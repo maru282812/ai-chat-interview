@@ -1,0 +1,26 @@
+<%- include("../../partials/header", { title }) %>
+<table>
+  <thead>
+    <tr>
+      <th>LINE User</th>
+      <th>Name</th>
+      <th>Status</th>
+      <th>Points</th>
+      <th>Rank</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const respondent of respondents) { %>
+      <tr>
+        <td><code><%= respondent.line_user_id %></code></td>
+        <td><%= respondent.display_name || "-" %></td>
+        <td><span class="tag"><%= respondent.status %></span></td>
+        <td><%= respondent.total_points %> pt</td>
+        <td><%= respondent.current_rank?.rank_name || "-" %></td>
+        <td><a href="/admin/respondents/<%= respondent.id %>">詳細</a></td>
+      </tr>
+    <% } %>
+  </tbody>
+</table>
+<%- include("../../partials/footer") %>

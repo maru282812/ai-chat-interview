@@ -1,0 +1,27 @@
+{
+  "name": "ai-chat-interview",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LINE chat style AI interview MVP with Supabase, OpenAI, and minimal admin UI.",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "dotenv": "^17.2.3",
+    "ejs": "^3.1.10",
+    "express": "^5.1.0",
+    "openai": "^6.4.0",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@types/ejs": "^3.1.5",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.6.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

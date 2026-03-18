@@ -1,0 +1,110 @@
+<%- include("../../partials/header", { title }) %>
+<section class="grid">
+  <div class="card">
+    <h2><%= respondent.display_name || respondent.line_user_id %></h2>
+    <p class="muted">status: <%= respondent.status %></p>
+    <p>累計ポイント: <strong><%= respondent.total_points %> pt</strong></p>
+    <p>現在ランク: <strong><%= respondent.current_rank?.rank_name || "-" %></strong></p>
+  </div>
+  <form class="card" method="post" action="/admin/respondents/<%= respondent.id %>/points">
+    <h2>手動ポイント調整</h2>
+    <label>
+      points
+      <input type="number" name="points" value="10" />
+    </label>
+    <label>
+      reason
+      <input type="text" name="reason" value="manual adjustment" />
+    </label>
+    <button type="submit">反映</button>
+  </form>
+</section>
+
+<section class="stack" style="margin-top: 16px;">
+  <div class="card">
+    <h2>Sessions</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Status</th>
+          <th>Phase</th>
+          <th>Started</th>
+          <th>Completed</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const session of sessions) { %>
+          <tr>
+            <td><code><%= session.id %></code></td>
+            <td><%= session.status %></td>
+            <td><%= session.current_phase %></td>
+            <td><%= session.started_at %></td>
+            <td><%= session.completed_at || "-" %></td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Conversation Log</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>At</th>
+          <th>Sender</th>
+          <th>Message</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const message of messages) { %>
+          <tr>
+            <td><%= message.created_at %></td>
+            <td><span class="tag"><%= message.sender_type %></span></td>
+            <td><%= message.message_text %></td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>AI Analysis</h2>
+    <% if (analysis) { %>
+      <p><strong>Summary:</strong> <%= analysis.summary || "-" %></p>
+      <p><strong>Usage Scene:</strong> <%= analysis.usage_scene || "-" %></p>
+      <p><strong>Motive:</strong> <%= analysis.motive || "-" %></p>
+      <p><strong>Pain Points:</strong> <%= analysis.pain_points || "-" %></p>
+      <p><strong>Alternatives:</strong> <%= analysis.alternatives || "-" %></p>
+      <p><strong>Insights:</strong> <%= analysis.insight_candidates || "-" %></p>
+    <% } else { %>
+      <p class="muted">分析結果はまだありません。</p>
+    <% } %>
+  </div>
+
+  <div class="card">
+    <h2>Point Transactions</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>At</th>
+          <th>Type</th>
+          <th>Points</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const tx of transactions) { %>
+          <tr>
+            <td><%= tx.created_at %></td>
+            <td><%= tx.transaction_type %></td>
+            <td><%= tx.points %></td>
+            <td><%= tx.reason %></td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</section>
+<%- include("../../partials/footer") %>

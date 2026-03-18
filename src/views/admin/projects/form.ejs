@@ -1,0 +1,29 @@
+<%- include("../../partials/header", { title }) %>
+<form class="card" method="post" action="<%= action %>">
+  <label>
+    プロジェクト名
+    <input type="text" name="name" value="<%= project?.name || '' %>" required />
+  </label>
+  <label>
+    クライアント名
+    <input type="text" name="client_name" value="<%= project?.client_name || '' %>" />
+  </label>
+  <label>
+    調査目的
+    <textarea name="objective"><%= project?.objective || '' %></textarea>
+  </label>
+  <label>
+    ステータス
+    <select name="status">
+      <% for (const status of ["draft", "active", "paused", "archived"]) { %>
+        <option value="<%= status %>" <%= project?.status === status ? "selected" : "" %>><%= status %></option>
+      <% } %>
+    </select>
+  </label>
+  <label>
+    完了ポイント
+    <input type="number" name="reward_points" value="<%= project?.reward_points || 30 %>" />
+  </label>
+  <button type="submit">保存</button>
+</form>
+<%- include("../../partials/footer") %>

@@ -1,0 +1,44 @@
+<%- include("../../partials/header", { title }) %>
+<div class="card" style="margin-bottom: 16px;">
+  <h2>CSV Exports</h2>
+  <p>
+    <a href="/admin/exports/answers.csv">answers.csv</a> |
+    <a href="/admin/exports/messages.csv">messages.csv</a> |
+    <a href="/admin/exports/analysis.csv">analysis.csv</a> |
+    <a href="/admin/exports/points.csv">points.csv</a> |
+    <a href="/admin/exports/ranks.csv">ranks.csv</a>
+  </p>
+</div>
+
+<section class="grid">
+  <div class="card">
+    <h2>Rank Thresholds</h2>
+    <% for (const rank of ranks) { %>
+      <p><strong><%= rank.rank_name %></strong>: <%= rank.min_points %> pt</p>
+    <% } %>
+  </div>
+</section>
+
+<table style="margin-top: 16px;">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Status</th>
+      <th>Total Points</th>
+      <th>Current Rank</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const respondent of respondents) { %>
+      <tr>
+        <td><%= respondent.display_name || respondent.line_user_id %></td>
+        <td><%= respondent.status %></td>
+        <td><%= respondent.total_points %></td>
+        <td><%= respondent.current_rank?.rank_name || "-" %></td>
+        <td><a href="/admin/respondents/<%= respondent.id %>">詳細</a></td>
+      </tr>
+    <% } %>
+  </tbody>
+</table>
+<%- include("../../partials/footer") %>

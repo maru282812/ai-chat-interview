@@ -1,0 +1,42 @@
+<%- include("../../partials/header", { title }) %>
+<form class="card" method="post" action="<%= action %>">
+  <p class="muted">project: <%= project.name %></p>
+  <label>
+    question_code
+    <input type="text" name="question_code" value="<%= question?.question_code || '' %>" required />
+  </label>
+  <label>
+    question_text
+    <textarea name="question_text" required><%= question?.question_text || '' %></textarea>
+  </label>
+  <label>
+    question_type
+    <select name="question_type">
+      <% for (const type of ["text", "single_select", "multi_select", "yes_no", "scale"]) { %>
+        <option value="<%= type %>" <%= question?.question_type === type ? "selected" : "" %>><%= type %></option>
+      <% } %>
+    </select>
+  </label>
+  <label>
+    sort_order
+    <input type="number" name="sort_order" value="<%= question?.sort_order || 1 %>" />
+  </label>
+  <label>
+    <input type="checkbox" name="is_required" <%= question?.is_required ? "checked" : "" %> />
+    必須
+  </label>
+  <label>
+    <input type="checkbox" name="ai_probe_enabled" <%= question?.ai_probe_enabled ? "checked" : "" %> />
+    AI深掘り許可
+  </label>
+  <label>
+    question_config(JSON)
+    <textarea name="question_config"><%= question?.question_config ? JSON.stringify(question.question_config, null, 2) : "" %></textarea>
+  </label>
+  <label>
+    branch_rule(JSON)
+    <textarea name="branch_rule"><%= question?.branch_rule ? JSON.stringify(question.branch_rule, null, 2) : "" %></textarea>
+  </label>
+  <button type="submit">保存</button>
+</form>
+<%- include("../../partials/footer") %>

@@ -1,0 +1,30 @@
+<%- include("../../partials/header", { title }) %>
+<p>
+  <a class="button-link" href="/admin/projects/<%= project.id %>/questions/new">質問追加</a>
+  <span class="muted" style="margin-left: 12px;"><%= project.name %></span>
+</p>
+<table>
+  <thead>
+    <tr>
+      <th>Order</th>
+      <th>Code</th>
+      <th>Text</th>
+      <th>Type</th>
+      <th>AI Probe</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const question of questions) { %>
+      <tr>
+        <td><%= question.sort_order %></td>
+        <td><%= question.question_code %></td>
+        <td><strong><%= question.question_text %></strong></td>
+        <td><%= question.question_type %></td>
+        <td><%= question.ai_probe_enabled ? "ON" : "OFF" %></td>
+        <td><a href="/admin/questions/<%= question.id %>/edit">編集</a></td>
+      </tr>
+    <% } %>
+  </tbody>
+</table>
+<%- include("../../partials/footer") %>

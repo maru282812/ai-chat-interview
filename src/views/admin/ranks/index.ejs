@@ -1,0 +1,18 @@
+<%- include("../../partials/header", { title }) %>
+<div class="stack">
+  <% for (const rank of ranks) { %>
+    <form class="card" method="post" action="/admin/ranks/<%= rank.id %>">
+      <h2><%= rank.rank_name %></h2>
+      <label>
+        min_points
+        <input type="number" name="min_points" value="<%= rank.min_points %>" />
+      </label>
+      <label>
+        badge_label
+        <input type="text" name="badge_label" value="<%= rank.badge_label || '' %>" />
+      </label>
+      <button type="submit">更新</button>
+    </form>
+  <% } %>
+</div>
+<%- include("../../partials/footer") %>

@@ -1,0 +1,25 @@
+<%- include("../partials/header", { title }) %>
+<section class="grid">
+  <div class="card">
+    <div class="muted">稼働中プロジェクト</div>
+    <h2><%= stats.activeProjects %></h2>
+  </div>
+  <div class="card">
+    <div class="muted">進行中セッション</div>
+    <h2><%= stats.activeSessions %></h2>
+  </div>
+  <div class="card">
+    <div class="muted">完了セッション</div>
+    <h2><%= stats.completedSessions %></h2>
+  </div>
+  <div class="card">
+    <div class="muted">回答者数</div>
+    <h2><%= stats.totalRespondents %></h2>
+  </div>
+</section>
+
+<section class="card" style="margin-top: 16px;">
+  <h2>MVP Scope</h2>
+  <p class="muted">Webhook、固定質問フロー、回答保存、管理画面、CSV、ポイント、ランク、AI深掘り/要約/分析の土台を同一アプリで運用します。</p>
+</section>
+<%- include("../partials/footer") %>
