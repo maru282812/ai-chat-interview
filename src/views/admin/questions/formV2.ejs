@@ -1,0 +1,110 @@
+<%- include("../../partials/header", { title }) %>
+
+<form class="card stack" method="post" action="<%= action %>">
+  <p class="muted">プロジェクト: <%= project.name %></p>
+
+  <div class="form-grid">
+    <label>
+      質問コード
+      <input type="text" name="question_code" value="<%= question?.question_code || '' %>" required />
+    </label>
+    <label>
+      表示順
+      <input type="number" name="sort_order" value="<%= question?.sort_order || 1 %>" />
+    </label>
+    <label>
+      質問役割
+      <select name="question_role">
+        <% for (const role of ["screening", "main", "probe_trigger", "attribute", "comparison_core"]) { %>
+          <option value="<%= role %>" <%= (question?.question_role || "main") === role ? "selected" : "" %>><%= role %></option>
+        <% } %>
+      </select>
+    </label>
+    <label>
+      回答形式
+      <select name="question_type">
+        <% for (const type of ["text", "single_select", "multi_select", "yes_no", "scale"]) { %>
+          <option value="<%= type %>" <%= question?.question_type === type ? "selected" : "" %>><%= type %></option>
+        <% } %>
+      </select>
+    </label>
+  </div>
+
+  <label>
+    質問文
+    <textarea name="question_text" required><%= question?.question_text || '' %></textarea>
+  </label>
+
+  <div class="form-grid">
+    <label>
+      <input type="checkbox" name="is_required" <%= question?.is_required ? "checked" : "" %> />
+      必須質問
+    </label>
+    <label>
+      <input type="checkbox" name="ai_probe_enabled" <%= question?.ai_probe_enabled ? "checked" : "" %> />
+      AI深掘り対象
+    </label>
+    <label>
+      <input type="checkbox" name="can_prefill_future_slots" <%= questionMetaForm?.can_prefill_future_slots !== false ? "checked" : "" %> />
+      次質問 slot の先取りを許可
+    </label>
+    <label>
+      <input type="checkbox" name="skip_forbidden_on_bad_answer" <%= questionMetaForm?.skip_forbidden_on_bad_answer !== false ? "checked" : "" %> />
+      bad answer 時はスキップ禁止
+    </label>
+  </div>
+
+  <label>
+    質問ゴール
+    <textarea name="question_goal" required><%= questionMetaForm?.question_goal || "" %></textarea>
+  </label>
+
+  <label>
+    想定 slot(JSON)
+    <textarea name="expected_slots"><%= questionMetaForm?.expected_slots_text || "" %></textarea>
+  </label>
+
+  <label>
+    必須 slot(JSON array)
+    <textarea name="required_slots"><%= questionMetaForm?.required_slots_text || "" %></textarea>
+  </label>
+
+  <label>
+    slot が埋まっていればスキップ可能(JSON array)
+    <textarea name="skippable_if_slots_present"><%= questionMetaForm?.skippable_if_slots_present_text || "" %></textarea>
+  </label>
+
+  <label>
+    bad answer 判定(JSON)
+    <textarea name="bad_answer_patterns"><%= questionMetaForm?.bad_answer_patterns_text || "" %></textarea>
+  </label>
+
+  <div class="form-grid">
+    <label>
+      最大深掘り回数
+      <input type="number" name="max_probes" min="0" value="<%= questionMetaForm?.max_probes || '1' %>" />
+    </label>
+    <label>
+      <input type="checkbox" name="force_probe_on_bad" <%= questionMetaForm?.force_probe_on_bad !== false ? "checked" : "" %> />
+      bad answer で深掘り
+    </label>
+    <label>
+      <input type="checkbox" name="strict_topic_lock" <%= questionMetaForm?.strict_topic_lock !== false ? "checked" : "" %> />
+      話題固定
+    </label>
+  </div>
+
+  <label>
+    question_config(JSON)
+    <textarea name="question_config"><%= question?.question_config ? JSON.stringify(question.question_config, null, 2) : "" %></textarea>
+  </label>
+
+  <label>
+    branch_rule(JSON)
+    <textarea name="branch_rule"><%= question?.branch_rule ? JSON.stringify(question.branch_rule, null, 2) : "" %></textarea>
+  </label>
+
+  <button type="submit">保存する</button>
+</form>
+
+<%- include("../../partials/footer") %>

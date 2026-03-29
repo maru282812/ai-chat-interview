@@ -1,0 +1,49 @@
+<%- include("../../partials/header", { title }) %>
+<div class="card" style="margin-bottom: 16px;">
+  <h2><%= project.name %></h2>
+  <p class="muted">Research mode: <%= project.research_mode %></p>
+  <p>
+    <a href="/admin/projects/<%= project.id %>/exports/respondents.csv">Export CSV</a> |
+    <a href="/admin/projects/<%= project.id %>/exports/respondents.csv?column=question_order">Export CSV by Order</a> |
+    <a href="/admin/projects/<%= project.id %>/analysis">Analysis</a> |
+    <a href="/admin/projects/<%= project.id %>/questions">Questions</a> |
+    <a href="/admin/projects/<%= project.id %>/delivery">Delivery</a>
+  </p>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>LINE User</th>
+      <th>Status</th>
+      <th>Sessions</th>
+      <th>Completed</th>
+      <th>Latest</th>
+      <th>Delivery Session</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const item of respondents) { %>
+      <tr>
+        <td><%= item.respondent.display_name || "-" %></td>
+        <td><code><%= item.respondent.line_user_id %></code></td>
+        <td><span class="tag"><%= item.respondent.status %></span></td>
+        <td><%= item.sessionCount %></td>
+        <td><%= item.completedSessionCount %></td>
+        <td><%= item.latestSession?.last_activity_at || "-" %></td>
+        <td>
+          <% if (item.deliverySession) { %>
+            <span class="tag"><%= item.deliverySession.status %></span><br />
+            <a href="/admin/sessions/<%= item.deliverySession.id %>"><code><%= item.deliverySession.id %></code></a>
+          <% } else { %>
+            <span class="muted">-</span>
+          <% } %>
+        </td>
+        <td><a href="/admin/respondents/<%= item.respondent.id %>">Respondent</a></td>
+      </tr>
+    <% } %>
+  </tbody>
+</table>
+<%- include("../../partials/footer") %>

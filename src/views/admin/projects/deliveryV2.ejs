@@ -1,0 +1,237 @@
+<%- include("../../partials/header", { title }) %>
+<div class="stack">
+  <div class="card">
+    <h2><%= project.name %></h2>
+    <p class="muted">Assignment-based delivery management</p>
+    <p>
+      <a href="/admin/projects/<%= project.id %>/respondents">Respondents</a> |
+      <a href="/admin/projects/<%= project.id %>/questions">Questions</a> |
+      <a href="/admin/projects/<%= project.id %>/exports/assignments.csv">Assignments CSV</a> |
+      <a href="/admin/projects/<%= project.id %>/exports/unanswered.csv">Unanswered CSV</a> |
+      <a href="/admin/projects/<%= project.id %>/exports/expired.csv">Expired CSV</a>
+    </p>
+  </div>
+
+  <div class="form-grid">
+    <div class="card">
+      <div class="muted">Delivery Targets</div>
+      <div><strong><%= stats.targetCount %></strong></div>
+    </div>
+    <div class="card">
+      <div class="muted">Unanswered</div>
+      <div><strong><%= stats.unansweredCount %></strong></div>
+    </div>
+    <div class="card">
+      <div class="muted">Completed</div>
+      <div><strong><%= stats.completedCount %></strong></div>
+    </div>
+    <div class="card">
+      <div class="muted">Completion Rate</div>
+      <div><strong><%= stats.completionRate %>%</strong></div>
+    </div>
+  </div>
+
+  <form class="card stack" method="post" action="/admin/projects/<%= project.id %>/delivery/reminders">
+    <div>
+      <h3>Reminders</h3>
+      <p class="muted">Send reminder messages to all unanswered assignments.</p>
+    </div>
+    <div>
+      <button type="submit">Send Reminders</button>
+    </div>
+  </form>
+
+  <form class="card stack" method="post" action="/admin/projects/<%= project.id %>/delivery/manual">
+    <div>
+      <h3>Manual Delivery</h3>
+      <p class="muted">Create or update assignments and send LINE invitations.</p>
+    </div>
+    <label>
+      Deadline
+      <input type="datetime-local" name="deadline" />
+    </label>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Select</th>
+            <th>Display</th>
+            <th>LINE User</th>
+            <th>Rank</th>
+            <th>Total Points</th>
+            <th>Last Participation</th>
+            <th>Current Status</th>
+            <th>Assignment</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% for (const candidate of candidates) { %>
+            <tr>
+              <td>
+                <input
+                  type="checkbox"
+                  name="selected_respondent_ids"
+                  value="<%= candidate.source_respondent_id %>"
+                  <%= candidate.has_line_user_id ? "" : "disabled" %>
+                />
+              </td>
+              <td>
+                <strong><%= candidate.display_name || "-" %></strong><br />
+                <span class="muted"><code><%= candidate.source_respondent_id %></code></span>
+              </td>
+              <td>
+                <% if (candidate.has_line_user_id) { %>
+                  <code><%= candidate.line_user_id %></code>
+                <% } else { %>
+                  <span class="danger-text">not available</span>
+                <% } %>
+              </td>
+              <td><%= candidate.rank_name || "-" %></td>
+              <td><%= candidate.total_points %> pt</td>
+              <td><%= candidate.last_participated_at || "-" %></td>
+              <td><span class="tag"><%= candidate.status %></span></td>
+              <td>
+                <% if (candidate.target_assignment_status) { %>
+                  <span class="tag"><%= candidate.target_assignment_status %></span><br />
+                  <span class="muted"><%= candidate.target_assignment_deadline || "-" %></span>
+                <% } else { %>
+                  <span class="muted">-</span>
+                <% } %>
+              </td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <button type="submit">Assign And Push</button>
+    </div>
+  </form>
+
+  <form class="card stack" method="post" action="/admin/projects/<%= project.id %>/delivery/rules">
+    <div>
+      <h3>Rule Based Delivery</h3>
+      <p class="muted">Filter respondents and create assignments in bulk.</p>
+    </div>
+    <div class="form-grid">
+      <label>
+        Rank
+        <select name="rank_code">
+          <option value="">Any</option>
+          <% for (const rank of ranks) { %>
+            <option value="<%= rank.rank_code %>"><%= rank.rank_name %></option>
+          <% } %>
+        </select>
+      </label>
+      <label>
+        Total Points Min
+        <input type="number" name="total_points_min" min="0" />
+      </label>
+      <label>
+        Total Points Max
+        <input type="number" name="total_points_max" min="0" />
+      </label>
+      <label>
+        Has Participated
+        <select name="has_participated">
+          <option value="">Any</option>
+          <option value="true">Yes</option>
+          <option value="false">No</option>
+        </select>
+      </label>
+      <label>
+        Last Participated Before
+        <input type="date" name="last_participated_before" />
+      </label>
+      <label>
+        Unanswered Project
+        <select name="unanswered_project_id">
+          <option value="">Skip</option>
+          <% for (const item of projects) { %>
+            <option value="<%= item.id %>"><%= item.name %></option>
+          <% } %>
+        </select>
+      </label>
+      <label>
+        Deadline
+        <input type="datetime-local" name="rule_deadline" />
+      </label>
+    </div>
+    <div>
+      <button type="submit">Assign By Rule</button>
+    </div>
+  </form>
+
+  <div class="card">
+    <h3>Unanswered Assignments</h3>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>User ID</th>
+            <th>Respondent</th>
+            <th>Status</th>
+            <th>Deadline</th>
+            <th>Sent</th>
+            <th>Started</th>
+            <th>Reminder</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% for (const item of unansweredAssignments) { %>
+            <tr>
+              <td><code><%= item.assignment.user_id || "-" %></code></td>
+              <td>
+                <strong><%= item.assignment.respondent?.display_name || "-" %></strong><br />
+                <span class="muted"><code><%= item.assignment.respondent_id %></code></span>
+              </td>
+              <td><span class="tag"><%= item.assignment.status %></span></td>
+              <td><%= item.assignment.deadline || "-" %></td>
+              <td><%= item.assignment.sent_at || "-" %></td>
+              <td><%= item.assignment.started_at || "-" %></td>
+              <td><%= item.assignment.reminder_sent_at || "-" %></td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Delivery History</h3>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>User ID</th>
+            <th>Respondent</th>
+            <th>Status</th>
+            <th>Assigned</th>
+            <th>Sent</th>
+            <th>Started</th>
+            <th>Completed</th>
+            <th>Deadline</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% for (const item of assignments) { %>
+            <tr>
+              <td><code><%= item.assignment.user_id || "-" %></code></td>
+              <td>
+                <strong><%= item.assignment.respondent?.display_name || "-" %></strong><br />
+                <span class="muted"><code><%= item.assignment.respondent_id %></code></span>
+              </td>
+              <td><span class="tag"><%= item.assignment.status %></span></td>
+              <td><%= item.assignment.assigned_at || "-" %></td>
+              <td><%= item.assignment.sent_at || "-" %></td>
+              <td><%= item.assignment.started_at || "-" %></td>
+              <td><%= item.assignment.completed_at || "-" %></td>
+              <td><%= item.assignment.deadline || "-" %></td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<%- include("../../partials/footer") %>

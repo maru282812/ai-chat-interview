@@ -1,0 +1,61 @@
+<%- include("../../partials/header", { title }) %>
+<%
+  const notice = typeof noticeMessage === "string" ? noticeMessage : "";
+%>
+
+<div class="actions-row">
+  <a class="button-link" href="/admin/projects/new">新規プロジェクト</a>
+</div>
+
+<% if (notice) { %>
+  <section class="card subtle-card success-card" style="margin-top: 16px;">
+    <strong class="<%= notice.includes('archived') ? '' : 'success-text' %>"><%= notice %></strong>
+  </section>
+<% } %>
+
+<table style="margin-top: 16px;">
+  <thead>
+    <tr>
+      <th>Project</th>
+      <th>Client</th>
+      <th>Status</th>
+      <th>Reward</th>
+      <th>Design</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const row of projects) { %>
+      <tr>
+        <td>
+          <strong><%= row.project.name %></strong><br />
+          <span class="muted"><%= row.project.objective || "-" %></span>
+        </td>
+        <td><%= row.project.client_name || "-" %></td>
+        <td><span class="tag"><%= row.project.status %></span></td>
+        <td><%= row.project.reward_points %> pt</td>
+        <td>
+          <span class="tag"><%= row.project.research_mode %></span><br />
+          <span class="muted">questions: <%= row.questionCount %> / branches: <%= row.branchCount %></span>
+        </td>
+        <td>
+          <div class="actions-row">
+            <a href="/admin/projects/<%= row.project.id %>/edit">Edit</a>
+            <a href="/admin/projects/<%= row.project.id %>/questions">Questions</a>
+            <a href="/admin/projects/<%= row.project.id %>/respondents">Respondents</a>
+            <a href="/admin/projects/<%= row.project.id %>/delivery">Delivery</a>
+            <a href="/admin/projects/<%= row.project.id %>/analysis">Analysis</a>
+            <form method="post" action="/admin/projects/<%= row.project.id %>/copy" class="inline-form" onsubmit="return window.confirm('このプロジェクトを複製します。複製先は draft として作成されます。よろしいですか？');">
+              <button type="submit" class="button-link secondary">Copy</button>
+            </form>
+            <form method="post" action="/admin/projects/<%= row.project.id %>/delete" class="inline-form" onsubmit="return window.confirm('このプロジェクトを削除します。回答履歴や配信履歴がある場合は archived に変更されます。よろしいですか？');">
+              <button type="submit" class="button-link danger">Delete</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+    <% } %>
+  </tbody>
+</table>
+
+<%- include("../../partials/footer") %>

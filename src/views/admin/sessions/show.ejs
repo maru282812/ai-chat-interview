@@ -1,0 +1,97 @@
+<%- include("../../partials/header", { title }) %>
+<section class="grid">
+  <div class="card">
+    <h2>Session</h2>
+    <p><strong><%= respondent.display_name || respondent.line_user_id %></strong></p>
+    <p class="muted">Project: <%= project.name %></p>
+    <p>Status: <span class="tag"><%= session.status %></span></p>
+    <p>Phase: <%= session.current_phase %></p>
+    <p>Started: <%= session.started_at %></p>
+    <p>Completed: <%= session.completed_at || "-" %></p>
+  </div>
+  <div class="card">
+    <h2>Project Context</h2>
+    <p class="muted">Research mode: <%= project.research_mode %></p>
+    <p><strong>Primary objectives</strong><br /><%= (project.primary_objectives || []).join(" / ") || "-" %></p>
+    <p><strong>Secondary objectives</strong><br /><%= (project.secondary_objectives || []).join(" / ") || "-" %></p>
+  </div>
+</section>
+
+<section class="stack" style="margin-top: 16px;">
+  <div class="card">
+    <h2>Answers by Question</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Order</th>
+          <th>Code</th>
+          <th>Role</th>
+          <th>Question</th>
+          <th>Answer</th>
+          <th>normalized_answer</th>
+          <th>extracted_json</th>
+          <th>AI Probe</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const group of answerGroups) { %>
+          <tr>
+            <td><%= group.question.sort_order %></td>
+            <td><%= group.question.question_code %></td>
+            <td><span class="tag"><%= group.question.question_role %></span></td>
+            <td><strong><%= group.question.question_text %></strong></td>
+            <td>
+              <%= group.primaryAnswer?.answer_text || "-" %>
+              <% if (group.probeAnswers.length > 0) { %>
+                <div class="muted" style="margin-top: 8px;">Probe answers:</div>
+                <% for (const probe of group.probeAnswers) { %>
+                  <div class="prelike"><%= probe.answer_text %></div>
+                <% } %>
+              <% } %>
+            </td>
+            <td><pre class="prelike"><%= group.primaryAnswer?.normalized_answer ? JSON.stringify(group.primaryAnswer.normalized_answer, null, 2) : "-" %></pre></td>
+            <td><pre class="prelike"><%= group.extraction?.extracted_json ? JSON.stringify(group.extraction.extracted_json, null, 2) : "-" %></pre></td>
+            <td><%= group.hasAiProbe ? "Yes" : "No" %></td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Conversation Log</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>At</th>
+          <th>Sender</th>
+          <th>Message</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const message of messages) { %>
+          <tr>
+            <td><%= message.created_at %></td>
+            <td><span class="tag"><%= message.sender_type %></span></td>
+            <td><div class="prelike"><%= message.message_text %></div></td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>AI Analysis</h2>
+    <% if (analysis) { %>
+      <p><strong>Summary:</strong> <%= analysis.summary || "-" %></p>
+      <p><strong>Usage Scene:</strong> <%= analysis.usage_scene || "-" %></p>
+      <p><strong>Motive:</strong> <%= analysis.motive || "-" %></p>
+      <p><strong>Pain Points:</strong> <%= analysis.pain_points || "-" %></p>
+      <p><strong>Alternatives:</strong> <%= analysis.alternatives || "-" %></p>
+      <p><strong>Insights:</strong> <%= analysis.insight_candidates || "-" %></p>
+    <% } else { %>
+      <p class="muted">No session analysis yet.</p>
+    <% } %>
+  </div>
+</section>
+<%- include("../../partials/footer") %>

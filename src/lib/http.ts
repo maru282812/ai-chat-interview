@@ -40,6 +40,22 @@ export function errorHandler(
     return;
   }
 
+  if (req.path.startsWith("/liff")) {
+    const friendlyMessage =
+      statusCode === 401
+        ? "認証に失敗しました。LINEからもう一度開き直してください。"
+        : statusCode === 400
+          ? error.message
+          : "投稿の保存に失敗しました。時間を置いて再度お試しください。";
+
+    res.status(statusCode).json({
+      error: friendlyMessage,
+      detail: error.message,
+      fallback: "解決しない場合はLINEトーク画面から再度開き直してください。"
+    });
+    return;
+  }
+
   res.status(statusCode).json({
     error: error.message
   });

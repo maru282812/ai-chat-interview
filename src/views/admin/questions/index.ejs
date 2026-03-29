@@ -8,6 +8,7 @@
     <tr>
       <th>Order</th>
       <th>Code</th>
+      <th>Role</th>
       <th>Text</th>
       <th>Type</th>
       <th>AI Probe</th>
@@ -19,6 +20,7 @@
       <tr>
         <td><%= question.sort_order %></td>
         <td><%= question.question_code %></td>
+        <td><span class="tag"><%= question.question_role %></span></td>
         <td><strong><%= question.question_text %></strong></td>
         <td><%= question.question_type %></td>
         <td><%= question.ai_probe_enabled ? "ON" : "OFF" %></td>

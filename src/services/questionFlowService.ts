@@ -1,6 +1,7 @@
 import { HttpError } from "../lib/http";
+import { getQuestionScaleRange, getYesNoLabels, resolveNextQuestionCode } from "../lib/questionDesign";
 import { questionRepository } from "../repositories/questionRepository";
-import type { BranchRule, ParsedAnswer, Question, QuestionOption } from "../types/domain";
+import type { ParsedAnswer, Question, QuestionOption } from "../types/domain";
 
 function findOption(input: string, options: QuestionOption[]): QuestionOption | null {
   const normalized = input.trim().toLowerCase();
@@ -16,28 +17,6 @@ function findOption(input: string, options: QuestionOption[]): QuestionOption | 
       return normalized === label || normalized === value;
     }) ?? null
   );
-}
-
-function evaluateBranchRule(branchRule: BranchRule, normalizedAnswer: Record<string, unknown>): boolean {
-  const actual =
-    (normalizedAnswer.value as string | number | boolean | undefined) ??
-    (normalizedAnswer.values as (string | number)[] | undefined);
-  const expected = branchRule.when.value;
-
-  switch (branchRule.when.operator) {
-    case "equals":
-      return actual === expected;
-    case "not_equals":
-      return actual !== expected;
-    case "includes":
-      return Array.isArray(actual) && actual.includes(expected as never);
-    case "gte":
-      return Number(actual) >= Number(expected);
-    case "lte":
-      return Number(actual) <= Number(expected);
-    default:
-      return false;
-  }
 }
 
 export const questionFlowService = {
@@ -148,10 +127,9 @@ export const questionFlowService = {
     question: Question,
     normalizedAnswer: Record<string, unknown>
   ): Promise<Question | null> {
-    for (const branchRule of question.branch_rule ?? []) {
-      if (evaluateBranchRule(branchRule, normalizedAnswer)) {
-        return questionRepository.getByProjectAndCode(projectId, branchRule.targetQuestionCode);
-      }
+    const nextQuestionCode = resolveNextQuestionCode(question.branch_rule, normalizedAnswer);
+    if (nextQuestionCode) {
+      return questionRepository.getByProjectAndCode(projectId, nextQuestionCode);
     }
 
     return questionRepository.getNextBySortOrder(projectId, question.sort_order);

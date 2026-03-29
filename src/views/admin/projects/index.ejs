@@ -1,25 +1,64 @@
 <%- include("../../partials/header", { title }) %>
-<p><a class="button-link" href="/admin/projects/new">新規プロジェクト</a></p>
-<table>
+<%
+  const notice = typeof noticeMessage === "string" ? noticeMessage : "";
+%>
+<div class="actions-row">
+  <a class="button-link" href="/admin/projects/new">新規プロジェクト</a>
+</div>
+
+<% if (notice) { %>
+  <section class="card subtle-card success-card" style="margin-top: 16px;">
+    <strong class="success-text"><%= notice %></strong>
+  </section>
+<% } %>
+
+<table style="margin-top: 16px;">
   <thead>
     <tr>
-      <th>Name</th>
-      <th>Client</th>
-      <th>Status</th>
-      <th>Reward</th>
-      <th>Actions</th>
+      <th>プロジェクト</th>
+      <th>クライアント</th>
+      <th>ステータス</th>
+      <th>報酬</th>
+      <th>調査設定</th>
+      <th>操作</th>
     </tr>
   </thead>
   <tbody>
     <% for (const project of projects) { %>
       <tr>
-        <td><strong><%= project.name %></strong><br /><span class="muted"><%= project.objective || "" %></span></td>
+        <td>
+          <strong><%= project.name %></strong><br />
+          <span class="muted"><%= project.objective || "目的未設定" %></span>
+        </td>
         <td><%= project.client_name || "-" %></td>
         <td><span class="tag"><%= project.status %></span></td>
         <td><%= project.reward_points %> pt</td>
         <td>
-          <a href="/admin/projects/<%= project.id %>/edit">編集</a> |
-          <a href="/admin/projects/<%= project.id %>/questions">質問管理</a>
+          <span class="tag"><%= project.research_mode %></span><br />
+          <span class="muted">
+            主目的 <%= (project.primary_objectives || []).length %>件 /
+            副目的 <%= (project.secondary_objectives || []).length %>件
+          </span>
+        </td>
+        <td>
+          <div class="actions-row">
+            <a href="/admin/projects/<%= project.id %>/edit">編集</a>
+            <a href="/admin/projects/<%= project.id %>/questions">質問</a>
+            <a href="/admin/projects/<%= project.id %>/respondents">回答者</a>
+            <a href="/admin/projects/<%= project.id %>/delivery">配信</a>
+            <a href="/admin/projects/<%= project.id %>/analysis">分析</a>
+            <form method="post" action="/admin/projects/<%= project.id %>/copy" class="inline-form">
+              <button type="submit" class="button-link secondary">コピー</button>
+            </form>
+            <form
+              method="post"
+              action="/admin/projects/<%= project.id %>/delete"
+              class="inline-form"
+              onsubmit="return window.confirm('このプロジェクトを削除します。質問・回答者・セッションなどの関連データも削除されます。よろしいですか？');"
+            >
+              <button type="submit" class="button-link danger">削除</button>
+            </form>
+          </div>
         </td>
       </tr>
     <% } %>

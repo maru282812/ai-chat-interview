@@ -1,0 +1,50 @@
+<%- include("../../partials/header", { title }) %>
+
+<div class="actions-row" style="justify-content: space-between;">
+  <div class="actions-row">
+    <a class="button-link" href="/admin/projects/<%= project.id %>/questions/new">質問を追加</a>
+    <a class="button-link secondary" href="/admin/projects/<%= project.id %>/edit">プロジェクトへ戻る</a>
+  </div>
+  <span class="muted"><%= project.name %></span>
+</div>
+
+<table style="margin-top: 16px;">
+  <thead>
+    <tr>
+      <th>Order</th>
+      <th>Code</th>
+      <th>Type</th>
+      <th>Role</th>
+      <th>AI Probe</th>
+      <th>Extraction</th>
+      <th>Branch</th>
+      <th>Next</th>
+      <th>Text</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const row of questions) { %>
+      <tr>
+        <td><%= row.question.sort_order %></td>
+        <td><strong><%= row.question.question_code %></strong></td>
+        <td><%= row.question.question_type %></td>
+        <td><span class="tag"><%= row.question.question_role %></span></td>
+        <td><%= row.question.ai_probe_enabled ? "ON" : "OFF" %></td>
+        <td><%= row.question.question_config?.extraction?.mode && row.question.question_config.extraction.mode !== "none" ? row.question.question_config.extraction.mode : "-" %></td>
+        <td>
+          <% if (row.hasBranches) { %>
+            <span class="tag"><%= row.branchCount %> branches</span>
+          <% } else { %>
+            <span class="muted">なし</span>
+          <% } %>
+        </td>
+        <td><%= row.nextSummary || "-" %></td>
+        <td><strong><%= row.question.question_text %></strong></td>
+        <td><a href="/admin/questions/<%= row.question.id %>/edit">Edit</a></td>
+      </tr>
+    <% } %>
+  </tbody>
+</table>
+
+<%- include("../../partials/footer") %>

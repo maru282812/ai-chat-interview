@@ -19,6 +19,8 @@ export const respondentRepository = {
     display_name?: string | null;
     project_id: string;
     status: RespondentStatus;
+    total_points?: number;
+    current_rank_id?: string | null;
   }): Promise<Respondent> {
     const { data, error } = await supabase.from("respondents").insert(input).select("*").single();
     throwIfError(error);
@@ -50,6 +52,16 @@ export const respondentRepository = {
     return (data ?? []) as (Respondent & { current_rank?: Rank | null })[];
   },
 
+  async listByProject(projectId: string): Promise<(Respondent & { current_rank?: Rank | null })[]> {
+    const { data, error } = await supabase
+      .from("respondents")
+      .select("*, current_rank:ranks(*)")
+      .eq("project_id", projectId)
+      .order("updated_at", { ascending: false });
+    throwIfError(error);
+    return (data ?? []) as (Respondent & { current_rank?: Rank | null })[];
+  },
+
   async getById(id: string): Promise<Respondent & { current_rank?: Rank | null }> {
     const { data, error } = await supabase
       .from("respondents")
@@ -61,6 +73,16 @@ export const respondentRepository = {
       data as (Respondent & { current_rank?: Rank | null }) | null,
       "Respondent not found"
     );
+  },
+
+  async listByLineUserId(lineUserId: string): Promise<(Respondent & { current_rank?: Rank | null })[]> {
+    const { data, error } = await supabase
+      .from("respondents")
+      .select("*, current_rank:ranks(*)")
+      .eq("line_user_id", lineUserId)
+      .order("updated_at", { ascending: false });
+    throwIfError(error);
+    return (data ?? []) as (Respondent & { current_rank?: Rank | null })[];
   },
 
   async countCompletedByLineUser(lineUserId: string): Promise<number> {
@@ -77,6 +99,15 @@ export const respondentRepository = {
     const { count, error } = await supabase
       .from("respondents")
       .select("*", { count: "exact", head: true });
+    throwIfError(error);
+    return count ?? 0;
+  },
+
+  async countByProject(projectId: string): Promise<number> {
+    const { count, error } = await supabase
+      .from("respondents")
+      .select("*", { count: "exact", head: true })
+      .eq("project_id", projectId);
     throwIfError(error);
     return count ?? 0;
   }

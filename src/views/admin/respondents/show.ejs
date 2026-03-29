@@ -2,12 +2,14 @@
 <section class="grid">
   <div class="card">
     <h2><%= respondent.display_name || respondent.line_user_id %></h2>
-    <p class="muted">status: <%= respondent.status %></p>
-    <p>累計ポイント: <strong><%= respondent.total_points %> pt</strong></p>
-    <p>現在ランク: <strong><%= respondent.current_rank?.rank_name || "-" %></strong></p>
+    <p class="muted">Project: <%= project.name %></p>
+    <p class="muted">Research mode: <%= project.research_mode %></p>
+    <p>Status: <span class="tag"><%= respondent.status %></span></p>
+    <p>Points: <strong><%= respondent.total_points %> pt</strong></p>
+    <p>Rank: <strong><%= respondent.current_rank?.rank_name || "-" %></strong></p>
   </div>
   <form class="card" method="post" action="/admin/respondents/<%= respondent.id %>/points">
-    <h2>手動ポイント調整</h2>
+    <h2>Adjust Points</h2>
     <label>
       points
       <input type="number" name="points" value="10" />
@@ -16,7 +18,7 @@
       reason
       <input type="text" name="reason" value="manual adjustment" />
     </label>
-    <button type="submit">反映</button>
+    <button type="submit">Apply</button>
   </form>
 </section>
 
@@ -31,56 +33,22 @@
           <th>Phase</th>
           <th>Started</th>
           <th>Completed</th>
+          <th>Action</th>
         </tr>
       </thead>
       <tbody>
         <% for (const session of sessions) { %>
           <tr>
             <td><code><%= session.id %></code></td>
-            <td><%= session.status %></td>
+            <td><span class="tag"><%= session.status %></span></td>
             <td><%= session.current_phase %></td>
             <td><%= session.started_at %></td>
             <td><%= session.completed_at || "-" %></td>
+            <td><a href="/admin/sessions/<%= session.id %>">Session Detail</a></td>
           </tr>
         <% } %>
       </tbody>
     </table>
-  </div>
-
-  <div class="card">
-    <h2>Conversation Log</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>At</th>
-          <th>Sender</th>
-          <th>Message</th>
-        </tr>
-      </thead>
-      <tbody>
-        <% for (const message of messages) { %>
-          <tr>
-            <td><%= message.created_at %></td>
-            <td><span class="tag"><%= message.sender_type %></span></td>
-            <td><%= message.message_text %></td>
-          </tr>
-        <% } %>
-      </tbody>
-    </table>
-  </div>
-
-  <div class="card">
-    <h2>AI Analysis</h2>
-    <% if (analysis) { %>
-      <p><strong>Summary:</strong> <%= analysis.summary || "-" %></p>
-      <p><strong>Usage Scene:</strong> <%= analysis.usage_scene || "-" %></p>
-      <p><strong>Motive:</strong> <%= analysis.motive || "-" %></p>
-      <p><strong>Pain Points:</strong> <%= analysis.pain_points || "-" %></p>
-      <p><strong>Alternatives:</strong> <%= analysis.alternatives || "-" %></p>
-      <p><strong>Insights:</strong> <%= analysis.insight_candidates || "-" %></p>
-    <% } else { %>
-      <p class="muted">分析結果はまだありません。</p>
-    <% } %>
   </div>
 
   <div class="card">

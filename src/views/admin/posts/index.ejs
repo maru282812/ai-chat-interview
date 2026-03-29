@@ -1,0 +1,175 @@
+<%- include("../../partials/header", { title }) %>
+<section class="card" style="margin-bottom: 16px;">
+  <h2>Posts</h2>
+  <form method="get" action="/admin/posts" class="stack">
+    <div class="form-grid">
+      <label>
+        Type
+        <select name="type">
+          <option value="">All</option>
+          <option value="free_comment" <%= filters.type === "free_comment" ? "selected" : "" %>>free_comment</option>
+          <option value="rant" <%= filters.type === "rant" ? "selected" : "" %>>rant</option>
+          <option value="diary" <%= filters.type === "diary" ? "selected" : "" %>>diary</option>
+        </select>
+      </label>
+      <label>
+        Analysis
+        <select name="analysis_status">
+          <option value="">All</option>
+          <option value="pending" <%= filters.analysisStatus === "pending" ? "selected" : "" %>>pending</option>
+          <option value="analyzed" <%= filters.analysisStatus === "analyzed" ? "selected" : "" %>>analyzed</option>
+        </select>
+      </label>
+      <label>
+        Source
+        <select name="source_channel">
+          <option value="">All</option>
+          <option value="line" <%= filters.sourceChannel === "line" ? "selected" : "" %>>line</option>
+          <option value="liff" <%= filters.sourceChannel === "liff" ? "selected" : "" %>>liff</option>
+          <option value="admin" <%= filters.sourceChannel === "admin" ? "selected" : "" %>>admin</option>
+          <option value="system" <%= filters.sourceChannel === "system" ? "selected" : "" %>>system</option>
+        </select>
+      </label>
+      <label>
+        Project
+        <select name="project_id">
+          <option value="">All</option>
+          <% for (const project of projects) { %>
+            <option value="<%= project.id %>" <%= filters.projectId === project.id ? "selected" : "" %>><%= project.name %></option>
+          <% } %>
+        </select>
+      </label>
+      <label>
+        Quality Min
+        <input type="number" name="quality_score_min" min="0" max="100" value="<%= filters.qualityScoreMin ?? "" %>" />
+      </label>
+      <label>
+        Quality Max
+        <input type="number" name="quality_score_max" min="0" max="100" value="<%= filters.qualityScoreMax ?? "" %>" />
+      </label>
+      <label>
+        Sentiment
+        <select name="sentiment">
+          <option value="">All</option>
+          <option value="positive" <%= filters.sentiment === "positive" ? "selected" : "" %>>positive</option>
+          <option value="neutral" <%= filters.sentiment === "neutral" ? "selected" : "" %>>neutral</option>
+          <option value="negative" <%= filters.sentiment === "negative" ? "selected" : "" %>>negative</option>
+          <option value="mixed" <%= filters.sentiment === "mixed" ? "selected" : "" %>>mixed</option>
+        </select>
+      </label>
+      <label>
+        Insight
+        <select name="insight_type">
+          <option value="">All</option>
+          <option value="issue" <%= filters.insightType === "issue" ? "selected" : "" %>>issue</option>
+          <option value="request" <%= filters.insightType === "request" ? "selected" : "" %>>request</option>
+          <option value="complaint" <%= filters.insightType === "complaint" ? "selected" : "" %>>complaint</option>
+          <option value="praise" <%= filters.insightType === "praise" ? "selected" : "" %>>praise</option>
+          <option value="other" <%= filters.insightType === "other" ? "selected" : "" %>>other</option>
+        </select>
+      </label>
+      <label>
+        Date From
+        <input type="date" name="date_from" value="<%= filters.dateFrom || "" %>" />
+      </label>
+      <label>
+        Date To
+        <input type="date" name="date_to" value="<%= filters.dateTo || "" %>" />
+      </label>
+    </div>
+    <label>
+      Search
+      <input type="text" name="search" value="<%= filters.search || "" %>" placeholder="content / summary / user / project" />
+    </label>
+    <div class="actions-row">
+      <button type="submit">Filter</button>
+      <a class="button-link secondary" href="/admin/posts">Reset</a>
+      <a class="button-link" href="/admin/exports/user-posts.csv?<%= new URLSearchParams({
+        type: filters.type || "",
+        analysis_status: filters.analysisStatus || "",
+        source_channel: filters.sourceChannel || "",
+        project_id: filters.projectId || "",
+        quality_score_min: filters.qualityScoreMin?.toString() || "",
+        quality_score_max: filters.qualityScoreMax?.toString() || "",
+        sentiment: filters.sentiment || "",
+        insight_type: filters.insightType || "",
+        date_from: filters.dateFrom || "",
+        date_to: filters.dateTo || "",
+        search: filters.search || ""
+      }).toString() %>">Export CSV</a>
+    </div>
+  </form>
+</section>
+
+<% if (tagSummary.length > 0) { %>
+  <section class="card" style="margin-bottom: 16px;">
+    <h2>Top Tags</h2>
+    <div class="summary-chips">
+      <% for (const item of tagSummary) { %>
+        <span class="tag"><%= item.tag %> (<%= item.count %>)</span>
+      <% } %>
+    </div>
+  </section>
+<% } %>
+
+<div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>Created</th>
+        <th>Type</th>
+        <th>Quality</th>
+        <th>User</th>
+        <th>Project</th>
+        <th>Source</th>
+        <th>Analysis</th>
+        <th>Original Text</th>
+        <th>Summary</th>
+        <th>Insight</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% for (const row of rows) { %>
+        <tr class="<%= row.post.quality_label === 'high' ? 'high-value-row' : '' %>">
+          <td><%= row.post.created_at %><br /><span class="muted"><%= row.post.posted_on || "-" %></span></td>
+          <td><span class="tag"><%= row.post.type %></span></td>
+          <td>
+            <strong><%= row.post.quality_score %></strong><br />
+            <span class="status-pill <%= row.post.quality_label === "high" ? "status-ok" : row.post.quality_label === "medium" ? "status-warn" : "" %>"><%= row.post.quality_label %></span>
+          </td>
+          <td>
+            <strong><%= row.respondentDisplayName || "-" %></strong><br />
+            <code><%= row.respondentLineUserId || row.post.user_id %></code>
+          </td>
+          <td><%= row.projectName || "-" %></td>
+          <td>
+            <span class="tag"><%= row.post.source_channel %></span><br />
+            <span class="muted"><%= row.post.menu_action_key || "-" %></span>
+          </td>
+          <td>
+            <span class="status-pill <%= row.analysis_status === "analyzed" ? "status-ok" : "status-warn" %>"><%= row.analysis_status %></span>
+          </td>
+          <td class="excerpt-cell"><%= row.post.content %></td>
+          <td class="excerpt-cell"><%= row.analysis?.summary || "-" %></td>
+          <td>
+            <%= row.analysis?.insight_type || "-" %><br />
+            <span class="muted"><%= row.analysis?.sentiment || "-" %></span>
+          </td>
+          <td>
+            <a href="/admin/posts/<%= row.post.id %>">Detail</a>
+            <% if (row.analysis) { %>
+              <br /><a href="/admin/post-analysis?search=<%= encodeURIComponent(row.post.id) %>">Analysis</a>
+            <% } %>
+          </td>
+        </tr>
+      <% } %>
+      <% if (rows.length === 0) { %>
+        <tr>
+          <td colspan="11" class="muted">No posts matched the current filter.</td>
+        </tr>
+      <% } %>
+    </tbody>
+  </table>
+</div>
+<%- include("../../partials/footer") %>

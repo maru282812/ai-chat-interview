@@ -83,5 +83,47 @@ export const sessionRepository = {
       .order("started_at", { ascending: false });
     throwIfError(error);
     return (data ?? []) as Session[];
+  },
+
+  async listByRespondentIds(respondentIds: string[]): Promise<Session[]> {
+    if (respondentIds.length === 0) {
+      return [];
+    }
+
+    const { data, error } = await supabase
+      .from("sessions")
+      .select("*")
+      .in("respondent_id", respondentIds)
+      .order("last_activity_at", { ascending: false });
+    throwIfError(error);
+    return (data ?? []) as Session[];
+  },
+
+  async listByProject(projectId: string): Promise<Session[]> {
+    const { data, error } = await supabase
+      .from("sessions")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("started_at", { ascending: false });
+    throwIfError(error);
+    return (data ?? []) as Session[];
+  },
+
+  async listAll(): Promise<Session[]> {
+    const { data, error } = await supabase
+      .from("sessions")
+      .select("*")
+      .order("last_activity_at", { ascending: false });
+    throwIfError(error);
+    return (data ?? []) as Session[];
+  },
+
+  async countByProject(projectId: string): Promise<number> {
+    const { count, error } = await supabase
+      .from("sessions")
+      .select("*", { count: "exact", head: true })
+      .eq("project_id", projectId);
+    throwIfError(error);
+    return count ?? 0;
   }
 };

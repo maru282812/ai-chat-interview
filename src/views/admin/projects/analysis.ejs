@@ -1,0 +1,96 @@
+<%- include("../../partials/header", { title }) %>
+<div class="card" style="margin-bottom: 16px;">
+  <h2><%= project.name %></h2>
+  <p class="muted">Research mode: <%= project.research_mode %></p>
+  <p>
+    <a href="/admin/projects/<%= project.id %>/respondents">Respondents</a> |
+    <a href="/admin/projects/<%= project.id %>/exports/respondents.csv">Export CSV</a>
+  </p>
+  <form method="post" action="/admin/projects/<%= project.id %>/analysis" style="margin-top: 12px;">
+    <button type="submit">Run AI Analysis</button>
+  </form>
+</div>
+
+<section class="grid">
+  <div class="card">
+    <h2>Coverage</h2>
+    <p>Respondents: <strong><%= dataset.respondent_count %></strong></p>
+    <p>Completed sessions: <strong><%= dataset.completed_session_count %></strong></p>
+    <p><strong>Primary objectives</strong><br /><%= (project.primary_objectives || []).join(" / ") || "-" %></p>
+    <p><strong>Secondary objectives</strong><br /><%= (project.secondary_objectives || []).join(" / ") || "-" %></p>
+  </div>
+  <div class="card">
+    <h2>Free-text Policy</h2>
+    <p><%= dataset.freeAnswerPolicy.policy %></p>
+    <p class="muted">Target questions: <%= dataset.freeAnswerPolicy.target_question_codes.join(", ") || "-" %></p>
+  </div>
+</section>
+
+<section class="stack" style="margin-top: 16px;">
+  <div class="card">
+    <h2>Comparison Units</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Question</th>
+          <th>Role</th>
+          <th>Type</th>
+          <th>Aggregation</th>
+          <th>Values</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const unit of dataset.comparisonUnits) { %>
+          <tr>
+            <td><strong><%= unit.question_code %></strong><br /><span class="muted"><%= unit.question_text %></span></td>
+            <td><span class="tag"><%= unit.question_role %></span></td>
+            <td><%= unit.question_type %></td>
+            <td><%= unit.aggregation_type %><br /><span class="muted"><%= unit.note %></span></td>
+            <td>
+              <% if (unit.values.length > 0) { %>
+                <% for (const value of unit.values) { %>
+                  <div><%= value.label %>: <%= value.count %></div>
+                <% } %>
+              <% } else { %>
+                <span class="muted">qualitative only</span>
+              <% } %>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Respondent Summaries</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Session</th>
+          <th>Summary</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const item of dataset.respondentSummaries) { %>
+          <tr>
+            <td><strong><%= item.respondent_name %></strong><br /><span class="muted"><%= item.line_user_id %></span></td>
+            <td><span class="tag"><%= item.session_status %></span><br /><span class="muted"><%= item.completed_at || "-" %></span></td>
+            <td><%= item.summary %></td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Latest AI Report</h2>
+    <% if (latestReport) { %>
+      <p class="muted">Generated at: <%= latestReport.created_at %></p>
+      <pre class="prelike"><%= JSON.stringify(latestReport.report_json, null, 2) %></pre>
+    <% } else { %>
+      <p class="muted">No project analysis report yet.</p>
+    <% } %>
+  </div>
+</section>
+<%- include("../../partials/footer") %>

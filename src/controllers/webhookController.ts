@@ -1,8 +1,8 @@
 import type { Request, Response } from "express";
 import { verifyLineSignature } from "../lib/line";
 import { logger } from "../lib/logger";
+import { conversationOrchestratorService } from "../services/conversationOrchestratorService";
 import type { LineWebhookEvent } from "../types/domain";
-import { conversationService } from "../services/conversationService";
 
 export const webhookController = {
   async lineWebhook(req: Request, res: Response): Promise<void> {
@@ -23,15 +23,30 @@ export const webhookController = {
 
       try {
         if (event.type === "follow" && event.replyToken) {
-          await conversationService.handleFollowEvent(event.source.userId, event.replyToken);
+          await conversationOrchestratorService.handleFollowEvent(event.source.userId, event.replyToken);
           continue;
         }
 
-        if (event.type === "message" && event.message?.type === "text" && event.replyToken) {
-          await conversationService.handleTextMessage({
+        if (event.type === "unfollow") {
+          await conversationOrchestratorService.handleUnfollowEvent(event.source.userId);
+          continue;
+        }
+
+        if (event.type === "message" && event.replyToken && event.message?.type === "text") {
+          await conversationOrchestratorService.handleTextMessage({
             userId: event.source.userId,
             replyToken: event.replyToken,
             text: event.message.text ?? "",
+            rawPayload: event as unknown as Record<string, unknown>
+          });
+          continue;
+        }
+
+        if (event.type === "message" && event.replyToken && event.message) {
+          await conversationOrchestratorService.handleNonTextMessage({
+            userId: event.source.userId,
+            replyToken: event.replyToken,
+            messageType: event.message.type,
             rawPayload: event as unknown as Record<string, unknown>
           });
         }

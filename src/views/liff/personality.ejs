@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/styles.css" />
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  </head>
+  <body class="liff-body">
+    <main class="liff-main">
+      <section class="card liff-card stack">
+        <div>
+          <h1><%= title %></h1>
+          <p class="muted">投稿内容から性格分析のプロフィールを表示します。データが不足している場合はその旨を案内します。</p>
+        </div>
+        <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+        <div id="personality-root" class="stack"></div>
+        <p id="status" class="muted">LIFF を初期化しています...</p>
+      </section>
+    </main>
+    <script>
+      (() => {
+        const initialDataEl = document.getElementById("initial-data");
+        const initialData = JSON.parse(initialDataEl.dataset.json || "{}");
+        const liffId = initialData.liffId || "";
+        const root = document.getElementById("personality-root");
+        const statusEl = document.getElementById("status");
+
+        function setStatus(text, isError) {
+          statusEl.textContent = text;
+          statusEl.className = isError ? "danger-text" : "muted";
+        }
+
+        function escapeHtml(value) {
+          return String(value ?? "")
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#39;");
+        }
+
+        function renderReady(result) {
+          const profile = result.profile || {};
+          const raw = profile.raw_json || {};
+          const personalityType = result.personalityType || raw.personality_type || "-";
+          const summary = profile.summary || result.message || "-";
+          const confidence = profile.confidence || "-";
+          const traits = Array.isArray(result.features)
+            ? result.features
+            : Array.isArray(profile.traits)
+              ? profile.traits
+              : [];
+          const behaviorTendencies = Array.isArray(result.behaviorTendencies)
+            ? result.behaviorTendencies
+            : Array.isArray(raw.behavior_tendencies)
+              ? raw.behavior_tendencies
+              : [];
+          const evidencePosts = Array.isArray(result.evidencePosts) ? result.evidencePosts : [];
+
+          root.innerHTML = `
+            <div class="card subtle-card">
+              <h2>性格タイプ</h2>
+              <p><strong>${escapeHtml(personalityType)}</strong></p>
+              <p>${escapeHtml(summary)}</p>
+              <p class="muted">Confidence: ${escapeHtml(confidence)}</p>
+            </div>
+            <div class="card subtle-card">
+              <h2>特徴</h2>
+              <ul>${traits.map((trait) => `<li>${escapeHtml(trait)}</li>`).join("") || "<li>-</li>"}</ul>
+            </div>
+            <div class="card subtle-card">
+              <h2>行動傾向</h2>
+              <ul>${behaviorTendencies.map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>-</li>"}</ul>
+            </div>
+            <div class="card subtle-card">
+              <h2>根拠となった投稿</h2>
+              <ul>${evidencePosts
+                .map((post) => `<li>${escapeHtml(post.type)}: ${escapeHtml(String(post.content || "").slice(0, 80))}</li>`)
+                .join("") || "<li>-</li>"}</ul>
+            </div>
+          `;
+        }
+
+        function renderInsufficient(result) {
+          root.innerHTML = `
+            <div class="card subtle-card">
+              <h2>データ不足</h2>
+              <p>${escapeHtml(result.message || "性格分析に必要なデータがまだ十分ではありません。")}</p>
+              <p class="muted">対象投稿数: ${escapeHtml(result.postCount || 0)}</p>
+            </div>
+          `;
+        }
+
+        async function load() {
+          if (!liffId) {
+            setStatus("LIFF を利用できません。LINEトークのメニューから開き直してください。", true);
+            return;
+          }
+
+          try {
+            if (!window.liff) {
+              throw new Error("LIFF SDK を読み込めませんでした。");
+            }
+
+            await liff.init({ liffId });
+            const idToken = liff.getIDToken();
+            if (!idToken) {
+              throw new Error("LINE認証に失敗しました。もう一度お試しください。");
+            }
+
+            const response = await fetch(initialData.personalityDataUrl, {
+              headers: {
+                Authorization: `Bearer ${idToken}`
+              }
+            });
+            if (!response.ok) {
+              throw new Error("性格分析の取得に失敗しました。時間をおいて再度お試しください。");
+            }
+            const result = await response.json();
+
+            if (result.status === "ready") {
+              renderReady(result);
+            } else {
+              renderInsufficient(result);
+            }
+            setStatus("最新の分析結果を表示しています。", false);
+          } catch (error) {
+            setStatus(error.message || "性格分析の取得に失敗しました。", true);
+          }
+        }
+
+        void load();
+      })();
+    </script>
+  </body>
+</html>

@@ -10,6 +10,14 @@
     <textarea name="question_text" required><%= question?.question_text || '' %></textarea>
   </label>
   <label>
+    question_role
+    <select name="question_role">
+      <% for (const role of ["screening", "main", "probe_trigger", "attribute", "comparison_core"]) { %>
+        <option value="<%= role %>" <%= (question?.question_role || "main") === role ? "selected" : "" %>><%= role %></option>
+      <% } %>
+    </select>
+  </label>
+  <label>
     question_type
     <select name="question_type">
       <% for (const type of ["text", "single_select", "multi_select", "yes_no", "scale"]) { %>
@@ -23,11 +31,35 @@
   </label>
   <label>
     <input type="checkbox" name="is_required" <%= question?.is_required ? "checked" : "" %> />
-    必須
+    required
   </label>
   <label>
     <input type="checkbox" name="ai_probe_enabled" <%= question?.ai_probe_enabled ? "checked" : "" %> />
-    AI深掘り許可
+    ai_probe_enabled
+  </label>
+  <label>
+    question_goal
+    <textarea name="question_goal" required><%= questionMetaForm?.question_goal || "" %></textarea>
+  </label>
+  <label>
+    expected_slots(JSON)
+    <textarea name="expected_slots"><%= questionMetaForm?.expected_slots_text || "" %></textarea>
+  </label>
+  <label>
+    bad_answer_patterns(JSON)
+    <textarea name="bad_answer_patterns"><%= questionMetaForm?.bad_answer_patterns_text || "" %></textarea>
+  </label>
+  <label>
+    max_probes
+    <input type="number" name="max_probes" min="0" value="<%= questionMetaForm?.max_probes || '1' %>" />
+  </label>
+  <label>
+    <input type="checkbox" name="force_probe_on_bad" <%= questionMetaForm?.force_probe_on_bad !== false ? "checked" : "" %> />
+    force_probe_on_bad
+  </label>
+  <label>
+    <input type="checkbox" name="strict_topic_lock" <%= questionMetaForm?.strict_topic_lock !== false ? "checked" : "" %> />
+    strict_topic_lock
   </label>
   <label>
     question_config(JSON)

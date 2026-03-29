@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/styles.css" />
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  </head>
+  <body class="liff-body">
+    <main class="liff-main">
+      <section class="card liff-card">
+        <h1><%= title %></h1>
+        <p class="muted">日付と本文を入力して日記を保存します。</p>
+        <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+        <form id="post-form" class="stack">
+          <input type="hidden" name="type" value="diary" />
+          <input type="hidden" name="menu_action_key" value="<%= initialData.menuActionKey %>" />
+          <label>
+            日付
+            <input type="date" name="posted_on" value="<%= initialData.postedOn || "" %>" required />
+          </label>
+          <label>
+            本文
+            <textarea
+              name="content"
+              required
+              rows="8"
+              placeholder="今日あったことや感じたことを入力してください。"
+            ></textarea>
+          </label>
+          <div class="actions-row">
+            <button type="submit">保存する</button>
+            <button type="button" id="close-button" class="button-link secondary">閉じる</button>
+          </div>
+        </form>
+        <p id="status" class="muted">LIFF を初期化しています...</p>
+      </section>
+    </main>
+    <script>
+      (() => {
+        const initialDataEl = document.getElementById("initial-data");
+        const initialData = JSON.parse(initialDataEl.dataset.json || "{}");
+        const liffId = initialData.liffId || "";
+        const form = document.getElementById("post-form");
+        const statusEl = document.getElementById("status");
+        const closeButton = document.getElementById("close-button");
+        const submitButton = form.querySelector("button[type='submit']");
+
+        function setStatus(text, isError) {
+          statusEl.textContent = text;
+          statusEl.className = isError ? "danger-text" : "muted";
+        }
+
+        async function getIdToken() {
+          if (!window.liff) {
+            throw new Error("LIFF SDK を読み込めませんでした。");
+          }
+          if (!liffId) {
+            throw new Error("LIFF ID が設定されていません。");
+          }
+          await liff.init({ liffId });
+          const idToken = liff.getIDToken();
+          if (!idToken) {
+            throw new Error("LINE認証に失敗しました。もう一度お試しください。");
+          }
+          return idToken;
+        }
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          try {
+            setStatus("保存中...", false);
+            const idToken = await getIdToken();
+            const payload = Object.fromEntries(new FormData(form).entries());
+            const response = await fetch(initialData.submitUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${idToken}`
+              },
+              body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+              throw new Error("保存に失敗しました。時間をおいて再度お試しください。");
+            }
+            setStatus("保存しました。必要に応じてこの画面を閉じてください。", false);
+            form.reset();
+            form.elements.posted_on.value = initialData.postedOn || "";
+          } catch (error) {
+            setStatus(error.message || "保存に失敗しました。", true);
+          }
+        });
+
+        closeButton.addEventListener("click", async () => {
+          if (window.liff && liff.isInClient()) {
+            await liff.closeWindow();
+            return;
+          }
+          window.history.back();
+        });
+
+        if (!liffId) {
+          submitButton.disabled = true;
+          setStatus("LIFF を利用できません。LINEトークからもう一度開いてください。", true);
+        } else {
+          setStatus("日付と本文を入力して保存してください。", false);
+        }
+      })();
+    </script>
+  </body>
+</html>

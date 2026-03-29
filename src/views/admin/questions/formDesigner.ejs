@@ -1,0 +1,793 @@
+<%- include("../../partials/header", { title }) %>
+<%
+  const safeForm = form || {};
+  const currentQuestionId = question?.id || "";
+  const questionOptions = (availableQuestions || []).map((item) => ({
+    id: item.id,
+    code: item.question_code,
+    text: item.question_text,
+    isCurrent: item.id === currentQuestionId
+  }));
+%>
+
+<style>
+  .designer-section {
+    border: 1px solid #dce9e6;
+    border-radius: 12px;
+    padding: 16px;
+    background: #f9fcfb;
+  }
+  .designer-section h3 {
+    margin: 0 0 12px;
+    font-size: 16px;
+  }
+  .compact-table th,
+  .compact-table td {
+    padding: 10px 12px;
+  }
+  .compact-table input,
+  .compact-table select {
+    min-width: 120px;
+  }
+  .row-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .inline-note {
+    font-size: 12px;
+    color: #6a7b78;
+  }
+  .warning-card {
+    border: 1px solid #f2cf88;
+    background: #fff7e8;
+    color: #8a5b00;
+  }
+  .json-panel[hidden] {
+    display: none;
+  }
+</style>
+
+<div id="question-options-data" hidden data-json='<%= JSON.stringify(questionOptions) %>'></div>
+
+<form class="card stack" method="post" action="<%= action %>">
+  <div class="actions-row" style="justify-content: space-between;">
+    <p class="muted" style="margin: 0;">プロジェクト: <%= project.name %></p>
+    <a class="button-link secondary" href="/admin/projects/<%= project.id %>/questions">一覧へ戻る</a>
+  </div>
+
+  <% if (errorMessage) { %>
+    <section class="card subtle-card warning-card">
+      <strong><%= errorMessage %></strong>
+    </section>
+  <% } %>
+
+  <% if (successMessage) { %>
+    <section class="card subtle-card success-card">
+      <strong class="success-text"><%= successMessage %></strong>
+    </section>
+  <% } %>
+
+  <div class="form-grid">
+    <label>
+      question_code
+      <input type="text" name="question_code" value="<%= safeForm.question_code || "" %>" required />
+    </label>
+    <label>
+      sort_order
+      <input type="number" name="sort_order" value="<%= safeForm.sort_order_text || "1" %>" min="1" />
+    </label>
+    <label>
+      question_role
+      <select name="question_role">
+        <% for (const role of ["screening", "main", "probe_trigger", "attribute", "comparison_core"]) { %>
+          <option value="<%= role %>" <%= (safeForm.question_role || "main") === role ? "selected" : "" %>><%= role %></option>
+        <% } %>
+      </select>
+    </label>
+    <label>
+      question_type
+      <select name="question_type" id="questionTypeSelect">
+        <% for (const type of ["text", "single_select", "multi_select", "yes_no", "scale"]) { %>
+          <option value="<%= type %>" <%= (safeForm.question_type || "text") === type ? "selected" : "" %>><%= type %></option>
+        <% } %>
+      </select>
+    </label>
+  </div>
+
+  <label>
+    question_text
+    <textarea name="question_text" required><%= safeForm.question_text || "" %></textarea>
+  </label>
+
+  <div class="form-grid">
+    <label>
+      <input type="checkbox" name="is_required" <%= safeForm.is_required ? "checked" : "" %> />
+      required
+    </label>
+    <label>
+      <input type="checkbox" name="ai_probe_enabled" <%= safeForm.ai_probe_enabled ? "checked" : "" %> />
+      ai_probe_enabled
+    </label>
+    <label>
+      <input type="checkbox" name="can_prefill_future_slots" <%= safeForm.can_prefill_future_slots ? "checked" : "" %> />
+      can_prefill_future_slots
+    </label>
+    <label>
+      <input type="checkbox" name="skip_forbidden_on_bad_answer" <%= safeForm.skip_forbidden_on_bad_answer ? "checked" : "" %> />
+      skip_forbidden_on_bad_answer
+    </label>
+  </div>
+
+  <section class="designer-section stack">
+    <div class="actions-row" style="justify-content: space-between;">
+      <h3>選択肢設定</h3>
+      <button type="button" class="button-link secondary" id="toggleConfigJson">question_config(JSON) を表示</button>
+    </div>
+    <p class="inline-note" id="typeChangeNotice" hidden>
+      question_type を変更しました。必要に応じて設定値を確認してください。
+    </p>
+    <div id="questionConfigDesigner" class="stack"></div>
+    <div class="json-panel stack" id="questionConfigJsonPanel" hidden>
+      <label>
+        question_config(JSON)
+        <textarea name="question_config" id="questionConfigRaw"><%= safeForm.question_config_text || "" %></textarea>
+      </label>
+    </div>
+  </section>
+
+  <section class="designer-section stack">
+    <h3>抽出設定</h3>
+    <div class="form-grid">
+      <label>
+        extraction_mode
+        <select name="extraction_mode">
+          <% for (const mode of ["none", "single_object", "multi_object"]) { %>
+            <option value="<%= mode %>" <%= (safeForm.extraction_mode || "none") === mode ? "selected" : "" %>><%= mode %></option>
+          <% } %>
+        </select>
+      </label>
+      <label>
+        extraction_target
+        <select name="extraction_target">
+          <% for (const target of ["post_answer", "post_session"]) { %>
+            <option value="<%= target %>" <%= (safeForm.extraction_target || "post_answer") === target ? "selected" : "" %>><%= target %></option>
+          <% } %>
+        </select>
+      </label>
+      <label>
+        <input type="checkbox" name="extracted_branch_enabled" <%= safeForm.extracted_branch_enabled ? "checked" : "" %> />
+        extracted_branch_enabled
+      </label>
+    </div>
+
+    <label>
+      extraction_schema(JSON)
+      <textarea name="extraction_schema"><%= safeForm.extraction_schema_text || "" %></textarea>
+    </label>
+    <p class="inline-note">
+      通常は単一オブジェクトを想定します。multi_object は複数件を抽出したい場合に利用してください。
+    </p>
+  </section>
+
+  <section class="designer-section stack">
+    <div class="actions-row" style="justify-content: space-between;">
+      <h3>分岐ルール設定</h3>
+      <button type="button" class="button-link secondary" id="toggleBranchJson">branch_rule(JSON) を表示</button>
+    </div>
+    <div class="form-grid">
+      <label>
+        default_next
+        <select id="defaultNextSelect">
+          <option value="">未設定</option>
+        </select>
+      </label>
+      <label>
+        merge_question_code
+        <select id="mergeQuestionSelect">
+          <option value="">未設定</option>
+        </select>
+      </label>
+    </div>
+    <div class="stack">
+      <table class="compact-table">
+        <thead>
+          <tr>
+            <th>source</th>
+            <th>field</th>
+            <th>条件</th>
+            <th>値</th>
+            <th>next question_code</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="branchRows"></tbody>
+      </table>
+      <div class="actions-row">
+        <button type="button" class="button-link secondary" id="addBranchRow">分岐を追加</button>
+      </div>
+    </div>
+    <div class="json-panel stack" id="branchRuleJsonPanel" hidden>
+      <label>
+        branch_rule(JSON)
+        <textarea name="branch_rule" id="branchRuleRaw"><%= safeForm.branch_rule_text || "" %></textarea>
+      </label>
+    </div>
+  </section>
+
+  <section class="designer-section stack">
+    <h3>AIメタ設定</h3>
+    <label>
+      question_goal
+      <textarea name="question_goal" required><%= safeForm.question_goal || "" %></textarea>
+    </label>
+
+    <label>
+      expected_slots(JSON)
+      <textarea name="expected_slots"><%= safeForm.expected_slots_text || "" %></textarea>
+    </label>
+
+    <label>
+      required_slots(JSON array)
+      <textarea name="required_slots"><%= safeForm.required_slots_text || "" %></textarea>
+    </label>
+
+    <label>
+      skippable_if_slots_present(JSON array)
+      <textarea name="skippable_if_slots_present"><%= safeForm.skippable_if_slots_present_text || "" %></textarea>
+    </label>
+
+    <label>
+      bad_answer_patterns(JSON)
+      <textarea name="bad_answer_patterns"><%= safeForm.bad_answer_patterns_text || "" %></textarea>
+    </label>
+
+    <div class="form-grid">
+      <label>
+        max_probes
+        <input type="number" name="max_probes" min="0" value="<%= safeForm.max_probes || "1" %>" />
+      </label>
+      <label>
+        <input type="checkbox" name="force_probe_on_bad" <%= safeForm.force_probe_on_bad ? "checked" : "" %> />
+        force_probe_on_bad
+      </label>
+      <label>
+        <input type="checkbox" name="strict_topic_lock" <%= safeForm.strict_topic_lock ? "checked" : "" %> />
+        strict_topic_lock
+      </label>
+    </div>
+  </section>
+
+  <div class="actions-row">
+    <button type="submit">保存する</button>
+  </div>
+</form>
+
+<script>
+  (() => {
+    const questionOptionsData = document.getElementById("question-options-data");
+    const questionTypeSelect = document.getElementById("questionTypeSelect");
+    const questionConfigDesigner = document.getElementById("questionConfigDesigner");
+    const questionConfigRaw = document.getElementById("questionConfigRaw");
+    const branchRuleRaw = document.getElementById("branchRuleRaw");
+    const branchRows = document.getElementById("branchRows");
+    const defaultNextSelect = document.getElementById("defaultNextSelect");
+    const mergeQuestionSelect = document.getElementById("mergeQuestionSelect");
+    const typeChangeNotice = document.getElementById("typeChangeNotice");
+
+    function safeParseJson(value, fallback) {
+      if (!value || !value.trim()) {
+        return fallback;
+      }
+      try {
+        return JSON.parse(value);
+      } catch {
+        return fallback;
+      }
+    }
+
+    const questionOptions = safeParseJson(questionOptionsData?.dataset.json || "[]", []);
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function createSelectOptions(includeBlankLabel, selectedValue, excludeCurrent) {
+      const fragment = document.createDocumentFragment();
+      if (includeBlankLabel) {
+        const empty = document.createElement("option");
+        empty.value = "";
+        empty.textContent = includeBlankLabel;
+        fragment.appendChild(empty);
+      }
+
+      questionOptions
+        .filter((item) => !excludeCurrent || !item.isCurrent)
+        .forEach((item) => {
+          const option = document.createElement("option");
+          option.value = item.code;
+          option.textContent = `${item.code} - ${item.text}`;
+          option.selected = item.code === selectedValue;
+          fragment.appendChild(option);
+        });
+      return fragment;
+    }
+
+    function buildBaseQuestionConfig() {
+      const current = safeParseJson(questionConfigRaw.value, {});
+      const next = current && typeof current === "object" && !Array.isArray(current) ? { ...current } : {};
+      [
+        "options",
+        "placeholder",
+        "max_length",
+        "example_answer",
+        "min_select",
+        "max_select",
+        "yes_label",
+        "no_label",
+        "min",
+        "max",
+        "min_label",
+        "max_label",
+        "scaleMin",
+        "scaleMax",
+        "scaleLabels"
+      ].forEach((key) => {
+        delete next[key];
+      });
+      return next;
+    }
+
+    function buildConfigState(questionType) {
+      const current = safeParseJson(questionConfigRaw.value, {});
+      const options = Array.isArray(current.options) ? current.options.filter((item) => item && typeof item === "object") : [];
+      switch (questionType) {
+        case "text":
+          return {
+            placeholder: typeof current.placeholder === "string" ? current.placeholder : "",
+            max_length: typeof current.max_length === "number" ? current.max_length : "",
+            example_answer: typeof current.example_answer === "string" ? current.example_answer : ""
+          };
+        case "single_select":
+          return { options: options.length > 0 ? options : [{ label: "", value: "" }] };
+        case "multi_select":
+          return {
+            options: options.length > 0 ? options : [{ label: "", value: "" }],
+            min_select: typeof current.min_select === "number" ? current.min_select : "",
+            max_select: typeof current.max_select === "number" ? current.max_select : ""
+          };
+        case "yes_no":
+          return {
+            yes_label: typeof current.yes_label === "string" ? current.yes_label : "はい",
+            no_label: typeof current.no_label === "string" ? current.no_label : "いいえ"
+          };
+        case "scale":
+          return {
+            min: typeof current.min === "number" ? current.min : typeof current.scaleMin === "number" ? current.scaleMin : 1,
+            max: typeof current.max === "number" ? current.max : typeof current.scaleMax === "number" ? current.scaleMax : 5,
+            min_label: typeof current.min_label === "string" ? current.min_label : "",
+            max_label: typeof current.max_label === "string" ? current.max_label : ""
+          };
+        default:
+          return {};
+      }
+    }
+
+    function syncQuestionConfig(questionType) {
+      const base = buildBaseQuestionConfig();
+      const config = { ...base };
+
+      if (questionType === "text") {
+        const placeholder = document.querySelector("[data-config='placeholder']")?.value?.trim() || "";
+        const maxLength = document.querySelector("[data-config='max_length']")?.value?.trim() || "";
+        const exampleAnswer = document.querySelector("[data-config='example_answer']")?.value?.trim() || "";
+        if (placeholder) config.placeholder = placeholder;
+        if (maxLength) config.max_length = Number(maxLength);
+        if (exampleAnswer) config.example_answer = exampleAnswer;
+      }
+
+      if (questionType === "single_select" || questionType === "multi_select") {
+        const optionRows = [...document.querySelectorAll("[data-option-row]")];
+        const options = optionRows
+          .map((row) => ({
+            label: row.querySelector("[data-option-label]")?.value?.trim() || "",
+            value: row.querySelector("[data-option-value]")?.value?.trim() || ""
+          }))
+          .filter((row) => row.label && row.value);
+        config.options = options;
+
+        if (questionType === "multi_select") {
+          const minSelect = document.querySelector("[data-config='min_select']")?.value?.trim() || "";
+          const maxSelect = document.querySelector("[data-config='max_select']")?.value?.trim() || "";
+          if (minSelect) config.min_select = Number(minSelect);
+          if (maxSelect) config.max_select = Number(maxSelect);
+        }
+      }
+
+      if (questionType === "yes_no") {
+        const yesLabel = document.querySelector("[data-config='yes_label']")?.value?.trim() || "";
+        const noLabel = document.querySelector("[data-config='no_label']")?.value?.trim() || "";
+        if (yesLabel) config.yes_label = yesLabel;
+        if (noLabel) config.no_label = noLabel;
+      }
+
+      if (questionType === "scale") {
+        const min = document.querySelector("[data-config='min']")?.value?.trim() || "";
+        const max = document.querySelector("[data-config='max']")?.value?.trim() || "";
+        const minLabel = document.querySelector("[data-config='min_label']")?.value?.trim() || "";
+        const maxLabel = document.querySelector("[data-config='max_label']")?.value?.trim() || "";
+        if (min) config.min = Number(min);
+        if (max) config.max = Number(max);
+        if (minLabel) config.min_label = minLabel;
+        if (maxLabel) config.max_label = maxLabel;
+      }
+
+      questionConfigRaw.value = Object.keys(config).length > 0 ? JSON.stringify(config, null, 2) : "";
+    }
+
+    function renderOptionRows(options) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "stack";
+
+      const table = document.createElement("table");
+      table.className = "compact-table";
+      table.innerHTML = `
+        <thead>
+          <tr>
+            <th>label</th>
+            <th>value</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      `;
+
+      const tbody = table.querySelector("tbody");
+      const appendRow = (option = { label: "", value: "" }) => {
+        const tr = document.createElement("tr");
+        tr.setAttribute("data-option-row", "true");
+        tr.innerHTML = `
+          <td><input type="text" data-option-label value="${escapeHtml(option.label || "")}" /></td>
+          <td><input type="text" data-option-value value="${escapeHtml(option.value || "")}" /></td>
+          <td class="row-actions"><button type="button" class="button-link danger">削除</button></td>
+        `;
+
+        tr.querySelectorAll("input").forEach((input) => {
+          input.addEventListener("input", () => syncQuestionConfig(questionTypeSelect.value));
+        });
+        tr.querySelector("button").addEventListener("click", () => {
+          tr.remove();
+          syncQuestionConfig(questionTypeSelect.value);
+        });
+        tbody.appendChild(tr);
+      };
+
+      options.forEach((option) => appendRow(option));
+      wrapper.appendChild(table);
+
+      const actions = document.createElement("div");
+      actions.className = "actions-row";
+      const addButton = document.createElement("button");
+      addButton.type = "button";
+      addButton.className = "button-link secondary";
+      addButton.textContent = "選択肢を追加";
+      addButton.addEventListener("click", () => {
+        appendRow();
+        syncQuestionConfig(questionTypeSelect.value);
+      });
+      actions.appendChild(addButton);
+      wrapper.appendChild(actions);
+      return wrapper;
+    }
+
+    function renderQuestionConfigDesigner(questionType) {
+      const state = buildConfigState(questionType);
+      questionConfigDesigner.innerHTML = "";
+
+      if (questionType === "text") {
+        questionConfigDesigner.innerHTML = `
+          <div class="form-grid">
+            <label>placeholder<input type="text" data-config="placeholder" value="${escapeHtml(state.placeholder || "")}" /></label>
+            <label>max_length<input type="number" min="1" data-config="max_length" value="${escapeHtml(state.max_length || "")}" /></label>
+          </div>
+          <label>example_answer<textarea data-config="example_answer">${escapeHtml(state.example_answer || "")}</textarea></label>
+        `;
+      }
+
+      if (questionType === "single_select") {
+        questionConfigDesigner.appendChild(renderOptionRows(state.options || [{ label: "", value: "" }]));
+      }
+
+      if (questionType === "multi_select") {
+        questionConfigDesigner.appendChild(renderOptionRows(state.options || [{ label: "", value: "" }]));
+        const extra = document.createElement("div");
+        extra.className = "form-grid";
+        extra.innerHTML = `
+          <label>min_select<input type="number" min="0" data-config="min_select" value="${escapeHtml(state.min_select || "")}" /></label>
+          <label>max_select<input type="number" min="1" data-config="max_select" value="${escapeHtml(state.max_select || "")}" /></label>
+        `;
+        questionConfigDesigner.appendChild(extra);
+      }
+
+      if (questionType === "yes_no") {
+        questionConfigDesigner.innerHTML = `
+          <div class="form-grid">
+            <label>yes_label<input type="text" data-config="yes_label" value="${escapeHtml(state.yes_label || "はい")}" /></label>
+            <label>no_label<input type="text" data-config="no_label" value="${escapeHtml(state.no_label || "いいえ")}" /></label>
+          </div>
+        `;
+      }
+
+      if (questionType === "scale") {
+        questionConfigDesigner.innerHTML = `
+          <div class="form-grid">
+            <label>min<input type="number" data-config="min" value="${escapeHtml(state.min || 1)}" /></label>
+            <label>max<input type="number" data-config="max" value="${escapeHtml(state.max || 5)}" /></label>
+            <label>min_label<input type="text" data-config="min_label" value="${escapeHtml(state.min_label || "")}" /></label>
+            <label>max_label<input type="text" data-config="max_label" value="${escapeHtml(state.max_label || "")}" /></label>
+          </div>
+        `;
+      }
+
+      questionConfigDesigner.querySelectorAll("input, textarea, select").forEach((element) => {
+        element.addEventListener("input", () => syncQuestionConfig(questionType));
+      });
+
+      syncQuestionConfig(questionType);
+    }
+
+    function normalizeBranchRule() {
+      const current = safeParseJson(branchRuleRaw.value, {});
+      const branchList = Array.isArray(current)
+        ? current.map((item) => ({
+            source: "answer",
+            field: "",
+            when:
+              item?.when?.operator === "equals"
+                ? { equals: item?.when?.value }
+                : item?.when?.operator === "includes"
+                  ? { includes: item?.when?.value }
+                  : item?.when || {},
+            next: item?.targetQuestionCode || item?.next || ""
+          }))
+        : Array.isArray(current?.branches)
+          ? current.branches
+          : [];
+      return {
+        default_next: typeof current?.default_next === "string" ? current.default_next : "",
+        merge_question_code: typeof current?.merge_question_code === "string" ? current.merge_question_code : "",
+        branches: branchList
+          .map((item) => {
+            const when = item?.when || {};
+            if (Object.prototype.hasOwnProperty.call(when, "equals")) {
+              return {
+                source: item.source || "answer",
+                field: item.field || "",
+                condition: "equals",
+                value: when.equals,
+                next: item.next || ""
+              };
+            }
+            if (Object.prototype.hasOwnProperty.call(when, "includes")) {
+              return {
+                source: item.source || "answer",
+                field: item.field || "",
+                condition: "includes",
+                value: when.includes,
+                next: item.next || ""
+              };
+            }
+            if (Array.isArray(when.any_of)) {
+              return {
+                source: item.source || "answer",
+                field: item.field || "",
+                condition: "any_of",
+                value: when.any_of.join(", "),
+                next: item.next || ""
+              };
+            }
+            if (Object.prototype.hasOwnProperty.call(when, "gte")) {
+              return {
+                source: item.source || "answer",
+                field: item.field || "",
+                condition: "gte",
+                value: when.gte,
+                next: item.next || ""
+              };
+            }
+            if (Object.prototype.hasOwnProperty.call(when, "lte")) {
+              return {
+                source: item.source || "answer",
+                field: item.field || "",
+                condition: "lte",
+                value: when.lte,
+                next: item.next || ""
+              };
+            }
+            return null;
+          })
+          .filter(Boolean)
+      };
+    }
+
+    function syncBranchRule() {
+      const payload = {};
+      if (defaultNextSelect.value) payload.default_next = defaultNextSelect.value;
+      if (mergeQuestionSelect.value) payload.merge_question_code = mergeQuestionSelect.value;
+
+      const rows = [...branchRows.querySelectorAll("[data-branch-row]")]
+        .map((row) => {
+          const source = row.querySelector("[data-branch-source]").value;
+          const field = row.querySelector("[data-branch-field]").value.trim();
+          const condition = row.querySelector("[data-branch-condition]").value;
+          const value = row.querySelector("[data-branch-value]").value.trim();
+          const next = row.querySelector("[data-branch-next]").value;
+          if (!condition || !value || !next) {
+            return null;
+          }
+
+          if (condition === "any_of") {
+            return {
+              source,
+              field: field || undefined,
+              when: {
+                any_of: value
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean)
+              },
+              next
+            };
+          }
+
+          return {
+            source,
+            field: field || undefined,
+            when: {
+              [condition]: condition === "gte" || condition === "lte" ? Number(value) : value
+            },
+            next
+          };
+        })
+        .filter(Boolean);
+
+      if (rows.length > 0) payload.branches = rows;
+      branchRuleRaw.value = Object.keys(payload).length > 0 ? JSON.stringify(payload, null, 2) : "";
+    }
+
+    function appendBranchRow(row = { source: "answer", field: "", condition: "equals", value: "", next: "" }) {
+      const tr = document.createElement("tr");
+      tr.setAttribute("data-branch-row", "true");
+
+      const sourceCell = document.createElement("td");
+      const sourceSelect = document.createElement("select");
+      sourceSelect.setAttribute("data-branch-source", "true");
+      [
+        { value: "answer", label: "answer" },
+        { value: "extracted", label: "extracted" }
+      ].forEach((item) => {
+        const option = document.createElement("option");
+        option.value = item.value;
+        option.textContent = item.label;
+        option.selected = item.value === (row.source || "answer");
+        sourceSelect.appendChild(option);
+      });
+      sourceCell.appendChild(sourceSelect);
+
+      const fieldCell = document.createElement("td");
+      const fieldInput = document.createElement("input");
+      fieldInput.type = "text";
+      fieldInput.value = row.field || "";
+      fieldInput.placeholder = "pet_types / pets.age";
+      fieldInput.setAttribute("data-branch-field", "true");
+      fieldCell.appendChild(fieldInput);
+
+      const conditionCell = document.createElement("td");
+      const conditionSelect = document.createElement("select");
+      conditionSelect.setAttribute("data-branch-condition", "true");
+      ["equals", "includes", "any_of", "gte", "lte"].forEach((condition) => {
+        const option = document.createElement("option");
+        option.value = condition;
+        option.textContent = condition;
+        option.selected = condition === row.condition;
+        conditionSelect.appendChild(option);
+      });
+      conditionCell.appendChild(conditionSelect);
+
+      const valueCell = document.createElement("td");
+      const valueInput = document.createElement("input");
+      valueInput.type = "text";
+      valueInput.value = row.value || "";
+      valueInput.placeholder = row.condition === "any_of" ? "tea, coffee" : "yes";
+      valueInput.setAttribute("data-branch-value", "true");
+      valueCell.appendChild(valueInput);
+
+      const nextCell = document.createElement("td");
+      const nextSelect = document.createElement("select");
+      nextSelect.setAttribute("data-branch-next", "true");
+      nextSelect.appendChild(createSelectOptions("未設定", row.next || "", true));
+      nextCell.appendChild(nextSelect);
+
+      const actionCell = document.createElement("td");
+      actionCell.className = "row-actions";
+      const removeButton = document.createElement("button");
+      removeButton.type = "button";
+      removeButton.className = "button-link danger";
+      removeButton.textContent = "削除";
+      actionCell.appendChild(removeButton);
+
+      [sourceSelect, fieldInput, conditionSelect, valueInput, nextSelect].forEach((element) => {
+        element.addEventListener("input", syncBranchRule);
+        element.addEventListener("change", () => {
+          if (element === conditionSelect) {
+            valueInput.placeholder =
+              conditionSelect.value === "any_of"
+                ? "tea, coffee"
+                : conditionSelect.value === "gte" || conditionSelect.value === "lte"
+                  ? "1"
+                  : "yes";
+          }
+          syncBranchRule();
+        });
+      });
+      removeButton.addEventListener("click", () => {
+        tr.remove();
+        syncBranchRule();
+      });
+
+      tr.appendChild(sourceCell);
+      tr.appendChild(fieldCell);
+      tr.appendChild(conditionCell);
+      tr.appendChild(valueCell);
+      tr.appendChild(nextCell);
+      tr.appendChild(actionCell);
+      branchRows.appendChild(tr);
+    }
+
+    function renderBranchDesigner() {
+      const state = normalizeBranchRule();
+      defaultNextSelect.innerHTML = "";
+      defaultNextSelect.appendChild(createSelectOptions("未設定", state.default_next || "", true));
+      mergeQuestionSelect.innerHTML = "";
+      mergeQuestionSelect.appendChild(createSelectOptions("未設定", state.merge_question_code || "", true));
+      branchRows.innerHTML = "";
+      (state.branches || []).forEach((row) => appendBranchRow(row));
+      syncBranchRule();
+    }
+
+    document.getElementById("addBranchRow").addEventListener("click", () => {
+      appendBranchRow();
+      syncBranchRule();
+    });
+
+    document.getElementById("toggleConfigJson").addEventListener("click", () => {
+      const panel = document.getElementById("questionConfigJsonPanel");
+      panel.hidden = !panel.hidden;
+    });
+
+    document.getElementById("toggleBranchJson").addEventListener("click", () => {
+      const panel = document.getElementById("branchRuleJsonPanel");
+      panel.hidden = !panel.hidden;
+    });
+
+    questionTypeSelect.addEventListener("change", () => {
+      typeChangeNotice.hidden = false;
+      renderQuestionConfigDesigner(questionTypeSelect.value);
+    });
+
+    questionConfigRaw.addEventListener("input", () => renderQuestionConfigDesigner(questionTypeSelect.value));
+    branchRuleRaw.addEventListener("input", renderBranchDesigner);
+    defaultNextSelect.addEventListener("change", syncBranchRule);
+    mergeQuestionSelect.addEventListener("change", syncBranchRule);
+
+    renderQuestionConfigDesigner(questionTypeSelect.value);
+    renderBranchDesigner();
+  })();
+</script>
+
+<%- include("../../partials/footer") %>

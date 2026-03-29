@@ -1,0 +1,50 @@
+<%- include("../../partials/header", { title }) %>
+<p>
+  <a href="<%= from === "post-analysis" ? "/admin/post-analysis" : "/admin/posts" %>">Back</a>
+</p>
+
+<section class="grid">
+  <div class="card">
+    <h2>Post</h2>
+    <p><strong>Type:</strong> <span class="tag"><%= detail.post.type %></span></p>
+    <p><strong>Created:</strong> <%= detail.post.created_at %></p>
+    <p><strong>Posted On:</strong> <%= detail.post.posted_on || "-" %></p>
+    <p><strong>Source:</strong> <span class="tag"><%= detail.post.source_channel %></span></p>
+    <p><strong>Menu Action:</strong> <%= detail.post.menu_action_key || "-" %></p>
+    <p><strong>Quality:</strong> <%= detail.post.quality_score %> / <%= detail.post.quality_label %></p>
+    <p><strong>User:</strong> <code><%= detail.respondent?.line_user_id || detail.post.user_id %></code></p>
+    <p><strong>Name:</strong> <%= detail.respondent?.display_name || "-" %></p>
+    <p><strong>Project:</strong> <%= detail.project?.name || "-" %></p>
+    <p><strong>Analysis Status:</strong> <span class="status-pill <%= detail.analysis_status === "analyzed" ? "status-ok" : "status-warn" %>"><%= detail.analysis_status %></span></p>
+  </div>
+
+  <div class="card">
+    <h2>Original Text</h2>
+    <pre class="prelike"><%= detail.post.content %></pre>
+  </div>
+</section>
+
+<section class="stack" style="margin-top: 16px;">
+  <div class="card">
+    <h2>Metadata</h2>
+    <pre class="prelike"><%= JSON.stringify(detail.post.metadata, null, 2) %></pre>
+  </div>
+
+  <div class="card">
+    <h2>Analysis</h2>
+    <% if (detail.analysis) { %>
+      <p><strong>Summary:</strong> <%= detail.analysis.summary || "-" %></p>
+      <p><strong>Sentiment:</strong> <%= detail.analysis.sentiment %></p>
+      <p><strong>Insight Type:</strong> <%= detail.analysis.insight_type %></p>
+      <p><strong>Specificity:</strong> <%= detail.analysis.specificity %></p>
+      <p><strong>Novelty:</strong> <%= detail.analysis.novelty %></p>
+      <p><strong>Actionability:</strong> <%= detail.analysis.actionability %></p>
+      <p><strong>Tags:</strong> <%= (detail.analysis.tags || []).join(", ") || "-" %></p>
+      <p><strong>Keywords:</strong> <%= (detail.analysis.keywords || []).join(", ") || "-" %></p>
+      <pre class="prelike"><%= JSON.stringify(detail.analysis.raw_json, null, 2) %></pre>
+    <% } else { %>
+      <p class="muted">This post has not been analyzed yet.</p>
+    <% } %>
+  </div>
+</section>
+<%- include("../../partials/footer") %>

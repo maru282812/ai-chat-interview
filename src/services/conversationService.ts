@@ -2,6 +2,7 @@ import { env } from "../config/env";
 import { answerRepository } from "../repositories/answerRepository";
 import { messageRepository } from "../repositories/messageRepository";
 import { projectRepository } from "../repositories/projectRepository";
+import { questionRepository } from "../repositories/questionRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
 import { logger } from "../lib/logger";
 import { buildCompletionFlex, buildMypageFlex, buildRankFlex, buildRankUpMessages, buildWelcomeMessages } from "../templates/flex";
@@ -10,7 +11,7 @@ import { analysisService } from "./analysisService";
 import { aiService } from "./aiService";
 import { lineMessagingService } from "./lineMessagingService";
 import { pointService } from "./pointService";
-import { questionFlowService } from "./questionFlowService";
+import { questionFlowService } from "./questionFlowServiceV2";
 import { rankService } from "./rankService";
 import { respondentService } from "./respondentService";
 
@@ -58,6 +59,7 @@ async function refreshSummaryIfNeeded(session: Session): Promise<Session> {
     return session;
   }
 
+  const project = await projectRepository.getById(session.project_id);
   const answers = await answerRepository.listBySession(session.id);
   const recentTranscript = answers
     .slice(-env.SESSION_SUMMARY_INTERVAL)
@@ -66,6 +68,7 @@ async function refreshSummaryIfNeeded(session: Session): Promise<Session> {
 
   const summary = await aiService.summarizeSession({
     sessionId: session.id,
+    project,
     previousSummary: session.summary ?? "",
     recentTranscript
   });
@@ -93,15 +96,28 @@ async function completeSession(session: Session, lineUserId: string): Promise<Li
     completed_at: new Date().toISOString()
   });
 
-  const answers = await answerRepository.listBySession(session.id);
-  const formattedAnswers = answers
-    .map((answer, index) => `${index + 1}. ${answer.answer_text}`)
-    .join("\n");
+  const [answers, questions] = await Promise.all([
+    answerRepository.listBySession(session.id),
+    questionRepository.listByProject(session.project_id, { includeHidden: true })
+  ]);
+  const questionMap = new Map(questions.map((question) => [question.id, question]));
+  const analysisAnswers = answers
+    .filter((answer) => answer.answer_role === "primary")
+    .map((answer) => {
+      const question = questionMap.get(answer.question_id);
+      return {
+        question_code: question?.question_code ?? answer.question_id,
+        question_text: question?.question_text ?? "",
+        answer_text: answer.answer_text,
+        normalized_answer: answer.normalized_answer
+      };
+    });
 
   try {
     await analysisService.analyzeCompletedSession({
       session: finalizedSession,
-      formattedAnswers
+      project,
+      answers: analysisAnswers
     });
   } catch (error) {
     logger.warn("Final analysis failed", {
@@ -266,6 +282,8 @@ export const conversationService = {
         session_id: activeSession.id,
         question_id: activeSession.current_question_id,
         answer_text: input.text.trim(),
+        answer_role: "ai_probe",
+        parent_answer_id: activeSession.state_json?.pendingProbeSourceAnswerId ?? null,
         normalized_answer: {
           value: input.text.trim(),
           source: "ai_probe"
@@ -286,6 +304,7 @@ export const conversationService = {
           ...activeSession.state_json,
           pendingQuestionId: null,
           pendingProbeQuestion: null,
+          pendingProbeSourceAnswerId: null,
           aiProbeCountCurrentAnswer: 0
         }
       });
@@ -308,10 +327,12 @@ export const conversationService = {
       return;
     }
 
-    await answerRepository.create({
+    const primaryAnswer = await answerRepository.create({
       session_id: activeSession.id,
       question_id: currentQuestion.id,
       answer_text: parsedAnswer.answerText,
+      answer_role: "primary",
+      parent_answer_id: null,
       normalized_answer: parsedAnswer.normalizedAnswer
     });
 
@@ -347,8 +368,10 @@ export const conversationService = {
 
     if (canProbe) {
       try {
+        const project = await projectRepository.getById(activeSession.project_id);
         const probeQuestion = await aiService.generateProbeQuestion({
           sessionId: activeSession.id,
+          project,
           question: currentQuestion.question_text,
           answer: parsedAnswer.answerText,
           sessionSummary: updatedSession.summary ?? ""
@@ -361,6 +384,7 @@ export const conversationService = {
             ...updatedSession.state_json,
             pendingQuestionId: nextQuestion?.id ?? null,
             pendingProbeQuestion: probeQuestion,
+            pendingProbeSourceAnswerId: primaryAnswer.id,
             aiProbeCount: (updatedSession.state_json?.aiProbeCount ?? 0) + 1,
             aiProbeCountCurrentAnswer: 1
           }

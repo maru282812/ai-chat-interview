@@ -2,23 +2,41 @@
 <table>
   <thead>
     <tr>
-      <th>LINE User</th>
+      <th>Project</th>
       <th>Name</th>
+      <th>LINE User</th>
       <th>Status</th>
+      <th>Sessions</th>
+      <th>Completed</th>
+      <th>Latest Session</th>
       <th>Points</th>
       <th>Rank</th>
       <th>Action</th>
     </tr>
   </thead>
   <tbody>
-    <% for (const respondent of respondents) { %>
+    <% for (const item of respondents) { %>
       <tr>
-        <td><code><%= respondent.line_user_id %></code></td>
-        <td><%= respondent.display_name || "-" %></td>
-        <td><span class="tag"><%= respondent.status %></span></td>
-        <td><%= respondent.total_points %> pt</td>
-        <td><%= respondent.current_rank?.rank_name || "-" %></td>
-        <td><a href="/admin/respondents/<%= respondent.id %>">詳細</a></td>
+        <td>
+          <strong><%= item.project.name %></strong><br />
+          <span class="muted"><%= item.project.research_mode %></span>
+        </td>
+        <td><%= item.respondent.display_name || "-" %></td>
+        <td><code><%= item.respondent.line_user_id %></code></td>
+        <td><span class="tag"><%= item.respondent.status %></span></td>
+        <td><%= item.sessionCount %></td>
+        <td><%= item.completedSessionCount %></td>
+        <td>
+          <% if (item.latestSession) { %>
+            <span class="tag"><%= item.latestSession.status %></span><br />
+            <span class="muted"><%= item.latestSession.last_activity_at %></span>
+          <% } else { %>
+            <span class="muted">-</span>
+          <% } %>
+        </td>
+        <td><%= item.respondent.total_points %> pt</td>
+        <td><%= item.respondent.current_rank?.rank_name || "-" %></td>
+        <td><a href="/admin/respondents/<%= item.respondent.id %>">Detail</a></td>
       </tr>
     <% } %>
   </tbody>
