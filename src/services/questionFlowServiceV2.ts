@@ -8,8 +8,14 @@ import {
 import { questionRepository } from "../repositories/questionRepository";
 import type { ParsedAnswer, Question, QuestionOption } from "../types/domain";
 
+function normalizeOptionInput(input: string): string {
+  return input
+    .trim()
+    .replace(/[\uFF10-\uFF19]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0));
+}
+
 function findOption(input: string, options: QuestionOption[]): QuestionOption | null {
-  const normalized = input.trim().toLowerCase();
+  const normalized = normalizeOptionInput(input).toLowerCase();
   const numbered = Number(normalized);
   if (!Number.isNaN(numbered) && options[numbered - 1]) {
     return options[numbered - 1] ?? null;
@@ -69,6 +75,9 @@ export const questionFlowService = {
 
   parseAnswer(question: Question, rawText: string): ParsedAnswer {
     const text = rawText.trim();
+    const configuredOptions = question.question_config?.options ?? [];
+    const numericOption =
+      question.question_type === "text" && configuredOptions.length > 0 ? findOption(text, configuredOptions) : null;
     if (!text) {
       throw new HttpError(400, "回答が空です。");
     }
@@ -78,6 +87,18 @@ export const questionFlowService = {
         const maxLength = question.question_config?.max_length ?? null;
         if (maxLength !== null && text.length > maxLength) {
           throw new HttpError(400, `${maxLength}文字以内で入力してください。`);
+        }
+        if (numericOption) {
+          const optionIndex = configuredOptions.findIndex((option) => option.value === numericOption.value) + 1;
+          return {
+            answerText: numericOption.label,
+            normalizedAnswer: {
+              value: numericOption.value,
+              label: numericOption.label,
+              option_index: optionIndex > 0 ? optionIndex : null,
+              selection_source: "option_number"
+            }
+          };
         }
         return { answerText: text, normalizedAnswer: { value: text } };
       }

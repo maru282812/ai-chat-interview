@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(grep -i \"is_system\\\\|is_hidden\\\\|probe_guideline\\\\|max_probe_count\\\\|render_strategy\" supabase/migrations/*.sql)",
+      "Bash(grep -i \"research_mode\" supabase/migrations/*.sql)",
+      "Bash(grep -i \"question_role.*check\\\\|check.*question_role\" supabase/migrations/*.sql)",
+      "Bash(npm run:*)"
+    ]
+  }
+}

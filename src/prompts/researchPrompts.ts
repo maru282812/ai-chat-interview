@@ -3,6 +3,7 @@ import { getProjectAIState, type ProjectAIStateTemplateDefinition } from "../lib
 import { normalizeQuestionMeta, resolveAnswerAnalysisContext } from "../lib/questionMetadata";
 import type {
   Project,
+  ProjectAIState,
   Question,
   QuestionExpectedSlot,
   ResearchMode,
@@ -23,10 +24,8 @@ function modeLabel(mode: ResearchMode): string {
   switch (mode) {
     case "interview":
       return "interview";
-    case "survey_with_interview_probe":
-      return "survey_with_interview_probe";
     default:
-      return "survey";
+      return "survey_interview";
   }
 }
 
@@ -35,10 +34,8 @@ function modeInstruction(mode: ResearchMode, purpose: PromptPurpose): string {
     switch (mode) {
       case "interview":
         return "Render the next question as a natural interviewer utterance. Do not expose question numbers or internal codes.";
-      case "survey_with_interview_probe":
-        return "Keep the question concise and survey-first, but make the wording feel natural.";
       default:
-        return "Keep the wording clear and concise for structured survey response capture.";
+        return "Keep the question concise and survey-first, but make the wording feel natural.";
     }
   }
 
@@ -46,10 +43,8 @@ function modeInstruction(mode: ResearchMode, purpose: PromptPurpose): string {
     switch (mode) {
       case "interview":
         return "Ask one natural follow-up that deepens context, motive, or concrete detail.";
-      case "survey_with_interview_probe":
-        return "Ask one light follow-up only when it improves comparable insight.";
       default:
-        return "Ask one follow-up only when it materially improves structured understanding.";
+        return "Ask one light follow-up only when it improves comparable insight for the structured flow.";
     }
   }
 
@@ -65,20 +60,16 @@ function modeInstruction(mode: ResearchMode, purpose: PromptPurpose): string {
     switch (mode) {
       case "interview":
         return "Preserve the evolving respondent context and decision logic.";
-      case "survey_with_interview_probe":
-        return "Summarize the main answer first, then only the useful probe detail.";
       default:
-        return "Compress the answer stream into the smallest useful factual summary.";
+        return "Summarize the main answer first, then only the useful probe detail.";
     }
   }
 
   switch (mode) {
     case "interview":
       return "Analyze as an interview: preserve reasoning, context, and decision process.";
-    case "survey_with_interview_probe":
-      return "Analyze as survey answers with limited probe detail. Keep common comparisons central.";
     default:
-      return "Analyze as structured survey data first and qualitative support second.";
+      return "Analyze as survey answers with limited probe detail. Keep common comparisons central.";
   }
 }
 
@@ -106,7 +97,9 @@ function renderSlotGuide(slots: QuestionExpectedSlot[]): string {
         `examples: ${(slot.examples ?? []).join(" | ") || "none"}`
       ].join(", ")
     )
-  ].join("\n");
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join("\n");
 }
 
 function renderFutureSlotGuide(question: Question | null | undefined, slots: QuestionExpectedSlot[]): string {
@@ -399,114 +392,118 @@ export function buildAnalyzeAnswerPrompt(input: {
       input.question.question_role === "free_comment" ? "free_comment" : input.project.research_mode
   });
   const projectAiState = getProjectAIState(input.project);
+  const probeGuideline = (input.project.ai_state_json as ProjectAIState)?.probe_guideline;
+  const freeCommentPolicy =
+    input.question.question_role === "free_comment" &&
+    (!input.aiProbeEnabled || context.required_slots.length === 0) &&
+    input.maxProbes === 0
+      ? [
+          "Default free_comment policy",
+          "- Treat this as optional supplemental input only.",
+          "- Do not ask a follow-up unless free comment probing is explicitly enabled by configuration.",
+          "- Replies such as 「特になし」 or 「ありません」 are acceptable and should not trigger a probe."
+        ].join("\n")
+      : null;
+  const modeStyleGuide = (() => {
+    switch (input.project.research_mode) {
+      case "interview":
+        return [
+          "Mode: interview",
+          "- If action is probe, write one natural conversational follow-up in Japanese.",
+          "- Do not show question numbers such as Q1/3.",
+          "- Phrases like \"もう少し詳しく教えてください\" are acceptable."
+        ].join("\n");
+      default:
+        return [
+          "Mode: survey_interview",
+          "- Normal survey progression (branch/skip) is handled outside this prompt.",
+          "- If action is probe, write one natural interview-style follow-up in Japanese.",
+          "- Do not show question numbers in the probe question.",
+          "- After probe, flow returns to the structured question sequence."
+        ].join("\n");
+    }
+  })();
 
   return [
-    "あなたは消費者インタビューを行うAIです。",
+    "Return JSON only.",
+    "You are the single decision-maker for one turn of a LINE-based interview or survey.",
+    "Decide the next action from the project objective first, not only from the current question text.",
     "",
-    "# 目的",
-    "このインタビューの目的は以下です:",
-    context.project_goal || "現在の案件で本質的に知りたい情報を集めること",
-    "",
-    "あなたの役割は、回答者の発言から「本質的に知りたい情報」を引き出すことです。",
-    "",
-    "# 絶対ルール",
-    "- 質問は必ず現在の設問の意図に沿うこと",
-    "- 関係ない話題に絶対に逸れない（topic lock）",
-    "- 他の案件や過去の文脈を絶対に混ぜない",
-    "- 回答者が不快に感じる繰り返し質問は禁止",
-    "- すでに回答されている内容は再質問しない",
-    "",
-    "# スロット定義",
-    "今回収集すべき情報:",
+    "Priority execution context",
+    `- project_goal: ${context.project_goal || "not set"}`,
+    `- user_understanding_goal: ${context.user_understanding_goal || "not set"}`,
+    `- project_language: ${projectAiState.language}`,
+    `- strict_topic_lock: ${context.strict_topic_lock}`,
     "",
     renderJapaneseSlotList(
-      "必須",
+      "Project required slots",
+      projectAiState.required_slots,
+      "project level required slots are not set"
+    ),
+    "",
+    renderJapaneseSlotList(
+      "Current question required slots",
       context.required_slots,
-      "現在の設問で知りたい具体情報を日本語で整理してください"
+      "current question required slots are not set"
     ),
     "",
     renderJapaneseSlotList(
-      "任意",
+      "Current question optional slots",
       context.optional_slots,
-      "任意スロットが未設定なら、補足的に得られた具体情報だけを扱ってください"
+      "current question optional slots are not set"
     ),
     "",
-    "# 現在の状況",
-    `現在の設問:\n${input.question.question_text}`,
-    `回答:\n${input.answer}`,
-    `現在取得済みスロット:\n${JSON.stringify(input.existingSlots)}`,
-    "",
-    "# 判断ルール",
-    "",
-    "## ① 回答の質判定",
-    "以下の場合は「不十分」と判断:",
-    "- 特になし / わからない / ない",
-    "- 抽象的（例: なんとなく、普通）",
-    "- 短すぎる（具体性なし）",
-    "",
-    "## ② 深堀り条件",
-    "以下すべて満たす場合のみ深堀り:",
-    `- AI深堀りがON: ${input.aiProbeEnabled}`,
-    `- probe回数 < max_probes: ${input.currentProbeCount} < ${input.maxProbes}`,
-    "- 回答が不十分 or スロット未充足",
-    "",
-    "## ③ スキップ条件",
-    "以下すべて満たす場合のみ次設問スキップ:",
-    "- 現設問のrequired_slotsが埋まっている",
-    "- 次設問のrequired_slotsも埋まっている",
-    "- 回答が具体的（bad answerではない）",
-    "",
-    "## ④ 終了条件",
-    "以下のみ:",
-    "- projectのrequired_slotsが全て埋まった",
-    "",
-    "# 補足コンテキスト",
-    `現在の設問の補助目的:\n${context.user_understanding_goal ?? "未設定"}`,
     renderJapaneseSlotList(
-      "次設問の必須スロット",
+      "Next question required slots",
       context.next_question_required_slots,
-      "次設問の必須スロットは未設定です"
+      "next question required slots are not set"
     ),
-    `project required slots:\n${JSON.stringify(context.project_required_slot_keys)}`,
-    `strict_topic_lock: ${context.strict_topic_lock}`,
-    `required_slots source: ${context.sources.required_slots}`,
-    `optional_slots source: ${context.sources.optional_slots}`,
-    `max_probes source: ${context.sources.max_probes}`,
-    `strict_topic_lock source: ${context.sources.strict_topic_lock}`,
-    `project_ai_state language: ${projectAiState.language}`,
     "",
-    "# 出力ルール",
-    "必ず以下のJSON形式で返す:",
+    "Current turn context",
+    `- question_code: ${input.question.question_code}`,
+    `- question_type: ${input.question.question_type}`,
+    `- question_text: ${input.question.question_text}`,
+    `- answer: ${input.answer}`,
+    `- existing_slots: ${JSON.stringify(input.existingSlots)}`,
+    `- ai_probe_enabled: ${input.aiProbeEnabled}`,
+    `- current_probe_count: ${input.currentProbeCount}`,
+    `- max_probes: ${input.maxProbes}`,
+    `- project_required_slot_keys: ${JSON.stringify(context.project_required_slot_keys)}`,
     "",
+    "Decision policy",
+    "- Judge sufficiency by whether the essential information has been captured.",
+    "- A short but concrete answer can be sufficient.",
+    "- A long but abstract answer can still require a probe.",
+    "- Probe when required information is still missing, when the answer is abstract, or when the project-level understanding is still weak.",
+    "- Do not treat answer length alone as a failure.",
+    "- If the current question is sufficiently answered and the next question's required slots are already covered, action can be skip.",
+    "- action finish is allowed only when the project-level required information is already captured.",
+    "- If you probe, ask exactly one focused follow-up.",
+    "- Do not expose internal slot keys such as snake_case names to the respondent.",
+    "- If question_type is yes_no, single_select, multi_select, or scale, action MUST be ask_next. Never probe these types.",
+    "- Do not ask about a new topic that is outside the project goal.",
+    probeGuideline ? `- Custom probe guideline: ${probeGuideline}` : null,
+    "",
+    freeCommentPolicy,
+    freeCommentPolicy ? "" : null,
+    modeStyleGuide,
+    "",
+    "Output schema",
     "{",
-    '  "action": "ask_next | probe | skip | finish",',
-    '  "question": "ユーザーに見せる質問（日本語）",',
-    '  "reason": "内部理由",',
-    '  "collected_slots": {},',
+    '  "action": "probe | ask_next | skip | finish",',
+    '  "question": "Japanese user-facing text. Empty string unless action is probe.",',
+    '  "reason": "short internal reason in English or Japanese",',
+    '  "collected_slots": { "slot_key": "value or null" },',
     '  "is_sufficient": true',
     "}",
     "",
-    "action が probe 以外のときは question を空文字にしてください。",
-    "collected_slots には、今回の回答から根拠を持って確定できる値だけを入れてください。",
-    "internal slot key は user-facing question にそのまま出さないでください。",
-    "user-facing output は日本語のみで、英語混入は禁止です。",
-    "",
-    "# 質問生成ルール",
-    "- 自然な日本語で話す",
-    "- 設問番号は使わない（interviewモード）",
-    "- 1回の質問は1意図のみ",
-    "- 抽象的な言葉は禁止（usage_sceneなど）",
-    "",
-    "# 深堀りルール",
-    "NG:",
-    "- 同じ質問の言い換え",
-    "- 意味不明な抽象質問",
-    "",
-    "OK:",
-    "- 「いつ」「どこで」「なぜ」「具体例」",
-    "",
-    "JSON以外は出力しないでください。"
-  ].join("\n");
+    "Output constraints",
+    "- question must be Japanese only.",
+    "- question must contain a single intent.",
+    "- collected_slots must include only grounded information from the answer.",
+    "- If action is not probe, return an empty question string.",
+    "- Do not wrap JSON in markdown."
+  ].filter((line): line is string => line !== null).join("\n");
 }
 
 export function buildSlotFillingPrompt(input: {
@@ -730,4 +727,74 @@ export function buildFinalAnalysisPrompt(input: {
     `Session summary: ${input.sessionSummary || "none"}`,
     `Answers: ${input.answers}`
   ].join("\n\n");
+}
+
+export function buildInterviewTurnPrompt(input: {
+  project: Project;
+  question: Question;
+  answer: string;
+  nextQuestion?: Question | null;
+  existingSlots: Record<string, string | null>;
+  currentProbeCount: number;
+  maxProbes: number;
+  aiProbeEnabled: boolean;
+  conversationSummary?: string | null;
+}): string {
+  const aiState = getProjectAIState(input.project);
+  const probeGuideline = (input.project.ai_state_json as ProjectAIState)?.probe_guideline;
+  const canProbe = input.aiProbeEnabled && input.currentProbeCount < input.maxProbes && input.maxProbes > 0;
+
+  return [
+    "Return JSON only.",
+    "You are an interviewer conducting a LINE-based research interview in Japanese.",
+    "You have just received an answer and must decide the next action.",
+    "",
+    `Project goal: ${aiState.project_goal || "not set"}`,
+    `User understanding goal: ${aiState.user_understanding_goal || "not set"}`,
+    renderJapaneseSlotList("Required information to collect", aiState.required_slots, "none"),
+    "",
+    "Current turn",
+    `- question: ${input.question.question_text}`,
+    `- question_type: ${input.question.question_type}`,
+    `- answer: ${input.answer}`,
+    `- collected_so_far: ${JSON.stringify(input.existingSlots)}`,
+    `- probe_count: ${input.currentProbeCount} / ${input.maxProbes}`,
+    input.nextQuestion
+      ? `- next_question: ${input.nextQuestion.question_text} (code: ${input.nextQuestion.question_code})`
+      : "- next_question: none (this is the last question)",
+    "",
+    "Probe rules",
+    "- Only probe on text-type answers that lack specificity, reason, or concrete detail",
+    "- NEVER probe on yes_no, single_select, multi_select, or scale type answers",
+    "- NEVER probe if probe_count >= max_probes or aiProbeEnabled is false",
+    canProbe ? "- Probing is allowed this turn" : "- Probing is NOT allowed this turn (budget exceeded or disabled)",
+    probeGuideline ? `- Custom probe guideline: ${probeGuideline}` : null,
+    "",
+    "Skip rules",
+    "- If next_question asks for information already collected in collected_so_far, action can be skip",
+    "- Skip means: skip the next question and advance further",
+    "",
+    "Response rules",
+    "- Write all user-facing text in natural Japanese conversation style",
+    "- Do NOT use Q1/Q2 numbers or internal codes",
+    "- Keep messages short and suitable for LINE chat",
+    "- If action is probe: response_text = one follow-up question",
+    "- If action is ask_next or skip: response_text = the next question rendered as natural conversation",
+    "- If action is finish: response_text = null",
+    "",
+    "Output schema",
+    "{",
+    '  "action": "probe | ask_next | skip | finish",',
+    '  "response_text": "text to send to user (probe or next question), null if finish",',
+    '  "collected_slots": { "slot_key": "extracted value or null" },',
+    '  "reason": "short internal reason"',
+    "}",
+    "",
+    "Output constraints",
+    "- JSON only, no markdown fences",
+    "- response_text must be Japanese",
+    "- collected_slots must be grounded in the answer"
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
 }

@@ -13,7 +13,7 @@ import type {
 import { analysisService } from "./analysisService";
 
 function resolveAnswerPostType(project: Project): UserPostType {
-  return project.research_mode === "survey" ? "survey" : "interview";
+  return project.research_mode === "interview" ? "interview" : "survey";
 }
 
 function resolveMenuActionKey(input: {

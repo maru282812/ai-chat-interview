@@ -19,6 +19,9 @@ interface CreateQuestionInput {
   branch_rule?: Question["branch_rule"];
   question_config?: Question["question_config"];
   ai_probe_enabled?: boolean;
+  probe_guideline?: string | null;
+  max_probe_count?: number | null;
+  render_strategy?: Question["render_strategy"];
   is_system?: boolean;
   is_hidden?: boolean;
 }
@@ -27,46 +30,25 @@ function buildFreeCommentQuestionConfig(): Question["question_config"] {
   return {
     placeholder: "\u81ea\u7531\u306b\u66f8\u3044\u3066\u304f\u3060\u3055\u3044",
     meta: {
-      research_goal: "Collect comparable background information from the final free comment.",
-      question_goal: "Capture what was left unsaid in a comparable structure.",
-      probe_goal: "Turn a shallow free comment into concrete context and reasons.",
-      expected_slots: [
-        { key: "usage_scene", label: "usage_scene", description: "when, where, in what situation", required: true },
-        { key: "reason", label: "reason", description: "why the respondent feels that way", required: true },
-        { key: "pain_point", label: "pain_point", description: "problem, frustration, or hassle", required: false },
-        { key: "alternative", label: "alternative", description: "alternative means or comparison target", required: false },
-        { key: "desired_state", label: "desired_state", description: "ideal outcome", required: false }
-      ],
-      required_slots: ["usage_scene", "reason"],
+      research_goal: "Collect only optional supplemental comments at the end of the session.",
+      question_goal: "Accept any remaining project-relevant comment without forcing structure.",
+      probe_goal: "Do not probe by default.",
+      expected_slots: [],
+      required_slots: [],
       skippable_if_slots_present: [],
-      can_prefill_future_slots: true,
-      skip_forbidden_on_bad_answer: true,
-      bad_answer_patterns: [
-        { type: "exact", value: "\u7279\u306b\u306a\u3057", note: "no_content" },
-        { type: "exact", value: "\u7279\u306b\u306a\u3044", note: "no_content" },
-        { type: "exact", value: "\u306a\u3044", note: "no_content" },
-        { type: "exact", value: "\u308f\u304b\u3089\u306a\u3044", note: "no_content" },
-        { type: "exact", value: "\u601d\u3044\u3064\u304b\u306a\u3044", note: "no_content" },
-        { type: "exact", value: "\u899a\u3048\u3066\u3044\u306a\u3044", note: "no_content" },
-        { type: "contains", value: "\u306a\u3093\u3068\u306a\u304f", note: "abstract" },
-        { type: "contains", value: "\u666e\u901a", note: "abstract" },
-        { type: "contains", value: "\u3044\u308d\u3044\u308d", note: "abstract" },
-        { type: "max_length", value: 14, note: "low_specificity" }
-      ],
+      can_prefill_future_slots: false,
+      skip_forbidden_on_bad_answer: false,
+      bad_answer_patterns: [],
       probe_config: {
-        max_probes: 1,
+        max_probes: 0,
         min_probes: 0,
-        force_probe_on_bad: true,
+        force_probe_on_bad: false,
         probe_priority: ["missing", "bad_pattern", "low_specificity"],
         stop_conditions: ["sufficient_slots", "high_quality"],
-        allow_followup_expansion: true,
+        allow_followup_expansion: false,
         strict_topic_lock: true
       },
-      completion_conditions: [
-        { type: "min_length", value: 18 },
-        { type: "required_slots" },
-        { type: "no_bad_patterns" }
-      ],
+      completion_conditions: [],
       render_style: {
         mode: "free_comment",
         connect_from_previous_answer: true,
@@ -136,6 +118,11 @@ export const questionRepository = {
     return (data as Question | null) ?? null;
   },
 
+  async getNextSortOrder(projectId: string): Promise<number> {
+    const questions = await this.listByProject(projectId, { includeHidden: true });
+    return questions.reduce((max, question) => Math.max(max, question.sort_order), 0) + 1;
+  },
+
   async create(input: CreateQuestionInput): Promise<Question> {
     const payload = {
       ...input,
@@ -162,6 +149,9 @@ export const questionRepository = {
         | "branch_rule"
         | "question_config"
         | "ai_probe_enabled"
+        | "probe_guideline"
+        | "max_probe_count"
+        | "render_strategy"
         | "is_system"
         | "is_hidden"
       >

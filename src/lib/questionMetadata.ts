@@ -14,7 +14,8 @@
   StructuredAnswerPayload,
   StructuredAnswerSlotValue,
   StructuredProbeType,
-  UserPostType
+  UserPostType,
+  QuestionExtractionSchema
 } from "../types/domain";
 import { getProjectAIState } from "./projectAiState";
 
@@ -113,7 +114,177 @@ const ABSTRACT_KEYWORDS = [
   "\u307e\u3042\u307e\u3042"
 ];
 
-function createDefaultBadAnswerPatterns(maxLength: number): QuestionBadAnswerPattern[] {
+export interface QuestionAuthoringMetaInput {
+  questionGoal: string;
+  extractionItemLabels?: string[];
+  maxProbes?: number | null;
+  existingMeta?: QuestionMeta | null;
+}
+
+function normalizeAuthoringLabel(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function dedupeAuthoringLabels(values: unknown[]): string[] {
+  const labels: string[] = [];
+  const seen = new Set<string>();
+
+  for (const value of values) {
+    const normalized = normalizeAuthoringLabel(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    labels.push(normalized);
+  }
+
+  return labels;
+}
+
+function toAsciiSlotKey(label: string): string {
+  return label
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function buildAuthoringSlotKey(label: string, index: number, prefix = "slot"): string {
+  const asciiKey = toAsciiSlotKey(label);
+  return asciiKey || `${prefix}_${index + 1}`;
+}
+
+function deriveGoalLabel(questionGoal: string): string {
+  const normalized = questionGoal
+    .trim()
+    .replace(/について知りたい$/u, "")
+    .replace(/について把握したい$/u, "")
+    .replace(/について理解したい$/u, "")
+    .replace(/を知りたい$/u, "")
+    .replace(/を把握したい$/u, "")
+    .replace(/を理解したい$/u, "")
+    .replace(/が知りたい$/u, "")
+    .replace(/か知りたい$/u, "")
+    .trim();
+
+  return normalized || "知りたいこと";
+}
+
+export function inferRequiredSlotKeysFromGoal(
+  questionGoal: string,
+  expectedSlots: QuestionExpectedSlot[]
+): string[] {
+  if (expectedSlots.length === 0) {
+    return [];
+  }
+
+  const goal = questionGoal.trim();
+  const goalLabel = deriveGoalLabel(goal);
+  const matched = expectedSlots.filter((slot) => {
+    const label = slot.label?.trim() || slot.key;
+    return Boolean(label) && (goal.includes(label) || goalLabel.includes(label) || label.includes(goalLabel));
+  });
+
+  if (matched.length > 0) {
+    return matched.map((slot) => slot.key);
+  }
+
+  return [expectedSlots[0]?.key ?? ""].filter(Boolean);
+}
+
+export function buildExpectedSlotsFromAuthoringInput(input: {
+  questionGoal: string;
+  extractionItemLabels?: string[];
+}): QuestionExpectedSlot[] {
+  const labels = dedupeAuthoringLabels(input.extractionItemLabels ?? []);
+  const slots =
+    labels.length > 0
+      ? labels.map((label, index) => ({
+          key: buildAuthoringSlotKey(label, index),
+          label,
+          description: `${label}を回答から整理する`,
+          required: false,
+          examples: []
+        }))
+      : input.questionGoal.trim()
+        ? [
+            {
+              key: buildAuthoringSlotKey(deriveGoalLabel(input.questionGoal), 0, "goal"),
+              label: deriveGoalLabel(input.questionGoal),
+              description: input.questionGoal.trim(),
+              required: true,
+              examples: []
+            }
+          ]
+        : [];
+
+  const requiredKeys = new Set(inferRequiredSlotKeysFromGoal(input.questionGoal, slots));
+  return slots.map((slot) => ({
+    ...slot,
+    required: requiredKeys.has(slot.key)
+  }));
+}
+
+export function buildExtractionSchemaFromExpectedSlots(
+  expectedSlots: QuestionExpectedSlot[]
+): QuestionExtractionSchema {
+  return {
+    version: "v1",
+    entity_name: "question_answer",
+    entity_label: "質問回答",
+    fields: expectedSlots.map((slot) => ({
+      key: slot.key,
+      label: slot.label ?? slot.key,
+      description: slot.description,
+      type: "string",
+      required: slot.required ?? false,
+      aliases: [],
+      options: []
+    }))
+  };
+}
+
+export function buildQuestionMetaFromAuthoringInput(input: QuestionAuthoringMetaInput): QuestionMeta {
+  const existingMeta = input.existingMeta ?? {};
+  const questionGoal = input.questionGoal.trim();
+  const expectedSlots = buildExpectedSlotsFromAuthoringInput({
+    questionGoal,
+    extractionItemLabels: input.extractionItemLabels ?? []
+  });
+  const requiredSlots = expectedSlots.filter((slot) => slot.required !== false).map((slot) => slot.key);
+  const configuredMaxProbes = Number(input.maxProbes);
+  const maxProbes =
+    Number.isFinite(configuredMaxProbes) && configuredMaxProbes >= 0
+      ? Math.round(configuredMaxProbes)
+      : typeof existingMeta.probe_config?.max_probes === "number"
+        ? existingMeta.probe_config.max_probes
+        : 1;
+
+  return {
+    ...existingMeta,
+    question_goal: questionGoal,
+    expected_slots: expectedSlots,
+    required_slots: requiredSlots,
+    skippable_if_slots_present: requiredSlots,
+    can_prefill_future_slots: existingMeta.can_prefill_future_slots ?? true,
+    skip_forbidden_on_bad_answer: existingMeta.skip_forbidden_on_bad_answer ?? true,
+    probe_config: {
+      ...(existingMeta.probe_config ?? {}),
+      max_probes: maxProbes,
+      force_probe_on_bad: existingMeta.probe_config?.force_probe_on_bad ?? true,
+      strict_topic_lock: existingMeta.probe_config?.strict_topic_lock ?? true
+    },
+    completion_conditions:
+      Array.isArray(existingMeta.completion_conditions) && existingMeta.completion_conditions.length > 0
+        ? existingMeta.completion_conditions
+        : requiredSlots.length > 0
+          ? [{ type: "required_slots" }, { type: "no_bad_patterns" }]
+          : [{ type: "no_bad_patterns" }]
+  };
+}
+
+function createDefaultBadAnswerPatterns(_maxLength: number): QuestionBadAnswerPattern[] {
   return [
     { type: "exact", value: "\u7279\u306b\u306a\u3057", note: BAD_ANSWER_NOTE.NO_CONTENT },
     { type: "exact", value: "\u7279\u306b\u306a\u3044", note: BAD_ANSWER_NOTE.NO_CONTENT },
@@ -123,21 +294,19 @@ function createDefaultBadAnswerPatterns(maxLength: number): QuestionBadAnswerPat
     { type: "exact", value: "\u899a\u3048\u3066\u3044\u306a\u3044", note: BAD_ANSWER_NOTE.NO_CONTENT },
     { type: "contains", value: "\u306a\u3093\u3068\u306a\u304f", note: BAD_ANSWER_NOTE.ABSTRACT },
     { type: "contains", value: "\u666e\u901a", note: BAD_ANSWER_NOTE.ABSTRACT },
-    { type: "contains", value: "\u3044\u308d\u3044\u308d", note: BAD_ANSWER_NOTE.ABSTRACT },
-    { type: "max_length", value: maxLength, note: BAD_ANSWER_NOTE.LOW_SPECIFICITY }
+    { type: "contains", value: "\u3044\u308d\u3044\u308d", note: BAD_ANSWER_NOTE.ABSTRACT }
   ];
 }
 
 function createProbeConfig(
-  input: Pick<
-    NormalizedProbeConfig,
-    "max_probes" | "min_probes" | "allow_followup_expansion" | "strict_topic_lock"
-  >
+  input: Pick<NormalizedProbeConfig, "max_probes" | "min_probes" | "allow_followup_expansion" | "strict_topic_lock"> & {
+    force_probe_on_bad?: boolean;
+  }
 ): NormalizedProbeConfig {
   return {
     max_probes: input.max_probes,
     min_probes: input.min_probes,
-    force_probe_on_bad: true,
+    force_probe_on_bad: input.force_probe_on_bad ?? true,
     probe_priority: [...DEFAULT_PROBE_PRIORITY],
     stop_conditions: [...DEFAULT_STOP_CONDITIONS],
     allow_followup_expansion: input.allow_followup_expansion,
@@ -162,7 +331,7 @@ function defaultInterviewMeta(question: Question): NormalizedQuestionMeta {
       allow_followup_expansion: false,
       strict_topic_lock: true
     }),
-    completion_conditions: [{ type: "min_length", value: 10 }, { type: "no_bad_patterns" }],
+    completion_conditions: [{ type: "no_bad_patterns" }],
     render_style: {
       mode: question.question_type === "text" ? "interview_natural" : "default",
       connect_from_previous_answer: true,
@@ -189,11 +358,11 @@ function defaultSurveyMeta(question: Question): NormalizedQuestionMeta {
       allow_followup_expansion: false,
       strict_topic_lock: true
     }),
-    completion_conditions: [{ type: "min_length", value: 8 }, { type: "no_bad_patterns" }],
+    completion_conditions: [{ type: "no_bad_patterns" }],
     render_style: {
       mode: "default",
       connect_from_previous_answer: true,
-      avoid_question_number: true,
+      avoid_question_number: false,
       preserve_options: question.question_type !== "text"
     }
   };
@@ -201,32 +370,23 @@ function defaultSurveyMeta(question: Question): NormalizedQuestionMeta {
 
 function defaultFreeCommentMeta(): NormalizedQuestionMeta {
   return {
-    research_goal: "Collect comparable context and any missing insight from the final free comment.",
-    question_goal: "Capture what was left unsaid in a comparable structure.",
-    probe_goal: "Turn a shallow free comment into concrete context and reasons.",
-    expected_slots: [
-      { key: "usage_scene", label: "利用場面", description: "いつ、どこで、どんな状況だったか", required: true },
-      { key: "reason", label: "理由", description: "そう感じた理由や背景", required: true },
-      { key: "pain_point", label: "不満点", description: "困りごとや不便だったこと", required: false },
-      { key: "alternative", label: "代替手段", description: "代わりに使ったものや比較対象", required: false },
-      { key: "desired_state", label: "理想状態", description: "本当はどうなってほしいか", required: false }
-    ],
-    required_slots: ["usage_scene", "reason"],
+    research_goal: "Collect only optional supplemental comments at the end of the session.",
+    question_goal: "Accept any remaining project-relevant comment without forcing structure.",
+    probe_goal: "Do not probe by default. Probe only when free comment follow-up is explicitly configured.",
+    expected_slots: [],
+    required_slots: [],
     skippable_if_slots_present: [],
-    can_prefill_future_slots: true,
-    skip_forbidden_on_bad_answer: true,
-    bad_answer_patterns: createDefaultBadAnswerPatterns(14),
+    can_prefill_future_slots: false,
+    skip_forbidden_on_bad_answer: false,
+    bad_answer_patterns: [],
     probe_config: createProbeConfig({
-      max_probes: 1,
+      max_probes: 0,
       min_probes: 0,
-      allow_followup_expansion: true,
+      force_probe_on_bad: false,
+      allow_followup_expansion: false,
       strict_topic_lock: true
     }),
-    completion_conditions: [
-      { type: "min_length", value: 18 },
-      { type: "required_slots" },
-      { type: "no_bad_patterns" }
-    ],
+    completion_conditions: [],
     render_style: {
       mode: "free_comment",
       connect_from_previous_answer: true,
@@ -240,7 +400,26 @@ function defaultDiaryMeta(): NormalizedQuestionMeta {
   return {
     ...defaultFreeCommentMeta(),
     research_goal: "Store daily events and feelings in a later-comparable structure.",
-    question_goal: "Capture event context and emotional background concretely."
+    question_goal: "Capture event context and emotional background concretely.",
+    probe_goal: "Turn a shallow diary entry into concrete context and reasons.",
+    expected_slots: [
+      { key: "event", label: "出来事", description: "何が起きたのか", required: true },
+      { key: "emotion", label: "感情", description: "そのとき感じたこと", required: true },
+      { key: "reason", label: "理由", description: "そう感じた背景", required: true },
+      { key: "pain_point", label: "不満点", description: "嫌だったことや困ったこと", required: false },
+      { key: "desired_state", label: "理想状態", description: "本当はどうなってほしいか", required: false }
+    ],
+    required_slots: ["event", "emotion", "reason"],
+    can_prefill_future_slots: true,
+    skip_forbidden_on_bad_answer: true,
+    bad_answer_patterns: createDefaultBadAnswerPatterns(14),
+    probe_config: createProbeConfig({
+      max_probes: 1,
+      min_probes: 0,
+      allow_followup_expansion: true,
+      strict_topic_lock: true
+    }),
+    completion_conditions: [{ type: "required_slots" }, { type: "no_bad_patterns" }]
   };
 }
 
@@ -248,8 +427,31 @@ function defaultRantMeta(): NormalizedQuestionMeta {
   return {
     ...defaultFreeCommentMeta(),
     research_goal: "Store strong complaints and emotions with comparable background and causes.",
-    question_goal: "Capture complaint context and triggers concretely."
+    question_goal: "Capture complaint context and triggers concretely.",
+    probe_goal: "Turn a shallow rant into concrete context and reasons.",
+    expected_slots: [
+      { key: "pain_point", label: "不満点", description: "最も不満に感じたこと", required: true },
+      { key: "trigger", label: "きっかけ", description: "その不満が起きた場面や出来事", required: true },
+      { key: "reason", label: "理由", description: "そう感じた背景", required: true },
+      { key: "impact", label: "影響", description: "困ったことや嫌だったこと", required: false },
+      { key: "desired_state", label: "理想状態", description: "本当はどうなってほしいか", required: false }
+    ],
+    required_slots: ["pain_point", "trigger", "reason"],
+    can_prefill_future_slots: true,
+    skip_forbidden_on_bad_answer: true,
+    bad_answer_patterns: createDefaultBadAnswerPatterns(14),
+    probe_config: createProbeConfig({
+      max_probes: 1,
+      min_probes: 0,
+      allow_followup_expansion: true,
+      strict_topic_lock: true
+    }),
+    completion_conditions: [{ type: "required_slots" }, { type: "no_bad_patterns" }]
   };
+}
+
+function isFreeCommentQuestion(question: Question): boolean {
+  return question.question_role === "free_comment" || question.question_code === "__free_comment__";
 }
 
 function normalizeExpectedSlot(slot: QuestionExpectedSlot): QuestionExpectedSlot | null {
@@ -433,7 +635,7 @@ function normalizeProbeConfig(
 function resolveMetaContextType(
   question: Question,
   contextType?: QuestionMetaContextType
-): "survey" | "interview" | "free_comment" | "rant" | "diary" {
+): QuestionMetaContextType | "interview" {
   if (question.question_role === "free_comment" || question.question_code === "__free_comment__") {
     return "free_comment";
   }
@@ -442,8 +644,8 @@ function resolveMetaContextType(
     return contextType;
   }
 
-  if (contextType === "survey" || contextType === "survey_with_interview_probe") {
-    return "survey";
+  if (contextType === "survey_interview") {
+    return "survey_interview";
   }
 
   return "interview";
@@ -454,7 +656,7 @@ function defaultMetaByContext(
   contextType?: QuestionMetaContextType
 ): NormalizedQuestionMeta {
   switch (resolveMetaContextType(question, contextType)) {
-    case "survey":
+    case "survey_interview":
       return defaultSurveyMeta(question);
     case "free_comment":
       return defaultFreeCommentMeta();
@@ -471,7 +673,27 @@ function normalizeProjectStateText(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function normalizeProjectStateSlots(value: unknown): QuestionExpectedSlot[] {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function getExplicitFreeCommentProjectConfig(projectAiState?: ProjectAIState | null): Record<string, unknown> | null {
+  if (!isPlainObject(projectAiState)) {
+    return null;
+  }
+
+  const candidate =
+    (isPlainObject((projectAiState as Record<string, unknown>).free_comment_config)
+      ? (projectAiState as Record<string, unknown>).free_comment_config
+      : null) ??
+    (isPlainObject((projectAiState as Record<string, unknown>).free_comment)
+      ? (projectAiState as Record<string, unknown>).free_comment
+      : null);
+
+  return isPlainObject(candidate) ? candidate : null;
+}
+
+function normalizeProjectStateSlots(value: unknown, requiredDefault: boolean): QuestionExpectedSlot[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -497,7 +719,8 @@ function normalizeProjectStateSlots(value: unknown): QuestionExpectedSlot[] {
           typeof candidate.description === "string" && candidate.description.trim()
             ? candidate.description.trim()
             : undefined,
-        required: false,
+        required:
+          typeof candidate.required === "boolean" ? candidate.required : requiredDefault,
         examples: Array.isArray(candidate.examples)
           ? candidate.examples.map((example) => String(example).trim()).filter(Boolean)
           : []
@@ -512,11 +735,71 @@ function buildInheritedProjectSlots(projectAiState?: ProjectAIState | null): Que
     return [];
   }
 
-  const requiredSlots = normalizeProjectStateSlots(projectAiState.required_slots);
+  const requiredSlots = normalizeProjectStateSlots(projectAiState.required_slots, true);
   return requiredSlots.concat(
-    normalizeProjectStateSlots(projectAiState.optional_slots).filter(
+    normalizeProjectStateSlots(projectAiState.optional_slots, false).filter(
       (slot) => !requiredSlots.some((requiredSlot) => requiredSlot.key === slot.key)
     )
+  );
+}
+
+function getProjectRequiredSlotKeys(projectAiState?: ProjectAIState | null): string[] {
+  if (!projectAiState) {
+    return [];
+  }
+
+  return normalizeProjectStateSlots(projectAiState.required_slots, true).map((slot) => slot.key);
+}
+
+function buildExplicitFreeCommentProjectSlots(projectAiState?: ProjectAIState | null): QuestionExpectedSlot[] {
+  const config = getExplicitFreeCommentProjectConfig(projectAiState);
+  if (!config) {
+    return [];
+  }
+
+  const requiredSlots = normalizeProjectStateSlots(config.required_slots, true);
+  return requiredSlots.concat(
+    normalizeProjectStateSlots(config.optional_slots, false).filter(
+      (slot) => !requiredSlots.some((requiredSlot) => requiredSlot.key === slot.key)
+    )
+  );
+}
+
+function getExplicitFreeCommentProjectRequiredSlotKeys(projectAiState?: ProjectAIState | null): string[] {
+  const config = getExplicitFreeCommentProjectConfig(projectAiState);
+  if (!config) {
+    return [];
+  }
+
+  return normalizeProjectStateSlots(config.required_slots, true).map((slot) => slot.key);
+}
+
+function hasExplicitConfiguredFreeCommentMeta(meta: QuestionMeta): boolean {
+  return Boolean(
+    (Array.isArray(meta.expected_slots) && meta.expected_slots.length > 0) ||
+      (Array.isArray(meta.required_slots) && meta.required_slots.length > 0) ||
+      (Array.isArray(meta.bad_answer_patterns) && meta.bad_answer_patterns.length > 0) ||
+      (Array.isArray(meta.completion_conditions) && meta.completion_conditions.length > 0) ||
+      normalizeProjectStateText(meta.probe_goal) ||
+      Object.values(meta.probe_config ?? {}).some((value) => value !== undefined)
+  );
+}
+
+function hasExplicitFreeCommentProjectContext(projectAiState?: ProjectAIState | null): boolean {
+  const config = getExplicitFreeCommentProjectConfig(projectAiState);
+  if (!config) {
+    return false;
+  }
+
+  return Boolean(
+    normalizeProjectStateText(config.project_goal) ||
+      normalizeProjectStateText(config.research_goal) ||
+      normalizeProjectStateText(config.user_understanding_goal) ||
+      normalizeProjectStateText(config.question_goal) ||
+      normalizeProjectStateText(config.probe_goal) ||
+      buildExplicitFreeCommentProjectSlots(projectAiState).length > 0 ||
+      isPlainObject(config.probe_policy) ||
+      isPlainObject(config.probe_config)
   );
 }
 
@@ -550,6 +833,42 @@ function applyProjectStateProbeDefaults(
   };
 }
 
+function applyExplicitFreeCommentProjectProbeDefaults(
+  fallback: NormalizedProbeConfig,
+  projectAiState?: ProjectAIState | null
+): NormalizedProbeConfig {
+  const config = getExplicitFreeCommentProjectConfig(projectAiState);
+  const probePolicy =
+    (isPlainObject(config?.probe_policy) ? config.probe_policy : null) ??
+    (isPlainObject(config?.probe_config) ? config.probe_config : null);
+
+  return {
+    ...fallback,
+    max_probes:
+      typeof probePolicy?.max_probes === "number"
+        ? Math.max(0, Math.round(probePolicy.max_probes))
+        : typeof probePolicy?.default_max_probes === "number"
+          ? Math.max(0, Math.round(probePolicy.default_max_probes))
+          : fallback.max_probes,
+    min_probes:
+      typeof probePolicy?.min_probes === "number"
+        ? Math.max(0, Math.round(probePolicy.min_probes))
+        : fallback.min_probes,
+    force_probe_on_bad:
+      typeof probePolicy?.force_probe_on_bad === "boolean"
+        ? probePolicy.force_probe_on_bad
+        : fallback.force_probe_on_bad,
+    allow_followup_expansion:
+      typeof probePolicy?.allow_followup_expansion === "boolean"
+        ? probePolicy.allow_followup_expansion
+        : fallback.allow_followup_expansion,
+    strict_topic_lock:
+      typeof probePolicy?.strict_topic_lock === "boolean"
+        ? probePolicy.strict_topic_lock
+        : fallback.strict_topic_lock
+  };
+}
+
 function resolveSlotSource(
   question: Question,
   projectAiState?: ProjectAIState | null
@@ -560,6 +879,10 @@ function resolveSlotSource(
     (Array.isArray(configured.required_slots) && configured.required_slots.length > 0);
   if (hasQuestionSlots) {
     return "question.question_config.meta";
+  }
+
+  if (isFreeCommentQuestion(question) && buildExplicitFreeCommentProjectSlots(projectAiState).length > 0) {
+    return "project.ai_state_json";
   }
 
   if (question.question_type === "text" && buildInheritedProjectSlots(projectAiState).length > 0) {
@@ -582,6 +905,23 @@ function resolveProbeSettingSource(
     return "question.question_config.meta";
   }
 
+  if (isFreeCommentQuestion(question)) {
+    const config = getExplicitFreeCommentProjectConfig(projectAiState);
+    const probePolicy =
+      (isPlainObject(config?.probe_policy) ? config.probe_policy : null) ??
+      (isPlainObject(config?.probe_config) ? config.probe_config : null);
+    if (
+      setting === "max_probes" &&
+      (typeof probePolicy?.max_probes === "number" || typeof probePolicy?.default_max_probes === "number")
+    ) {
+      return "project.ai_state_json";
+    }
+    if (setting === "strict_topic_lock" && typeof probePolicy?.strict_topic_lock === "boolean") {
+      return "project.ai_state_json";
+    }
+    return "default";
+  }
+
   const probePolicy =
     projectAiState?.probe_policy && typeof projectAiState.probe_policy === "object"
       ? projectAiState.probe_policy
@@ -601,13 +941,38 @@ export function normalizeQuestionMeta(
   contextType?: QuestionMetaContextType,
   options: NormalizeQuestionMetaOptions = {}
 ): NormalizedQuestionMeta {
+  const metaContext = resolveMetaContextType(question, contextType);
   const configured = question.question_config?.meta ?? {};
-  const base = defaultMetaByContext(question, contextType);
-  const configuredExpectedSlots = (configured.expected_slots ?? [])
+  const base = defaultMetaByContext(question, metaContext);
+  const explicitFreeCommentProbeEnabled =
+    metaContext === "free_comment" &&
+    question.ai_probe_enabled &&
+    (hasExplicitConfiguredFreeCommentMeta(configured) || hasExplicitFreeCommentProjectContext(options.projectAiState));
+  const effectiveConfigured =
+    metaContext === "free_comment" && !explicitFreeCommentProbeEnabled
+      ? {
+          ...configured,
+          expected_slots: [],
+          required_slots: [],
+          bad_answer_patterns: [],
+          completion_conditions: [],
+          probe_goal: undefined,
+          probe_config: undefined
+        }
+      : configured;
+  const explicitFreeCommentProjectConfig =
+    metaContext === "free_comment" ? getExplicitFreeCommentProjectConfig(options.projectAiState) : null;
+  const configuredExpectedSlots = (effectiveConfigured.expected_slots ?? [])
     .map(normalizeExpectedSlot)
     .filter((slot): slot is QuestionExpectedSlot => Boolean(slot));
   const inheritedProjectSlots =
-    question.question_type === "text" ? buildInheritedProjectSlots(options.projectAiState) : [];
+    question.question_type !== "text"
+      ? []
+      : metaContext === "free_comment"
+        ? explicitFreeCommentProbeEnabled
+          ? buildExplicitFreeCommentProjectSlots(options.projectAiState)
+          : []
+        : buildInheritedProjectSlots(options.projectAiState);
   const expectedSlots =
     configuredExpectedSlots.length > 0
       ? configuredExpectedSlots.concat(
@@ -618,17 +983,34 @@ export function normalizeQuestionMeta(
       : inheritedProjectSlots.length > 0
         ? inheritedProjectSlots
         : base.expected_slots;
-  const projectBackedProbeConfig = applyProjectStateProbeDefaults(base.probe_config, options.projectAiState);
+  const inheritedRequiredSlots =
+    configuredExpectedSlots.length === 0 && inheritedProjectSlots.length > 0
+      ? (
+          metaContext === "free_comment"
+            ? getExplicitFreeCommentProjectRequiredSlotKeys(options.projectAiState)
+            : getProjectRequiredSlotKeys(options.projectAiState)
+        ).filter((key) =>
+          expectedSlots.some((slot) => slot.key === key)
+        )
+      : [];
+  const projectBackedProbeConfig =
+    metaContext === "free_comment"
+      ? applyExplicitFreeCommentProjectProbeDefaults(base.probe_config, options.projectAiState)
+      : applyProjectStateProbeDefaults(base.probe_config, options.projectAiState);
   const requiredSlots = Array.from(
     new Set([
-      ...normalizeSlotKeyList(configured.required_slots),
-      ...(configured.required_slots?.length ? [] : getRequiredSlotKeys({ expected_slots: expectedSlots, required_slots: base.required_slots }))
+      ...normalizeSlotKeyList(effectiveConfigured.required_slots),
+      ...(effectiveConfigured.required_slots?.length
+        ? []
+        : inheritedRequiredSlots.length > 0
+          ? inheritedRequiredSlots
+          : getRequiredSlotKeys({ expected_slots: expectedSlots, required_slots: base.required_slots }))
     ])
   );
   const skippableIfSlotsPresent = Array.from(
     new Set([
-      ...normalizeSlotKeyList(configured.skippable_if_slots_present),
-      ...(configured.skippable_if_slots_present?.length
+      ...normalizeSlotKeyList(effectiveConfigured.skippable_if_slots_present),
+      ...(effectiveConfigured.skippable_if_slots_present?.length
         ? []
         : getSkippableSlotKeys({
             expected_slots: expectedSlots,
@@ -640,45 +1022,67 @@ export function normalizeQuestionMeta(
 
   return {
     research_goal:
-      configured.research_goal?.trim() ||
+      effectiveConfigured.research_goal?.trim() ||
+      (metaContext === "free_comment"
+        ? normalizeProjectStateText(
+            explicitFreeCommentProjectConfig?.research_goal ?? explicitFreeCommentProjectConfig?.project_goal
+          )
+        : null) ||
       normalizeProjectStateText(options.projectAiState?.project_goal) ||
       base.research_goal,
     question_goal:
-      configured.question_goal?.trim() ||
+      effectiveConfigured.question_goal?.trim() ||
+      (metaContext === "free_comment"
+        ? normalizeProjectStateText(
+            explicitFreeCommentProjectConfig?.question_goal ??
+              explicitFreeCommentProjectConfig?.user_understanding_goal
+          )
+        : null) ||
       normalizeProjectStateText(options.projectAiState?.user_understanding_goal) ||
       base.question_goal,
-    probe_goal: configured.probe_goal?.trim() || base.probe_goal,
+    probe_goal:
+      effectiveConfigured.probe_goal?.trim() ||
+      (metaContext === "free_comment"
+        ? normalizeProjectStateText(explicitFreeCommentProjectConfig?.probe_goal)
+        : null) ||
+      base.probe_goal,
     expected_slots: expectedSlots,
     required_slots: requiredSlots,
     skippable_if_slots_present: skippableIfSlotsPresent,
     can_prefill_future_slots:
-      typeof configured.can_prefill_future_slots === "boolean"
-        ? configured.can_prefill_future_slots
+      typeof effectiveConfigured.can_prefill_future_slots === "boolean"
+        ? effectiveConfigured.can_prefill_future_slots
         : base.can_prefill_future_slots,
     skip_forbidden_on_bad_answer:
-      typeof configured.skip_forbidden_on_bad_answer === "boolean"
-        ? configured.skip_forbidden_on_bad_answer
+      typeof effectiveConfigured.skip_forbidden_on_bad_answer === "boolean"
+        ? effectiveConfigured.skip_forbidden_on_bad_answer
         : base.skip_forbidden_on_bad_answer,
-    bad_answer_patterns: (configured.bad_answer_patterns ?? [])
+    bad_answer_patterns: (effectiveConfigured.bad_answer_patterns ?? [])
       .map(normalizeBadAnswerPattern)
       .filter((pattern): pattern is QuestionBadAnswerPattern => Boolean(pattern))
-      .concat(base.bad_answer_patterns.filter(() => !configured.bad_answer_patterns?.length)),
-    probe_config: normalizeProbeConfig(configured.probe_config, projectBackedProbeConfig),
-    completion_conditions: (configured.completion_conditions ?? [])
+      .concat(base.bad_answer_patterns.filter(() => !effectiveConfigured.bad_answer_patterns?.length)),
+    probe_config: normalizeProbeConfig(
+      {
+        ...effectiveConfigured.probe_config,
+        ...(question.max_probe_count != null ? { max_probes: question.max_probe_count } : {})
+      },
+      projectBackedProbeConfig
+    ),
+    completion_conditions: (effectiveConfigured.completion_conditions ?? [])
       .map(normalizeCompletionCondition)
       .filter((condition): condition is QuestionCompletionCondition => Boolean(condition))
-      .concat(base.completion_conditions.filter(() => !configured.completion_conditions?.length)),
+      .concat(base.completion_conditions.filter(() => !effectiveConfigured.completion_conditions?.length)),
     render_style: {
-      mode: configured.render_style?.mode ?? base.render_style.mode ?? "default",
-      lead_in: configured.render_style?.lead_in?.trim(),
+      mode: effectiveConfigured.render_style?.mode ?? base.render_style.mode ?? "default",
+      lead_in: effectiveConfigured.render_style?.lead_in?.trim(),
       connect_from_previous_answer:
-        configured.render_style?.connect_from_previous_answer ??
+        effectiveConfigured.render_style?.connect_from_previous_answer ??
         base.render_style.connect_from_previous_answer ??
         true,
       avoid_question_number:
-        configured.render_style?.avoid_question_number ?? base.render_style.avoid_question_number ?? true,
+        effectiveConfigured.render_style?.avoid_question_number ?? base.render_style.avoid_question_number ?? true,
       preserve_options:
-        configured.render_style?.preserve_options ?? base.render_style.preserve_options ?? false
+        effectiveConfigured.render_style?.preserve_options ?? base.render_style.preserve_options ?? false
     }
   };
 }
@@ -753,7 +1157,7 @@ export function normalizeFreeText(text: string): string {
 
 export function isAbstractAnswer(text: string): boolean {
   const normalized = normalizeFreeText(text);
-  return normalized.length <= 16 || ABSTRACT_KEYWORDS.some((keyword) => normalized.includes(keyword));
+  return ABSTRACT_KEYWORDS.some((keyword) => normalized.includes(keyword));
 }
 
 function isBadAnswerPatternMatched(text: string, pattern: QuestionBadAnswerPattern): boolean {
@@ -817,17 +1221,18 @@ function calculateQualityScore(input: {
       : 0;
   const slotCoverage =
     totalSlots === 0
-      ? text.length >= 24
-        ? 100
-        : text.length >= 12
-          ? 75
-          : text.length >= 6
-            ? 50
-            : 20
+      ? text
+        ? 80
+        : 0
       : Math.round((filledSlotCount / totalSlots) * 100);
   const lengthScore =
     text.length >= 60 ? 100 : text.length >= 30 ? 85 : text.length >= 16 ? 70 : text.length >= 8 ? 50 : text ? 30 : 0;
   let qualityScore = Math.round(slotCoverage * 0.6 + lengthScore * 0.4);
+  const hasFullRequiredSlotCoverage = totalSlots > 0 && filledSlotCount >= totalSlots;
+
+  if (hasFullRequiredSlotCoverage) {
+    qualityScore = Math.max(qualityScore, 80);
+  }
 
   if (hasMatchedBadAnswerNote(text, meta.bad_answer_patterns, BAD_ANSWER_NOTE.NO_CONTENT)) {
     qualityScore = Math.min(qualityScore, 15);
@@ -835,10 +1240,7 @@ function calculateQualityScore(input: {
   if (hasMatchedBadAnswerNote(text, meta.bad_answer_patterns, BAD_ANSWER_NOTE.ABSTRACT)) {
     qualityScore = Math.min(qualityScore, 55);
   }
-  if (
-    hasMatchedBadAnswerNote(text, meta.bad_answer_patterns, BAD_ANSWER_NOTE.LOW_SPECIFICITY) ||
-    text.length <= 12
-  ) {
+  if (hasMatchedBadAnswerNote(text, meta.bad_answer_patterns, BAD_ANSWER_NOTE.LOW_SPECIFICITY)) {
     qualityScore = Math.min(qualityScore, 50);
   }
 
@@ -940,7 +1342,8 @@ export function evaluateCompletion(input: {
   if (badPatterns.length > 0) {
     reasons.add("bad_patterns");
   }
-  if (qualityScore < DEFAULT_COMPLETION_QUALITY_THRESHOLD) {
+  const hasRequiredCoverage = requiredSlots.length > 0 && missingSlots.length === 0;
+  if (qualityScore < DEFAULT_COMPLETION_QUALITY_THRESHOLD && !hasRequiredCoverage) {
     reasons.add("low_quality");
   }
 
@@ -993,18 +1396,20 @@ export function assessProbeNeed(input: {
   const matchedBadPatterns = matchBadAnswerPatterns(text, meta.bad_answer_patterns);
   const isShort = text.length <= 12;
   const isBadAnswer = hasMatchedBadAnswerNote(text, meta.bad_answer_patterns, BAD_ANSWER_NOTE.NO_CONTENT);
-  const isLowSpecificity =
-    hasMatchedBadAnswerNote(text, meta.bad_answer_patterns, BAD_ANSWER_NOTE.LOW_SPECIFICITY) || isShort;
+  const isLowSpecificity = hasMatchedBadAnswerNote(
+    text,
+    meta.bad_answer_patterns,
+    BAD_ANSWER_NOTE.LOW_SPECIFICITY
+  );
   const currentProbeCount = input.currentProbeCountForAnswer ?? 0;
+  const filledSlotCount = countFilledSlots(input.extractedSlots);
   const matchedNoContent =
     meta.probe_config.force_probe_on_bad &&
     isBadAnswer;
   const matchedAbstractPattern =
     meta.probe_config.force_probe_on_bad &&
     hasMatchedBadAnswerNote(text, meta.bad_answer_patterns, BAD_ANSWER_NOTE.ABSTRACT);
-  const matchedLowSpecificityPattern =
-    meta.probe_config.force_probe_on_bad &&
-    isLowSpecificity;
+  const matchedLowSpecificityPattern = meta.probe_config.force_probe_on_bad && isLowSpecificity;
   const abstract = !matchedNoContent && !matchedAbstractPattern && isAbstractAnswer(text);
 
   if (currentProbeCount >= meta.probe_config.max_probes) {
@@ -1046,10 +1451,10 @@ export function assessProbeNeed(input: {
     };
   }
 
-  if (matchedAbstractPattern || matchedLowSpecificityPattern || isShort) {
+  if (matchedAbstractPattern) {
     return {
       shouldProbe: true,
-      probeType: "concretize",
+      probeType: "clarify",
       missingSlots: completion.missing_slots,
       matchedBadPatterns,
       isShort,
@@ -1072,7 +1477,33 @@ export function assessProbeNeed(input: {
     };
   }
 
-  if (currentProbeCount < meta.probe_config.min_probes) {
+  if (filledSlotCount > 0 && completion.missing_slots.length === 0) {
+    return {
+      shouldProbe: false,
+      probeType: null,
+      missingSlots: completion.missing_slots,
+      matchedBadPatterns,
+      isShort,
+      isAbstract: abstract,
+      isBadAnswer,
+      isLowSpecificity
+    };
+  }
+
+  if (matchedLowSpecificityPattern) {
+    return {
+      shouldProbe: true,
+      probeType: "concretize",
+      missingSlots: completion.missing_slots,
+      matchedBadPatterns,
+      isShort,
+      isAbstract: abstract,
+      isBadAnswer,
+      isLowSpecificity
+    };
+  }
+
+  if (currentProbeCount < meta.probe_config.min_probes && !completion.is_complete) {
     return {
       shouldProbe: true,
       probeType: "concretize",

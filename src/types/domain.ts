@@ -1,7 +1,7 @@
 export type UUID = string;
 
 export type ProjectStatus = "draft" | "active" | "paused" | "archived";
-export type ResearchMode = "survey" | "interview" | "survey_with_interview_probe";
+export type ResearchMode = "survey_interview" | "interview";
 export type RespondentStatus = "invited" | "active" | "completed" | "dropped";
 export type SessionStatus = "pending" | "active" | "completed" | "abandoned";
 export type SessionPhase = "question" | "ai_probe" | "free_comment" | "completed";
@@ -141,6 +141,7 @@ export interface ProjectAIState {
   completion_rule?: ProjectAICompletionRule;
   topic_control?: ProjectAITopicControl;
   language?: string;
+  probe_guideline?: string;
 }
 
 export interface Project {
@@ -324,10 +325,25 @@ export interface Question {
   branch_rule: QuestionBranchRule | LegacyBranchRule[] | null;
   question_config: QuestionConfig | null;
   ai_probe_enabled: boolean;
+  probe_guideline?: string | null;
+  max_probe_count?: number | null;
+  render_strategy?: "static" | "dynamic" | null;
   is_system: boolean;
   is_hidden: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface PendingNextQuestionCache {
+  sessionId: string;
+  nextQuestionId: string;
+  nextQuestionVersion: string;
+  flowSignature: string;
+  collectedFieldSignature: string;
+  renderStrategy: "static" | "dynamic";
+  renderKey: string;
+  questionText?: string;
+  createdAt: string;
 }
 
 export interface Rank {
@@ -403,6 +419,8 @@ export interface SessionState {
   lastQuestionText?: string | null;
   lastQuestionEmbedding?: string[] | null;
   lastProbeType?: StructuredProbeType | null;
+  pendingNextQuestionText?: string | null;
+  pendingNextQuestionCache?: PendingNextQuestionCache | null;
 }
 
 export interface AnswerAnalysisResult {

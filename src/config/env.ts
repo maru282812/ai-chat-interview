@@ -22,6 +22,10 @@ const envSchema = z.object({
   SESSION_SUMMARY_INTERVAL: z.coerce.number().int().positive().default(5),
   MAX_AI_PROBES_PER_ANSWER: z.coerce.number().int().nonnegative().default(1),
   MAX_AI_PROBES_PER_SESSION: z.coerce.number().int().nonnegative().default(2),
+  MENU_ACTION_DEBUG_FORCE_PROJECT_LIST: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => value === "true"),
   ADMIN_BASIC_USER: z.string().min(1),
   ADMIN_BASIC_PASSWORD: z.string().min(1)
 });

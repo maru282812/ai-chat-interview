@@ -1,110 +1,505 @@
-<%- include("../../partials/header", { title }) %>
+﻿<%- include("../../partials/header", { title }) %>
+<%
+  const safeForm = form || {};
+  const branchRows = Array.isArray(safeForm.branch_rows) && safeForm.branch_rows.length > 0
+    ? safeForm.branch_rows
+    : [{ source: "answer", field_label: "", operator: "equals", value: "", next: "" }];
+  const extractionItems = Array.isArray(safeForm.extraction_items) && safeForm.extraction_items.length > 0
+    ? safeForm.extraction_items
+    : [""];
+  const optionLabels = Array.isArray(safeForm.option_labels) && safeForm.option_labels.length > 0
+    ? safeForm.option_labels
+    : [""];
+  const nextQuestionOptions = (availableQuestions || [])
+    .filter((item) => item.id !== question?.id)
+    .map((item) => ({ code: item.question_code, text: item.question_text }));
+%>
+
+<style>
+  .authoring-section {
+    border: 1px solid #d8e3e0;
+    border-radius: 14px;
+    padding: 18px;
+    background: #f8fbfa;
+  }
+  .authoring-section h2,
+  .authoring-section h3 {
+    margin: 0 0 10px;
+  }
+  .helper-text {
+    margin: 0;
+    font-size: 12px;
+    color: #60726f;
+  }
+  .stack-sm {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .row-card {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid #d8e3e0;
+    border-radius: 12px;
+    background: #fff;
+  }
+  .details-toggle {
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .inline-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .hidden {
+    display: none;
+  }
+  .warning-card {
+    border: 1px solid #f2cf88;
+    background: #fff7e8;
+    color: #8a5b00;
+  }
+</style>
 
 <form class="card stack" method="post" action="<%= action %>">
-  <p class="muted">プロジェクト: <%= project.name %></p>
+  <input type="hidden" name="question_code" value="<%= safeForm.question_code || "" %>" />
 
-  <div class="form-grid">
+  <div class="actions-row" style="justify-content: space-between;">
+    <p class="muted" style="margin: 0;">プロジェクト: <%= project.name %></p>
+    <a class="button-link secondary" href="/admin/projects/<%= project.id %>/questions">一覧へ戻る</a>
+  </div>
+
+  <% if (errorMessage) { %>
+    <section class="card subtle-card warning-card">
+      <strong><%= errorMessage %></strong>
+    </section>
+  <% } %>
+
+  <% if (successMessage) { %>
+    <section class="card subtle-card success-card">
+      <strong class="success-text"><%= successMessage %></strong>
+    </section>
+  <% } %>
+
+  <section class="authoring-section stack">
+    <h2>1. 基本設定</h2>
+    <p class="helper-text">この4項目だけで質問を作れます。</p>
+
     <label>
-      質問コード
-      <input type="text" name="question_code" value="<%= question?.question_code || '' %>" required />
+      質問文
+      <textarea name="question_text" required><%= safeForm.question_text || "" %></textarea>
     </label>
+
+    <div class="form-grid">
+      <label>
+        <input type="checkbox" name="is_required" <%= safeForm.is_required ? "checked" : "" %> />
+        必須にする
+      </label>
+      <label>
+        <input type="checkbox" name="ai_probe_enabled" <%= safeForm.ai_probe_enabled ? "checked" : "" %> />
+        AI深掘りを有効にする
+      </label>
+    </div>
+
+    <div id="probeOptions" class="stack-sm">
+      <label>
+        深掘りガイドライン（任意）
+        <input type="text" name="probe_guideline" value="<%= safeForm.probe_guideline || '' %>" placeholder="例: 理由・具体例・感情・利用シーン" />
+      </label>
+      <label>
+        深掘り上限（任意・未入力は既定値）
+        <input type="number" name="max_probe_count" value="<%= safeForm.max_probe_count_text || '' %>" min="0" max="5" placeholder="未入力＝既定値" />
+      </label>
+      <label>
+        質問文キャッシュ戦略
+        <select name="render_strategy">
+          <option value="static" <%= safeForm.render_strategy === "static" ? "selected" : "" %>>static（キャッシュ可）</option>
+          <option value="dynamic" <%= safeForm.render_strategy === "dynamic" ? "selected" : "" %>>dynamic（キャッシュ不可）</option>
+        </select>
+      </label>
+    </div>
+
     <label>
-      表示順
-      <input type="number" name="sort_order" value="<%= question?.sort_order || 1 %>" />
+      この質問で何を知りたいか
+      <textarea name="question_goal" required placeholder="例: なぜその選択をしたのか知りたい"><%= safeForm.question_goal || "" %></textarea>
     </label>
+  </section>
+
+  <section class="authoring-section stack">
+    <h2>2. 抽出</h2>
     <label>
-      質問役割
-      <select name="question_role">
-        <% for (const role of ["screening", "main", "probe_trigger", "attribute", "comparison_core"]) { %>
-          <option value="<%= role %>" <%= (question?.question_role || "main") === role ? "selected" : "" %>><%= role %></option>
+      <input type="checkbox" id="extractionEnabled" name="extraction_enabled" <%= safeForm.extraction_enabled ? "checked" : "" %> />
+      回答を分解する
+    </label>
+    <p class="helper-text">ONにすると、回答から比較しやすい項目を自動で整理します。</p>
+
+    <div id="extractionArea" class="stack-sm <%= safeForm.extraction_enabled ? '' : 'hidden' %>">
+      <div id="extractionRows" class="stack-sm">
+        <% for (const item of extractionItems) { %>
+          <div class="row-card extraction-row">
+            <label>
+              抽出したい項目
+              <input type="text" name="extraction_items" value="<%= item %>" placeholder="例: 種類 / 年齢 / 数" />
+            </label>
+            <div class="inline-actions">
+              <button type="button" class="button-link danger remove-row">削除</button>
+            </div>
+          </div>
         <% } %>
-      </select>
-    </label>
-    <label>
-      回答形式
-      <select name="question_type">
-        <% for (const type of ["text", "single_select", "multi_select", "yes_no", "scale"]) { %>
-          <option value="<%= type %>" <%= question?.question_type === type ? "selected" : "" %>><%= type %></option>
-        <% } %>
-      </select>
-    </label>
-  </div>
+      </div>
+      <div class="inline-actions">
+        <button type="button" class="button-link secondary" id="addExtractionRow">項目を追加</button>
+      </div>
+    </div>
+  </section>
 
-  <label>
-    質問文
-    <textarea name="question_text" required><%= question?.question_text || '' %></textarea>
-  </label>
+  <section class="authoring-section stack">
+    <h2>3. 分岐</h2>
+    <p class="helper-text">「〇〇が△△なら次の質問へ」の形で設定します。</p>
 
-  <div class="form-grid">
-    <label>
-      <input type="checkbox" name="is_required" <%= question?.is_required ? "checked" : "" %> />
-      必須質問
-    </label>
-    <label>
-      <input type="checkbox" name="ai_probe_enabled" <%= question?.ai_probe_enabled ? "checked" : "" %> />
-      AI深掘り対象
-    </label>
-    <label>
-      <input type="checkbox" name="can_prefill_future_slots" <%= questionMetaForm?.can_prefill_future_slots !== false ? "checked" : "" %> />
-      次質問 slot の先取りを許可
-    </label>
-    <label>
-      <input type="checkbox" name="skip_forbidden_on_bad_answer" <%= questionMetaForm?.skip_forbidden_on_bad_answer !== false ? "checked" : "" %> />
-      bad answer 時はスキップ禁止
-    </label>
-  </div>
+    <div id="branchRows" class="stack-sm">
+      <% for (const row of branchRows) { %>
+        <div class="row-card branch-row">
+          <div class="form-grid">
+            <label>
+              判定元
+              <select name="branch_source" class="branch-source">
+                <option value="answer" <%= row.source === "answer" ? "selected" : "" %>>回答そのもの</option>
+                <option value="extracted" <%= row.source === "extracted" ? "selected" : "" %>>抽出項目</option>
+              </select>
+            </label>
+            <label>
+              項目
+              <select name="branch_field_label" class="branch-field" data-selected="<%= row.field_label || '' %>">
+                <option value="">回答そのもの</option>
+              </select>
+            </label>
+            <label>
+              条件
+              <select name="branch_operator">
+                <% for (const operator of ["equals", "includes", "any_of", "gte", "lte"]) { %>
+                  <option value="<%= operator %>" <%= row.operator === operator ? "selected" : "" %>><%= operator %></option>
+                <% } %>
+              </select>
+            </label>
+            <label>
+              値
+              <input type="text" name="branch_value" value="<%= row.value || '' %>" placeholder="例: 犬" />
+            </label>
+          </div>
+          <div class="form-grid">
+            <label>
+              遷移先
+              <select name="branch_next">
+                <option value="">選択してください</option>
+                <% for (const option of nextQuestionOptions) { %>
+                  <option value="<%= option.code %>" <%= row.next === option.code ? "selected" : "" %>><%= option.code %> | <%= option.text %></option>
+                <% } %>
+              </select>
+            </label>
+          </div>
+          <div class="inline-actions">
+            <button type="button" class="button-link danger remove-row">削除</button>
+          </div>
+        </div>
+      <% } %>
+    </div>
 
-  <label>
-    質問ゴール
-    <textarea name="question_goal" required><%= questionMetaForm?.question_goal || "" %></textarea>
-  </label>
+    <div class="inline-actions">
+      <button type="button" class="button-link secondary" id="addBranchRow">分岐を追加</button>
+    </div>
+  </section>
 
-  <label>
-    想定 slot(JSON)
-    <textarea name="expected_slots"><%= questionMetaForm?.expected_slots_text || "" %></textarea>
-  </label>
+  <details class="authoring-section">
+    <summary class="details-toggle">4. 詳細設定</summary>
+    <div class="stack" style="margin-top: 14px;">
+      <div class="form-grid">
+        <label>
+          回答形式
+          <select name="question_type" id="questionType">
+            <% for (const type of ["text", "single_select", "multi_select", "yes_no", "scale"]) { %>
+              <option value="<%= type %>" <%= safeForm.question_type === type ? "selected" : "" %>><%= type %></option>
+            <% } %>
+          </select>
+        </label>
+        <label>
+          質問ロール
+          <select name="question_role">
+            <% for (const role of ["screening", "main", "probe_trigger", "attribute", "comparison_core"]) { %>
+              <option value="<%= role %>" <%= safeForm.question_role === role ? "selected" : "" %>><%= role %></option>
+            <% } %>
+          </select>
+        </label>
+        <label>
+          表示順
+          <input type="number" name="sort_order" min="1" value="<%= safeForm.sort_order_text || '1' %>" />
+        </label>
+        <label>
+          最大深掘り回数
+          <input type="number" name="max_probes" min="0" value="<%= safeForm.max_probes || '1' %>" />
+        </label>
+      </div>
 
-  <label>
-    必須 slot(JSON array)
-    <textarea name="required_slots"><%= questionMetaForm?.required_slots_text || "" %></textarea>
-  </label>
+      <div id="typeTextFields" class="stack-sm">
+        <label>
+          入力補助テキスト
+          <input type="text" name="placeholder" value="<%= safeForm.placeholder || '' %>" placeholder="例: できるだけ具体的に書いてください" />
+        </label>
+      </div>
 
-  <label>
-    slot が埋まっていればスキップ可能(JSON array)
-    <textarea name="skippable_if_slots_present"><%= questionMetaForm?.skippable_if_slots_present_text || "" %></textarea>
-  </label>
+      <div id="typeOptionFields" class="stack-sm hidden">
+        <div id="optionRows" class="stack-sm">
+          <% for (const label of optionLabels) { %>
+            <div class="row-card option-row">
+              <label>
+                選択肢
+                <input type="text" name="option_labels" value="<%= label %>" placeholder="例: 毎日" />
+              </label>
+              <div class="inline-actions">
+                <button type="button" class="button-link danger remove-row">削除</button>
+              </div>
+            </div>
+          <% } %>
+        </div>
+        <div class="inline-actions">
+          <button type="button" class="button-link secondary" id="addOptionRow">選択肢を追加</button>
+        </div>
+      </div>
 
-  <label>
-    bad answer 判定(JSON)
-    <textarea name="bad_answer_patterns"><%= questionMetaForm?.bad_answer_patterns_text || "" %></textarea>
-  </label>
+      <div id="typeMultiFields" class="form-grid hidden">
+        <label>
+          最小選択数
+          <input type="number" name="min_select" min="0" value="<%= safeForm.min_select_text || '' %>" />
+        </label>
+        <label>
+          最大選択数
+          <input type="number" name="max_select" min="1" value="<%= safeForm.max_select_text || '' %>" />
+        </label>
+      </div>
 
-  <div class="form-grid">
-    <label>
-      最大深掘り回数
-      <input type="number" name="max_probes" min="0" value="<%= questionMetaForm?.max_probes || '1' %>" />
-    </label>
-    <label>
-      <input type="checkbox" name="force_probe_on_bad" <%= questionMetaForm?.force_probe_on_bad !== false ? "checked" : "" %> />
-      bad answer で深掘り
-    </label>
-    <label>
-      <input type="checkbox" name="strict_topic_lock" <%= questionMetaForm?.strict_topic_lock !== false ? "checked" : "" %> />
-      話題固定
-    </label>
-  </div>
+      <div id="typeYesNoFields" class="form-grid hidden">
+        <label>
+          Yesラベル
+          <input type="text" name="yes_label" value="<%= safeForm.yes_label || 'はい' %>" />
+        </label>
+        <label>
+          Noラベル
+          <input type="text" name="no_label" value="<%= safeForm.no_label || 'いいえ' %>" />
+        </label>
+      </div>
 
-  <label>
-    question_config(JSON)
-    <textarea name="question_config"><%= question?.question_config ? JSON.stringify(question.question_config, null, 2) : "" %></textarea>
-  </label>
+      <div id="typeScaleFields" class="form-grid hidden">
+        <label>
+          最小値
+          <input type="number" name="scale_min" value="<%= safeForm.scale_min_text || '1' %>" />
+        </label>
+        <label>
+          最小ラベル
+          <input type="text" name="scale_min_label" value="<%= safeForm.scale_min_label || '' %>" />
+        </label>
+        <label>
+          最大値
+          <input type="number" name="scale_max" value="<%= safeForm.scale_max_text || '5' %>" />
+        </label>
+        <label>
+          最大ラベル
+          <input type="text" name="scale_max_label" value="<%= safeForm.scale_max_label || '' %>" />
+        </label>
+      </div>
+    </div>
+  </details>
 
-  <label>
-    branch_rule(JSON)
-    <textarea name="branch_rule"><%= question?.branch_rule ? JSON.stringify(question.branch_rule, null, 2) : "" %></textarea>
-  </label>
-
-  <button type="submit">保存する</button>
+  <button type="submit"><%= question ? "更新する" : "作成する" %></button>
 </form>
+
+<script>
+  (() => {
+    const questionType = document.getElementById("questionType");
+    const extractionEnabled = document.getElementById("extractionEnabled");
+    const extractionArea = document.getElementById("extractionArea");
+    const extractionRows = document.getElementById("extractionRows");
+    const optionRows = document.getElementById("optionRows");
+    const branchRows = document.getElementById("branchRows");
+    const nextQuestionOptions = <%- JSON.stringify(nextQuestionOptions) %>;
+
+    function extractionLabels() {
+      return Array.from(extractionRows.querySelectorAll("input[name='extraction_items']"))
+        .map((input) => input.value.trim())
+        .filter(Boolean);
+    }
+
+    function syncExtractionVisibility() {
+      extractionArea.classList.toggle("hidden", !extractionEnabled.checked);
+      syncBranchFieldOptions();
+    }
+
+    function syncTypeVisibility() {
+      const type = questionType.value;
+      document.getElementById("typeTextFields").classList.toggle("hidden", type !== "text");
+      document.getElementById("typeOptionFields").classList.toggle(
+        "hidden",
+        type !== "single_select" && type !== "multi_select"
+      );
+      document.getElementById("typeMultiFields").classList.toggle("hidden", type !== "multi_select");
+      document.getElementById("typeYesNoFields").classList.toggle("hidden", type !== "yes_no");
+      document.getElementById("typeScaleFields").classList.toggle("hidden", type !== "scale");
+    }
+
+    function syncBranchFieldOptions() {
+      const labels = extractionLabels();
+      branchRows.querySelectorAll(".branch-row").forEach((row) => {
+        const source = row.querySelector(".branch-source");
+        const fieldSelect = row.querySelector(".branch-field");
+        const selected = fieldSelect.dataset.selected || fieldSelect.value || "";
+
+        if (source.value !== "extracted") {
+          fieldSelect.innerHTML = '<option value="">回答そのもの</option>';
+          fieldSelect.value = "";
+          fieldSelect.disabled = true;
+          return;
+        }
+
+        fieldSelect.disabled = false;
+        fieldSelect.innerHTML = ['<option value="">項目を選択</option>']
+          .concat(labels.map((label) => `<option value="${label}">${label}</option>`))
+          .join("");
+        if (labels.includes(selected)) {
+          fieldSelect.value = selected;
+        }
+      });
+    }
+
+    function attachRowActions(container) {
+      container.querySelectorAll(".remove-row").forEach((button) => {
+        button.onclick = () => {
+          const rows = container.querySelectorAll(".row-card");
+          if (rows.length <= 1) {
+            rows[0].querySelectorAll("input, select").forEach((field) => {
+              if (field.tagName === "SELECT") {
+                field.selectedIndex = 0;
+              } else {
+                field.value = "";
+              }
+            });
+            if (container === branchRows) {
+              syncBranchFieldOptions();
+            }
+            return;
+          }
+          button.closest(".row-card").remove();
+          if (container === extractionRows) {
+            syncBranchFieldOptions();
+          }
+        };
+      });
+
+      container.querySelectorAll(".branch-source").forEach((select) => {
+        select.onchange = () => syncBranchFieldOptions();
+      });
+
+      container.querySelectorAll("input[name='extraction_items']").forEach((input) => {
+        input.oninput = () => syncBranchFieldOptions();
+      });
+    }
+
+    function addExtractionRow(value = "") {
+      const wrapper = document.createElement("div");
+      wrapper.className = "row-card extraction-row";
+      wrapper.innerHTML = `
+        <label>
+          抽出したい項目
+          <input type="text" name="extraction_items" value="${value}" placeholder="例: 種類 / 年齢 / 数" />
+        </label>
+        <div class="inline-actions">
+          <button type="button" class="button-link danger remove-row">削除</button>
+        </div>
+      `;
+      extractionRows.appendChild(wrapper);
+      attachRowActions(extractionRows);
+      syncBranchFieldOptions();
+    }
+
+    function addOptionRow(value = "") {
+      const wrapper = document.createElement("div");
+      wrapper.className = "row-card option-row";
+      wrapper.innerHTML = `
+        <label>
+          選択肢
+          <input type="text" name="option_labels" value="${value}" placeholder="例: 毎日" />
+        </label>
+        <div class="inline-actions">
+          <button type="button" class="button-link danger remove-row">削除</button>
+        </div>
+      `;
+      optionRows.appendChild(wrapper);
+      attachRowActions(optionRows);
+    }
+
+    function addBranchRow() {
+      const wrapper = document.createElement("div");
+      wrapper.className = "row-card branch-row";
+      wrapper.innerHTML = `
+        <div class="form-grid">
+          <label>
+            判定元
+            <select name="branch_source" class="branch-source">
+              <option value="answer">回答そのもの</option>
+              <option value="extracted">抽出項目</option>
+            </select>
+          </label>
+          <label>
+            項目
+            <select name="branch_field_label" class="branch-field">
+              <option value="">回答そのもの</option>
+            </select>
+          </label>
+          <label>
+            条件
+            <select name="branch_operator">
+              <option value="equals">equals</option>
+              <option value="includes">includes</option>
+              <option value="any_of">any_of</option>
+              <option value="gte">gte</option>
+              <option value="lte">lte</option>
+            </select>
+          </label>
+          <label>
+            値
+            <input type="text" name="branch_value" placeholder="例: 犬" />
+          </label>
+        </div>
+        <div class="form-grid">
+          <label>
+            遷移先
+            <select name="branch_next">
+              <option value="">選択してください</option>
+              ${nextQuestionOptions.map((option) => `<option value="${option.code}">${option.code} | ${option.text}</option>`).join("")}
+            </select>
+          </label>
+        </div>
+        <div class="inline-actions">
+          <button type="button" class="button-link danger remove-row">削除</button>
+        </div>
+      `;
+      branchRows.appendChild(wrapper);
+      attachRowActions(branchRows);
+      syncBranchFieldOptions();
+    }
+
+    document.getElementById("addExtractionRow").onclick = () => addExtractionRow();
+    document.getElementById("addOptionRow").onclick = () => addOptionRow();
+    document.getElementById("addBranchRow").onclick = () => addBranchRow();
+    extractionEnabled.onchange = syncExtractionVisibility;
+    questionType.onchange = syncTypeVisibility;
+
+    attachRowActions(extractionRows);
+    attachRowActions(optionRows);
+    attachRowActions(branchRows);
+    syncTypeVisibility();
+    syncExtractionVisibility();
+  })();
+</script>
 
 <%- include("../../partials/footer") %>

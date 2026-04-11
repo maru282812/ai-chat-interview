@@ -1,32 +1,71 @@
 ﻿<%- include("../../partials/header", { title }) %>
 <%
   const form = projectForm || {};
-  const templates = Array.isArray(projectAiStateTemplates) ? projectAiStateTemplates : [];
   const aiState = aiStateDisplay || form.ai_state_summary || {};
   const requiredSlots = Array.isArray(aiState.required_slots) ? aiState.required_slots : [];
   const optionalSlots = Array.isArray(aiState.optional_slots) ? aiState.optional_slots : [];
-  const questionCategories = Array.isArray(aiState.question_categories) ? aiState.question_categories : [];
-  const completionRule = aiState.completion_rule || {};
-  const probePolicy = aiState.probe_policy || {};
-  const topicControl = aiState.topic_control || {};
+  const modeOptions = [
+    { value: "survey_interview", label: "サーベイ＋インタビュー" },
+    { value: "interview", label: "インタビュー" }
+  ];
   const statusOptions = [
     { value: "draft", label: "下書き" },
     { value: "active", label: "公開中" },
     { value: "paused", label: "一時停止" },
     { value: "archived", label: "アーカイブ" }
   ];
-  const modeOptions = [
-    { value: "survey", label: "アンケート" },
-    { value: "interview", label: "インタビュー" },
-    { value: "survey_with_interview_probe", label: "アンケート + 深掘り" }
-  ];
 %>
+
+<style>
+  .editor-section {
+    border: 1px solid #d8e3e0;
+    border-radius: 14px;
+    padding: 18px;
+    background: #f8fbfa;
+  }
+  .editor-section h2,
+  .editor-section h3 {
+    margin: 0 0 10px;
+  }
+  .helper-text {
+    margin: 0;
+    font-size: 12px;
+    color: #60726f;
+  }
+  .summary-toggle {
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .preview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+  }
+  .preview-card {
+    border: 1px solid #d8e3e0;
+    border-radius: 12px;
+    padding: 12px;
+    background: #fff;
+  }
+  .slot-list {
+    display: grid;
+    gap: 8px;
+  }
+  .slot-item {
+    border: 1px solid #d8e3e0;
+    border-radius: 10px;
+    padding: 10px;
+    background: #fff;
+  }
+</style>
+
 <form class="card stack" method="post" action="<%= action %>">
   <% if (successMessage) { %>
     <section class="card subtle-card success-card">
       <strong class="success-text"><%= successMessage %></strong>
     </section>
   <% } %>
+
   <% if (errorMessage) { %>
     <section class="card subtle-card">
       <strong class="danger-text">入力内容を確認してください</strong>
@@ -34,165 +73,137 @@
     </section>
   <% } %>
 
-  <div class="form-grid">
-    <label>
-      プロジェクト名
-      <input type="text" name="name" value="<%= form.name || '' %>" required />
-    </label>
-    <label>
-      クライアント名
-      <input type="text" name="client_name" value="<%= form.client_name || '' %>" />
-    </label>
-    <label>
-      ステータス
-      <select name="status">
-        <% for (const status of statusOptions) { %>
-          <option value="<%= status.value %>" <%= (form.status || "draft") === status.value ? "selected" : "" %>>
-            <%= status.label %>
-          </option>
-        <% } %>
-      </select>
-    </label>
-    <label>
-      調査モード
-      <select name="research_mode">
-        <% for (const mode of modeOptions) { %>
-          <option value="<%= mode.value %>" <%= (form.research_mode || "survey") === mode.value ? "selected" : "" %>>
-            <%= mode.label %>
-          </option>
-        <% } %>
-      </select>
-    </label>
-    <label>
-      報酬ポイント
-      <input type="number" name="reward_points" value="<%= form.reward_points_text || '30' %>" />
-    </label>
-    <label>
-      テンプレート
-      <select name="ai_state_template_key">
-        <option value="">自動選択</option>
-        <% for (const template of templates) { %>
-          <option value="<%= template.key %>" <%= (form.ai_state_template_key || "") === template.key ? "selected" : "" %>>
-            <%= template.label %>
-          </option>
-        <% } %>
-      </select>
-    </label>
-  </div>
+  <section class="editor-section stack">
+    <h2>1. 基本設定</h2>
+    <p class="helper-text">まずはこの3項目だけで、使える調査プロジェクトを作れます。</p>
 
-  <label>
-    調査目的
-    <textarea name="objective"><%= form.objective || '' %></textarea>
-  </label>
-
-  <label>
-    主目的
-    <textarea name="primary_objectives" rows="4" placeholder="1行に1件ずつ入力"><%= form.primary_objectives_text || "" %></textarea>
-  </label>
-
-  <label>
-    副目的
-    <textarea name="secondary_objectives" rows="4" placeholder="1行に1件ずつ入力"><%= form.secondary_objectives_text || "" %></textarea>
-  </label>
-
-  <label>
-    比較条件
-    <textarea name="comparison_constraints" rows="4" placeholder="1行に1件ずつ入力"><%= form.comparison_constraints_text || "" %></textarea>
-  </label>
-
-  <label>
-    プロンプトルール
-    <textarea name="prompt_rules" rows="5" placeholder="1行に1件ずつ入力"><%= form.prompt_rules_text || "" %></textarea>
-  </label>
-
-  <label>
-    深掘り設定(JSON)
-    <textarea name="probe_policy" rows="8"><%= form.probe_policy_text || "" %></textarea>
-  </label>
-
-  <label>
-    応答スタイル(JSON)
-    <textarea name="response_style" rows="6"><%= form.response_style_text || "" %></textarea>
-  </label>
-
-  <section class="card subtle-card stack">
-    <div>
-      <strong>project_ai_state</strong>
-      <p class="muted">
-        優先順位は `question.meta` → `project.ai_state_json` → 既定テンプレートです。下の JSON は手動調整用で、未入力でも画面表示は落ちません。
-      </p>
-      <% if (form.ai_state_generated_at) { %>
-        <p class="muted">生成日時: <%= form.ai_state_generated_at %></p>
-      <% } else { %>
-        <p class="muted">未生成です。保存時に既定値または入力JSONから表示を構成します。</p>
-      <% } %>
+    <div class="form-grid">
+      <label>
+        プロジェクト名
+        <input type="text" name="name" value="<%= form.name || '' %>" required />
+      </label>
+      <label>
+        調査モード
+        <select name="research_mode">
+          <% for (const mode of modeOptions) { %>
+            <option value="<%= mode.value %>" <%= form.research_mode === mode.value ? "selected" : "" %>><%= mode.label %></option>
+          <% } %>
+        </select>
+      </label>
     </div>
 
-    <div class="grid">
-      <div class="card subtle-card">
+    <label>
+      調査目的
+      <textarea name="objective" required placeholder="例: どの利用シーンで不満が出るのか把握したい"><%= form.objective || '' %></textarea>
+    </label>
+  </section>
+
+  <details class="editor-section">
+    <summary class="summary-toggle">2. 詳細設定</summary>
+    <div class="stack" style="margin-top: 14px;">
+      <div class="form-grid">
+        <label>
+          <input type="checkbox" name="deep_probe_enabled" <%= form.deep_probe_enabled ? "checked" : "" %> />
+          深掘りを有効にする
+        </label>
+        <label>
+          最大深掘り回数
+          <input type="number" name="max_probe_depth" min="0" value="<%= form.max_probe_depth_text || '1' %>" />
+        </label>
+        <label>
+          表示スタイル
+          <select name="display_style">
+            <option value="survey" <%= form.display_style === "survey" ? "selected" : "" %>>survey</option>
+            <option value="interview" <%= form.display_style === "interview" ? "selected" : "" %>>interview</option>
+          </select>
+        </label>
+      </div>
+
+      <label>
+        比較条件
+        <textarea name="comparison_constraints" rows="4" placeholder="1行に1件ずつ入力"><%= form.comparison_constraints_text || '' %></textarea>
+      </label>
+
+      <div class="form-grid">
+        <label>
+          クライアント名
+          <input type="text" name="client_name" value="<%= form.client_name || '' %>" />
+        </label>
+        <label>
+          報酬ポイント
+          <input type="number" name="reward_points" value="<%= form.reward_points_text || '30' %>" />
+        </label>
+        <label>
+          ステータス
+          <select name="status">
+            <% for (const status of statusOptions) { %>
+              <option value="<%= status.value %>" <%= form.status === status.value ? "selected" : "" %>><%= status.label %></option>
+            <% } %>
+          </select>
+        </label>
+      </div>
+    </div>
+  </details>
+
+  <section class="editor-section stack">
+    <h2>3. 内部プレビュー</h2>
+    <p class="helper-text">JSONは表示しません。下の内容は、現在の入力から内部で自動生成される AI 実行コンテキストです。</p>
+
+    <div class="preview-grid">
+      <div class="preview-card">
         <div class="muted">調査ゴール</div>
         <div><%= aiState.project_goal || "未設定" %></div>
       </div>
-      <div class="card subtle-card">
+      <div class="preview-card">
         <div class="muted">理解したいこと</div>
         <div><%= aiState.user_understanding_goal || "未設定" %></div>
       </div>
-      <div class="card subtle-card">
-        <div class="muted">深掘り設定</div>
-        <div>最大深掘り回数: <%= probePolicy.default_max_probes ?? 0 %></div>
-        <div>不十分回答で深掘り: <%= probePolicy.force_probe_on_bad ? "有効" : "無効" %></div>
-        <div>話題固定: <%= probePolicy.strict_topic_lock ? "有効" : "無効" %></div>
+      <div class="preview-card">
+        <div class="muted">深掘り</div>
+        <div>有効: <%= form.deep_probe_enabled ? "ON" : "OFF" %></div>
+        <div>最大回数: <%= form.max_probe_depth_text || "0" %></div>
       </div>
-      <div class="card subtle-card">
-        <div class="muted">完了条件・言語</div>
-        <div>話題逸脱防止: <%= topicControl.forbidden_topic_shift ? "有効" : "無効" %></div>
-        <div>言語: <%= aiState.language || "ja" %></div>
-        <div>補足: <%= topicControl.topic_lock_note || "未設定" %></div>
+      <div class="preview-card">
+        <div class="muted">生成日時</div>
+        <div><%= form.ai_state_generated_at || "保存時に更新" %></div>
       </div>
     </div>
 
-    <div class="table-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th>区分</th>
-            <th>項目</th>
-            <th>説明</th>
-          </tr>
-        </thead>
-        <tbody>
+    <div class="form-grid">
+      <div>
+        <h3>必須スロット</h3>
+        <div class="slot-list">
+          <% if (requiredSlots.length === 0) { %>
+            <div class="slot-item muted">内部テンプレートから自動設定されます。</div>
+          <% } %>
           <% for (const slot of requiredSlots) { %>
-            <tr>
-              <td><span class="tag">必須項目</span></td>
-              <td><strong><%= slot.label %></strong><br /><span class="muted"><%= slot.key %></span></td>
-              <td><%= slot.description || "説明なし" %></td>
-            </tr>
+            <div class="slot-item">
+              <strong><%= slot.label %></strong>
+              <div class="muted"><%= slot.key %></div>
+              <div><%= slot.description || "説明なし" %></div>
+            </div>
+          <% } %>
+        </div>
+      </div>
+      <div>
+        <h3>任意スロット</h3>
+        <div class="slot-list">
+          <% if (optionalSlots.length === 0) { %>
+            <div class="slot-item muted">必要に応じて内部テンプレートから補完されます。</div>
           <% } %>
           <% for (const slot of optionalSlots) { %>
-            <tr>
-              <td><span class="tag">任意項目</span></td>
-              <td><strong><%= slot.label %></strong><br /><span class="muted"><%= slot.key %></span></td>
-              <td><%= slot.description || "説明なし" %></td>
-            </tr>
+            <div class="slot-item">
+              <strong><%= slot.label %></strong>
+              <div class="muted"><%= slot.key %></div>
+              <div><%= slot.description || "説明なし" %></div>
+            </div>
           <% } %>
-        </tbody>
-      </table>
+        </div>
+      </div>
     </div>
-
-    <div class="card subtle-card">
-      <div class="muted">完了条件</div>
-      <div>必須項目キー: <%= Array.isArray(completionRule.required_slots_needed) && completionRule.required_slots_needed.length ? completionRule.required_slots_needed.join(", ") : "未設定" %></div>
-      <div>任意項目なしで完了: <%= completionRule.allow_finish_without_optional ? "許可" : "不許可" %></div>
-      <div>完了に必要な最小必須数: <%= completionRule.min_required_slots_to_finish ?? 0 %></div>
-      <div>質問カテゴリ: <%= questionCategories.length ? questionCategories.join(" / ") : "未設定" %></div>
-    </div>
-
-    <label>
-      AI state JSON
-      <textarea name="ai_state_json" rows="24"><%= form.ai_state_json_text || "" %></textarea>
-    </label>
   </section>
 
   <button type="submit"><%= project ? "更新する" : "作成する" %></button>
 </form>
+
 <%- include("../../partials/footer") %>

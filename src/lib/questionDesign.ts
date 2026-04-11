@@ -256,23 +256,54 @@ function normalizeBranchSource(value: unknown): QuestionBranchSource | undefined
   return normalized === "answer" || normalized === "extracted" ? normalized : undefined;
 }
 
-function toCanonicalBranchRoute(input: unknown): QuestionBranchRoute | null {
+function toCanonicalBranchRoute(
+  input: unknown,
+  defaults: { next?: string | null; source?: QuestionBranchSource; field?: string | null } = {}
+): QuestionBranchRoute | null {
   if (!isPlainObject(input)) {
     return null;
   }
 
-  const next = normalizeString(input.next) ?? normalizeString(input.targetQuestionCode);
+  const next =
+    normalizeString(input.next) ??
+    normalizeString(input.next_question_code) ??
+    normalizeString(input.targetQuestionCode) ??
+    defaults.next ??
+    null;
   const when = toCanonicalBranchCondition(input.when ?? input);
   if (!next || !when) {
     return null;
   }
 
   return {
-    source: normalizeBranchSource(input.source),
-    field: normalizeString(input.field),
+    source: normalizeBranchSource(input.source) ?? defaults.source,
+    field: normalizeString(input.field) ?? defaults.field ?? undefined,
     when,
     next
   };
+}
+
+function toCanonicalBranchRoutes(input: unknown): QuestionBranchRoute[] {
+  if (!isPlainObject(input)) {
+    return [];
+  }
+
+  const next =
+    normalizeString(input.next) ??
+    normalizeString(input.next_question_code) ??
+    normalizeString(input.targetQuestionCode);
+  const source = normalizeBranchSource(input.source);
+  const field = normalizeString(input.field);
+  const defaults = { next, source, field };
+
+  if (Array.isArray(input.conditions)) {
+    return input.conditions
+      .map((condition) => toCanonicalBranchRoute(condition, defaults))
+      .filter((route): route is QuestionBranchRoute => Boolean(route));
+  }
+
+  const route = toCanonicalBranchRoute(input, defaults);
+  return route ? [route] : [];
 }
 
 function comparePrimitive(left: BranchPrimitive, right: BranchPrimitive): boolean {
@@ -538,7 +569,7 @@ export function getQuestionExtractionConfig(config: Question["question_config"] 
 export function normalizeBranchRule(value: Question["branch_rule"] | unknown): QuestionBranchRule | null {
   if (Array.isArray(value)) {
     const branches = value
-      .map((item) => toCanonicalBranchRoute(item))
+      .flatMap((item) => toCanonicalBranchRoutes(item))
       .filter((item): item is QuestionBranchRoute => Boolean(item));
     return branches.length > 0 ? { branches } : null;
   }
@@ -551,7 +582,7 @@ export function normalizeBranchRule(value: Question["branch_rule"] | unknown): Q
   const mergeQuestionCode = normalizeString(value.merge_question_code);
   const branches = Array.isArray(value.branches)
     ? value.branches
-        .map((item) => toCanonicalBranchRoute(item))
+        .flatMap((item) => toCanonicalBranchRoutes(item))
         .filter((item): item is QuestionBranchRoute => Boolean(item))
     : [];
 

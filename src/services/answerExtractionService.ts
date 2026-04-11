@@ -18,6 +18,7 @@ type PrimitiveFieldValue = string | number | boolean | null;
 interface BuiltExtraction {
   extraction: NormalizedExtractionResult;
   normalizedAnswer: Record<string, unknown>;
+  usedAi: boolean;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -382,6 +383,7 @@ export const answerExtractionService = {
     }
 
     let extraction = buildRuleExtraction(input.answerText, config);
+    let usedAi = false;
     if (shouldRunAiDuringConversation(config, extraction, input.requireForBranching ?? false)) {
       extraction = await maybeEnhanceWithAi({
         sessionId: input.sessionId,
@@ -392,11 +394,13 @@ export const answerExtractionService = {
         extraction,
         force: true
       });
+      usedAi = extraction.method === "ai_assisted";
     }
 
     return {
       extraction,
-      normalizedAnswer: mergeExtractionIntoAnswer(input.baseNormalized, extraction)
+      normalizedAnswer: mergeExtractionIntoAnswer(input.baseNormalized, extraction),
+      usedAi
     };
   },
 

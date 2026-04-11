@@ -1,6 +1,8 @@
 ﻿import type { Request, Response } from "express";
 import { HttpError } from "../lib/http";
 import {
+  getQuestionScaleRange,
+  getYesNoLabels,
   normalizeBranchRule,
   normalizeQuestionConfig,
   validateBranchRule,
@@ -9,10 +11,13 @@ import {
 import {
   getProjectAIState,
   getProjectAiStateTemplates,
-  normalizeProjectAIState,
-  stringifyProjectAIState
+  normalizeProjectAIState
 } from "../lib/projectAiState";
-import { getProjectResearchSettings, parseLineSeparatedList, stringifyJsonField } from "../lib/projectResearch";
+import {
+  buildExtractionSchemaFromExpectedSlots,
+  buildQuestionMetaFromAuthoringInput
+} from "../lib/questionMetadata";
+import { getProjectResearchSettings, parseLineSeparatedList } from "../lib/projectResearch";
 import { csvService } from "../services/csvService";
 import { adminService } from "../services/adminService";
 import { pointService } from "../services/pointService";
@@ -21,7 +26,6 @@ import { projectRepository } from "../repositories/projectRepository";
 import { questionRepository } from "../repositories/questionRepository";
 import { rankRepository } from "../repositories/rankRepository";
 import { analysisService } from "../services/analysisService";
-import { projectAiStateService } from "../services/projectAiStateService";
 import type {
   PostActionability,
   PostInsightType,
@@ -148,6 +152,13 @@ function resolveNoticeMessage(value: unknown): string | null {
   }
 }
 
+function buildProjectEditRedirectPath(
+  projectId: string,
+  notice: "project_created" | "project_updated" | "project_copied"
+): string {
+  return `/admin/projects/${projectId}/edit?notice=${notice}`;
+}
+
 function renderProjectsIndex(
   res: Response,
   input: {
@@ -258,10 +269,10 @@ function numberField(value: unknown, defaultValue = 0): number {
   return Number.isFinite(numeric) ? numeric : defaultValue;
 }
 function parseResearchMode(value: string): ResearchMode {
-  if (value === "survey" || value === "interview" || value === "survey_with_interview_probe") {
+  if (value === "survey_interview" || value === "interview") {
     return value;
   }
-  return "survey";
+  return "survey_interview";
 }
 
 function parseQuestionRole(value: string): QuestionRole {
@@ -292,6 +303,8 @@ function parseQuestionType(value: string): QuestionType {
   return "text";
 }
 
+type ProjectDisplayStyle = "survey" | "interview";
+
 type ProjectFormOverrides = Partial<{
   name: string;
   client_name: string;
@@ -299,58 +312,83 @@ type ProjectFormOverrides = Partial<{
   status: string;
   reward_points_text: string;
   research_mode: string;
-  primary_objectives_text: string;
-  secondary_objectives_text: string;
   comparison_constraints_text: string;
-  prompt_rules_text: string;
-  probe_policy_text: string;
-  response_style_text: string;
-  ai_state_template_key: string;
+  deep_probe_enabled: boolean;
+  max_probe_depth_text: string;
+  display_style: ProjectDisplayStyle;
   ai_state_json: Project["ai_state_json"] | null;
-  ai_state_json_text: string;
   ai_state_generated_at: string | null;
 }>;
+
+function parseProjectDisplayStyle(value: string): ProjectDisplayStyle {
+  return value === "interview" ? "interview" : "survey";
+}
+
+function buildProjectProbePolicyFromSimpleInput(input: {
+  deepProbeEnabled: boolean;
+  maxProbeDepth: number;
+  existing?: Project["probe_policy"] | null;
+}): Project["probe_policy"] {
+  const enabled = input.deepProbeEnabled && input.maxProbeDepth > 0;
+  return {
+    enabled,
+    conditions: enabled ? ["short_answer", "abstract_answer"] : ["short_answer"],
+    max_probes_per_answer: enabled ? input.maxProbeDepth : 0,
+    max_probes_per_session: enabled ? Math.max(input.maxProbeDepth, 1) : 0,
+    require_question_probe_enabled: true,
+    target_question_codes: input.existing?.target_question_codes ?? [],
+    blocked_question_codes: input.existing?.blocked_question_codes ?? [],
+    short_answer_min_length: input.existing?.short_answer_min_length ?? 10,
+    end_conditions:
+      input.existing?.end_conditions ?? [
+        "answer_sufficient",
+        "max_probes_per_answer",
+        "max_probes_per_session",
+        "question_not_target",
+        "question_blocked",
+        "user_declined"
+      ]
+  };
+}
+
+function buildProjectResponseStyleFromSimpleInput(displayStyle: ProjectDisplayStyle): Project["response_style"] {
+  return {
+    channel: "line",
+    tone: "natural_japanese",
+    max_characters_per_message: displayStyle === "interview" ? 80 : 60,
+    max_sentences: displayStyle === "interview" ? 2 : 1
+  };
+}
 
 function buildProjectForm(project: Project | null, overrides: ProjectFormOverrides = {}) {
   const settings = getProjectResearchSettings(project);
   const name = overrides.name ?? project?.name ?? "";
   const objective = overrides.objective ?? project?.objective ?? "";
-  const researchMode = overrides.research_mode ?? project?.research_mode ?? "survey";
-  const primaryObjectivesText = overrides.primary_objectives_text ?? settings.primary_objectives.join("\n");
-  const secondaryObjectivesText = overrides.secondary_objectives_text ?? settings.secondary_objectives.join("\n");
-  const aiStateTemplateKey = overrides.ai_state_template_key ?? project?.ai_state_template_key ?? "";
+  const researchMode = parseResearchMode(overrides.research_mode ?? project?.research_mode ?? "survey_interview");
+  const comparisonConstraintsText =
+    overrides.comparison_constraints_text ?? settings.comparison_constraints.join("\n");
   const fallbackProject = {
     name,
     objective: objective || null,
-    research_mode: parseResearchMode(researchMode),
-    primary_objectives: parseLineSeparatedList(primaryObjectivesText),
-    secondary_objectives: parseLineSeparatedList(secondaryObjectivesText),
-    ai_state_template_key: aiStateTemplateKey || null
+    research_mode: researchMode,
+    primary_objectives: objective ? [objective] : [],
+    secondary_objectives: [],
+    ai_state_template_key: project?.ai_state_template_key ?? null
   };
-  const aiStateJsonText =
-    overrides.ai_state_json_text ?? (project?.ai_state_json ? stringifyProjectAIState(project.ai_state_json) : "");
   const aiStateJson =
     overrides.ai_state_json ??
-    (() => {
-      const rawJson = aiStateJsonText.trim();
-      if (!rawJson) {
-        return project?.ai_state_json ?? null;
-      }
-
-      try {
-        return normalizeProjectAIState(JSON.parse(rawJson), {
-          fallbackTemplateKey: aiStateTemplateKey || null,
-          fallbackProject
-        });
-      } catch {
-        return project?.ai_state_json ?? null;
-      }
-    })();
+    normalizeProjectAIState(project?.ai_state_json, {
+      fallbackTemplateKey: project?.ai_state_template_key ?? null,
+      fallbackProject
+    });
   const aiState = getProjectAIState({
     ...fallbackProject,
     ai_state_json: aiStateJson,
-    ai_state_template_key: aiStateTemplateKey || null
+    ai_state_template_key: project?.ai_state_template_key ?? null
   });
+  const deepProbeEnabled =
+    overrides.deep_probe_enabled ??
+    Boolean((aiState.probe_policy.default_max_probes ?? 0) > 0 || settings.probe_policy.enabled);
 
   return {
     name,
@@ -359,17 +397,20 @@ function buildProjectForm(project: Project | null, overrides: ProjectFormOverrid
     status: overrides.status ?? project?.status ?? "draft",
     reward_points_text: overrides.reward_points_text ?? String(project?.reward_points ?? 30),
     research_mode: researchMode,
-    primary_objectives_text: primaryObjectivesText,
-    secondary_objectives_text: secondaryObjectivesText,
-    comparison_constraints_text:
-      overrides.comparison_constraints_text ?? settings.comparison_constraints.join("\n"),
-    prompt_rules_text: overrides.prompt_rules_text ?? settings.prompt_rules.join("\n"),
-    probe_policy_text: overrides.probe_policy_text ?? stringifyJsonField(settings.probe_policy),
-    response_style_text: overrides.response_style_text ?? stringifyJsonField(settings.response_style),
-    ai_state_template_key: aiStateTemplateKey,
+    comparison_constraints_text: comparisonConstraintsText,
+    deep_probe_enabled: deepProbeEnabled,
+    max_probe_depth_text:
+      overrides.max_probe_depth_text ??
+      String(
+        aiState.probe_policy.default_max_probes ??
+          settings.probe_policy.max_probes_per_answer ??
+          (deepProbeEnabled ? 1 : 0)
+      ),
+    display_style:
+      overrides.display_style ??
+      (researchMode === "interview" || (project?.response_style?.max_sentences ?? 0) > 1 ? "interview" : "survey"),
     ai_state_json: aiStateJson,
     ai_state_generated_at: overrides.ai_state_generated_at ?? project?.ai_state_generated_at ?? null,
-    ai_state_json_text: aiStateJsonText,
     ai_state_summary: aiState
   };
 }
@@ -381,15 +422,11 @@ function buildProjectFormOverridesFromRequest(req: Request): ProjectFormOverride
     objective: bodyString(req.body.objective),
     status: bodyString(req.body.status) || "draft",
     reward_points_text: bodyString(req.body.reward_points) || "30",
-    research_mode: bodyString(req.body.research_mode) || "survey",
-    primary_objectives_text: bodyString(req.body.primary_objectives),
-    secondary_objectives_text: bodyString(req.body.secondary_objectives),
+    research_mode: bodyString(req.body.research_mode) || "survey_interview",
     comparison_constraints_text: bodyString(req.body.comparison_constraints),
-    prompt_rules_text: bodyString(req.body.prompt_rules),
-    probe_policy_text: bodyString(req.body.probe_policy),
-    response_style_text: bodyString(req.body.response_style),
-    ai_state_template_key: bodyString(req.body.ai_state_template_key),
-    ai_state_json_text: bodyString(req.body.ai_state_json),
+    deep_probe_enabled: req.body.deep_probe_enabled === "on",
+    max_probe_depth_text: bodyString(req.body.max_probe_depth) || "1",
+    display_style: parseProjectDisplayStyle(bodyString(req.body.display_style)),
     ai_state_generated_at: null
   };
 }
@@ -407,7 +444,11 @@ function renderProjectResearchForm(
   }
 ): void {
   const projectForm = buildProjectForm(input.project, input.projectFormOverrides ?? {});
-  const payload = {
+  if (typeof input.statusCode === "number") {
+    res.status(input.statusCode);
+  }
+
+  res.render("admin/projects/researchForm", {
     title: input.title,
     project: input.project,
     action: input.action,
@@ -416,16 +457,13 @@ function renderProjectResearchForm(
     projectAiStateTemplates: getProjectAiStateTemplates(),
     projectForm,
     aiStateDisplay: projectForm.ai_state_summary
-  };
-
-  if (typeof input.statusCode === "number") {
-    res.status(input.statusCode);
-  }
-
-  res.render("admin/projects/researchForm", payload);
+  });
 }
 
 function getProjectRenderErrorMessage(error: unknown, fallbackMessage: string): string {
+  if (error instanceof HttpError && error.message.trim()) {
+    return error.message;
+  }
   if (error instanceof Error && error.message.trim()) {
     return error.message;
   }
@@ -450,49 +488,53 @@ function buildProjectAiStateFromRequest(input: {
     >
   >;
   existingAiState?: Project["ai_state_json"] | null;
-}): Project["ai_state_json"] | null {
-  const rawJson = bodyString(input.req.body.ai_state_json).trim();
-  if (!rawJson) {
-    return input.existingAiState ?? null;
-  }
-
-  return normalizeProjectAIState(parseJsonField(rawJson, "ai_state_json", input.existingAiState ?? null), {
-    fallbackTemplateKey: bodyString(input.req.body.ai_state_template_key) || input.fallbackProject.ai_state_template_key || null,
+}): Project["ai_state_json"] {
+  const deepProbeEnabled = input.req.body.deep_probe_enabled === "on";
+  const maxProbeDepth = Math.max(0, parseOptionalInteger(input.req.body.max_probe_depth) ?? (deepProbeEnabled ? 1 : 0));
+  const comparisonConstraints = parseLineSeparatedList(bodyString(input.req.body.comparison_constraints));
+  const displayStyle = parseProjectDisplayStyle(bodyString(input.req.body.display_style));
+  const baseState = normalizeProjectAIState(input.existingAiState, {
+    fallbackTemplateKey: input.fallbackProject.ai_state_template_key ?? null,
     fallbackProject: input.fallbackProject
   });
+
+  return normalizeProjectAIState(
+    {
+      ...baseState,
+      probe_policy: {
+        ...baseState.probe_policy,
+        default_max_probes: deepProbeEnabled ? maxProbeDepth : 0,
+        force_probe_on_bad: deepProbeEnabled,
+        allow_followup_expansion: displayStyle === "interview",
+        strict_topic_lock: true
+      },
+      topic_control: {
+        ...baseState.topic_control,
+        forbidden_topic_shift: true,
+        topic_lock_note:
+          comparisonConstraints.length > 0
+            ? `比較条件: ${comparisonConstraints.join(" / ")}`
+            : baseState.topic_control.topic_lock_note
+      }
+    },
+    {
+      fallbackTemplateKey: input.fallbackProject.ai_state_template_key ?? null,
+      fallbackProject: input.fallbackProject
+    }
+  );
 }
 
-function parseQuestionExpectedSlots(
-  value: string
-): NonNullable<NonNullable<Question["question_config"]>["meta"]>["expected_slots"] {
-  if (!value.trim()) {
-    return [];
-  }
+type QuestionBranchOperator = "equals" | "includes" | "any_of" | "gte" | "lte";
 
-  return parseJsonField(value, "expected_slots", []);
+interface QuestionBranchRowFormValue {
+  source: "answer" | "extracted";
+  field_label: string;
+  operator: QuestionBranchOperator;
+  value: string;
+  next: string;
 }
 
-function buildQuestionMetaForm(question: Question | null) {
-  const meta = question?.question_config?.meta ?? {};
-  const probeConfig = meta.probe_config ?? {};
-
-  return {
-    question_goal: meta.question_goal ?? "",
-    expected_slots_text: meta.expected_slots ? JSON.stringify(meta.expected_slots, null, 2) : "",
-    required_slots_text: meta.required_slots ? JSON.stringify(meta.required_slots, null, 2) : "",
-    skippable_if_slots_present_text: meta.skippable_if_slots_present
-      ? JSON.stringify(meta.skippable_if_slots_present, null, 2)
-      : "",
-    can_prefill_future_slots: meta.can_prefill_future_slots ?? true,
-    skip_forbidden_on_bad_answer: meta.skip_forbidden_on_bad_answer ?? true,
-    bad_answer_patterns_text: meta.bad_answer_patterns ? JSON.stringify(meta.bad_answer_patterns, null, 2) : "",
-    max_probes: typeof probeConfig.max_probes === "number" ? String(probeConfig.max_probes) : "",
-    force_probe_on_bad: probeConfig.force_probe_on_bad ?? true,
-    strict_topic_lock: probeConfig.strict_topic_lock ?? true
-  };
-}
-
-type QuestionFormValues = ReturnType<typeof buildQuestionMetaForm> & {
+interface QuestionFormValues {
   question_code: string;
   question_text: string;
   question_role: QuestionRole;
@@ -500,19 +542,100 @@ type QuestionFormValues = ReturnType<typeof buildQuestionMetaForm> & {
   sort_order_text: string;
   is_required: boolean;
   ai_probe_enabled: boolean;
-  extraction_mode: "none" | "single_object" | "multi_object";
-  extraction_target: "post_answer" | "post_session";
-  extraction_schema_text: string;
-  extracted_branch_enabled: boolean;
-  question_config_text: string;
-  branch_rule_text: string;
-};
+  probe_guideline: string;
+  max_probe_count_text: string;
+  render_strategy: "static" | "dynamic";
+  question_goal: string;
+  max_probes: string;
+  placeholder: string;
+  option_labels: string[];
+  min_select_text: string;
+  max_select_text: string;
+  yes_label: string;
+  no_label: string;
+  scale_min_text: string;
+  scale_max_text: string;
+  scale_min_label: string;
+  scale_max_label: string;
+  extraction_enabled: boolean;
+  extraction_items: string[];
+  branch_rows: QuestionBranchRowFormValue[];
+}
+
+function parseQuestionBranchOperator(value: string): QuestionBranchOperator {
+  if (
+    value === "equals" ||
+    value === "includes" ||
+    value === "any_of" ||
+    value === "gte" ||
+    value === "lte"
+  ) {
+    return value;
+  }
+  return "equals";
+}
+
+function normalizeTextList(values: string[]): string[] {
+  return values.map((value) => value.trim()).filter(Boolean);
+}
+
+function branchConditionToFormValue(
+  when: Record<string, unknown> | null | undefined
+): Pick<QuestionBranchRowFormValue, "operator" | "value"> {
+  if (!when) {
+    return { operator: "equals", value: "" };
+  }
+  if ("equals" in when) {
+    return { operator: "equals", value: String(when.equals ?? "") };
+  }
+  if ("includes" in when) {
+    return { operator: "includes", value: String(when.includes ?? "") };
+  }
+  if ("gte" in when) {
+    return { operator: "gte", value: String(when.gte ?? "") };
+  }
+  if ("lte" in when) {
+    return { operator: "lte", value: String(when.lte ?? "") };
+  }
+  if ("any_of" in when && Array.isArray(when.any_of)) {
+    return { operator: "any_of", value: when.any_of.map((value) => String(value ?? "")).join(", ") };
+  }
+  return { operator: "equals", value: "" };
+}
 
 function buildQuestionFormValues(
   question: Question | null,
   overrides: Partial<QuestionFormValues> = {}
 ): QuestionFormValues {
-  const extraction = question?.question_config?.extraction;
+  const meta = question?.question_config?.meta ?? {};
+  const extractionFields = Array.isArray(question?.question_config?.extraction?.schema?.fields)
+    ? question?.question_config?.extraction?.schema?.fields ?? []
+    : [];
+  const extractionItems = extractionFields
+    .map((field) => (typeof field.label === "string" && field.label.trim() ? field.label.trim() : field.key))
+    .filter(Boolean);
+  const fieldLabelByKey = new Map<string, string>(
+    extractionFields.map((field) => [field.key, field.label?.trim() || field.key])
+  );
+  const branchRule = normalizeBranchRule(question?.branch_rule ?? null);
+  const branchRows: QuestionBranchRowFormValue[] =
+    (branchRule?.branches ?? []).map((branch) => {
+      const condition = branchConditionToFormValue(branch.when as Record<string, unknown>);
+      return {
+        source: branch.source === "extracted" ? "extracted" : "answer",
+        field_label: branch.source === "extracted" ? fieldLabelByKey.get(branch.field ?? "") ?? branch.field ?? "" : "",
+        operator: condition.operator,
+        value: condition.value,
+        next: branch.next
+      } as QuestionBranchRowFormValue;
+    });
+  const optionLabels =
+    Array.isArray(question?.question_config?.options) && question?.question_config?.options.length > 0
+      ? question.question_config.options.map((option) => option.label)
+      : [];
+  const yesNoLabels = getYesNoLabels(question?.question_config ?? null);
+  const scale = getQuestionScaleRange(question?.question_config ?? null);
+
   return {
     question_code: overrides.question_code ?? question?.question_code ?? "",
     question_text: overrides.question_text ?? question?.question_text ?? "",
@@ -520,31 +643,50 @@ function buildQuestionFormValues(
     question_type: overrides.question_type ?? question?.question_type ?? "text",
     sort_order_text: overrides.sort_order_text ?? String(question?.sort_order ?? 1),
     is_required: overrides.is_required ?? question?.is_required ?? true,
-    ai_probe_enabled: overrides.ai_probe_enabled ?? question?.ai_probe_enabled ?? false,
-    extraction_mode:
-      overrides.extraction_mode ??
-      (extraction?.mode === "single_object" || extraction?.mode === "multi_object" ? extraction.mode : "none"),
-    extraction_target:
-      overrides.extraction_target ??
-      (extraction?.target === "post_session" ? "post_session" : "post_answer"),
-    extraction_schema_text:
-      overrides.extraction_schema_text ??
-      (extraction?.schema ? JSON.stringify(extraction.schema, null, 2) : ""),
-    extracted_branch_enabled: overrides.extracted_branch_enabled ?? extraction?.extracted_branch_enabled ?? false,
-    question_config_text:
-      overrides.question_config_text ??
-      (question?.question_config ? JSON.stringify(question.question_config, null, 2) : ""),
-    branch_rule_text:
-      overrides.branch_rule_text ??
-      (question?.branch_rule
-        ? JSON.stringify(normalizeBranchRule(question.branch_rule) ?? question.branch_rule, null, 2)
-        : ""),
-    ...buildQuestionMetaForm(question),
-    ...overrides
+    ai_probe_enabled: overrides.ai_probe_enabled ?? question?.ai_probe_enabled ?? true,
+    probe_guideline: overrides.probe_guideline ?? question?.probe_guideline ?? "",
+    max_probe_count_text:
+      overrides.max_probe_count_text ??
+      (question?.max_probe_count != null ? String(question.max_probe_count) : ""),
+    render_strategy: overrides.render_strategy ?? question?.render_strategy ?? "static",
+    question_goal: overrides.question_goal ?? meta.question_goal ?? "",
+    max_probes:
+      overrides.max_probes ??
+      String(typeof meta.probe_config?.max_probes === "number" ? meta.probe_config.max_probes : 1),
+    placeholder: overrides.placeholder ?? question?.question_config?.placeholder ?? "",
+    option_labels: overrides.option_labels ?? optionLabels,
+    min_select_text:
+      overrides.min_select_text ??
+      (typeof question?.question_config?.min_select === "number" ? String(question.question_config.min_select) : ""),
+    max_select_text:
+      overrides.max_select_text ??
+      (typeof question?.question_config?.max_select === "number" ? String(question.question_config.max_select) : ""),
+    yes_label: overrides.yes_label ?? yesNoLabels.yesLabel,
+    no_label: overrides.no_label ?? yesNoLabels.noLabel,
+    scale_min_text: overrides.scale_min_text ?? String(scale.min),
+    scale_max_text: overrides.scale_max_text ?? String(scale.max),
+    scale_min_label: overrides.scale_min_label ?? scale.minLabel,
+    scale_max_label: overrides.scale_max_label ?? scale.maxLabel,
+    extraction_enabled: overrides.extraction_enabled ?? extractionItems.length > 0,
+    extraction_items: overrides.extraction_items ?? extractionItems,
+    branch_rows: overrides.branch_rows ?? branchRows
   };
 }
 
 function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
+  const branchSources = bodyStringArray(req.body.branch_source);
+  const branchFieldLabels = bodyStringArray(req.body.branch_field_label);
+  const branchOperators = bodyStringArray(req.body.branch_operator);
+  const branchValues = bodyStringArray(req.body.branch_value);
+  const branchNextValues = bodyStringArray(req.body.branch_next);
+  const branchRowCount = Math.max(
+    branchSources.length,
+    branchFieldLabels.length,
+    branchOperators.length,
+    branchValues.length,
+    branchNextValues.length
+  );
+
   return {
     question_code: bodyString(req.body.question_code),
     question_text: bodyString(req.body.question_text),
@@ -553,25 +695,30 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     sort_order_text: bodyString(req.body.sort_order) || "1",
     is_required: req.body.is_required === "on",
     ai_probe_enabled: req.body.ai_probe_enabled === "on",
+    probe_guideline: bodyString(req.body.probe_guideline),
+    max_probe_count_text: bodyString(req.body.max_probe_count),
+    render_strategy: (bodyString(req.body.render_strategy) === "dynamic" ? "dynamic" : "static") as "static" | "dynamic",
     question_goal: bodyString(req.body.question_goal),
-    expected_slots_text: bodyString(req.body.expected_slots),
-    required_slots_text: bodyString(req.body.required_slots),
-    skippable_if_slots_present_text: bodyString(req.body.skippable_if_slots_present),
-    can_prefill_future_slots: req.body.can_prefill_future_slots === "on",
-    skip_forbidden_on_bad_answer: req.body.skip_forbidden_on_bad_answer === "on",
-    bad_answer_patterns_text: bodyString(req.body.bad_answer_patterns),
     max_probes: bodyString(req.body.max_probes) || "1",
-    force_probe_on_bad: req.body.force_probe_on_bad === "on",
-    strict_topic_lock: req.body.strict_topic_lock === "on",
-    extraction_mode:
-      bodyString(req.body.extraction_mode) === "single_object" || bodyString(req.body.extraction_mode) === "multi_object"
-        ? (bodyString(req.body.extraction_mode) as "single_object" | "multi_object")
-        : "none",
-    extraction_target: bodyString(req.body.extraction_target) === "post_session" ? "post_session" : "post_answer",
-    extraction_schema_text: bodyString(req.body.extraction_schema),
-    extracted_branch_enabled: req.body.extracted_branch_enabled === "on",
-    question_config_text: bodyString(req.body.question_config),
-    branch_rule_text: bodyString(req.body.branch_rule)
+    placeholder: bodyString(req.body.placeholder),
+    option_labels: normalizeTextList(bodyStringArray(req.body.option_labels)),
+    min_select_text: bodyString(req.body.min_select),
+    max_select_text: bodyString(req.body.max_select),
+    yes_label: bodyString(req.body.yes_label) || "はい",
+    no_label: bodyString(req.body.no_label) || "いいえ",
+    scale_min_text: bodyString(req.body.scale_min) || "1",
+    scale_max_text: bodyString(req.body.scale_max) || "5",
+    scale_min_label: bodyString(req.body.scale_min_label),
+    scale_max_label: bodyString(req.body.scale_max_label),
+    extraction_enabled: req.body.extraction_enabled === "on",
+    extraction_items: normalizeTextList(bodyStringArray(req.body.extraction_items)),
+    branch_rows: Array.from({ length: branchRowCount }, (_unused, index) => ({
+      source: (branchSources[index] === "extracted" ? "extracted" : "answer") as "answer" | "extracted",
+      field_label: branchFieldLabels[index] ?? "",
+      operator: parseQuestionBranchOperator(branchOperators[index] ?? ""),
+      value: branchValues[index] ?? "",
+      next: branchNextValues[index] ?? ""
+    })).filter((row) => row.field_label || row.value || row.next) as QuestionBranchRowFormValue[]
   };
 }
 
@@ -593,13 +740,15 @@ function renderQuestionForm(
     res.status(input.statusCode);
   }
 
-  res.render("admin/questions/formDesigner", {
+  res.render("admin/questions/formV2", {
     title: input.title,
     project: input.project,
     question: input.question,
     action: input.action,
     form: input.formValues,
-    availableQuestions: input.availableQuestions,
+    availableQuestions: input.availableQuestions.filter(
+      (candidate) => !candidate.is_hidden || candidate.id === input.question?.id
+    ),
     errorMessage: input.errorMessage ?? null,
     successMessage: input.successMessage ?? null
   });
@@ -610,68 +759,200 @@ function buildQuestionConfigFromRequest(
   questionType: QuestionType,
   existing: Question["question_config"] | null
 ) {
-  const parsed = parseJsonField(bodyString(req.body.question_config), "question_config", existing ?? null);
-  const questionConfig: NonNullable<Question["question_config"]> =
-    normalizeQuestionConfig(questionType, parsed) ?? {};
-  const meta =
-    questionConfig.meta && typeof questionConfig.meta === "object" && !Array.isArray(questionConfig.meta)
-      ? { ...questionConfig.meta }
-      : {};
-  const maxProbes = parseOptionalInteger(req.body.max_probes);
   const questionGoal = bodyString(req.body.question_goal).trim();
-
   if (!questionGoal) {
     throw new HttpError(400, "question_goal は必須です");
   }
 
-  meta.question_goal = questionGoal;
-  meta.expected_slots = parseQuestionExpectedSlots(bodyString(req.body.expected_slots));
-  meta.required_slots = parseStringArrayJsonField(bodyString(req.body.required_slots), "required_slots");
-  meta.skippable_if_slots_present = parseStringArrayJsonField(
-    bodyString(req.body.skippable_if_slots_present),
-    "skippable_if_slots_present"
-  );
-  meta.can_prefill_future_slots = req.body.can_prefill_future_slots === "on";
-  meta.skip_forbidden_on_bad_answer = req.body.skip_forbidden_on_bad_answer === "on";
-  meta.bad_answer_patterns = parseJsonField(
-    bodyString(req.body.bad_answer_patterns),
-    "bad_answer_patterns",
-    meta.bad_answer_patterns ?? []
-  );
-  meta.probe_config = {
-    ...(meta.probe_config ?? {}),
-    max_probes: maxProbes ?? 1,
-    force_probe_on_bad: req.body.force_probe_on_bad === "on",
-    strict_topic_lock: req.body.strict_topic_lock === "on"
-  };
+  const extractionEnabled = req.body.extraction_enabled === "on";
+  const extractionItems = normalizeTextList(bodyStringArray(req.body.extraction_items));
+  const questionConfig: NonNullable<Question["question_config"]> =
+    normalizeQuestionConfig(questionType, existing ?? {}) ?? {};
 
-  const extractionMode =
-    bodyString(req.body.extraction_mode) === "single_object" || bodyString(req.body.extraction_mode) === "multi_object"
-      ? (bodyString(req.body.extraction_mode) as "single_object" | "multi_object")
-      : "none";
-  if (extractionMode === "none") {
-    delete questionConfig.extraction;
-  } else {
-    const extractionSchema = parseJsonField(
-      bodyString(req.body.extraction_schema),
-      "extraction_schema",
-      existing?.extraction?.schema ?? null
-    );
-    questionConfig.extraction = {
-      mode: extractionMode,
-      target: bodyString(req.body.extraction_target) === "post_session" ? "post_session" : "post_answer",
-      schema: extractionSchema,
-      extracted_branch_enabled: req.body.extracted_branch_enabled === "on"
-    };
+  switch (questionType) {
+    case "text": {
+      const placeholder = bodyString(req.body.placeholder).trim();
+      if (placeholder) {
+        questionConfig.placeholder = placeholder;
+      } else {
+        delete questionConfig.placeholder;
+      }
+      break;
+    }
+    case "single_select":
+    case "multi_select": {
+      const optionLabels = normalizeTextList(bodyStringArray(req.body.option_labels));
+      questionConfig.options = optionLabels.map((label) => ({ label, value: label }));
+      if (questionType === "multi_select") {
+        const minSelect = parseOptionalInteger(req.body.min_select);
+        const maxSelect = parseOptionalInteger(req.body.max_select);
+        if (minSelect !== null) {
+          questionConfig.min_select = minSelect;
+        } else {
+          delete questionConfig.min_select;
+        }
+        if (maxSelect !== null) {
+          questionConfig.max_select = maxSelect;
+        } else {
+          delete questionConfig.max_select;
+        }
+      }
+      break;
+    }
+    case "yes_no":
+      questionConfig.yes_label = bodyString(req.body.yes_label).trim() || "はい";
+      questionConfig.no_label = bodyString(req.body.no_label).trim() || "いいえ";
+      break;
+    case "scale":
+      questionConfig.min = parseOptionalInteger(req.body.scale_min) ?? 1;
+      questionConfig.max = parseOptionalInteger(req.body.scale_max) ?? 5;
+      questionConfig.min_label = bodyString(req.body.scale_min_label).trim() || undefined;
+      questionConfig.max_label = bodyString(req.body.scale_max_label).trim() || undefined;
+      break;
+    default:
+      break;
   }
 
+  const meta = buildQuestionMetaFromAuthoringInput({
+    questionGoal,
+    extractionItemLabels: extractionEnabled ? extractionItems : [],
+    maxProbes: parseOptionalInteger(req.body.max_probes),
+    existingMeta: existing?.meta ?? null
+  });
   questionConfig.meta = meta;
+
+  if (extractionEnabled && extractionItems.length > 0) {
+    questionConfig.extraction = {
+      mode: "single_object",
+      target: "post_answer",
+      schema: buildExtractionSchemaFromExpectedSlots(meta.expected_slots ?? []),
+      extracted_branch_enabled: true
+    };
+  } else {
+    delete questionConfig.extraction;
+  }
+
   return questionConfig;
 }
 
-function buildBranchRuleFromRequest(req: Request, existing: Question["branch_rule"] | null) {
-  const parsed = parseJsonField(bodyString(req.body.branch_rule), "branch_rule", existing ?? null);
-  return normalizeBranchRule(parsed);
+function parseBranchPrimitive(value: string): string | number | boolean {
+  const normalized = value.trim();
+  if (/^-?\d+(\.\d+)?$/.test(normalized)) {
+    return Number(normalized);
+  }
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false") {
+    return false;
+  }
+  return normalized;
+}
+
+function buildBranchCondition(operator: QuestionBranchOperator, value: string) {
+  const normalizedValue = value.trim();
+  if (!normalizedValue) {
+    throw new HttpError(400, "分岐条件の値を入力してください。");
+  }
+
+  switch (operator) {
+    case "includes":
+      return { includes: parseBranchPrimitive(normalizedValue) };
+    case "any_of":
+      return { any_of: normalizeTextList(normalizedValue.split(",")).map((item) => parseBranchPrimitive(item)) };
+    case "gte":
+      return { gte: Number(normalizedValue) };
+    case "lte":
+      return { lte: Number(normalizedValue) };
+    default:
+      return { equals: parseBranchPrimitive(normalizedValue) };
+  }
+}
+
+function resolveExpectedSlotKeyByLabel(
+  expectedSlots: NonNullable<NonNullable<Question["question_config"]>["meta"]>["expected_slots"],
+  label: string
+) {
+  const normalizedLabel = label.trim();
+  const matched = (expectedSlots ?? []).find(
+    (slot) => slot.label?.trim() === normalizedLabel || slot.key === normalizedLabel
+  );
+  if (!matched) {
+    throw new HttpError(400, `分岐項目が見つかりません: ${normalizedLabel}`);
+  }
+  return matched.key;
+}
+
+function buildBranchRuleFromRequest(
+  req: Request,
+  expectedSlots: NonNullable<NonNullable<Question["question_config"]>["meta"]>["expected_slots"]
+): Question["branch_rule"] | null {
+  const sources = bodyStringArray(req.body.branch_source);
+  const fieldLabels = bodyStringArray(req.body.branch_field_label);
+  const operators = bodyStringArray(req.body.branch_operator);
+  const values = bodyStringArray(req.body.branch_value);
+  const nextValues = bodyStringArray(req.body.branch_next);
+  const rowCount = Math.max(sources.length, fieldLabels.length, operators.length, values.length, nextValues.length);
+  const branches = Array.from({ length: rowCount }, (_unused, index) => {
+    const next = (nextValues[index] ?? "").trim();
+    const value = values[index] ?? "";
+    if (!next || !value.trim()) {
+      return null;
+    }
+
+    const source = (sources[index] === "extracted" ? "extracted" : "answer") as "answer" | "extracted";
+    const fieldLabel = fieldLabels[index] ?? "";
+    return {
+      source,
+      field: source === "extracted" ? resolveExpectedSlotKeyByLabel(expectedSlots, fieldLabel) : undefined,
+      when: buildBranchCondition(parseQuestionBranchOperator(operators[index] ?? ""), value),
+      next
+    };
+  }).filter((branch): branch is NonNullable<typeof branch> => Boolean(branch));
+
+  return normalizeBranchRule(branches.length > 0 ? { branches } : null);
+}
+
+function slugifyQuestionCode(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 32);
+}
+
+function buildQuestionCode(input: {
+  requestedCode: string;
+  questionText: string;
+  sortOrder: number;
+  existingQuestionCode?: string;
+  existingQuestions: Question[];
+  currentQuestionId?: string | null;
+}): string {
+  const requested = input.requestedCode.trim();
+  if (requested) {
+    return requested;
+  }
+  if (input.existingQuestionCode?.trim()) {
+    return input.existingQuestionCode.trim();
+  }
+
+  const base = slugifyQuestionCode(input.questionText) || `q_${input.sortOrder}`;
+  const normalizedBase = base.startsWith("q_") ? base : `q_${base}`;
+  const existingCodes = new Set(
+    input.existingQuestions
+      .filter((question) => question.id !== input.currentQuestionId)
+      .map((question) => question.question_code)
+  );
+  let candidate = normalizedBase;
+  let suffix = 2;
+  while (existingCodes.has(candidate)) {
+    candidate = `${normalizedBase}_${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
 }
 
 async function validateQuestionDefinition(input: {
@@ -739,9 +1020,11 @@ export const adminController = {
       const researchMode = parseResearchMode(bodyString(req.body.research_mode));
       const name = bodyString(req.body.name);
       const objective = bodyString(req.body.objective) || null;
-      const primaryObjectives = parseLineSeparatedList(bodyString(req.body.primary_objectives));
-      const secondaryObjectives = parseLineSeparatedList(bodyString(req.body.secondary_objectives));
-      const aiStateTemplateKey = bodyString(req.body.ai_state_template_key) || null;
+      const comparisonConstraints = parseLineSeparatedList(bodyString(req.body.comparison_constraints));
+      const deepProbeEnabled = req.body.deep_probe_enabled === "on";
+      const maxProbeDepth = Math.max(0, parseOptionalInteger(req.body.max_probe_depth) ?? (deepProbeEnabled ? 1 : 0));
+      const displayStyle = parseProjectDisplayStyle(bodyString(req.body.display_style));
+      const aiStateTemplateKey = null;
 
       const created = await projectRepository.create({
         name,
@@ -750,12 +1033,15 @@ export const adminController = {
         status: bodyString(req.body.status || "draft") as "draft" | "active" | "paused" | "archived",
         reward_points: numberField(req.body.reward_points),
         research_mode: researchMode,
-        primary_objectives: primaryObjectives,
-        secondary_objectives: secondaryObjectives,
-        comparison_constraints: parseLineSeparatedList(bodyString(req.body.comparison_constraints)),
-        prompt_rules: parseLineSeparatedList(bodyString(req.body.prompt_rules)),
-        probe_policy: parseJsonField(bodyString(req.body.probe_policy), "probe_policy", null),
-        response_style: parseJsonField(bodyString(req.body.response_style), "response_style", null),
+        primary_objectives: objective ? [objective] : [],
+        secondary_objectives: [],
+        comparison_constraints: comparisonConstraints,
+        prompt_rules: [],
+        probe_policy: buildProjectProbePolicyFromSimpleInput({
+          deepProbeEnabled,
+          maxProbeDepth
+        }),
+        response_style: buildProjectResponseStyleFromSimpleInput(displayStyle),
         ai_state_template_key: aiStateTemplateKey,
         ai_state_json: buildProjectAiStateFromRequest({
           req,
@@ -763,15 +1049,14 @@ export const adminController = {
             name,
             objective,
             research_mode: researchMode,
-            primary_objectives: primaryObjectives,
-            secondary_objectives: secondaryObjectives,
+            primary_objectives: objective ? [objective] : [],
+            secondary_objectives: [],
             ai_state_template_key: aiStateTemplateKey
           }
         }),
-        ai_state_generated_at: bodyString(req.body.ai_state_json).trim() ? new Date().toISOString() : null
+        ai_state_generated_at: new Date().toISOString()
       });
-      const project = created.ai_state_json ? created : await projectAiStateService.ensureGenerated(created.id);
-      res.redirect(`/admin/projects/${project.id}/edit?notice=project_created`);
+      res.redirect(buildProjectEditRedirectPath(created.id, "project_created"));
     } catch (error) {
       renderProjectResearchForm(res, {
         title: "新規プロジェクト作成",
@@ -801,17 +1086,19 @@ export const adminController = {
       const researchMode = parseResearchMode(bodyString(req.body.research_mode));
       const name = bodyString(req.body.name);
       const objective = bodyString(req.body.objective) || null;
-      const primaryObjectives = parseLineSeparatedList(bodyString(req.body.primary_objectives));
-      const secondaryObjectives = parseLineSeparatedList(bodyString(req.body.secondary_objectives));
-      const aiStateTemplateKey = bodyString(req.body.ai_state_template_key) || null;
+      const comparisonConstraints = parseLineSeparatedList(bodyString(req.body.comparison_constraints));
+      const deepProbeEnabled = req.body.deep_probe_enabled === "on";
+      const maxProbeDepth = Math.max(0, parseOptionalInteger(req.body.max_probe_depth) ?? (deepProbeEnabled ? 1 : 0));
+      const displayStyle = parseProjectDisplayStyle(bodyString(req.body.display_style));
+      const aiStateTemplateKey = existing.ai_state_template_key ?? null;
       const aiStateJson = buildProjectAiStateFromRequest({
         req,
         fallbackProject: {
           name,
           objective,
           research_mode: researchMode,
-          primary_objectives: primaryObjectives,
-          secondary_objectives: secondaryObjectives,
+          primary_objectives: objective ? [objective] : [],
+          secondary_objectives: [],
           ai_state_template_key: aiStateTemplateKey
         },
         existingAiState: existing.ai_state_json
@@ -824,20 +1111,21 @@ export const adminController = {
         status: bodyString(req.body.status || "draft") as "draft" | "active" | "paused" | "archived",
         reward_points: numberField(req.body.reward_points),
         research_mode: researchMode,
-        primary_objectives: primaryObjectives,
-        secondary_objectives: secondaryObjectives,
-        comparison_constraints: parseLineSeparatedList(bodyString(req.body.comparison_constraints)),
-        prompt_rules: parseLineSeparatedList(bodyString(req.body.prompt_rules)),
-        probe_policy: parseJsonField(bodyString(req.body.probe_policy), "probe_policy", null),
-        response_style: parseJsonField(bodyString(req.body.response_style), "response_style", null),
+        primary_objectives: objective ? [objective] : [],
+        secondary_objectives: [],
+        comparison_constraints: comparisonConstraints,
+        prompt_rules: [],
+        probe_policy: buildProjectProbePolicyFromSimpleInput({
+          deepProbeEnabled,
+          maxProbeDepth,
+          existing: existing.probe_policy
+        }),
+        response_style: buildProjectResponseStyleFromSimpleInput(displayStyle),
         ai_state_template_key: aiStateTemplateKey,
         ai_state_json: aiStateJson,
-        ai_state_generated_at:
-          aiStateJson && !existing.ai_state_generated_at
-            ? new Date().toISOString()
-            : existing.ai_state_generated_at
+        ai_state_generated_at: new Date().toISOString()
       });
-      res.redirect(`/admin/projects/${projectId}/edit?notice=project_updated`);
+      res.redirect(buildProjectEditRedirectPath(projectId, "project_updated"));
     } catch (error) {
       renderProjectResearchForm(res, {
         title: "プロジェクト編集",
@@ -860,12 +1148,13 @@ export const adminController = {
   async newQuestion(req: Request, res: Response): Promise<void> {
     const project = await projectRepository.getById(routeParam(req, "projectId"));
     const availableQuestions = await questionRepository.listByProject(project.id);
+    const nextSortOrder = await questionRepository.getNextSortOrder(project.id);
     renderQuestionForm(res, {
       title: "質問作成",
       project,
       question: null,
       action: `/admin/projects/${project.id}/questions`,
-      formValues: buildQuestionFormValues(null),
+      formValues: buildQuestionFormValues(null, { sort_order_text: String(nextSortOrder) }),
       availableQuestions
     });
   },
@@ -873,32 +1162,43 @@ export const adminController = {
   async createQuestion(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
     const project = await projectRepository.getById(projectId);
-    const availableQuestions = await questionRepository.listByProject(projectId);
+    const availableQuestions = await questionRepository.listByProject(projectId, { includeHidden: true });
 
     try {
       const questionType = parseQuestionType(bodyString(req.body.question_type || "text"));
       const questionConfig = buildQuestionConfigFromRequest(req, questionType, null);
-      const branchRule = buildBranchRuleFromRequest(req, null);
+      const sortOrder = numberField(req.body.sort_order, await questionRepository.getNextSortOrder(projectId));
+      const questionCode = buildQuestionCode({
+        requestedCode: bodyString(req.body.question_code),
+        questionText: bodyString(req.body.question_text),
+        sortOrder,
+        existingQuestions: availableQuestions
+      });
+      const branchRule = buildBranchRuleFromRequest(req, questionConfig.meta?.expected_slots ?? []);
 
       await validateQuestionDefinition({
         projectId,
-        questionCode: bodyString(req.body.question_code),
+        questionCode,
         questionType,
         questionConfig,
         branchRule
       });
 
+      const createMaxProbeCount = parseOptionalInteger(bodyString(req.body.max_probe_count));
       await questionRepository.create({
         project_id: projectId,
-        question_code: bodyString(req.body.question_code),
+        question_code: questionCode,
         question_text: bodyString(req.body.question_text),
         question_role: parseQuestionRole(bodyString(req.body.question_role)),
         question_type: questionType,
         is_required: req.body.is_required === "on",
-        sort_order: numberField(req.body.sort_order),
+        sort_order: sortOrder,
         branch_rule: branchRule,
         question_config: questionConfig,
-        ai_probe_enabled: req.body.ai_probe_enabled === "on"
+        ai_probe_enabled: req.body.ai_probe_enabled === "on",
+        probe_guideline: bodyString(req.body.probe_guideline) || null,
+        max_probe_count: createMaxProbeCount,
+        render_strategy: bodyString(req.body.render_strategy) === "dynamic" ? "dynamic" : "static"
       });
 
       res.redirect(`/admin/projects/${projectId}/questions`);
@@ -933,7 +1233,7 @@ export const adminController = {
 
   async copyProject(req: Request, res: Response): Promise<void> {
     const copied = await projectRepository.copyProject(routeParam(req, "projectId"));
-    res.redirect(`/admin/projects/${copied.id}/edit?notice=project_copied`);
+    res.redirect(buildProjectEditRedirectPath(copied.id, "project_copied"));
   },
 
   async deleteProject(req: Request, res: Response): Promise<void> {
@@ -945,32 +1245,45 @@ export const adminController = {
     const questionId = routeParam(req, "questionId");
     const existing = await questionRepository.getById(questionId);
     const project = await projectRepository.getById(existing.project_id);
-    const availableQuestions = await questionRepository.listByProject(existing.project_id);
+    const availableQuestions = await questionRepository.listByProject(existing.project_id, { includeHidden: true });
 
     try {
       const questionType = parseQuestionType(bodyString(req.body.question_type || "text"));
       const questionConfig = buildQuestionConfigFromRequest(req, questionType, existing.question_config);
-      const branchRule = buildBranchRuleFromRequest(req, existing.branch_rule);
+      const sortOrder = numberField(req.body.sort_order, existing.sort_order);
+      const questionCode = buildQuestionCode({
+        requestedCode: bodyString(req.body.question_code),
+        questionText: bodyString(req.body.question_text),
+        sortOrder,
+        existingQuestionCode: existing.question_code,
+        existingQuestions: availableQuestions,
+        currentQuestionId: questionId
+      });
+      const branchRule = buildBranchRuleFromRequest(req, questionConfig.meta?.expected_slots ?? []);
 
       await validateQuestionDefinition({
         projectId: existing.project_id,
         questionId,
-        questionCode: bodyString(req.body.question_code),
+        questionCode,
         questionType,
         questionConfig,
         branchRule
       });
 
+      const updateMaxProbeCount = parseOptionalInteger(bodyString(req.body.max_probe_count));
       await questionRepository.update(questionId, {
-        question_code: bodyString(req.body.question_code),
+        question_code: questionCode,
         question_text: bodyString(req.body.question_text),
         question_role: parseQuestionRole(bodyString(req.body.question_role)),
         question_type: questionType,
         is_required: req.body.is_required === "on",
-        sort_order: numberField(req.body.sort_order),
+        sort_order: sortOrder,
         branch_rule: branchRule,
         question_config: questionConfig,
-        ai_probe_enabled: req.body.ai_probe_enabled === "on"
+        ai_probe_enabled: req.body.ai_probe_enabled === "on",
+        probe_guideline: bodyString(req.body.probe_guideline) || null,
+        max_probe_count: updateMaxProbeCount,
+        render_strategy: bodyString(req.body.render_strategy) === "dynamic" ? "dynamic" : "static"
       });
 
       res.redirect(`/admin/projects/${existing.project_id}/questions`);

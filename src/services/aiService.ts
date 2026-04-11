@@ -1,6 +1,11 @@
 import { env } from "../config/env";
 import { openai } from "../config/openai";
-import { getProjectAIState, getProjectAIStateTemplate, normalizeProjectAIState } from "../lib/projectAiState";
+import {
+  evaluateProjectSlotCompletion,
+  getProjectAIState,
+  getProjectAIStateTemplate,
+  normalizeProjectAIState
+} from "../lib/projectAiState";
 import { logger } from "../lib/logger";
 import {
   assessProbeNeed,
@@ -15,6 +20,7 @@ import {
   buildCompletionCheckPrompt,
   buildFinalAnalysisPrompt,
   buildFinalStructuredSummaryPrompt,
+  buildInterviewTurnPrompt,
   buildProbeGenerationPrompt,
   buildPostAnalysisPrompt,
   buildProjectInitialStatePrompt,
@@ -473,52 +479,62 @@ export const aiService = {
         projectAiState: input.project.ai_state_json
       });
       const currentQuestionSatisfied = completion.missing_slots.length === 0;
+      const projectCompletion = evaluateProjectSlotCompletion(input.project, collectedSlots);
       const nextQuestionRequiredKeys =
         promptContext.next_question_required_slots.length > 0
           ? promptContext.next_question_required_slots.map((slot) => slot.key)
           : [];
       const nextQuestionSatisfied =
         nextQuestionRequiredKeys.length > 0 && nextQuestionRequiredKeys.every((key) => Boolean(collectedSlots[key]?.trim()));
-      const projectCompletionRequiredKeys =
-        promptContext.project_required_slot_keys.length > 0
-          ? promptContext.project_required_slot_keys
-          : Array.from(allowedKeys);
-      const projectCompletionSatisfied =
-        projectCompletionRequiredKeys.length > 0 &&
-        projectCompletionRequiredKeys.every((key) => Boolean(collectedSlots[key]?.trim()));
-      const canProbe =
-        input.aiProbeEnabled &&
-        input.currentProbeCount < input.maxProbes &&
-        Boolean(assessment.probeType);
+      const canProbe = input.aiProbeEnabled && input.currentProbeCount < input.maxProbes && input.maxProbes > 0;
       const skipEligible =
         currentQuestionSatisfied &&
         nextQuestionSatisfied &&
         !assessment.isBadAnswer &&
-        !assessment.isAbstract &&
-        !assessment.isLowSpecificity;
+        !assessment.isAbstract;
       const derivedSufficient =
         currentQuestionSatisfied &&
         !assessment.isBadAnswer &&
-        !assessment.isAbstract &&
-        !assessment.isLowSpecificity;
+        !assessment.isAbstract;
       const parsedAction = sanitizeAction(raw?.action);
-      const probeType = canProbe ? assessment.probeType : null;
+      const probeType = assessment.probeType;
 
-      let action: AnswerAnalysisAction;
-      if (projectCompletionSatisfied) {
-        action = "finish";
-      } else if (canProbe && assessment.shouldProbe) {
-        action = "probe";
-      } else if (skipEligible) {
-        action = "skip";
-      } else if (parsedAction === "finish" && projectCompletionSatisfied) {
-        action = "finish";
-      } else if (parsedAction === "probe" && canProbe) {
-        action = "probe";
-      } else if (parsedAction === "skip" && skipEligible) {
-        action = "skip";
-      } else {
+      let action: AnswerAnalysisAction =
+        projectCompletion.isComplete
+          ? "finish"
+          : canProbe && assessment.shouldProbe
+            ? "probe"
+            : skipEligible
+              ? "skip"
+              : "ask_next";
+      const decisionPath = [`fallback:${action}`];
+
+      if (parsedAction === "finish") {
+        if (projectCompletion.isComplete) {
+          action = "finish";
+          decisionPath.push("ai:finish");
+        } else {
+          decisionPath.push("ai:finish_rejected");
+        }
+      } else if (parsedAction === "probe") {
+        if (canProbe) {
+          action = "probe";
+          decisionPath.push("ai:probe");
+        } else {
+          decisionPath.push("ai:probe_rejected");
+        }
+      } else if (parsedAction === "skip") {
+        if (skipEligible) {
+          action = "skip";
+          decisionPath.push("ai:skip");
+        } else {
+          decisionPath.push("ai:skip_rejected");
+        }
+      } else if (parsedAction === "ask_next") {
         action = "ask_next";
+        decisionPath.push("ai:ask_next");
+      } else {
+        decisionPath.push("ai:missing_action");
       }
 
       const rawQuestion =
@@ -530,14 +546,14 @@ export const aiService = {
             ? buildFallbackProbeQuestion({
                 question: input.question,
                 missingSlots: assessment.missingSlots,
-                probeType,
+                probeType: canProbe ? probeType : null,
                 project: input.project
               })
             : null;
       const reason =
         typeof raw?.reason === "string" && raw.reason.trim()
           ? raw.reason.trim()
-          : projectCompletionSatisfied
+          : projectCompletion.isComplete
             ? "project_required_slots_filled"
             : action === "probe"
               ? assessment.missingSlots.length > 0
@@ -547,6 +563,25 @@ export const aiService = {
                 ? "current_and_next_required_slots_filled"
                 : "continue_to_next_question";
 
+      if (env.NODE_ENV === "development") {
+        logger.info("analyzeAnswer.decision_path", {
+          sessionId: input.sessionId,
+          questionCode: input.question.question_code,
+          action,
+          decisionPath,
+          projectCompletion: projectCompletion.isComplete,
+          currentQuestionSatisfied,
+          nextQuestionSatisfied,
+          canProbe,
+          assessment: {
+            shouldProbe: assessment.shouldProbe,
+            missingSlots: assessment.missingSlots,
+            isBadAnswer: assessment.isBadAnswer,
+            isAbstract: assessment.isAbstract
+          }
+        });
+      }
+
       return {
         action,
         question: safeQuestion,
@@ -554,7 +589,7 @@ export const aiService = {
         collected_slots: collectedSlots,
         is_sufficient: Boolean(raw?.is_sufficient) || derivedSufficient,
         missing_slots: completion.missing_slots,
-        probe_type: probeType,
+        probe_type: action === "probe" && canProbe ? probeType : null,
         confidence: clampConfidence((raw as { confidence?: unknown } | null)?.confidence, confidenceFallback)
       };
     };
@@ -720,6 +755,69 @@ export const aiService = {
       japaneseCheckMode: "text"
     });
     return result.text.replace(/^["']|["']$/g, "");
+  },
+
+  async interviewTurn(input: {
+    sessionId: string;
+    project: Project;
+    question: Question;
+    answer: string;
+    nextQuestion?: Question | null;
+    existingSlots: Record<string, string | null>;
+    currentProbeCount: number;
+    maxProbes: number;
+    aiProbeEnabled: boolean;
+    conversationSummary?: string | null;
+  }): Promise<{
+    action: AnswerAnalysisAction;
+    response_text: string | null;
+    collected_slots: Record<string, string | null>;
+    reason: string;
+  }> {
+    const prompt = buildInterviewTurnPrompt(input);
+
+    try {
+      const result = await runTextPrompt(input.sessionId, "interview_turn", prompt, {
+        japaneseCheckMode: "json_values"
+      });
+      const parsed = parseJsonResponse<{
+        action?: unknown;
+        response_text?: unknown;
+        collected_slots?: unknown;
+        reason?: unknown;
+      }>(result.text);
+
+      const action = sanitizeAction(parsed.action) ?? "ask_next";
+      const responseText =
+        typeof parsed.response_text === "string" && parsed.response_text.trim()
+          ? parsed.response_text.trim()
+          : null;
+      const rawSlots =
+        parsed.collected_slots && typeof parsed.collected_slots === "object" && !Array.isArray(parsed.collected_slots)
+          ? (parsed.collected_slots as Record<string, unknown>)
+          : {};
+      const collectedSlots = Object.entries(rawSlots).reduce<Record<string, string | null>>(
+        (acc, [key, value]) => {
+          acc[key] = typeof value === "string" && value.trim() ? value.trim() : null;
+          return acc;
+        },
+        {}
+      );
+
+      return {
+        action,
+        response_text: responseText,
+        collected_slots: mergeSlotMaps(input.existingSlots, collectedSlots),
+        reason: typeof parsed.reason === "string" ? parsed.reason : action
+      };
+    } catch {
+      return {
+        action: "ask_next",
+        response_text: null,
+        collected_slots: input.existingSlots,
+        reason: "fallback_parse_error"
+      };
+    }
   },
 
   async generateStructuredProbe(input: {

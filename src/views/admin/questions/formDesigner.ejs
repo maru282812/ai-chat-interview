@@ -297,6 +297,52 @@
         .replace(/'/g, "&#39;");
     }
 
+    function toBranchFieldValue(value) {
+      if (value === null || value === undefined) {
+        return "";
+      }
+      if (Array.isArray(value)) {
+        return value.join(", ");
+      }
+      return String(value);
+    }
+
+    function normalizeBranchConditionRow(conditionLike, routeLike, nextValue) {
+      const when =
+        conditionLike && typeof conditionLike === "object" && !Array.isArray(conditionLike) && conditionLike.when
+          ? conditionLike.when
+          : conditionLike;
+      if (!when || typeof when !== "object" || Array.isArray(when) || !nextValue) {
+        return null;
+      }
+
+      const source = conditionLike?.source || routeLike?.source || "answer";
+      const field = conditionLike?.field || routeLike?.field || "";
+
+      if (Object.prototype.hasOwnProperty.call(when, "equals")) {
+        return { source, field, condition: "equals", value: toBranchFieldValue(when.equals), next: nextValue };
+      }
+      if (Object.prototype.hasOwnProperty.call(when, "includes")) {
+        return { source, field, condition: "includes", value: toBranchFieldValue(when.includes), next: nextValue };
+      }
+      if (Array.isArray(when.any_of)) {
+        return { source, field, condition: "any_of", value: when.any_of.map((item) => String(item)).join(", "), next: nextValue };
+      }
+      if (Object.prototype.hasOwnProperty.call(when, "gte")) {
+        return { source, field, condition: "gte", value: toBranchFieldValue(when.gte), next: nextValue };
+      }
+      if (Object.prototype.hasOwnProperty.call(when, "lte")) {
+        return { source, field, condition: "lte", value: toBranchFieldValue(when.lte), next: nextValue };
+      }
+      if (when.operator === "equals" || when.operator === "includes" || when.operator === "gte" || when.operator === "lte") {
+        return { source, field, condition: when.operator, value: toBranchFieldValue(when.value), next: nextValue };
+      }
+      if (when.operator === "any_of" && Array.isArray(when.value)) {
+        return { source, field, condition: "any_of", value: when.value.map((item) => String(item)).join(", "), next: nextValue };
+      }
+      return null;
+    }
+
     function createSelectOptions(includeBlankLabel, selectedValue, excludeCurrent) {
       const fragment = document.createDocumentFragment();
       if (includeBlankLabel) {
@@ -543,75 +589,29 @@
 
     function normalizeBranchRule() {
       const current = safeParseJson(branchRuleRaw.value, {});
-      const branchList = Array.isArray(current)
-        ? current.map((item) => ({
-            source: "answer",
-            field: "",
-            when:
-              item?.when?.operator === "equals"
-                ? { equals: item?.when?.value }
-                : item?.when?.operator === "includes"
-                  ? { includes: item?.when?.value }
-                  : item?.when || {},
-            next: item?.targetQuestionCode || item?.next || ""
-          }))
-        : Array.isArray(current?.branches)
-          ? current.branches
-          : [];
+      const branchInputs = Array.isArray(current) ? current : Array.isArray(current?.branches) ? current.branches : [];
+      const branchList = [];
+      branchInputs.forEach((item) => {
+        const nextValue = item?.next_question_code || item?.targetQuestionCode || item?.next || "";
+        if (Array.isArray(item?.conditions)) {
+          item.conditions.forEach((condition) => {
+            const normalized = normalizeBranchConditionRow(condition, item, nextValue);
+            if (normalized) {
+              branchList.push(normalized);
+            }
+          });
+          return;
+        }
+
+        const normalized = normalizeBranchConditionRow(item?.when || item, item, nextValue);
+        if (normalized) {
+          branchList.push(normalized);
+        }
+      });
       return {
         default_next: typeof current?.default_next === "string" ? current.default_next : "",
         merge_question_code: typeof current?.merge_question_code === "string" ? current.merge_question_code : "",
         branches: branchList
-          .map((item) => {
-            const when = item?.when || {};
-            if (Object.prototype.hasOwnProperty.call(when, "equals")) {
-              return {
-                source: item.source || "answer",
-                field: item.field || "",
-                condition: "equals",
-                value: when.equals,
-                next: item.next || ""
-              };
-            }
-            if (Object.prototype.hasOwnProperty.call(when, "includes")) {
-              return {
-                source: item.source || "answer",
-                field: item.field || "",
-                condition: "includes",
-                value: when.includes,
-                next: item.next || ""
-              };
-            }
-            if (Array.isArray(when.any_of)) {
-              return {
-                source: item.source || "answer",
-                field: item.field || "",
-                condition: "any_of",
-                value: when.any_of.join(", "),
-                next: item.next || ""
-              };
-            }
-            if (Object.prototype.hasOwnProperty.call(when, "gte")) {
-              return {
-                source: item.source || "answer",
-                field: item.field || "",
-                condition: "gte",
-                value: when.gte,
-                next: item.next || ""
-              };
-            }
-            if (Object.prototype.hasOwnProperty.call(when, "lte")) {
-              return {
-                source: item.source || "answer",
-                field: item.field || "",
-                condition: "lte",
-                value: when.lte,
-                next: item.next || ""
-              };
-            }
-            return null;
-          })
-          .filter(Boolean)
       };
     }
 
@@ -627,7 +627,7 @@
           const condition = row.querySelector("[data-branch-condition]").value;
           const value = row.querySelector("[data-branch-value]").value.trim();
           const next = row.querySelector("[data-branch-next]").value;
-          if (!condition || !value || !next) {
+          if (!condition || value === "" || !next) {
             return null;
           }
 
@@ -702,7 +702,7 @@
       const valueCell = document.createElement("td");
       const valueInput = document.createElement("input");
       valueInput.type = "text";
-      valueInput.value = row.value || "";
+      valueInput.value = toBranchFieldValue(row.value);
       valueInput.placeholder = row.condition === "any_of" ? "tea, coffee" : "yes";
       valueInput.setAttribute("data-branch-value", "true");
       valueCell.appendChild(valueInput);
@@ -781,7 +781,7 @@
     });
 
     questionConfigRaw.addEventListener("input", () => renderQuestionConfigDesigner(questionTypeSelect.value));
-    branchRuleRaw.addEventListener("input", renderBranchDesigner);
+    branchRuleRaw.addEventListener("change", renderBranchDesigner);
     defaultNextSelect.addEventListener("change", syncBranchRule);
     mergeQuestionSelect.addEventListener("change", syncBranchRule);
 

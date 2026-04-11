@@ -378,7 +378,7 @@ export function resolveProjectAIStateTemplateKey(input: {
     return "ux_research";
   }
 
-  if (input.researchMode === "survey_with_interview_probe") {
+  if (input.researchMode === "survey_interview") {
     return "pain_request";
   }
 

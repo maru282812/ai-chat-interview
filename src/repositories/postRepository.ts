@@ -1,4 +1,5 @@
 import { supabase } from "../config/supabase";
+import { logger } from "../lib/logger";
 import type {
   PostAnalysis,
   PostInsightType,
@@ -69,6 +70,36 @@ interface CreatePostInput {
   posted_on?: string | null;
 }
 
+function isMissingColumnError(error: { message?: string } | null | undefined, column: string): boolean {
+  if (!error?.message) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return message.includes(column.toLowerCase()) && (message.includes("column") || message.includes("schema cache"));
+}
+
+function omitUnsupportedQualityLabel<T extends { quality_label?: unknown }>(payload: T): Omit<T, "quality_label"> {
+  const { quality_label: _qualityLabel, ...rest } = payload;
+  return rest;
+}
+
+function normalizeUserPost(row: UserPost | null): UserPost | null {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    ...row,
+    quality_score: typeof row.quality_score === "number" ? row.quality_score : 0,
+    quality_label: row.quality_label ?? "low"
+  };
+}
+
+function normalizeUserPosts(rows: UserPost[] | null | undefined): UserPost[] {
+  return (rows ?? []).map((row) => normalizeUserPost(row as UserPost)).filter((row): row is UserPost => Boolean(row));
+}
+
 function startOfDayIso(value: string): string {
   return new Date(`${value}T00:00:00.000Z`).toISOString();
 }
@@ -97,8 +128,18 @@ function comparePosts(left: UserPost, right: UserPost): number {
 export const postRepository = {
   async create(input: CreatePostInput): Promise<UserPost> {
     const { data, error } = await supabase.from("user_posts").insert(input).select("*").single();
+    if (isMissingColumnError(error, "quality_label")) {
+      logger.warn("user_posts.quality_label_column_missing", { operation: "create" });
+      const retry = await supabase
+        .from("user_posts")
+        .insert(omitUnsupportedQualityLabel(input))
+        .select("*")
+        .single();
+      throwIfError(retry.error);
+      return normalizeUserPost(retry.data as UserPost | null) as UserPost;
+    }
     throwIfError(error);
-    return data as UserPost;
+    return normalizeUserPost(data as UserPost | null) as UserPost;
   },
 
   async update(
@@ -116,14 +157,25 @@ export const postRepository = {
       .eq("id", id)
       .select("*")
       .single();
+    if (isMissingColumnError(error, "quality_label")) {
+      logger.warn("user_posts.quality_label_column_missing", { operation: "update", postId: id });
+      const retry = await supabase
+        .from("user_posts")
+        .update(omitUnsupportedQualityLabel(input))
+        .eq("id", id)
+        .select("*")
+        .single();
+      throwIfError(retry.error);
+      return normalizeUserPost(retry.data as UserPost | null) as UserPost;
+    }
     throwIfError(error);
-    return data as UserPost;
+    return normalizeUserPost(data as UserPost | null) as UserPost;
   },
 
   async getById(id: string): Promise<UserPost | null> {
     const { data, error } = await supabase.from("user_posts").select("*").eq("id", id).maybeSingle();
     throwIfError(error);
-    return (data as UserPost | null) ?? null;
+    return normalizeUserPost((data as UserPost | null) ?? null);
   },
 
   async findByAnswerId(answerId: string): Promise<UserPost | null> {
@@ -133,7 +185,7 @@ export const postRepository = {
       .eq("answer_id", answerId)
       .maybeSingle();
     throwIfError(error);
-    return (data as UserPost | null) ?? null;
+    return normalizeUserPost((data as UserPost | null) ?? null);
   },
 
   async listByUserId(userId: string): Promise<UserPost[]> {
@@ -143,7 +195,7 @@ export const postRepository = {
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
     throwIfError(error);
-    return (data ?? []) as UserPost[];
+    return normalizeUserPosts((data ?? []) as UserPost[]);
   },
 
   async listBySessionId(sessionId: string): Promise<UserPost[]> {
@@ -153,7 +205,7 @@ export const postRepository = {
       .eq("session_id", sessionId)
       .order("created_at", { ascending: true });
     throwIfError(error);
-    return (data ?? []) as UserPost[];
+    return normalizeUserPosts((data ?? []) as UserPost[]);
   },
 
   async listByUserIdAndTypes(userId: string, types: UserPostType[], limit = 20): Promise<UserPost[]> {
@@ -170,7 +222,7 @@ export const postRepository = {
 
     const { data, error } = await query;
     throwIfError(error);
-    return (data ?? []) as UserPost[];
+    return normalizeUserPosts((data ?? []) as UserPost[]);
   },
 
   async listAdmin(filters: AdminPostFilters = {}): Promise<AdminPostRow[]> {
@@ -209,7 +261,7 @@ export const postRepository = {
 
     const { data, error } = await query;
     throwIfError(error);
-    const posts = (data ?? []) as UserPost[];
+    const posts = normalizeUserPosts((data ?? []) as UserPost[]);
     const analyses = await postAnalysisRepository.listByPostIds(posts.map((post) => post.id));
     const analysisByPostId = new Map(analyses.map((analysis) => [analysis.post_id, analysis] as const));
 

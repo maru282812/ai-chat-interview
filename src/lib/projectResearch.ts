@@ -38,11 +38,11 @@ const DEFAULT_PROBE_POLICY: Record<
     end_conditions: ProbeEndCondition[];
   }
 > = {
-  survey: {
-    enabled: false,
-    conditions: ["short_answer"],
-    max_probes_per_answer: 0,
-    max_probes_per_session: 0,
+  survey_interview: {
+    enabled: true,
+    conditions: ["short_answer", "abstract_answer"],
+    max_probes_per_answer: 1,
+    max_probes_per_session: 2,
     require_question_probe_enabled: true,
     target_question_codes: [],
     blocked_question_codes: [],
@@ -73,29 +73,11 @@ const DEFAULT_PROBE_POLICY: Record<
       "question_blocked",
       "user_declined"
     ]
-  },
-  survey_with_interview_probe: {
-    enabled: true,
-    conditions: ["short_answer", "abstract_answer"],
-    max_probes_per_answer: 1,
-    max_probes_per_session: 2,
-    require_question_probe_enabled: true,
-    target_question_codes: [],
-    blocked_question_codes: [],
-    short_answer_min_length: 10,
-    end_conditions: [
-      "answer_sufficient",
-      "max_probes_per_answer",
-      "max_probes_per_session",
-      "question_not_target",
-      "question_blocked",
-      "user_declined"
-    ]
   }
 };
 
 function isResearchMode(value: unknown): value is ResearchMode {
-  return value === "survey" || value === "interview" || value === "survey_with_interview_probe";
+  return value === "survey_interview" || value === "interview";
 }
 
 function isProbeCondition(value: unknown): value is ProbeCondition {
@@ -207,7 +189,7 @@ export function getProjectResearchSettings(
     >
   > | null
 ): NormalizedProjectResearchSettings {
-  const research_mode = isResearchMode(project?.research_mode) ? project.research_mode : "survey";
+  const research_mode = isResearchMode(project?.research_mode) ? project.research_mode : "survey_interview";
   const primary_objectives = normalizeStringList(project?.primary_objectives);
   const secondary_objectives = normalizeStringList(project?.secondary_objectives);
   const comparison_constraints = normalizeStringList(project?.comparison_constraints);

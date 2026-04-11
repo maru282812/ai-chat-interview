@@ -11,12 +11,9 @@ import {
   buildRestartedSessionText,
   buildResumeExistingSessionText,
   buildStoppedSessionText,
-  detectConversationCommand,
-  evaluateProbeDecision
+  detectConversationCommand
 } from "../lib/conversationControl";
 import {
-  assessProbeNeed,
-  buildInterviewQuestionFallback,
   evaluateCompletion,
   evaluateQuestionSlotProgress,
   mergeSlotMaps,
@@ -35,6 +32,7 @@ import { buildMypageFlex, buildRankFlex, buildWelcomeMessages } from "../templat
 import type {
   AnswerAnalysisAction,
   LineMessage,
+  PendingNextQuestionCache,
   Project,
   Question,
   ResearchMode,
@@ -58,8 +56,195 @@ function buildTextMessage(text: string): LineMessage {
   return { type: "text", text };
 }
 
+interface TurnDiagnostics {
+  sessionId: string | null;
+  startedAt: number;
+  aiCallCount: number;
+  aiPurposes: string[];
+  actionPath: string[];
+}
+
+function createTurnDiagnostics(sessionId: string | null = null): TurnDiagnostics {
+  return {
+    sessionId,
+    startedAt: Date.now(),
+    aiCallCount: 0,
+    aiPurposes: [],
+    actionPath: []
+  };
+}
+
+function recordAiCall(diagnostics: TurnDiagnostics | undefined, purpose: string): void {
+  if (!diagnostics) {
+    return;
+  }
+
+  diagnostics.aiCallCount += 1;
+  diagnostics.aiPurposes.push(purpose);
+}
+
+function recordActionPath(diagnostics: TurnDiagnostics | undefined, step: string): void {
+  if (!diagnostics) {
+    return;
+  }
+
+  diagnostics.actionPath = [step];
+}
+
+function logTurnDiagnostics(diagnostics: TurnDiagnostics | undefined, phase: string): void {
+  if (!diagnostics?.sessionId || env.NODE_ENV !== "development") {
+    return;
+  }
+
+  logger.info("conversation.turn", {
+    sessionId: diagnostics.sessionId,
+    phase,
+    elapsed_ms: Date.now() - diagnostics.startedAt,
+    ai_call_count: diagnostics.aiCallCount,
+    ai_call_purposes: diagnostics.aiPurposes,
+    action_path: diagnostics.actionPath
+  });
+}
+
+function runDeferredTask(
+  taskName: string,
+  task: () => Promise<void>,
+  context: Record<string, unknown> = {}
+): void {
+  void Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      logger.warn(taskName, {
+        ...context,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+}
+
+async function replyWithTiming(input: {
+  replyToken: string;
+  messages: LineMessage[];
+  label: string;
+  diagnostics?: TurnDiagnostics;
+  sessionId?: string | null;
+}): Promise<void> {
+  const sessionId = input.diagnostics?.sessionId ?? input.sessionId ?? null;
+  const replyStartedAt = Date.now();
+
+  if (env.NODE_ENV === "development") {
+    logger.info("line.reply.start", {
+      sessionId,
+      label: input.label,
+      started_at: new Date(replyStartedAt).toISOString(),
+      elapsed_before_reply_ms: input.diagnostics ? replyStartedAt - input.diagnostics.startedAt : null
+    });
+  }
+
+  await lineMessagingService.reply(input.replyToken, input.messages);
+
+  if (env.NODE_ENV === "development") {
+    const replyCompletedAt = Date.now();
+    logger.info("line.reply.end", {
+      sessionId,
+      label: input.label,
+      completed_at: new Date(replyCompletedAt).toISOString(),
+      reply_elapsed_ms: replyCompletedAt - replyStartedAt,
+      total_processing_ms: input.diagnostics ? replyCompletedAt - input.diagnostics.startedAt : null
+    });
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// --- PendingNextQuestionCache helpers ---
+
+function computeSimpleHash(value: unknown): string {
+  const str = JSON.stringify(
+    value === null || value === undefined ? null : value,
+    Object.keys(typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {}).sort()
+  );
+  let hash = 0;
+  for (let i = 0; i < str.length; i += 1) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  }
+  return String(hash >>> 0);
+}
+
+function buildFlowSignature(branchRule: Question["branch_rule"]): string {
+  return computeSimpleHash(branchRule);
+}
+
+function buildCollectedFieldSignature(slotMap: Record<string, string | null>): string {
+  const entries = Object.entries(slotMap)
+    .filter(([, v]) => typeof v === "string" && Boolean(v.trim()))
+    .sort(([a], [b]) => a.localeCompare(b));
+  return computeSimpleHash(entries);
+}
+
+function buildNextQuestionCache(input: {
+  sessionId: string;
+  nextQuestion: Question;
+  collectedSlotMap: Record<string, string | null>;
+  questionText: string | null;
+  hasBranching: boolean;
+  hasSkip: boolean;
+}): PendingNextQuestionCache {
+  const renderStrategy = input.nextQuestion.render_strategy ?? "static";
+  return {
+    sessionId: input.sessionId,
+    nextQuestionId: input.nextQuestion.id,
+    nextQuestionVersion: input.nextQuestion.updated_at,
+    flowSignature: buildFlowSignature(input.nextQuestion.branch_rule),
+    collectedFieldSignature: buildCollectedFieldSignature(input.collectedSlotMap),
+    renderStrategy,
+    renderKey: input.nextQuestion.id,
+    questionText:
+      renderStrategy === "static" && !input.hasBranching && !input.hasSkip && input.questionText
+        ? input.questionText
+        : undefined,
+    createdAt: new Date().toISOString()
+  };
+}
+
+function canReuseQuestionText(
+  cache: PendingNextQuestionCache,
+  sessionId: string,
+  question: Question,
+  currentSlotMap: Record<string, string | null>,
+  opts: { hasBranching: boolean; hasSkip: boolean; resumedSession: boolean }
+): boolean {
+  return (
+    cache.sessionId === sessionId &&
+    cache.nextQuestionId === question.id &&
+    cache.nextQuestionVersion === question.updated_at &&
+    cache.flowSignature === buildFlowSignature(question.branch_rule) &&
+    cache.collectedFieldSignature === buildCollectedFieldSignature(currentSlotMap) &&
+    cache.renderStrategy === "static" &&
+    !opts.hasBranching &&
+    !opts.hasSkip &&
+    !opts.resumedSession &&
+    typeof cache.questionText === "string" &&
+    Boolean(cache.questionText.trim())
+  );
+}
+
+// Structured per-turn log per spec section 8
+function logTurnResult(input: {
+  sessionId: string;
+  questionId: string;
+  questionType: string;
+  mode: ResearchMode;
+  usedInterviewTurn: boolean;
+  probeExecuted: boolean;
+  probeReason: string | null;
+  skippedReason: string | null;
+  usedCache: boolean;
+  cacheType: "text" | "id" | "none";
+  collectedFieldSignature: string;
+}): void {
+  logger.info("conversation.turn_result", input);
 }
 
 function normalizeQuestionText(text: string): string {
@@ -143,6 +328,38 @@ function resolveQuestionMetaContext(question: Question, projectMode: ResearchMod
   return question.question_role === "free_comment" ? "free_comment" : projectMode;
 }
 
+function resolveTextProbeBudget(input: {
+  project: Project;
+  settings: ReturnType<typeof getProjectResearchSettings>;
+  question: Question;
+  currentProbeCountForAnswer: number;
+  currentProbeCountForSession: number;
+}) {
+  const contextType = resolveQuestionMetaContext(input.question, input.project.research_mode);
+  const meta = normalizeQuestionMeta(input.question, contextType, {
+    projectAiState: input.project.ai_state_json
+  });
+  const maxProbesPerSession = Math.min(
+    env.MAX_AI_PROBES_PER_SESSION,
+    input.settings.probe_policy.max_probes_per_session
+  );
+  const maxProbesPerAnswer = Math.min(
+    env.MAX_AI_PROBES_PER_ANSWER,
+    input.settings.probe_policy.max_probes_per_answer,
+    meta.probe_config.max_probes
+  );
+
+  return {
+    contextType,
+    meta,
+    maxProbesPerSession,
+    maxProbesPerAnswer,
+    canProbe:
+      input.currentProbeCountForSession < maxProbesPerSession &&
+      input.currentProbeCountForAnswer < maxProbesPerAnswer
+  };
+}
+
 function extractSlotMap(normalizedAnswer: Record<string, unknown> | null | undefined): Record<string, string | null> {
   if (
     normalizedAnswer?.extracted_slot_map &&
@@ -177,14 +394,16 @@ function canSkipFutureQuestions(input: {
   question: Question;
   questionProgress: ReturnType<typeof evaluateQuestionSlotProgress>;
   projectMode: ResearchMode;
+  projectAiState: Project["ai_state_json"] | null;
 }): boolean {
-  const meta = normalizeQuestionMeta(input.question, resolveQuestionMetaContext(input.question, input.projectMode));
+  const meta = normalizeQuestionMeta(input.question, resolveQuestionMetaContext(input.question, input.projectMode), {
+    projectAiState: input.projectAiState
+  });
   return (
     meta.can_prefill_future_slots &&
     input.questionProgress.isCurrentQuestionSatisfied &&
     !input.questionProgress.isBadAnswer &&
-    !input.questionProgress.isAbstract &&
-    !input.questionProgress.isLowSpecificity
+    !input.questionProgress.isAbstract
   );
 }
 
@@ -239,7 +458,8 @@ async function evaluateAnswerProgressForSession(input: {
     allowSkippingFutureQuestions: canSkipFutureQuestions({
       question: input.question,
       questionProgress,
-      projectMode: input.project.research_mode
+      projectMode: input.project.research_mode,
+      projectAiState: input.project.ai_state_json
     })
   };
 }
@@ -267,10 +487,12 @@ function buildStructuredProbeFallback(input: {
   probeType: StructuredProbeType;
   missingSlots?: string[];
   projectMode?: ResearchMode;
+  projectAiState?: Project["ai_state_json"] | null;
 }): string {
   const meta = normalizeQuestionMeta(
     input.question,
-    input.projectMode ? resolveQuestionMetaContext(input.question, input.projectMode) : undefined
+    input.projectMode ? resolveQuestionMetaContext(input.question, input.projectMode) : undefined,
+    { projectAiState: input.projectAiState }
   );
   const firstMissingSlot = input.missingSlots?.[0];
   const rawSlotLabel =
@@ -279,14 +501,21 @@ function buildStructuredProbeFallback(input: {
     firstMissingSlot ??
     "その点";
   const slotLabel = /^[a-z][a-z0-9_]*$/i.test(rawSlotLabel) ? "その点" : rawSlotLabel;
+  const conversational = true; // both survey_interview and interview use conversational phrasing
 
   switch (input.probeType) {
     case "missing_slot":
-      return `${slotLabel}について、もう少し具体的に教えてください。`;
+      return conversational
+        ? `${slotLabel}について、もう少し具体的に教えてください。`
+        : `${slotLabel}を補足してください。`;
     case "clarify":
-      return "今のご回答の意味が伝わるように、もう少し詳しく教えてください。";
+      return conversational
+        ? "今のご回答の意味が伝わるように、もう少し詳しく教えてください。"
+        : "補足として、もう少しわかるように教えてください。";
     default:
-      return "そのときの状況や理由がわかる具体例を1つ教えてください。";
+      return conversational
+        ? "そのときの状況や理由がわかる具体例を1つ教えてください。"
+        : "補足として、具体例を1つ教えてください。";
   }
 }
 async function resolveConversationRespondent(lineUserId: string, displayName?: string | null) {
@@ -324,7 +553,15 @@ async function resolvePreviousQuestionContext(session: Session): Promise<{
   };
 }
 
-async function questionPrompt(session: Session, question: Question): Promise<string> {
+async function questionPrompt(
+  session: Session,
+  question: Question,
+  diagnostics?: TurnDiagnostics
+): Promise<string> {
+  if (question.question_role === "free_comment") {
+    return question.question_text?.trim() || buildFreeCommentPrompt();
+  }
+
   const [questions, project] = await Promise.all([
     questionFlowService.listByProject(session.project_id),
     projectRepository.getById(session.project_id)
@@ -334,7 +571,27 @@ async function questionPrompt(session: Session, question: Question): Promise<str
     project.research_mode === "interview" ? undefined : `Q${currentIndex}/${questions.length}`;
 
   if (project.research_mode === "interview" && question.question_type === "text") {
+    // Try structured cache first (PendingNextQuestionCache)
+    const cache = session.state_json?.pendingNextQuestionCache;
+    if (cache && cache.sessionId === session.id && cache.nextQuestionId === question.id) {
+      const currentSlotMap = await buildSessionSlotMap(session.id);
+      const useText = canReuseQuestionText(cache, session.id, question, currentSlotMap, {
+        hasBranching: false,
+        hasSkip: false,
+        resumedSession: false
+      });
+      if (useText && cache.questionText) {
+        return cache.questionText;
+      }
+      // id matches but text not reusable (dynamic) — fall through to AI render
+    }
+    // Fallback: legacy pendingNextQuestionText (single-use, no validation)
+    const legacyCached = session.state_json?.pendingNextQuestionText;
+    if (typeof legacyCached === "string" && legacyCached.trim()) {
+      return legacyCached;
+    }
     const previousContext = await resolvePreviousQuestionContext(session);
+    recordAiCall(diagnostics, "renderQuestion");
     return aiService.renderQuestion({
       sessionId: session.id,
       project,
@@ -396,37 +653,21 @@ function extractSuggestedProbeQuestion(normalizedAnswer: Record<string, unknown>
     : null;
 }
 
-function resolveImmediateProbe(input: {
-  question: Question;
-  answerText: string;
-  projectMode: ResearchMode;
-}): {
-  probeType: StructuredProbeType;
-  prompt: string;
-  missingSlots: string[];
-} | null {
-  const trimmed = input.answerText.trim();
-  const meta = normalizeQuestionMeta(input.question, resolveQuestionMetaContext(input.question, input.projectMode));
-  const normalized = trimmed.replace(/\s+/g, "");
-  const hardBadAnswers = new Set(["特になし", "なし", "わからない", "特にない"]);
+function extractCompletionMissingSlots(
+  normalizedAnswer: Record<string, unknown> | null | undefined
+): string[] {
+  const completion =
+    normalizedAnswer?.completion &&
+    typeof normalizedAnswer.completion === "object" &&
+    !Array.isArray(normalizedAnswer.completion)
+      ? (normalizedAnswer.completion as Record<string, unknown>)
+      : null;
 
-  if (hardBadAnswers.has(normalized)) {
-    return {
-      probeType: "clarify",
-      prompt: "そのままでは判断できないため、理由や具体例を1つ教えてください。",
-      missingSlots: meta.expected_slots.filter((slot) => slot.required !== false).map((slot) => slot.key)
-    };
+  if (!Array.isArray(completion?.missing_slots)) {
+    return [];
   }
 
-  if (trimmed.length < 5) {
-    return {
-      probeType: "concretize",
-      prompt: "短いご回答だったため、そのときの状況や理由がわかるようにもう少し具体的に教えてください。",
-      missingSlots: meta.expected_slots.filter((slot) => slot.required !== false).map((slot) => slot.key)
-    };
-  }
-
-  return null;
+  return completion.missing_slots.map((slot) => String(slot)).filter(Boolean);
 }
 
 async function buildStructuredAnswer(input: {
@@ -442,6 +683,7 @@ async function buildStructuredAnswer(input: {
   baseNormalized?: Record<string, unknown> | null;
   probeCount?: number;
   existingSlots?: Record<string, string | null>;
+  diagnostics?: TurnDiagnostics;
 }): Promise<Record<string, unknown>> {
   const project = await projectRepository.getById(input.projectId);
   const settings = getProjectResearchSettings(project);
@@ -459,11 +701,6 @@ async function buildStructuredAnswer(input: {
 
   const combinedAnswer = [input.answerText, input.probeAnswer].filter(Boolean).join("\n");
   const sessionSlotMap = await buildSessionSlotMap(input.session.id);
-  const immediateProbe = resolveImmediateProbe({
-    question: input.question,
-    answerText: combinedAnswer,
-    projectMode: project.research_mode
-  });
   const existingSlots = mergeSlotMaps(
     sessionSlotMap,
     input.existingSlots ?? extractSlotMap(input.baseNormalized)
@@ -472,22 +709,62 @@ async function buildStructuredAnswer(input: {
   const meta = normalizeQuestionMeta(input.question, contextType, {
     projectAiState: project.ai_state_json
   });
+  // survey_interview: probe only if ai_probe_enabled === true (strict)
+  // interview: probe if ai_probe_enabled !== false (lenient default)
+  const aiProbeAllowed = project.research_mode === "interview"
+    ? input.question.ai_probe_enabled !== false
+    : input.question.ai_probe_enabled === true;
   const aiProbeEnabled =
+    aiProbeAllowed &&
     settings.probe_policy.enabled &&
-    (!settings.probe_policy.require_question_probe_enabled || input.question.ai_probe_enabled) &&
     meta.probe_config.max_probes > 0;
-  const answerAnalysis = immediateProbe
-    ? {
-        action: "probe" as const,
-        question: immediateProbe.prompt,
-        reason: "immediate_probe_rule",
+  let answerAnalysis: Awaited<ReturnType<typeof aiService.analyzeAnswer>>;
+
+  if (project.research_mode === "interview") {
+    // interview mode: single AI call controls full turn
+    recordAiCall(input.diagnostics, "interviewTurn");
+    try {
+      const turnResult = await aiService.interviewTurn({
+        sessionId: input.session.id,
+        project,
+        question: input.question,
+        answer: combinedAnswer,
+        nextQuestion: input.nextQuestion,
+        existingSlots,
+        currentProbeCount: input.probeCount ?? 0,
+        maxProbes: meta.probe_config.max_probes,
+        aiProbeEnabled,
+        conversationSummary: input.session.summary ?? null
+      });
+      answerAnalysis = {
+        action: turnResult.action,
+        question: turnResult.response_text,
+        reason: turnResult.reason,
+        collected_slots: turnResult.collected_slots,
+        is_sufficient: turnResult.action !== "probe",
+        missing_slots: [],
+        probe_type: turnResult.action === "probe" ? "clarify" : null,
+        confidence: 0.8
+      };
+    } catch {
+      // interview fallback: AI failed → use fixed text for next question
+      logger.warn("buildStructuredAnswer.interviewTurn.fallback", { sessionId: input.session.id });
+      answerAnalysis = {
+        action: "ask_next",
+        question: null,
+        reason: "interview_turn_fallback",
         collected_slots: existingSlots,
-        is_sufficient: false,
-        missing_slots: immediateProbe.missingSlots,
-        probe_type: immediateProbe.probeType,
-        confidence: 0.99
-      }
-    : await aiService.analyzeAnswer({
+        is_sufficient: true,
+        missing_slots: [],
+        probe_type: null,
+        confidence: 0.3
+      };
+    }
+  } else {
+    // survey_interview: AI is probe-assist only; flow controls next question
+    recordAiCall(input.diagnostics, "analyzeAnswer");
+    try {
+      answerAnalysis = await aiService.analyzeAnswer({
         sessionId: input.session.id,
         project,
         question: input.question,
@@ -498,6 +775,25 @@ async function buildStructuredAnswer(input: {
         aiProbeEnabled,
         currentProbeCount: input.probeCount ?? 0
       });
+    } catch {
+      // survey_interview fallback: AI failed → skip probe, continue to next question
+      logger.warn("buildStructuredAnswer.analyzeAnswer.fallback", { sessionId: input.session.id });
+      answerAnalysis = {
+        action: "ask_next",
+        question: null,
+        reason: "survey_interview_ai_fallback",
+        collected_slots: existingSlots,
+        is_sufficient: true,
+        missing_slots: [],
+        probe_type: null,
+        confidence: 0.3
+      };
+    }
+  }
+  recordActionPath(
+    input.diagnostics,
+    `analyze:${answerAnalysis.action}:${answerAnalysis.reason}`
+  );
   if (env.NODE_ENV === "development") {
     logger.info("conversation.answer_analysis", {
       sessionId: input.session.id,
@@ -529,7 +825,8 @@ async function buildStructuredAnswer(input: {
     question: input.question,
     answerText: combinedAnswer,
     extractedSlots,
-    contextType
+    contextType,
+    projectAiState: project.ai_state_json
   });
   const completion = {
     is_complete:
@@ -568,6 +865,8 @@ async function buildStructuredAnswer(input: {
     needs_probe: answerAnalysis.action === "probe",
     suggested_probe_type: answerAnalysis.probe_type,
     suggested_probe_question: answerAnalysis.question,
+    pending_next_question_text:
+      answerAnalysis.action === "ask_next" && answerAnalysis.question ? answerAnalysis.question : null,
     question_code: input.question.question_code,
     slot_progress: {
       current_question: currentProgress,
@@ -606,6 +905,7 @@ async function logSystemMessage(
 async function enterFreeCommentPhase(input: {
   session: Session;
   replyToken: string;
+  diagnostics?: TurnDiagnostics;
 }): Promise<void> {
   const freeCommentQuestion =
     (await questionRepository.getSystemFreeCommentQuestion(input.session.project_id)) ??
@@ -615,7 +915,15 @@ async function enterFreeCommentPhase(input: {
     current_question_id: freeCommentQuestion.id,
     current_phase: "free_comment" as const
   };
-  const prompt = await questionPrompt(sessionForPrompt, freeCommentQuestion);
+  const prompt = await questionPrompt(sessionForPrompt, freeCommentQuestion, input.diagnostics);
+  await replyWithTiming({
+    replyToken: input.replyToken,
+    messages: [buildTextMessage(prompt)],
+    label: "enter_free_comment",
+    diagnostics: input.diagnostics,
+    sessionId: input.session.id
+  });
+
   const nextSession = await sessionRepository.update(input.session.id, {
     current_question_id: freeCommentQuestion.id,
     current_phase: "free_comment",
@@ -645,7 +953,6 @@ async function enterFreeCommentPhase(input: {
   });
 
   await logAssistantMessage(nextSession.id, prompt);
-  await lineMessagingService.reply(input.replyToken, [buildTextMessage(prompt)]);
 }
 
 async function refreshSummaryIfNeeded(session: Session): Promise<Session> {
@@ -842,9 +1149,12 @@ async function replyAndFinalizeCompletion(input: {
   userId: string;
   replyToken: string;
 }): Promise<void> {
-  await lineMessagingService.reply(input.replyToken, [
-    buildTextMessage("ありがとうございます。完了処理を進めています。")
-  ]);
+  await replyWithTiming({
+    replyToken: input.replyToken,
+    messages: [buildTextMessage("ありがとうございます。完了処理を進めています。")],
+    label: "completion_ack",
+    sessionId: input.session.id
+  });
 
   void completeSession(input.session, input.userId)
     .then((completionMessages) => lineMessagingService.push(input.userId, completionMessages))
@@ -865,9 +1175,12 @@ async function replyAndFinalizeCompletionV2(input: {
   userId: string;
   replyToken: string;
 }): Promise<void> {
-  await lineMessagingService.reply(input.replyToken, [
-    buildTextMessage("ありがとうございます。完了処理を進めています。")
-  ]);
+  await replyWithTiming({
+    replyToken: input.replyToken,
+    messages: [buildTextMessage("ありがとうございます。完了処理を進めています。")],
+    label: "completion_ack",
+    sessionId: input.session.id
+  });
 
   void completeSession(input.session, input.userId)
     .then(async (completionMessages) => {
@@ -896,9 +1209,11 @@ async function startSession(input: {
 }): Promise<void> {
   const firstQuestion = await questionFlowService.getFirstQuestion(input.projectId);
   if (!firstQuestion) {
-    await lineMessagingService.reply(input.replyToken, [
-      buildTextMessage("この案件にはまだ質問が設定されていません。")
-    ]);
+    await replyWithTiming({
+      replyToken: input.replyToken,
+      messages: [buildTextMessage("この案件にはまだ質問が設定されていません。")],
+      label: "start_session_missing_question"
+    });
     return;
   }
 
@@ -954,7 +1269,12 @@ async function startSession(input: {
     ? [buildTextMessage(input.leadMessage), buildTextMessage(prompt)]
     : [buildTextMessage(prompt)];
 
-  await lineMessagingService.reply(input.replyToken, replyMessages);
+  await replyWithTiming({
+    replyToken: input.replyToken,
+    messages: replyMessages,
+    label: "start_session",
+    sessionId: promptSession.id
+  });
 }
 
 async function replyWithCurrentPrompt(input: {
@@ -966,7 +1286,12 @@ async function replyWithCurrentPrompt(input: {
   const prompt = await currentPromptForSession(input.session);
   if (!prompt) {
     const { settings } = await resolveProjectContext(input.session.project_id);
-    await lineMessagingService.reply(input.replyToken, [buildTextMessage(buildNoActiveSessionText(settings.response_style))]);
+    await replyWithTiming({
+      replyToken: input.replyToken,
+      messages: [buildTextMessage(buildNoActiveSessionText(settings.response_style))],
+      label: "reply_current_prompt_missing",
+      sessionId: input.session.id
+    });
     return;
   }
 
@@ -977,7 +1302,12 @@ async function replyWithCurrentPrompt(input: {
   const messages = input.leadMessage
     ? [buildTextMessage(input.leadMessage), buildTextMessage(prompt)]
     : [buildTextMessage(prompt)];
-  await lineMessagingService.reply(input.replyToken, messages);
+  await replyWithTiming({
+    replyToken: input.replyToken,
+    messages,
+    label: "reply_current_prompt",
+    sessionId: input.session.id
+  });
 }
 
 async function resolveDistinctNextQuestion(input: {
@@ -1039,12 +1369,16 @@ async function advanceAfterProbeOrComplete(input: {
   pendingQuestionId: string | null;
   allowSkippingFutureQuestions: boolean;
   preferredAction?: AnswerAnalysisAction | null;
+  preRenderedPrompt?: string | null;
   replyToken: string;
+  diagnostics?: TurnDiagnostics;
 }): Promise<void> {
   if (input.preferredAction === "finish") {
+    recordActionPath(input.diagnostics, "orchestrator:finish");
     await enterFreeCommentPhase({
       session: input.session,
-      replyToken: input.replyToken
+      replyToken: input.replyToken,
+      diagnostics: input.diagnostics
     });
     return;
   }
@@ -1060,22 +1394,49 @@ async function advanceAfterProbeOrComplete(input: {
   });
 
   if (!nextQuestion) {
+    recordActionPath(input.diagnostics, "orchestrator:free_comment");
     await enterFreeCommentPhase({
       session: input.session,
-      replyToken: input.replyToken
+      replyToken: input.replyToken,
+      diagnostics: input.diagnostics
     });
     return;
   }
 
-  const prompt = await questionPrompt(
-    {
-      ...input.session,
-      current_question_id: nextQuestion.id,
-      current_phase: "question"
-    },
-    nextQuestion
-  );
+  const prompt =
+    input.preRenderedPrompt && input.preRenderedPrompt.trim()
+      ? input.preRenderedPrompt
+      : await questionPrompt(
+          {
+            ...input.session,
+            current_question_id: nextQuestion.id,
+            current_phase: "question"
+          },
+          nextQuestion,
+          input.diagnostics
+        );
   const nextQuestionIndex = await resolveQuestionIndex(input.session.project_id, nextQuestion.id);
+
+  await replyWithTiming({
+    replyToken: input.replyToken,
+    messages: [buildTextMessage(prompt)],
+    label: "next_question",
+    diagnostics: input.diagnostics,
+    sessionId: input.session.id
+  });
+
+  const slotMapForCache = await buildSessionSlotMap(input.session.id);
+  const probeCache =
+    input.project.research_mode === "interview"
+      ? buildNextQuestionCache({
+          sessionId: input.session.id,
+          nextQuestion,
+          collectedSlotMap: slotMapForCache,
+          questionText: input.preRenderedPrompt ?? null,
+          hasBranching: false,
+          hasSkip: input.preferredAction === "skip"
+        })
+      : null;
 
   const nextSession = await sessionRepository.update(input.session.id, {
     current_question_id: nextQuestion.id,
@@ -1091,11 +1452,13 @@ async function advanceAfterProbeOrComplete(input: {
       pendingProbeReason: null,
       pendingProbeType: null,
       pendingProbeMissingSlots: [],
-      aiProbeCountCurrentAnswer: 0
+      aiProbeCountCurrentAnswer: 0,
+      pendingNextQuestionText: input.project.research_mode === "interview" ? prompt : null,
+      pendingNextQuestionCache: probeCache
     }
   });
+  recordActionPath(input.diagnostics, `orchestrator:next_question:${nextQuestion.question_code}`);
   await logAssistantMessage(nextSession.id, prompt);
-  await lineMessagingService.reply(input.replyToken, [buildTextMessage(prompt)]);
 }
 
 async function maybeAskProbe(input: {
@@ -1106,34 +1469,31 @@ async function maybeAskProbe(input: {
   answerPayload?: Record<string, unknown> | null;
   pendingQuestionId: string | null;
   replyToken: string;
+  diagnostics?: TurnDiagnostics;
 }): Promise<boolean> {
   const { project, settings } = await resolveProjectContext(input.session.project_id);
   const currentProbeCountForAnswer = input.session.state_json?.aiProbeCountCurrentAnswer ?? 0;
   const currentProbeCountForSession = input.session.state_json?.aiProbeCount ?? 0;
-  const contextType = resolveQuestionMetaContext(input.question, project.research_mode);
-  const meta = normalizeQuestionMeta(input.question, contextType);
-  const maxProbesPerSession = Math.min(
-    env.MAX_AI_PROBES_PER_SESSION,
-    settings.probe_policy.max_probes_per_session
-  );
-  const maxProbesPerAnswer = Math.min(
-    env.MAX_AI_PROBES_PER_ANSWER,
-    settings.probe_policy.max_probes_per_answer,
-    meta.probe_config.max_probes
-  );
+  const probeBudget = resolveTextProbeBudget({
+    project,
+    settings,
+    question: input.question,
+    currentProbeCountForAnswer,
+    currentProbeCountForSession
+  });
+  const { maxProbesPerAnswer, maxProbesPerSession } = probeBudget;
 
   if (currentProbeCountForSession >= maxProbesPerSession) {
+    recordActionPath(input.diagnostics, "probe_gate:max_probes_session");
     return false;
   }
 
   if (input.question.question_type === "text") {
-    if (currentProbeCountForAnswer >= maxProbesPerAnswer) {
+    if (!probeBudget.canProbe) {
+      recordActionPath(input.diagnostics, "probe_gate:max_probes_answer");
       return false;
     }
 
-    const extractedSlots = Array.isArray(input.answerPayload?.extracted_slots)
-      ? (input.answerPayload?.extracted_slots as StructuredAnswerPayload["extracted_slots"])
-      : [];
     const analysisAction = extractAnalysisAction(input.answerPayload);
     const payloadProbeType =
       input.answerPayload?.suggested_probe_type === "missing_slot" ||
@@ -1141,107 +1501,65 @@ async function maybeAskProbe(input: {
       input.answerPayload?.suggested_probe_type === "clarify"
         ? (input.answerPayload.suggested_probe_type as StructuredProbeType)
         : null;
-    const assessment = assessProbeNeed({
-      question: input.question,
-      answerText: input.answerText,
-      extractedSlots: extractedSlots ?? [],
-      currentProbeCountForAnswer,
-      contextType
-    });
-    const probeType = payloadProbeType ?? assessment.probeType;
+    const missingSlots = extractCompletionMissingSlots(input.answerPayload);
+    const probeType = payloadProbeType ?? "clarify";
 
-    if ((analysisAction === "probe" || input.answerPayload?.needs_probe || assessment.shouldProbe) && probeType) {
-      let prompt =
-        extractSuggestedProbeQuestion(input.answerPayload)
-          ? extractSuggestedProbeQuestion(input.answerPayload)
-          : buildStructuredProbeFallback({
-              question: input.question,
-              probeType,
-              missingSlots: assessment.missingSlots,
-              projectMode: project.research_mode
-            });
-      prompt = prompt ?? buildStructuredProbeFallback({
+    if (analysisAction !== "probe") {
+      recordActionPath(input.diagnostics, `probe_gate:analysis_${analysisAction ?? "none"}`);
+      return false;
+    }
+
+    let prompt = extractSuggestedProbeQuestion(input.answerPayload);
+    if (!prompt) {
+      prompt = buildStructuredProbeFallback({
         question: input.question,
         probeType,
-        missingSlots: assessment.missingSlots,
-        projectMode: project.research_mode
+        missingSlots,
+        projectMode: project.research_mode,
+        projectAiState: project.ai_state_json
       });
+    }
 
-      if (input.session.state_json?.lastProbeType === probeType || isQuestionSimilarToLast(input.session, prompt)) {
-        return false;
+    if ((input.session.state_json?.lastProbeType === probeType && probeType) || isQuestionSimilarToLast(input.session, prompt)) {
+      recordActionPath(input.diagnostics, "probe_gate:duplicate_probe");
+      return false;
+    }
+
+    await replyWithTiming({
+      replyToken: input.replyToken,
+      messages: [buildTextMessage(prompt)],
+      label: "probe",
+      diagnostics: input.diagnostics,
+      sessionId: input.session.id
+    });
+
+    const probingSession = await sessionRepository.update(input.session.id, {
+      current_phase: "ai_probe",
+      current_question_id: input.question.id,
+      state_json: {
+        ...withQuestionMemory(input.session.state_json, prompt, probeType),
+        phase: "ai_probe",
+        pendingQuestionId: input.pendingQuestionId,
+        pendingProbeQuestion: prompt,
+        pendingProbeSourceQuestionId: input.question.id,
+        pendingProbeSourceAnswerId:
+          input.answerId ?? input.session.state_json?.pendingProbeSourceAnswerId ?? null,
+        pendingProbeReason: probeType,
+        pendingProbeType: probeType,
+        pendingProbeMissingSlots: missingSlots,
+        aiProbeCount: currentProbeCountForSession + 1,
+        aiProbeCountCurrentAnswer: currentProbeCountForAnswer + 1
       }
+    });
 
-      const probingSession = await sessionRepository.update(input.session.id, {
-        current_phase: "ai_probe",
-        current_question_id: input.question.id,
-        state_json: {
-          ...withQuestionMemory(input.session.state_json, prompt, probeType),
-          phase: "ai_probe",
-          pendingQuestionId: input.pendingQuestionId,
-          pendingProbeQuestion: prompt,
-          pendingProbeSourceQuestionId: input.question.id,
-          pendingProbeSourceAnswerId:
-            input.answerId ?? input.session.state_json?.pendingProbeSourceAnswerId ?? null,
-          pendingProbeReason: probeType,
-          pendingProbeType: probeType,
-          pendingProbeMissingSlots: assessment.missingSlots,
-          aiProbeCount: currentProbeCountForSession + 1,
-          aiProbeCountCurrentAnswer: currentProbeCountForAnswer + 1
-        }
-      });
-
-      await logAssistantMessage(probingSession.id, prompt);
-      await lineMessagingService.reply(input.replyToken, [buildTextMessage(prompt)]);
-      return true;
-    }
-
-    return false;
+    recordActionPath(input.diagnostics, `probe_sent:${probeType}`);
+    await logAssistantMessage(probingSession.id, prompt);
+    return true;
   }
 
-  if (currentProbeCountForAnswer >= maxProbesPerAnswer) {
-    return false;
-  }
-
-  const decision = evaluateProbeDecision({
-    question: input.question,
-    answerText: input.answerText,
-    projectSettings: settings,
-    currentProbeCountForAnswer,
-    currentProbeCountForSession,
-    maxProbesPerAnswer,
-    maxProbesPerSession
-  });
-
-  if (!decision.shouldProbe || !decision.prompt) {
-    return false;
-  }
-
-  if (isQuestionSimilarToLast(input.session, decision.prompt)) {
-    return false;
-  }
-
-  const probingSession = await sessionRepository.update(input.session.id, {
-    current_phase: "ai_probe",
-    current_question_id: input.question.id,
-    state_json: {
-      ...withQuestionMemory(input.session.state_json, decision.prompt, null),
-      phase: "ai_probe",
-      pendingQuestionId: input.pendingQuestionId,
-      pendingProbeQuestion: decision.prompt,
-      pendingProbeSourceQuestionId: input.question.id,
-      pendingProbeSourceAnswerId:
-        input.answerId ?? input.session.state_json?.pendingProbeSourceAnswerId ?? null,
-      pendingProbeReason: decision.reason,
-      pendingProbeType: null,
-      pendingProbeMissingSlots: [],
-      aiProbeCount: currentProbeCountForSession + 1,
-      aiProbeCountCurrentAnswer: currentProbeCountForAnswer + 1
-    }
-  });
-
-  await logAssistantMessage(probingSession.id, decision.prompt);
-  await lineMessagingService.reply(input.replyToken, [buildTextMessage(decision.prompt)]);
-  return true;
+  // Non-text types (yes_no, single_select, multi_select, scale) are never probed
+  recordActionPath(input.diagnostics, "probe_gate:non_text_type");
+  return false;
 }
 export const conversationOrchestratorService = {
   async handleFollowEvent(userId: string, replyToken: string): Promise<void> {
@@ -1325,7 +1643,36 @@ export const conversationOrchestratorService = {
 
     if (menuAction.handled) {
       if (menuAction.behavior === "reply") {
-        await lineMessagingService.reply(input.replyToken, menuAction.messages);
+        logger.info("menu_action.reply.dispatch.start", {
+          userId: input.userId,
+          inputText: input.text,
+          messageCount: menuAction.messages.length,
+          messagePreview: menuAction.messages.map((message) =>
+            message.type === "text" ? message.text.slice(0, 120) : message.altText.slice(0, 120)
+          )
+        });
+        try {
+          await lineMessagingService.reply(input.replyToken, menuAction.messages);
+          logger.info("menu_action.reply.dispatch.success", {
+            userId: input.userId,
+            inputText: input.text,
+            messageCount: menuAction.messages.length
+          });
+        } catch (error) {
+          logger.info("menu_action.resolve_text.final", {
+            finalDecision: "LINE_REPLY_FAILED",
+            userId: input.userId,
+            inputText: input.text
+          });
+          logger.error("menu_action.reply.dispatch.failed", {
+            userId: input.userId,
+            inputText: input.text,
+            finalDecision: "LINE_REPLY_FAILED",
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined
+          });
+          throw error;
+        }
         return;
       }
 
@@ -1539,24 +1886,27 @@ export const conversationOrchestratorService = {
       return;
     }
 
-    await messageRepository.create({
-      session_id: activeSession.id,
-      sender_type: "user",
-      message_text: input.text,
-      raw_payload: input.rawPayload
-    });
+    const diagnostics = createTurnDiagnostics(activeSession.id);
 
-    if (!input.text.trim()) {
-      const prompt = await currentPromptForSession(activeSession);
-      const messages = [buildTextMessage(buildEmptyAnswerText(settings.response_style))];
-      if (prompt) {
-        messages.push(buildTextMessage(prompt));
+    try {
+      await messageRepository.create({
+        session_id: activeSession.id,
+        sender_type: "user",
+        message_text: input.text,
+        raw_payload: input.rawPayload
+      });
+
+      if (!input.text.trim()) {
+        const prompt = await currentPromptForSession(activeSession);
+        const messages = [buildTextMessage(buildEmptyAnswerText(settings.response_style))];
+        if (prompt) {
+          messages.push(buildTextMessage(prompt));
+        }
+        await lineMessagingService.reply(input.replyToken, messages);
+        return;
       }
-      await lineMessagingService.reply(input.replyToken, messages);
-      return;
-    }
 
-    if (activeSession.current_phase === "free_comment") {
+      if (activeSession.current_phase === "free_comment") {
       const freeCommentQuestion =
         activeSession.current_question_id
           ? await questionFlowService.getQuestion(activeSession.current_question_id)
@@ -1595,7 +1945,8 @@ export const conversationOrchestratorService = {
           value: trimmedFreeComment
         },
         probeCount: activeSession.state_json?.aiProbeCountCurrentAnswer ?? 0,
-        existingSlots: extractSlotMap(existingFreeCommentSourceAnswer?.normalized_answer ?? null)
+        existingSlots: extractSlotMap(existingFreeCommentSourceAnswer?.normalized_answer ?? null),
+        diagnostics
       });
       const freeCommentAnswer = await answerRepository.create({
         session_id: activeSession.id,
@@ -1613,42 +1964,54 @@ export const conversationOrchestratorService = {
         });
       }
 
-      const extractedSlots = Array.isArray(freeCommentNormalized.extracted_slots)
-        ? (freeCommentNormalized.extracted_slots as StructuredAnswerPayload["extracted_slots"])
-        : [];
       const currentProbeCountForAnswer = activeSession.state_json?.aiProbeCountCurrentAnswer ?? 0;
-      const assessment = assessProbeNeed({
+      const currentProbeCountForSession = activeSession.state_json?.aiProbeCount ?? 0;
+      const probeBudget = resolveTextProbeBudget({
+        project,
+        settings,
         question: freeCommentQuestion,
-        answerText: combinedFreeCommentText,
-        extractedSlots: extractedSlots ?? [],
         currentProbeCountForAnswer,
-        contextType: "free_comment"
+        currentProbeCountForSession
       });
+      const freeCommentMissingSlots = extractCompletionMissingSlots(freeCommentNormalized);
       const freeCommentProbeType =
         freeCommentNormalized.suggested_probe_type === "missing_slot" ||
         freeCommentNormalized.suggested_probe_type === "concretize" ||
         freeCommentNormalized.suggested_probe_type === "clarify"
           ? (freeCommentNormalized.suggested_probe_type as StructuredProbeType)
-          : assessment.probeType;
+          : "clarify";
       const freeCommentAction = extractAnalysisAction(freeCommentNormalized);
       const freeCommentPrompt =
-        extractSuggestedProbeQuestion(freeCommentNormalized) ??
-        (freeCommentProbeType
-          ? buildStructuredProbeFallback({
-              question: freeCommentQuestion,
-              probeType: freeCommentProbeType,
-              missingSlots: assessment.missingSlots,
-              projectMode: project.research_mode
-            })
-          : null);
+        freeCommentAction === "probe"
+          ? extractSuggestedProbeQuestion(freeCommentNormalized) ??
+            (freeCommentProbeType
+              ? buildStructuredProbeFallback({
+                  question: freeCommentQuestion,
+                  probeType: freeCommentProbeType,
+                  missingSlots: freeCommentMissingSlots,
+                  projectMode: project.research_mode,
+                  projectAiState: project.ai_state_json
+                })
+              : null)
+          : null;
 
       if (
-        (freeCommentAction === "probe" || Boolean(freeCommentNormalized.needs_probe) || assessment.shouldProbe) &&
+        freeCommentAction === "probe" &&
+        probeBudget.canProbe &&
         freeCommentProbeType &&
         freeCommentPrompt &&
         activeSession.state_json?.lastProbeType !== freeCommentProbeType &&
         !isQuestionSimilarToLast(activeSession, freeCommentPrompt)
       ) {
+        recordActionPath(diagnostics, `free_comment_probe:${freeCommentProbeType}`);
+
+        await replyWithTiming({
+          replyToken: input.replyToken,
+          messages: [buildTextMessage(freeCommentPrompt)],
+          label: "free_comment_probe",
+          diagnostics,
+          sessionId: activeSession.id
+        });
 
         const probingSession = await sessionRepository.update(activeSession.id, {
           state_json: {
@@ -1662,16 +2025,19 @@ export const conversationOrchestratorService = {
             pendingFreeCommentSourceText: freeCommentBaseText,
             pendingFreeCommentReason: freeCommentProbeType,
             pendingFreeCommentProbeType: freeCommentProbeType,
-            pendingFreeCommentMissingSlots: assessment.missingSlots,
+            pendingFreeCommentMissingSlots: freeCommentMissingSlots,
             answersSinceSummary: (activeSession.state_json?.answersSinceSummary ?? 0) + 1,
-            aiProbeCount: (activeSession.state_json?.aiProbeCount ?? 0) + 1,
+            aiProbeCount: currentProbeCountForSession + 1,
             aiProbeCountCurrentAnswer: currentProbeCountForAnswer + 1
           }
         });
 
         await logAssistantMessage(probingSession.id, freeCommentPrompt);
-        await lineMessagingService.reply(input.replyToken, [buildTextMessage(freeCommentPrompt)]);
         return;
+      }
+
+      if (freeCommentAction === "probe" && !probeBudget.canProbe) {
+        recordActionPath(diagnostics, "free_comment_probe_gate");
       }
 
       const relatedAnswers =
@@ -1690,29 +2056,6 @@ export const conversationOrchestratorService = {
         activeSession.state_json?.pendingFreeCommentSourceText ?? sourceAnswer?.answer_text ?? trimmedFreeComment,
         freeCommentFollowUps
       );
-
-      const freeCommentPost = await postService.syncAnswerToPost({
-        answer: sourceAnswer ?? freeCommentAnswer,
-        respondent,
-        session: activeSession,
-        project,
-        questionCode: freeCommentQuestion.question_code,
-        questionRole: freeCommentQuestion.question_role,
-        overrideType: "free_comment",
-        contentOverride: combinedFreeComment,
-        metadata: {
-          free_comment_probe: {
-            asked: followUpAnswerIds.length > 0,
-            prompt: activeSession.state_json?.pendingFreeCommentPrompt ?? null,
-            source_reason: activeSession.state_json?.pendingFreeCommentReason ?? null,
-            probe_type: activeSession.state_json?.pendingFreeCommentProbeType ?? null,
-            missing_slots: activeSession.state_json?.pendingFreeCommentMissingSlots ?? [],
-            source_answer_id: freeCommentSourceAnswerId,
-            follow_up_answer_id: followUpAnswerIds[followUpAnswerIds.length - 1] ?? null,
-            follow_up_answer_ids: followUpAnswerIds
-          }
-        }
-      });
 
       const updatedSession = await sessionRepository.update(activeSession.id, {
         state_json: {
@@ -1738,17 +2081,43 @@ export const conversationOrchestratorService = {
         replyToken: input.replyToken
       });
 
-      if (freeCommentPost?.id) {
-        void analysisService.analyzePost(freeCommentPost.id).catch((error) => {
-          logger.warn("Post analysis failed", {
-            postId: freeCommentPost.id,
-            error: error instanceof Error ? error.message : String(error)
+      runDeferredTask(
+        "free_comment_post_sync_failed",
+        async () => {
+          const freeCommentPost = await postService.syncAnswerToPost({
+            answer: sourceAnswer ?? freeCommentAnswer,
+            respondent,
+            session: activeSession,
+            project,
+            questionCode: freeCommentQuestion.question_code,
+            questionRole: freeCommentQuestion.question_role,
+            overrideType: "free_comment",
+            contentOverride: combinedFreeComment,
+            metadata: {
+              free_comment_probe: {
+                asked: followUpAnswerIds.length > 0,
+                prompt: activeSession.state_json?.pendingFreeCommentPrompt ?? null,
+                source_reason: activeSession.state_json?.pendingFreeCommentReason ?? null,
+                probe_type: activeSession.state_json?.pendingFreeCommentProbeType ?? null,
+                missing_slots: activeSession.state_json?.pendingFreeCommentMissingSlots ?? [],
+                source_answer_id: freeCommentSourceAnswerId,
+                follow_up_answer_id: followUpAnswerIds[followUpAnswerIds.length - 1] ?? null,
+                follow_up_answer_ids: followUpAnswerIds
+              }
+            }
           });
-        });
+
+          if (freeCommentPost?.id) {
+            runDeferredTask("free_comment_post_analysis_failed", async () => {
+              await analysisService.analyzePost(freeCommentPost.id);
+            }, { postId: freeCommentPost.id, sessionId: activeSession.id });
+          }
+        },
+        { sessionId: activeSession.id, questionCode: freeCommentQuestion.question_code }
+      );
+        return;
       }
-      return;
-    }
-    if (activeSession.current_phase === "ai_probe") {
+      if (activeSession.current_phase === "ai_probe") {
       const currentQuestion = await questionFlowService.getQuestion(activeSession.current_question_id);
       const probeAnswerText = input.text.trim();
       const sourceAnswerId = activeSession.state_json?.pendingProbeSourceAnswerId ?? null;
@@ -1778,7 +2147,8 @@ export const conversationOrchestratorService = {
         probeType: activeSession.state_json?.pendingProbeType ?? null,
         baseNormalized: sourceAnswer?.normalized_answer ?? null,
         probeCount: activeSession.state_json?.aiProbeCountCurrentAnswer ?? 0,
-        existingSlots: extractSlotMap(sourceAnswer?.normalized_answer ?? null)
+        existingSlots: extractSlotMap(sourceAnswer?.normalized_answer ?? null),
+        diagnostics
       });
       await answerRepository.create({
         session_id: activeSession.id,
@@ -1803,15 +2173,6 @@ export const conversationOrchestratorService = {
         }
       });
 
-      try {
-        updatedSession = await refreshSummaryIfNeeded(updatedSession);
-      } catch (error) {
-        logger.warn("Session summary update failed", {
-          sessionId: activeSession.id,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-
       const nextPendingQuestionId = updatedSession.state_json?.pendingQuestionId ?? null;
       const preferredAction = extractAnalysisAction(mergedNormalizedAnswer);
       const askedNextProbe = await maybeAskProbe({
@@ -1821,10 +2182,14 @@ export const conversationOrchestratorService = {
         answerId: sourceAnswerId,
         answerPayload: mergedNormalizedAnswer,
         pendingQuestionId: nextPendingQuestionId,
-        replyToken: input.replyToken
+        replyToken: input.replyToken,
+        diagnostics
       });
 
       if (askedNextProbe) {
+        runDeferredTask("probe_summary_refresh_failed", async () => {
+          await refreshSummaryIfNeeded(updatedSession);
+        }, { sessionId: activeSession.id });
         return;
       }
 
@@ -1842,18 +2207,31 @@ export const conversationOrchestratorService = {
         pendingQuestionId: nextPendingQuestionId,
         allowSkippingFutureQuestions: probeAnswerProgress.allowSkippingFutureQuestions,
         preferredAction,
-        replyToken: input.replyToken
+        replyToken: input.replyToken,
+        diagnostics
       });
-      return;
-    }
-    const currentQuestion = await questionFlowService.getQuestion(activeSession.current_question_id);
+      runDeferredTask("probe_summary_refresh_failed", async () => {
+        await refreshSummaryIfNeeded(updatedSession);
+      }, { sessionId: activeSession.id });
+        return;
+      }
+      const currentQuestion = await questionFlowService.getQuestion(activeSession.current_question_id);
 
     let parsedAnswer;
     try {
       parsedAnswer = questionFlowService.parseAnswer(currentQuestion, input.text);
     } catch {
-      const prompt = await questionPrompt(activeSession, currentQuestion);
-      await lineMessagingService.reply(input.replyToken, [buildTextMessage(buildInvalidAnswerText({ question: currentQuestion, responseStyle: settings.response_style })), buildTextMessage(prompt)]);
+      const prompt = await questionPrompt(activeSession, currentQuestion, diagnostics);
+      await replyWithTiming({
+        replyToken: input.replyToken,
+        messages: [
+          buildTextMessage(buildInvalidAnswerText({ question: currentQuestion, responseStyle: settings.response_style })),
+          buildTextMessage(prompt)
+        ],
+        label: "invalid_answer",
+        diagnostics,
+        sessionId: activeSession.id
+      });
       return;
     }
 
@@ -1862,7 +2240,7 @@ export const conversationOrchestratorService = {
       branchRule?.branches?.some((branch) => branch.source === "extracted")
     );
     const extractedPrimaryAnswer =
-      currentQuestion.question_type === "text"
+      currentQuestion.question_type === "text" && requiresExtractedBranching
         ? await answerExtractionService.enrichAnswerForConversation({
             sessionId: activeSession.id,
             project,
@@ -1872,6 +2250,9 @@ export const conversationOrchestratorService = {
             requireForBranching: requiresExtractedBranching
           })
         : null;
+    if (extractedPrimaryAnswer?.usedAi) {
+      recordAiCall(diagnostics, "answerExtraction");
+    }
     const normalizedForFlow = extractedPrimaryAnswer?.normalizedAnswer ?? parsedAnswer.normalizedAnswer;
 
     const rawNextQuestion = await questionFlowService.determineNextQuestion(
@@ -1889,7 +2270,8 @@ export const conversationOrchestratorService = {
       source: "primary",
       baseNormalized: normalizedForFlow,
       probeCount: 0,
-      existingSlots: {}
+      existingSlots: {},
+      diagnostics
     });
     const primaryAnswer = await answerRepository.create({
       session_id: activeSession.id,
@@ -1899,20 +2281,6 @@ export const conversationOrchestratorService = {
       parent_answer_id: null,
       normalized_answer: structuredPrimaryAnswer
     });
-    await answerExtractionService.persistForAnswer(primaryAnswer, activeSession.project_id);
-
-    await postService.syncAnswerToPost({
-      answer: primaryAnswer,
-      respondent,
-      session: activeSession,
-      project,
-      questionCode: currentQuestion.question_code,
-      questionRole: currentQuestion.question_role
-    });
-
-    if (activeAssignment?.id) {
-      await assignmentService.markAssignmentStarted(activeAssignment.id);
-    }
 
     let updatedSession = await sessionRepository.update(activeSession.id, {
       current_phase: "question",
@@ -1931,15 +2299,6 @@ export const conversationOrchestratorService = {
       }
     });
 
-    try {
-      updatedSession = await refreshSummaryIfNeeded(updatedSession);
-    } catch (error) {
-      logger.warn("Session summary update failed", {
-        sessionId: activeSession.id,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-
     const askedProbe = await maybeAskProbe({
       session: updatedSession,
       question: currentQuestion,
@@ -1947,10 +2306,28 @@ export const conversationOrchestratorService = {
       answerId: primaryAnswer.id,
       answerPayload: structuredPrimaryAnswer,
       pendingQuestionId: rawNextQuestion?.id ?? null,
-      replyToken: input.replyToken
+      replyToken: input.replyToken,
+      diagnostics
     });
 
     if (askedProbe) {
+      runDeferredTask("post_answer_followups_failed", async () => {
+        if (currentQuestion.question_type === "text") {
+          await answerExtractionService.persistForAnswer(primaryAnswer, activeSession.project_id);
+        }
+        await postService.syncAnswerToPost({
+          answer: primaryAnswer,
+          respondent,
+          session: activeSession,
+          project,
+          questionCode: currentQuestion.question_code,
+          questionRole: currentQuestion.question_role
+        });
+        if (activeAssignment?.id) {
+          await assignmentService.markAssignmentStarted(activeAssignment.id);
+        }
+        await refreshSummaryIfNeeded(updatedSession);
+      }, { sessionId: activeSession.id, answerId: primaryAnswer.id });
       return;
     }
 
@@ -1963,10 +2340,29 @@ export const conversationOrchestratorService = {
     });
 
     if (preferredAction === "finish") {
+      recordActionPath(diagnostics, "orchestrator:finish");
       await enterFreeCommentPhase({
         session: updatedSession,
-        replyToken: input.replyToken
+        replyToken: input.replyToken,
+        diagnostics
       });
+      runDeferredTask("post_answer_followups_failed", async () => {
+        if (currentQuestion.question_type === "text") {
+          await answerExtractionService.persistForAnswer(primaryAnswer, activeSession.project_id);
+        }
+        await postService.syncAnswerToPost({
+          answer: primaryAnswer,
+          respondent,
+          session: activeSession,
+          project,
+          questionCode: currentQuestion.question_code,
+          questionRole: currentQuestion.question_role
+        });
+        if (activeAssignment?.id) {
+          await assignmentService.markAssignmentStarted(activeAssignment.id);
+        }
+        await refreshSummaryIfNeeded(updatedSession);
+      }, { sessionId: activeSession.id, answerId: primaryAnswer.id });
       return;
     }
 
@@ -1980,37 +2376,123 @@ export const conversationOrchestratorService = {
     });
 
     if (!nextQuestion) {
+      recordActionPath(diagnostics, "orchestrator:free_comment");
       await enterFreeCommentPhase({
         session: updatedSession,
-        replyToken: input.replyToken
+        replyToken: input.replyToken,
+        diagnostics
       });
+      runDeferredTask("post_answer_followups_failed", async () => {
+        if (currentQuestion.question_type === "text") {
+          await answerExtractionService.persistForAnswer(primaryAnswer, activeSession.project_id);
+        }
+        await postService.syncAnswerToPost({
+          answer: primaryAnswer,
+          respondent,
+          session: activeSession,
+          project,
+          questionCode: currentQuestion.question_code,
+          questionRole: currentQuestion.question_role
+        });
+        if (activeAssignment?.id) {
+          await assignmentService.markAssignmentStarted(activeAssignment.id);
+        }
+        await refreshSummaryIfNeeded(updatedSession);
+      }, { sessionId: activeSession.id, answerId: primaryAnswer.id });
       return;
     }
 
-    const prompt = await questionPrompt(
-      {
-        ...updatedSession,
-        current_question_id: nextQuestion.id,
-        current_phase: "question"
-      },
-      nextQuestion
-    );
+    const pendingNextQuestionText =
+      typeof structuredPrimaryAnswer.pending_next_question_text === "string" &&
+      structuredPrimaryAnswer.pending_next_question_text.trim()
+        ? structuredPrimaryAnswer.pending_next_question_text
+        : null;
+    const prompt =
+      pendingNextQuestionText ??
+      (await questionPrompt(
+        {
+          ...updatedSession,
+          current_question_id: nextQuestion.id,
+          current_phase: "question"
+        },
+        nextQuestion,
+        diagnostics
+      ));
+    await replyWithTiming({
+      replyToken: input.replyToken,
+      messages: [buildTextMessage(prompt)],
+      label: "next_question",
+      diagnostics,
+      sessionId: activeSession.id
+    });
+
+    // Build PendingNextQuestionCache for session resume support
+    const hasBranching = preferredAction === null && rawNextQuestion?.id !== nextQuestion.id;
+    const hasSkip = preferredAction === "skip";
+    const sessionSlotMapForCache = await buildSessionSlotMap(activeSession.id);
+    const nextQuestionCache =
+      project.research_mode === "interview"
+        ? buildNextQuestionCache({
+            sessionId: activeSession.id,
+            nextQuestion,
+            collectedSlotMap: sessionSlotMapForCache,
+            questionText: pendingNextQuestionText,
+            hasBranching,
+            hasSkip
+          })
+        : null;
+
     const nextSession = await sessionRepository.update(activeSession.id, {
       current_question_id: nextQuestion.id,
       current_phase: "question",
       state_json: {
         ...withQuestionMemory(updatedSession.state_json, prompt, null),
         phase: "question",
-        currentQuestionIndex: await resolveQuestionIndex(activeSession.project_id, nextQuestion.id)
+        currentQuestionIndex: await resolveQuestionIndex(activeSession.project_id, nextQuestion.id),
+        pendingNextQuestionText: project.research_mode === "interview" ? prompt : null,
+        pendingNextQuestionCache: nextQuestionCache
       }
     });
 
-    await logAssistantMessage(nextSession.id, prompt);
-    await lineMessagingService.reply(input.replyToken, [buildTextMessage(prompt)]);
+    // Emit structured turn log (spec section 8)
+    logTurnResult({
+      sessionId: activeSession.id,
+      questionId: currentQuestion.id,
+      questionType: currentQuestion.question_type,
+      mode: project.research_mode,
+      usedInterviewTurn: project.research_mode === "interview",
+      probeExecuted: false,
+      probeReason: null,
+      skippedReason: hasSkip ? (preferredAction ?? null) : null,
+      usedCache: Boolean(pendingNextQuestionText),
+      cacheType: pendingNextQuestionText ? "text" : "none",
+      collectedFieldSignature: buildCollectedFieldSignature(sessionSlotMapForCache)
+    });
+
+      recordActionPath(diagnostics, `orchestrator:next_question:${nextQuestion.question_code}`);
+      await logAssistantMessage(nextSession.id, prompt);
+      runDeferredTask("post_answer_followups_failed", async () => {
+        if (currentQuestion.question_type === "text") {
+          await answerExtractionService.persistForAnswer(primaryAnswer, activeSession.project_id);
+        }
+        await postService.syncAnswerToPost({
+          answer: primaryAnswer,
+          respondent,
+          session: activeSession,
+          project,
+          questionCode: currentQuestion.question_code,
+          questionRole: currentQuestion.question_role
+        });
+        if (activeAssignment?.id) {
+          await assignmentService.markAssignmentStarted(activeAssignment.id);
+        }
+        await refreshSummaryIfNeeded(nextSession);
+      }, { sessionId: activeSession.id, answerId: primaryAnswer.id, nextQuestion: nextQuestion.question_code });
+    } finally {
+      logTurnDiagnostics(diagnostics, activeSession.current_phase);
+    }
   }
 };
-
-
 
 
 

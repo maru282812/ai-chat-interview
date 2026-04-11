@@ -16,48 +16,57 @@ export const webhookController = {
     }
 
     const payload = JSON.parse(rawBody.toString("utf8")) as { events?: LineWebhookEvent[] };
-    for (const event of payload.events ?? []) {
-      if (!event.source.userId || event.mode === "standby") {
-        continue;
-      }
-
-      try {
-        if (event.type === "follow" && event.replyToken) {
-          await conversationOrchestratorService.handleFollowEvent(event.source.userId, event.replyToken);
-          continue;
-        }
-
-        if (event.type === "unfollow") {
-          await conversationOrchestratorService.handleUnfollowEvent(event.source.userId);
-          continue;
-        }
-
-        if (event.type === "message" && event.replyToken && event.message?.type === "text") {
-          await conversationOrchestratorService.handleTextMessage({
-            userId: event.source.userId,
-            replyToken: event.replyToken,
-            text: event.message.text ?? "",
-            rawPayload: event as unknown as Record<string, unknown>
-          });
-          continue;
-        }
-
-        if (event.type === "message" && event.replyToken && event.message) {
-          await conversationOrchestratorService.handleNonTextMessage({
-            userId: event.source.userId,
-            replyToken: event.replyToken,
-            messageType: event.message.type,
-            rawPayload: event as unknown as Record<string, unknown>
-          });
-        }
-      } catch (error) {
-        logger.error("Failed to handle LINE event", {
-          eventType: event.type,
-          message: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
     res.json({ ok: true });
+
+    void (async () => {
+      for (const event of payload.events ?? []) {
+        if (!event.source.userId || event.mode === "standby") {
+          continue;
+        }
+
+        try {
+          if (event.type === "follow" && event.replyToken) {
+            await conversationOrchestratorService.handleFollowEvent(event.source.userId, event.replyToken);
+            continue;
+          }
+
+          if (event.type === "unfollow") {
+            await conversationOrchestratorService.handleUnfollowEvent(event.source.userId);
+            continue;
+          }
+
+          if (event.type === "message" && event.replyToken && event.message?.type === "text") {
+            await conversationOrchestratorService.handleTextMessage({
+              userId: event.source.userId,
+              replyToken: event.replyToken,
+              text: event.message.text ?? "",
+              rawPayload: event as unknown as Record<string, unknown>
+            });
+            continue;
+          }
+
+          if (event.type === "message" && event.replyToken && event.message) {
+            await conversationOrchestratorService.handleNonTextMessage({
+              userId: event.source.userId,
+              replyToken: event.replyToken,
+              messageType: event.message.type,
+              rawPayload: event as unknown as Record<string, unknown>
+            });
+          }
+        } catch (error) {
+          logger.error("Failed to handle LINE event", {
+            eventType: event.type,
+            userId: event.source.userId,
+            replyToken: event.replyToken ?? null,
+            text:
+              event.type === "message" && event.message?.type === "text"
+                ? event.message.text ?? ""
+                : null,
+            message: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined
+          });
+        }
+      }
+    })();
   }
 };
