@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/styles.css" />
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  </head>
+  <body class="liff-body">
+    <main class="liff-main">
+      <section class="card liff-card stack">
+        <div>
+          <h1><%= title %></h1>
+          <p class="muted">基本情報を登録・更新できます。未入力の項目は随時追加できます。</p>
+        </div>
+        <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+        <div id="mypage-root" class="stack"></div>
+        <p id="status" class="muted">読み込み中...</p>
+      </section>
+    </main>
+    <script>
+      (() => {
+        const initialData = JSON.parse(document.getElementById("initial-data").dataset.json || "{}");
+        const liffId = initialData.liffId || "";
+        const root = document.getElementById("mypage-root");
+        const statusEl = document.getElementById("status");
+        let idToken = null;
+
+        function setStatus(text, isError) {
+          statusEl.textContent = text;
+          statusEl.className = isError ? "danger-text" : "muted";
+        }
+
+        function escapeHtml(value) {
+          return String(value ?? "")
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#39;");
+        }
+
+        function checked(val, target) {
+          return val === target ? "checked" : "";
+        }
+
+        function selected(val, target) {
+          return val === target ? "selected" : "";
+        }
+
+        function renderForm(profile) {
+          const p = profile || {};
+          root.innerHTML = `
+            <form id="profile-form" class="stack">
+              <label>
+                呼び名
+                <input type="text" name="nickname" value="${escapeHtml(p.nickname)}" placeholder="例: たろう" />
+              </label>
+              <label>
+                生年月日
+                <input type="date" name="birth_date" value="${escapeHtml(p.birth_date)}" />
+              </label>
+              <label>
+                都道府県
+                <select name="prefecture">
+                  <option value="">選択してください</option>
+                  ${[
+                    "北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県",
+                    "茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県",
+                    "新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県",
+                    "静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県",
+                    "奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県",
+                    "徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県",
+                    "熊本県","大分県","宮崎県","鹿児島県","沖縄県"
+                  ].map(pref => `<option value="${escapeHtml(pref)}" ${selected(p.prefecture, pref)}>${escapeHtml(pref)}</option>`).join("")}
+                </select>
+              </label>
+              <fieldset>
+                <legend>住所の詳細登録</legend>
+                <label>
+                  <input type="radio" name="address_declined" value="false" ${p.address_declined ? "" : "checked"} />
+                  登録する（都道府県以下）
+                </label>
+                <label>
+                  <input type="radio" name="address_declined" value="true" ${p.address_declined ? "checked" : ""} />
+                  都道府県のみ（詳細は登録しない）
+                </label>
+                <div id="address-detail-wrap">
+                  <label>
+                    住所（都道府県以下）
+                    <input type="text" name="address_detail" value="${escapeHtml(p.address_detail)}" placeholder="例: 渋谷区..." />
+                  </label>
+                </div>
+              </fieldset>
+              <label>
+                職業
+                <select name="occupation">
+                  <option value="">選択してください</option>
+                  ${["会社員（正社員）","会社員（契約・派遣）","公務員","自営業・フリーランス","パート・アルバイト","学生","専業主婦・主夫","無職","その他"].map(o => `<option value="${escapeHtml(o)}" ${selected(p.occupation, o)}>${escapeHtml(o)}</option>`).join("")}
+                </select>
+              </label>
+              <label>
+                業種
+                <select name="industry">
+                  <option value="">選択してください</option>
+                  ${["IT・通信","製造","金融・保険","医療・福祉","教育","小売・流通","外食・フード","建設・不動産","メディア・広告","公共・行政","その他"].map(i => `<option value="${escapeHtml(i)}" ${selected(p.industry, i)}>${escapeHtml(i)}</option>`).join("")}
+                </select>
+              </label>
+              <fieldset>
+                <legend>婚姻状況</legend>
+                ${[["single","未婚"],["married","既婚"],["divorced","離婚"],["widowed","死別"]].map(([val, label]) =>
+                  `<label><input type="radio" name="marital_status" value="${val}" ${checked(p.marital_status, val)} />${label}</label>`
+                ).join("")}
+              </fieldset>
+              <fieldset>
+                <legend>子どもの有無</legend>
+                <label><input type="radio" name="has_children" value="true" ${p.has_children === true ? "checked" : ""} />いる</label>
+                <label><input type="radio" name="has_children" value="false" ${p.has_children === false ? "checked" : ""} />いない</label>
+              </fieldset>
+              <label>
+                子どもの年齢（カンマ区切り、例: 3,7）
+                <input type="text" name="children_ages_text" value="${escapeHtml((p.children_ages || []).join(","))}" placeholder="例: 3,7,12" />
+              </label>
+              <fieldset>
+                <legend>同居家族構成（複数選択可）</legend>
+                ${[["self","本人のみ"],["spouse","配偶者"],["child","子ども"],["parent","親"],["sibling","兄弟姉妹"],["other","その他"]].map(([val, label]) =>
+                  `<label><input type="checkbox" name="household_composition" value="${val}" ${(p.household_composition||[]).includes(val) ? "checked" : ""} />${label}</label>`
+                ).join("")}
+              </fieldset>
+              <button type="submit">保存する</button>
+            </form>
+          `;
+
+          // 住所詳細の表示切替
+          const declineRadios = root.querySelectorAll('input[name="address_declined"]');
+          const addressDetailWrap = root.getElementById ? root.getElementById("address-detail-wrap") : document.getElementById("address-detail-wrap");
+          function toggleAddressDetail() {
+            const declined = root.querySelector('input[name="address_declined"]:checked')?.value === "true";
+            const wrap = document.getElementById("address-detail-wrap");
+            if (wrap) wrap.style.display = declined ? "none" : "";
+          }
+          declineRadios.forEach(r => r.addEventListener("change", toggleAddressDetail));
+          toggleAddressDetail();
+
+          root.querySelector("#profile-form").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const form = e.target;
+            const fd = new FormData(form);
+
+            const childrenAgesText = fd.get("children_ages_text") || "";
+            const childrenAges = childrenAgesText.toString().split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+            const householdComposition = fd.getAll("household_composition").map(String);
+
+            const payload = {
+              nickname: fd.get("nickname"),
+              birth_date: fd.get("birth_date") || null,
+              prefecture: fd.get("prefecture") || null,
+              address_declined: fd.get("address_declined") === "true",
+              address_detail: fd.get("address_declined") === "true" ? null : (fd.get("address_detail") || null),
+              occupation: fd.get("occupation") || null,
+              industry: fd.get("industry") || null,
+              marital_status: fd.get("marital_status") || null,
+              has_children: fd.get("has_children") === "true" ? true : fd.get("has_children") === "false" ? false : null,
+              children_ages: childrenAges,
+              household_composition: householdComposition
+            };
+
+            try {
+              setStatus("保存中...", false);
+              const res = await fetch(initialData.updateUrl, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${idToken}`
+                },
+                body: JSON.stringify(payload)
+              });
+              if (!res.ok) throw new Error("保存に失敗しました。");
+              setStatus("保存しました。", false);
+            } catch (err) {
+              setStatus(err.message || "保存に失敗しました。", true);
+            }
+          });
+        }
+
+        async function load() {
+          if (!liffId) {
+            setStatus("LIFF を利用できません。LINEのメニューから開き直してください。", true);
+            return;
+          }
+          try {
+            await liff.init({ liffId });
+            idToken = liff.getIDToken();
+            if (!idToken) throw new Error("LINE認証に失敗しました。もう一度お試しください。");
+
+            const res = await fetch(initialData.profileUrl, {
+              headers: { Authorization: `Bearer ${idToken}` }
+            });
+            if (!res.ok) throw new Error("情報の取得に失敗しました。");
+            const data = await res.json();
+            renderForm(data.profile);
+            setStatus("", false);
+          } catch (err) {
+            setStatus(err.message || "読み込みに失敗しました。", true);
+          }
+        }
+
+        void load();
+      })();
+    </script>
+  </body>
+</html>

@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { env } from "../config/env";
 import { HttpError } from "../lib/http";
+import { userProfileRepository, type UserProfileUpsertInput } from "../repositories/userProfileRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { analysisService } from "../services/analysisService";
 import { liffAuthService } from "../services/liffAuthService";
@@ -8,6 +9,7 @@ import { liffService } from "../services/liffService";
 import { personalityService } from "../services/personalityService";
 import { postService } from "../services/postService";
 import { respondentService } from "../services/respondentService";
+import type { MaritalStatus } from "../types/domain";
 
 type SupportedPostEntryKey = "rant" | "diary";
 
@@ -192,5 +194,90 @@ export const liffController = {
       user_id: verifiedUser.userId,
       ...result
     });
+  },
+
+  async mypagePage(req: Request, res: Response): Promise<void> {
+    const entry = await liffService.getPage("mypage");
+    if (!entry) {
+      throw new HttpError(404, "LIFF entrypoint not found");
+    }
+
+    res.render("liff/mypage", {
+      title: entry.title,
+      entry,
+      initialData: {
+        appBaseUrl: env.APP_BASE_URL,
+        liffId: entry.liffId,
+        profileUrl: "/liff/mypage-data",
+        updateUrl: "/liff/mypage-data"
+      }
+    });
+  },
+
+  async getMypageData(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const profile = await userProfileRepository.getByLineUserId(verifiedUser.userId);
+
+    res.json({
+      ok: true,
+      user_id: verifiedUser.userId,
+      display_name: verifiedUser.displayName,
+      profile: profile ?? null
+    });
+  },
+
+  async updateMypageData(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const body = req.body as Record<string, unknown>;
+
+    function parseDate(v: unknown): string | null {
+      const s = stringValue(v).trim();
+      if (!s) return null;
+      const d = new Date(s);
+      return Number.isNaN(d.getTime()) ? null : s;
+    }
+
+    function parseBool(v: unknown): boolean | null {
+      if (v === true || v === "true") return true;
+      if (v === false || v === "false") return false;
+      return null;
+    }
+
+    function parseIntArray(v: unknown): number[] {
+      if (!Array.isArray(v)) return [];
+      return v.map(Number).filter((n) => Number.isFinite(n));
+    }
+
+    function parseStringArray(v: unknown): string[] {
+      if (!Array.isArray(v)) return [];
+      return v.map(String).filter(Boolean);
+    }
+
+    function parseMaritalStatus(v: unknown): MaritalStatus | null {
+      const s = stringValue(v).trim();
+      if (s === "single" || s === "married" || s === "divorced" || s === "widowed") {
+        return s;
+      }
+      return null;
+    }
+
+    const input: UserProfileUpsertInput = {
+      nickname: stringValue(body.nickname).trim() || null,
+      birth_date: parseDate(body.birth_date),
+      prefecture: stringValue(body.prefecture).trim() || null,
+      address_detail: stringValue(body.address_detail).trim() || null,
+      address_declined: body.address_declined === true || body.address_declined === "true",
+      occupation: stringValue(body.occupation).trim() || null,
+      occupation_updated_at: body.occupation !== undefined ? new Date().toISOString() : undefined,
+      industry: stringValue(body.industry).trim() || null,
+      marital_status: parseMaritalStatus(body.marital_status),
+      has_children: parseBool(body.has_children),
+      children_ages: parseIntArray(body.children_ages),
+      household_composition: parseStringArray(body.household_composition)
+    };
+
+    const profile = await userProfileRepository.upsert(verifiedUser.userId, input);
+
+    res.json({ ok: true, profile });
   }
 };

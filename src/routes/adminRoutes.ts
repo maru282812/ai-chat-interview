@@ -71,3 +71,7 @@ adminRoutes.get("/exports/points.csv", asyncHandler(adminController.exportPoints
 adminRoutes.get("/exports/ranks.csv", asyncHandler(adminController.exportRanks));
 adminRoutes.get("/exports/user-posts.csv", asyncHandler(adminController.exportUserPosts));
 adminRoutes.get("/exports/post-analysis.csv", asyncHandler(adminController.exportPostAnalysis));
+
+// Tag API (formV3.ejs から呼び出される)
+adminRoutes.post("/api/parse-tags",    asyncHandler(adminController.parseTagsApi));
+adminRoutes.post("/api/generate-tags", asyncHandler(adminController.generateTagsApi));

@@ -16,6 +16,13 @@ export type ProjectAssignmentStatus =
   | "completed"
   | "expired"
   | "cancelled";
+export type ScreeningResult = "passed" | "failed";
+export type ScreeningPassAction = "survey" | "interview" | "manual_hold";
+export type MaritalStatus = "single" | "married" | "divorced" | "widowed";
+
+/** プロジェクト単位の表示モード (016_question_schema_redesign) */
+export type DisplayMode = "survey_page" | "survey_question" | "interview_chat";
+
 export type QuestionRole =
   | "screening"
   | "main"
@@ -23,12 +30,39 @@ export type QuestionRole =
   | "attribute"
   | "comparison_core"
   | "free_comment";
+
+/**
+ * QuestionType: 既存5種 + Phase1 拡張
+ * DB 制約は 016_question_schema_redesign.sql 参照
+ */
 export type QuestionType =
+  // 既存（後方互換）
   | "text"
   | "single_select"
   | "multi_select"
   | "yes_no"
-  | "scale";
+  | "scale"
+  // 選択系
+  | "single_choice"
+  | "multi_choice"
+  // マトリクス系
+  | "matrix_single"
+  | "matrix_multi"
+  | "matrix_mixed"
+  // テキスト系
+  | "free_text_short"
+  | "free_text_long"
+  // 数値
+  | "numeric"
+  // 画像
+  | "image_upload"
+  // 隠し項目
+  | "hidden_single"
+  | "hidden_multi"
+  // 画像付きテキスト
+  | "text_with_image"
+  // SD法
+  | "sd";
 export type AnswerRole = "primary" | "ai_probe";
 export type ExtractionMode = "none" | "single_object" | "multi_object";
 export type ExtractionTarget = "post_answer" | "post_session";
@@ -144,6 +178,12 @@ export interface ProjectAIState {
   probe_guideline?: string;
 }
 
+export interface ScreeningConfig {
+  pass_message?: string | null;
+  fail_message?: string | null;
+  pass_action?: ScreeningPassAction;
+}
+
 export interface Project {
   id: UUID;
   name: string;
@@ -152,6 +192,8 @@ export interface Project {
   status: ProjectStatus;
   reward_points: number;
   research_mode: ResearchMode;
+  /** 表示モード: survey_page | survey_question | interview_chat */
+  display_mode: DisplayMode;
   primary_objectives: string[];
   secondary_objectives: string[];
   comparison_constraints: string[];
@@ -161,6 +203,8 @@ export interface Project {
   ai_state_json: ProjectAIState | null;
   ai_state_template_key: string | null;
   ai_state_generated_at: string | null;
+  screening_config: ScreeningConfig | null;
+  screening_last_question_order: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -318,10 +362,24 @@ export interface Question {
   project_id: UUID;
   question_code: string;
   question_text: string;
+  /** コメント（設問文の上） */
+  comment_top: string | null;
+  /** コメント（設問文の下・選択肢の上） */
+  comment_bottom: string | null;
   question_role: QuestionRole;
   question_type: QuestionType;
   is_required: boolean;
   sort_order: number;
+  /** 回答出力タイプ: text | number | boolean | array | object | none */
+  answer_output_type: string | null;
+  /** PDFタグ仕様に基づく生タグ文字列（互換用） */
+  display_tags_raw: string | null;
+  /** タグ構造化データ（canonical）。tagParser が生成。こちらを優先して使う。 */
+  display_tags_parsed: import("./questionSchema").DisplayTagsParsed | null;
+  /** 設問単位の表示条件 (<pipe> の表示制御用途) */
+  visibility_conditions: import("./questionSchema").VisibilityCondition[] | null;
+  /** survey_page モード用ページグループ */
+  page_group_id: UUID | null;
   branch_rule: QuestionBranchRule | LegacyBranchRule[] | null;
   question_config: QuestionConfig | null;
   ai_probe_enabled: boolean;
@@ -389,6 +447,28 @@ export interface ProjectAssignment {
   reminder_sent_at: string | null;
   last_delivery_error: string | null;
   delivery_log: Record<string, unknown>[] | null;
+  screening_result: ScreeningResult | null;
+  screening_result_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserProfile {
+  id: UUID;
+  line_user_id: string;
+  nickname: string | null;
+  birth_date: string | null;
+  prefecture: string | null;
+  address_detail: string | null;
+  address_registered_at: string | null;
+  address_declined: boolean;
+  occupation: string | null;
+  occupation_updated_at: string | null;
+  industry: string | null;
+  marital_status: MaritalStatus | null;
+  has_children: boolean | null;
+  children_ages: number[];
+  household_composition: string[];
   created_at: string;
   updated_at: string;
 }

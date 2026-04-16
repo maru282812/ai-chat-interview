@@ -5,7 +5,8 @@ import type {
   ProjectProbePolicy,
   ProjectResponseStyle,
   ProjectStatus,
-  ResearchMode
+  ResearchMode,
+  ScreeningConfig
 } from "../types/domain";
 import { requireData, throwIfError } from "./baseRepository";
 import { projectAssignmentRepository } from "./projectAssignmentRepository";
@@ -29,6 +30,8 @@ interface ProjectMutationInput {
   ai_state_json?: ProjectAIState | null;
   ai_state_template_key?: string | null;
   ai_state_generated_at?: string | null;
+  screening_config?: ScreeningConfig | null;
+  screening_last_question_order?: number | null;
 }
 
 type ProjectUpdateInput = Partial<ProjectMutationInput>;

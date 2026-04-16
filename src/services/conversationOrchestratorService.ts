@@ -28,7 +28,8 @@ import { projectRepository } from "../repositories/projectRepository";
 import { questionRepository } from "../repositories/questionRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
-import { buildMypageFlex, buildRankFlex, buildWelcomeMessages } from "../templates/flex";
+import { buildMypageLiffFlex, buildRankFlex, buildWelcomeMessages } from "../templates/flex";
+import { liffService } from "./liffService";
 import type {
   AnswerAnalysisAction,
   LineMessage,
@@ -47,6 +48,7 @@ import { lineMessagingService } from "./lineMessagingService";
 import { menuActionServiceDb } from "./menuActionServiceDb";
 import { pointService } from "./pointService";
 import { assignmentService } from "./assignmentService";
+import { screeningService } from "./screeningService";
 import { postService } from "./postService";
 import { questionFlowService } from "./questionFlowServiceV2";
 import { rankService } from "./rankService";
@@ -1750,26 +1752,23 @@ export const conversationOrchestratorService = {
       ]);
       return;
     }
-    if (command === "points" || command === "rank" || command === "mypage") {
+    if (command === "mypage") {
+      const mypageLiff = await liffService.getPage("mypage");
+      const mypageUrl = mypageLiff?.url ?? `${env.APP_BASE_URL}/liff/mypage`;
+      await lineMessagingService.reply(input.replyToken, [buildMypageLiffFlex(mypageUrl)]);
+      return;
+    }
+
+    if (command === "points" || command === "rank") {
       const currentRank = await rankService.resolveRank(respondent.total_points);
       const nextRank = await rankService.getNextRank(respondent.total_points);
-      const card =
-        command === "mypage"
-          ? buildMypageFlex({
-              rankName: currentRank?.rank_name ?? "Bronze",
-              badgeLabel: currentRank?.badge_label ?? "",
-              totalPoints: respondent.total_points,
-              nextRank,
-              pointsToNext: nextRank ? nextRank.min_points - respondent.total_points : null,
-              hasActiveSession: Boolean(activeSession)
-            })
-          : buildRankFlex({
-              rankName: currentRank?.rank_name ?? "Bronze",
-              badgeLabel: currentRank?.badge_label ?? "",
-              totalPoints: respondent.total_points,
-              nextRank,
-              pointsToNext: nextRank ? nextRank.min_points - respondent.total_points : null
-            });
+      const card = buildRankFlex({
+        rankName: currentRank?.rank_name ?? "Bronze",
+        badgeLabel: currentRank?.badge_label ?? "",
+        totalPoints: respondent.total_points,
+        nextRank,
+        pointsToNext: nextRank ? nextRank.min_points - respondent.total_points : null
+      });
       await lineMessagingService.reply(input.replyToken, [card]);
       return;
     }
@@ -2401,6 +2400,82 @@ export const conversationOrchestratorService = {
       }, { sessionId: activeSession.id, answerId: primaryAnswer.id });
       return;
     }
+
+    // ── スクリーニングゲート ──────────────────────────────────────────────────
+    // screening_last_question_order が設定されており、今回の回答でスクリーニング区間
+    // (sort_order <= boundary) を抜けるタイミング（次の質問が区間外 or null）に判定する。
+    const screeningBoundary =
+      typeof project.screening_last_question_order === "number"
+        ? project.screening_last_question_order
+        : null;
+    const isLeavingScreeningSection =
+      screeningBoundary !== null &&
+      currentQuestion.sort_order <= screeningBoundary &&
+      (nextQuestion === null || nextQuestion.sort_order > screeningBoundary);
+
+    if (isLeavingScreeningSection && activeAssignment?.id && !activeAssignment.screening_result) {
+      try {
+        const screeningOutput = await screeningService.recordResult({
+          assignmentId: activeAssignment.id,
+          result: "passed",
+          lineUserId: input.userId
+        });
+        recordActionPath(
+          diagnostics,
+          `orchestrator:screening_passed:${screeningOutput.pass_action}`
+        );
+
+        if (screeningOutput.pass_action === "manual_hold") {
+          // 手動送付待ち: スクリーニング通過メッセージは push 送信済み。セッションを終了。
+          await sessionRepository.update(updatedSession.id, {
+            status: "completed",
+            current_phase: "completed",
+            current_question_id: null,
+            completed_at: new Date().toISOString()
+          });
+          // replyToken は空応答で消化（reply は messages.length === 0 のとき no-op）
+          await replyWithTiming({
+            replyToken: input.replyToken,
+            messages: [],
+            label: "screening_manual_hold",
+            diagnostics,
+            sessionId: activeSession.id
+          });
+          runDeferredTask(
+            "post_answer_followups_failed",
+            async () => {
+              if (currentQuestion.question_type === "text") {
+                await answerExtractionService.persistForAnswer(
+                  primaryAnswer,
+                  activeSession.project_id
+                );
+              }
+              await postService.syncAnswerToPost({
+                answer: primaryAnswer,
+                respondent,
+                session: activeSession,
+                project,
+                questionCode: currentQuestion.question_code,
+                questionRole: currentQuestion.question_role
+              });
+              if (activeAssignment?.id) {
+                await assignmentService.markAssignmentStarted(activeAssignment.id);
+              }
+            },
+            { sessionId: activeSession.id, answerId: primaryAnswer.id }
+          );
+          return;
+        }
+        // survey / interview: pass メッセージ送信済み。そのまま次の質問へ進む。
+      } catch (err) {
+        logger.warn("Screening gate failed", {
+          sessionId: activeSession.id,
+          assignmentId: activeAssignment?.id,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+    // ── /スクリーニングゲート ────────────────────────────────────────────────
 
     const pendingNextQuestionText =
       typeof structuredPrimaryAnswer.pending_next_question_text === "string" &&

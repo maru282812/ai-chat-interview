@@ -33,7 +33,7 @@ const COMMAND_ALIASES: Record<ConversationCommand, string[]> = {
   stop: ["stop", "やめる", "中断"],
   restart: ["restart", "最初から", "リセット"],
   rank: ["rank", "ランク"],
-  mypage: ["mypage", "マイページ"],
+  mypage: ["mypage", "マイページ", "基本情報変更", "基本情報"],
   points: ["point", "points", "ポイント"]
 };
 
@@ -238,7 +238,7 @@ export function buildHelpText(
   responseStyle: NormalizedProjectResearchSettings["response_style"]
 ): string {
   return formatTextForLine(
-    "使えるコマンド: start / resume / やめる / 最初から / points / rank / mypage / help",
+    "使えるコマンド: start / resume / やめる / 最初から / points / rank / mypage（基本情報） / help",
     responseStyle
   );
 }

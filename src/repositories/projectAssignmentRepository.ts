@@ -42,6 +42,8 @@ type ProjectAssignmentUpdateInput = Partial<
     | "reminder_sent_at"
     | "last_delivery_error"
     | "delivery_log"
+    | "screening_result"
+    | "screening_result_at"
   >
 >;
 

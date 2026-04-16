@@ -203,6 +203,35 @@
     </div>
   </section>
 
+  <section class="editor-section stack">
+    <h2>スクリーニング設定</h2>
+    <p class="muted">スクリーニング設問の通過・非通過後の動作を設定します。非通過者には必ず終了案内が送られます。</p>
+    <%
+      const sc = project?.screening_config || {};
+    %>
+    <label>
+      スクリーニング終了質問番号（sort_order）
+      <input type="number" name="screening_last_question_order" min="1" value="<%= project?.screening_last_question_order ?? '' %>" placeholder="例: 3（未設定の場合はスクリーニングなし）" />
+      <span class="muted">先頭からこの番号の質問まで（sort_order が一致するもの）をスクリーニング区間として扱います。未入力の場合はスクリーニング判定をスキップします。</span>
+    </label>
+    <label>
+      通過後の動作
+      <select name="screening_pass_action">
+        <option value="survey" <%= sc.pass_action === "survey" || !sc.pass_action ? "selected" : "" %>>アンケートへ進む（自動）</option>
+        <option value="interview" <%= sc.pass_action === "interview" ? "selected" : "" %>>インタビューへ進む（自動）</option>
+        <option value="manual_hold" <%= sc.pass_action === "manual_hold" ? "selected" : "" %>>手動送付待ち</option>
+      </select>
+    </label>
+    <label>
+      通過時メッセージ
+      <textarea name="screening_pass_message" placeholder="省略時はデフォルトメッセージが送信されます"><%= sc.pass_message || "" %></textarea>
+    </label>
+    <label>
+      非通過時メッセージ
+      <textarea name="screening_fail_message" placeholder="省略時はデフォルトメッセージが送信されます"><%= sc.fail_message || "" %></textarea>
+    </label>
+  </section>
+
   <button type="submit"><%= project ? "更新する" : "作成する" %></button>
 </form>
 

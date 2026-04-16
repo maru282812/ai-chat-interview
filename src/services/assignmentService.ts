@@ -8,13 +8,16 @@ import { projectRepository } from "../repositories/projectRepository";
 import { rankRepository } from "../repositories/rankRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
+import { userProfileRepository } from "../repositories/userProfileRepository";
 import type {
+  MaritalStatus,
   Project,
   ProjectAssignment,
   ProjectAssignmentStatus,
   Rank,
   Respondent,
-  Session
+  Session,
+  UserProfile
 } from "../types/domain";
 import { lineMessagingService } from "./lineMessagingService";
 
@@ -25,6 +28,15 @@ export interface AssignmentRuleFilter {
   has_participated?: boolean | null;
   last_participated_before?: string | null;
   unanswered_project_id?: string | null;
+  // 基本情報条件
+  age_min?: number | null;
+  age_max?: number | null;
+  prefectures?: string[] | null;
+  occupations?: string[] | null;
+  industries?: string[] | null;
+  marital_statuses?: MaritalStatus[] | null;
+  has_children?: boolean | null;
+  household_compositions?: string[] | null;
 }
 
 export interface DeliveryCandidate {
@@ -44,6 +56,9 @@ export interface DeliveryCandidate {
   target_assignment_status: ProjectAssignmentStatus | null;
   target_assignment_deadline: string | null;
   target_completed: boolean;
+  // 基本情報
+  profile: UserProfile | null;
+  age: number | null;
 }
 
 export interface ProjectAssignmentListItem {
@@ -182,6 +197,20 @@ function candidateSort(left: DeliveryCandidate, right: DeliveryCandidate): numbe
   return right.total_points - left.total_points;
 }
 
+function calcAge(birthDate: string | null): number | null {
+  if (!birthDate) {
+    return null;
+  }
+  const today = new Date();
+  const birth = new Date(birthDate);
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDelta = today.getMonth() - birth.getMonth();
+  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.getDate())) {
+    age -= 1;
+  }
+  return age;
+}
+
 function ruleMatches(candidate: DeliveryCandidate, filter: AssignmentRuleFilter): boolean {
   if (!candidate.has_line_user_id) {
     return false;
@@ -226,6 +255,62 @@ function ruleMatches(candidate: DeliveryCandidate, filter: AssignmentRuleFilter)
     candidate.completed_project_ids.includes(filter.unanswered_project_id)
   ) {
     return false;
+  }
+
+  // 基本情報条件
+  if (typeof filter.age_min === "number") {
+    if (candidate.age === null || candidate.age < filter.age_min) {
+      return false;
+    }
+  }
+
+  if (typeof filter.age_max === "number") {
+    if (candidate.age === null || candidate.age > filter.age_max) {
+      return false;
+    }
+  }
+
+  if (filter.prefectures && filter.prefectures.length > 0) {
+    const prefecture = candidate.profile?.prefecture ?? null;
+    if (!prefecture || !filter.prefectures.includes(prefecture)) {
+      return false;
+    }
+  }
+
+  if (filter.occupations && filter.occupations.length > 0) {
+    const occupation = candidate.profile?.occupation ?? null;
+    if (!occupation || !filter.occupations.includes(occupation)) {
+      return false;
+    }
+  }
+
+  if (filter.industries && filter.industries.length > 0) {
+    const industry = candidate.profile?.industry ?? null;
+    if (!industry || !filter.industries.includes(industry)) {
+      return false;
+    }
+  }
+
+  if (filter.marital_statuses && filter.marital_statuses.length > 0) {
+    const maritalStatus = candidate.profile?.marital_status ?? null;
+    if (!maritalStatus || !filter.marital_statuses.includes(maritalStatus)) {
+      return false;
+    }
+  }
+
+  if (typeof filter.has_children === "boolean") {
+    const hasChildren = candidate.profile?.has_children ?? null;
+    if (hasChildren === null || hasChildren !== filter.has_children) {
+      return false;
+    }
+  }
+
+  if (filter.household_compositions && filter.household_compositions.length > 0) {
+    const composition = candidate.profile?.household_composition ?? [];
+    const hasOverlap = filter.household_compositions.some((item) => composition.includes(item));
+    if (!hasOverlap) {
+      return false;
+    }
   }
 
   return true;
@@ -385,6 +470,16 @@ export const assignmentService = {
       projectRepository.list()
     ]);
 
+    const lineUserIds = [
+      ...new Set(
+        respondents
+          .map((item) => item.line_user_id)
+          .filter((id): id is string => Boolean(id))
+      )
+    ];
+    const profiles = await userProfileRepository.listByLineUserIds(lineUserIds);
+    const profileByLineUserId = new Map(profiles.map((p) => [p.line_user_id, p]));
+
     const sessionsByRespondent = await listSessionsByRespondentMap(respondents);
     const assignmentsByRespondent = new Map(assignments.map((item) => [item.respondent_id, item]));
 
@@ -431,6 +526,11 @@ export const assignmentService = {
             .filter((value): value is string => Boolean(value))
             .sort((left, right) => right.localeCompare(left))[0] ?? null;
 
+        const profile = hasLineUserId(pointLeader.line_user_id)
+          ? profileByLineUserId.get(pointLeader.line_user_id) ?? null
+          : null;
+        const age = calcAge(profile?.birth_date ?? null);
+
         return {
           key: group.key,
           source_respondent_id: targetRespondent?.id ?? pointLeader.id,
@@ -449,7 +549,9 @@ export const assignmentService = {
           target_assignment_deadline: targetAssignment?.deadline ?? targetAssignment?.due_at ?? null,
           target_completed:
             targetSessions.some((session) => session.status === "completed") ||
-            targetAssignment?.status === "completed"
+            targetAssignment?.status === "completed",
+          profile,
+          age
         };
       })
       .sort(candidateSort);

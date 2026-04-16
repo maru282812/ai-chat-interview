@@ -158,6 +158,50 @@
       </label>
     </div>
     <div>
+      <h4>基本情報条件（任意）</h4>
+      <p class="muted">未入力の項目は絞り込み対象外になります。複数値はカンマ区切りで入力してください。</p>
+    </div>
+    <div class="form-grid">
+      <label>
+        年齢（下限）
+        <input type="number" name="age_min" min="0" max="120" />
+      </label>
+      <label>
+        年齢（上限）
+        <input type="number" name="age_max" min="0" max="120" />
+      </label>
+      <label>
+        都道府県（カンマ区切り）
+        <input type="text" name="prefectures" placeholder="例: 東京都,神奈川県" />
+      </label>
+      <label>
+        職業（カンマ区切り）
+        <input type="text" name="occupations" placeholder="例: 会社員（正社員）,自営業・フリーランス" />
+      </label>
+      <label>
+        業種（カンマ区切り）
+        <input type="text" name="industries" placeholder="例: IT・通信,製造" />
+      </label>
+      <label>
+        婚姻状況（カンマ区切り）
+        <input type="text" name="marital_statuses" placeholder="例: single,married" />
+        <span class="muted">値: single / married / divorced / widowed</span>
+      </label>
+      <label>
+        子どもの有無
+        <select name="has_children">
+          <option value="">条件なし</option>
+          <option value="true">いる</option>
+          <option value="false">いない</option>
+        </select>
+      </label>
+      <label>
+        同居家族構成（カンマ区切り、いずれかを含む）
+        <input type="text" name="household_compositions" placeholder="例: spouse,child" />
+        <span class="muted">値: self / spouse / child / parent / sibling / other</span>
+      </label>
+    </div>
+    <div>
       <button type="submit">Assign By Rule</button>
     </div>
   </form>
@@ -206,6 +250,7 @@
             <th>User ID</th>
             <th>Respondent</th>
             <th>Status</th>
+            <th>Screening</th>
             <th>Assigned</th>
             <th>Sent</th>
             <th>Started</th>
@@ -222,6 +267,15 @@
                 <span class="muted"><code><%= item.assignment.respondent_id %></code></span>
               </td>
               <td><span class="tag"><%= item.assignment.status %></span></td>
+              <td>
+                <% if (item.assignment.screening_result === "passed") { %>
+                  <span class="tag tag-success">通過</span>
+                <% } else if (item.assignment.screening_result === "failed") { %>
+                  <span class="tag tag-danger">非通過</span>
+                <% } else { %>
+                  <span class="muted">-</span>
+                <% } %>
+              </td>
               <td><%= item.assignment.assigned_at || "-" %></td>
               <td><%= item.assignment.sent_at || "-" %></td>
               <td><%= item.assignment.started_at || "-" %></td>

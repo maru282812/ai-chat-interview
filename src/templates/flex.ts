@@ -20,9 +20,44 @@ export function buildWelcomeMessages(): LineMessage[] {
     },
     {
       type: "text",
-      text: "「はじめる」で開始、「再開」で続きから再開、「マイページ」でランクとポイントを確認できます。"
+      text: "「はじめる」で開始、「再開」で続きから再開、「マイページ」で基本情報の登録・確認ができます。"
     }
   ];
+}
+
+export function buildMypageLiffFlex(url: string): LineFlexMessage {
+  return {
+    type: "flex",
+    altText: "マイページ（基本情報）",
+    contents: bubble([
+      {
+        type: "text",
+        text: "マイページ",
+        size: "xl",
+        weight: "bold"
+      },
+      {
+        type: "text",
+        text: "ニックネーム・住所・職業などの基本情報を確認・編集できます。",
+        size: "sm",
+        wrap: true,
+        color: "#666666"
+      },
+      {
+        type: "separator"
+      },
+      {
+        type: "button",
+        action: {
+          type: "uri",
+          label: "マイページを開く",
+          uri: url
+        },
+        style: "primary",
+        color: "#0B7A75"
+      }
+    ])
+  };
 }
 
 export function buildCompletionFlex(points: number, totalPoints: number, rankName: string): LineFlexMessage {

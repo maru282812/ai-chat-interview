@@ -24,6 +24,14 @@ interface CreateQuestionInput {
   render_strategy?: Question["render_strategy"];
   is_system?: boolean;
   is_hidden?: boolean;
+  // Phase 1 追加
+  comment_top?: string | null;
+  comment_bottom?: string | null;
+  answer_output_type?: string | null;
+  display_tags_raw?: string | null;
+  display_tags_parsed?: Question["display_tags_parsed"];
+  visibility_conditions?: Question["visibility_conditions"];
+  page_group_id?: string | null;
 }
 
 function buildFreeCommentQuestionConfig(): Question["question_config"] {
@@ -154,6 +162,14 @@ export const questionRepository = {
         | "render_strategy"
         | "is_system"
         | "is_hidden"
+        // Phase 1 追加
+        | "comment_top"
+        | "comment_bottom"
+        | "answer_output_type"
+        | "display_tags_raw"
+        | "display_tags_parsed"
+        | "visibility_conditions"
+        | "page_group_id"
       >
     >
   ): Promise<Question> {

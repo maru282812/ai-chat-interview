@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title><%= project?.name || 'アンケート' %></title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif;
+      background: #f5f7f6;
+      min-height: 100vh;
+    }
+
+    /* ---- survey_question / survey_page 共通 ---- */
+    .survey-container {
+      max-width: 480px; margin: 0 auto; padding: 16px;
+    }
+    .progress-bar-wrap { background: #e0ede9; border-radius: 8px; height: 6px; margin-bottom: 16px; }
+    .progress-bar      { background: #2ca87a; height: 100%; border-radius: 8px; transition: width 0.3s; }
+    .question-card {
+      background: #fff; border-radius: 16px; padding: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.08); margin-bottom: 12px;
+    }
+    .question-number   { font-size: 12px; color: #60726f; margin-bottom: 6px; }
+    .comment-top       { font-size: 13px; color: #4a6060; margin-bottom: 8px; }
+    .question-text     { font-size: 16px; font-weight: 600; line-height: 1.5; margin-bottom: 12px; }
+    .comment-bottom    { font-size: 13px; color: #4a6060; margin-bottom: 10px; }
+    .choice-list       { display: flex; flex-direction: column; gap: 8px; }
+    .choice-item       {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; border: 1px solid #d8e3e0; border-radius: 10px;
+      cursor: pointer; transition: background 0.15s;
+      background: #fff;
+    }
+    .choice-item.selected { background: #e8f7f0; border-color: #2ca87a; }
+    .choice-item input    { accent-color: #2ca87a; }
+    .free-text-input {
+      width: 100%; padding: 10px; border: 1px solid #d8e3e0;
+      border-radius: 10px; font-size: 15px; resize: vertical; line-height: 1.5;
+    }
+    .free-text-input:focus { outline: none; border-color: #2ca87a; }
+    .scale-row         { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+    .scale-btn         {
+      width: 48px; height: 48px; border-radius: 50%;
+      border: 2px solid #d8e3e0; background: #fff; cursor: pointer;
+      font-size: 15px; font-weight: 600; transition: all 0.15s;
+    }
+    .scale-btn.selected { background: #2ca87a; color: #fff; border-color: #2ca87a; }
+    .nav-btns          { display: flex; gap: 10px; margin-top: 16px; }
+    .btn-next          {
+      flex: 1; padding: 14px; background: #2ca87a; color: #fff;
+      border: none; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer;
+    }
+    .btn-next:disabled { background: #b0ccc4; cursor: not-allowed; }
+    .btn-back          {
+      padding: 14px 20px; background: none; color: #2ca87a;
+      border: 2px solid #2ca87a; border-radius: 12px; font-size: 15px; cursor: pointer;
+    }
+    .required-badge { font-size: 10px; color: #fff; background: #e55; border-radius: 4px; padding: 2px 5px; margin-left: 6px; vertical-align: middle; }
+    .matrix-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .matrix-table th, .matrix-table td { padding: 8px 6px; border-bottom: 1px solid #eee; text-align: center; }
+    .matrix-table th:first-child, .matrix-table td:first-child { text-align: left; }
+
+    /* ---- interview_chat モード ---- */
+    .chat-container    { max-width: 480px; margin: 0 auto; padding: 12px; }
+    .chat-messages     { display: flex; flex-direction: column; gap: 10px; padding-bottom: 80px; }
+    .chat-bubble-wrap  { display: flex; }
+    .chat-bubble-wrap.ai   { justify-content: flex-start; }
+    .chat-bubble-wrap.user { justify-content: flex-end; }
+    .chat-bubble {
+      max-width: 85%; padding: 12px 16px; border-radius: 18px; line-height: 1.5; font-size: 15px;
+    }
+    .chat-bubble.ai   { background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.1); border-radius: 18px 18px 18px 4px; }
+    .chat-bubble.user { background: #2ca87a; color: #fff; border-radius: 18px 18px 4px 18px; }
+    .chat-input-area {
+      position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 100%; max-width: 480px; background: #fff;
+      padding: 10px 12px; box-shadow: 0 -2px 8px rgba(0,0,0,.08);
+      display: flex; gap: 8px; align-items: flex-end;
+    }
+    .chat-input {
+      flex: 1; padding: 10px 14px; border: 1px solid #d8e3e0;
+      border-radius: 20px; font-size: 15px; resize: none; max-height: 120px; overflow-y: auto;
+    }
+    .chat-send {
+      width: 44px; height: 44px; background: #2ca87a; border: none; border-radius: 50%;
+      color: #fff; font-size: 18px; cursor: pointer; flex-shrink: 0;
+    }
+    .chat-send:disabled { background: #b0ccc4; }
+
+    /* ---- 完了画面 ---- */
+    .complete-screen { text-align: center; padding: 40px 20px; }
+    .complete-icon   { font-size: 48px; margin-bottom: 16px; }
+    .complete-title  { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+    .complete-sub    { font-size: 14px; color: #60726f; }
+
+    /* ---- ページモード ---- */
+    .page-header { padding: 12px 0; margin-bottom: 8px; }
+    .page-title  { font-size: 17px; font-weight: 700; margin: 0; }
+  </style>
+</head>
+<body>
+
+<%
+  const displayMode = project?.display_mode || 'survey_question';
+  const isChatMode  = displayMode === 'interview_chat';
+  const isPageMode  = displayMode === 'survey_page';
+%>
+
+<% if (displayMode === 'interview_chat') { %>
+  <!-- ============================================================ -->
+  <!-- interview_chat モード                                         -->
+  <!-- ============================================================ -->
+  <div class="chat-container">
+    <div id="chatMessages" class="chat-messages">
+      <!-- メッセージは JS で動的追加 -->
+    </div>
+  </div>
+  <div class="chat-input-area">
+    <textarea id="chatInput" class="chat-input" rows="1" placeholder="返信する..."></textarea>
+    <button id="chatSend" class="chat-send" disabled>↑</button>
+  </div>
+
+<% } else { %>
+  <!-- ============================================================ -->
+  <!-- survey_question / survey_page モード                          -->
+  <!-- ============================================================ -->
+  <div class="survey-container">
+    <div class="progress-bar-wrap">
+      <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+    </div>
+
+    <% if (isPageMode) { %>
+      <div class="page-header">
+        <p class="question-number" id="pageIndicator"></p>
+        <h2 class="page-title" id="pageTitle"></h2>
+      </div>
+    <% } %>
+
+    <div id="questionArea">
+      <!-- 質問カードは JS で動的レンダリング -->
+    </div>
+
+    <div class="nav-btns">
+      <button class="btn-back" id="btnBack" style="display:none">← 戻る</button>
+      <button class="btn-next" id="btnNext" disabled>次へ →</button>
+    </div>
+
+    <div id="completeScreen" class="complete-screen" style="display:none">
+      <div class="complete-icon">✅</div>
+      <p class="complete-title">回答が完了しました</p>
+      <p class="complete-sub">ご協力ありがとうございます。</p>
+    </div>
+  </div>
+<% } %>
+
+<script>
+// ================================================================
+// survey.ejs クライアントサイド質問エンジン
+// ================================================================
+(function() {
+  'use strict';
+
+  // ---- 初期データ（サーバーから受け取る） ----
+  const PROJECT_DATA = <%- JSON.stringify(projectData || {}) %>;
+  const QUESTIONS    = <%- JSON.stringify(questions || []) %>;
+  const PAGE_GROUPS  = <%- JSON.stringify(pageGroups || []) %>;
+  const DISPLAY_MODE = <%- JSON.stringify(displayMode) %>;
+  const SESSION_ID   = <%- JSON.stringify(sessionId || null) %>;
+  const ASSIGNMENT_ID= <%- JSON.stringify(assignmentId || null) %>;
+
+  // ---- 回答コンテキスト ----
+  const answerCtx = { answers: {} };
+
+  // ---- 現在位置 ----
+  let currentQuestionIndex = 0;    // survey_question 用
+  let currentPageIndex = 0;         // survey_page 用
+  let questionHistory = [];         // 戻る機能のための履歴
+
+  // ---- survey_page: ページグループ化 ----
+  function groupByPage(qs) {
+    const pgMap = new Map(PAGE_GROUPS.map(pg => [pg.id, pg]));
+    const grouped = new Map();
+    for (const pg of PAGE_GROUPS.sort((a,b) => a.sort_order - b.sort_order)) {
+      grouped.set(pg.id, { pageGroup: pg, questions: [] });
+    }
+    grouped.set(null, { pageGroup: null, questions: [] });
+    for (const q of qs.sort((a,b) => a.sort_order - b.sort_order)) {
+      const key = q.page_group_id ?? null;
+      if (!grouped.has(key)) grouped.set(key, { pageGroup: null, questions: [] });
+      grouped.get(key).questions.push(q);
+    }
+    return [...grouped.values()].filter(p => p.questions.length > 0);
+  }
+
+  // ---- pipe 条件式の簡易評価 ----
+  function evalPipe(expression) {
+    try {
+      return evalExpr(expression.trim());
+    } catch(e) {
+      return true; // エラー時は表示
+    }
+  }
+
+  function evalExpr(expr) {
+    expr = expr.trim();
+    // 括弧除去
+    if (expr.startsWith('(') && expr.endsWith(')')) {
+      try { const inner = expr.slice(1,-1); evalExpr(inner); expr = inner.trim(); } catch(e){}
+    }
+    // OR
+    const orParts = splitByKw(expr, ' or ');
+    if (orParts.length > 1) return orParts.some(p => evalExpr(p));
+    // AND
+    const andParts = splitByKw(expr, ' and ');
+    if (andParts.length > 1) return andParts.every(p => evalExpr(p));
+    // NOT
+    if (/^not\s+/i.test(expr)) return !evalExpr(expr.slice(4).trim());
+    // 比較
+    const m = expr.match(/^(q\d+)\s*(!=|>=|<=|>|<|=)\s*(.+)$/i);
+    if (m) {
+      const actual = String(answerCtx.answers[m[1].toLowerCase()] ?? '');
+      const expected = m[3].trim();
+      switch(m[2]) {
+        case '=':  return actual === expected;
+        case '!=': return actual !== expected;
+        case '>':  return parseFloat(actual) > parseFloat(expected);
+        case '<':  return parseFloat(actual) < parseFloat(expected);
+        case '>=': return parseFloat(actual) >= parseFloat(expected);
+        case '<=': return parseFloat(actual) <= parseFloat(expected);
+      }
+    }
+    return false;
+  }
+
+  function splitByKw(expr, kw) {
+    const parts = []; let depth = 0, last = 0;
+    for (let i = 0; i < expr.length; i++) {
+      if (expr[i]==='(') depth++; else if (expr[i]===')') depth--;
+      else if (depth===0 && expr.slice(i).toLowerCase().startsWith(kw)) {
+        parts.push(expr.slice(last,i).trim()); last = i+kw.length; i = last-1;
+      }
+    }
+    parts.push(expr.slice(last).trim());
+    return parts.length>1 ? parts : [expr];
+  }
+
+  // ---- 設問の表示可否 ----
+  function isVisible(q) {
+    if (!q.visibility_conditions || q.visibility_conditions.length===0) return true;
+    return q.visibility_conditions.every(c =>
+      c.type === 'pipe_expression' ? evalPipe(c.expression) : true
+    );
+  }
+
+  // ---- <ans> 差し込み ----
+  function applyAns(text, parsed) {
+    if (!parsed || !parsed.answerInsertions) return text;
+    let result = text;
+    for (const ins of parsed.answerInsertions) {
+      const val = answerCtx.answers[ins.source.toLowerCase()];
+      const display = Array.isArray(val) ? val.join('、') : String(val ?? '');
+      result = result.replace(new RegExp(`<ans\\s+${ins.source}>`, 'gi'), display);
+      result = result.replace(new RegExp(`\\{ans:${ins.source}\\}`, 'gi'), display);
+    }
+    return result;
+  }
+
+  // ---- <disable> による選択肢フィルタ ----
+  function filterChoices(choices, parsed) {
+    if (!parsed || !parsed.disableRules || !parsed.disableRules.length) return choices;
+    return choices.filter(c => {
+      const rule = parsed.disableRules.find(r => r.targetChoice === c.value);
+      return !rule || !evalPipe(rule.condition);
+    });
+  }
+
+  // ---- 次の質問コード決定 ----
+  function resolveNext(q) {
+    const rule = q.branch_rule;
+    if (!rule) return null;
+    if (rule.branches) {
+      for (const b of rule.branches) {
+        const latestAnswer = answerCtx.answers[q.question_code.toLowerCase()];
+        const actual = String(latestAnswer ?? '');
+        let matched = false;
+        const w = b.when;
+        if (w.equals !== undefined)        matched = actual === String(w.equals);
+        else if (w.includes !== undefined)  matched = actual.includes(String(w.includes));
+        else if (Array.isArray(w.any_of))   matched = w.any_of.map(String).includes(actual);
+        else if (w.gte !== undefined)        matched = parseFloat(actual) >= Number(w.gte);
+        else if (w.lte !== undefined)        matched = parseFloat(actual) <= Number(w.lte);
+        if (matched) return b.next;
+      }
+    }
+    return rule.default_next || null;
+  }
+
+  // ---- 設問カード HTML 生成 ----
+  function renderQuestion(q, index, total) {
+    const parsed = q.display_tags_parsed || {};
+    const qText  = applyAns(q.question_text, parsed);
+    const commentTop    = q.comment_top    ? `<p class="comment-top">${esc(q.comment_top)}</p>` : '';
+    const commentBottom = q.comment_bottom ? `<p class="comment-bottom">${esc(q.comment_bottom)}</p>` : '';
+    const reqBadge = q.is_required ? '<span class="required-badge">必須</span>' : '';
+    let inputHtml = '';
+
+    const rawChoices = (q.question_config?.options || []).map(o => ({ value: o.value, label: o.label }));
+    const choices = filterChoices(rawChoices, parsed);
+
+    const qType = q.question_type;
+
+    if (['single_select','single_choice','yes_no'].includes(qType)) {
+      inputHtml = `<div class="choice-list" data-type="single">` +
+        choices.map(c => `<label class="choice-item">
+          <input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />
+          ${esc(c.label)}
+        </label>`).join('') + `</div>`;
+    } else if (['multi_select','multi_choice'].includes(qType)) {
+      inputHtml = `<div class="choice-list" data-type="multi">` +
+        choices.map(c => `<label class="choice-item">
+          <input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />
+          ${esc(c.label)}
+        </label>`).join('') + `</div>`;
+    } else if (['scale'].includes(qType)) {
+      const cfg = q.question_config || {};
+      const mn = cfg.scaleMin || cfg.min || 1;
+      const mx = cfg.scaleMax || cfg.max || 5;
+      const nums = [];
+      for (let i = mn; i <= mx; i++) nums.push(i);
+      inputHtml = `<div class="scale-row">` +
+        nums.map(n => `<button type="button" class="scale-btn" data-val="${n}" data-code="${esc(q.question_code)}">${n}</button>`).join('') +
+        `</div>`;
+    } else if (['matrix_single','matrix_multi','matrix_mixed'].includes(qType)) {
+      const rows = (q.question_config?.options || []).map(o => o.label);
+      const cols = (q.question_config?.matrix_cols || []).map(c => c.label || c);
+      inputHtml = `<table class="matrix-table"><tr><th></th>` +
+        cols.map(c => `<th>${esc(c)}</th>`).join('') + `</tr>` +
+        rows.map((r, ri) => `<tr><td>${esc(r)}</td>` +
+          cols.map((c, ci) => `<td><input type="${qType==='matrix_multi'?'checkbox':'radio'}" name="mq_${esc(q.question_code)}_${ri}" value="${ci}" /></td>`).join('') +
+          `</tr>`).join('') + `</table>`;
+    } else if (['free_text_long','text'].includes(qType)) {
+      const rows = parsed.rows || 4;
+      inputHtml = `<textarea class="free-text-input" data-code="${esc(q.question_code)}" rows="${rows}" placeholder="回答を入力..."></textarea>`;
+    } else {
+      inputHtml = `<input type="text" class="free-text-input" data-code="${esc(q.question_code)}" placeholder="回答を入力..." />`;
+    }
+
+    const numLabel = total ? `Q${index+1} / ${total}` : `Q${index+1}`;
+    return `<div class="question-card" data-code="${esc(q.question_code)}">
+      <p class="question-number">${numLabel}${reqBadge}</p>
+      ${commentTop}
+      <p class="question-text">${esc(qText)}</p>
+      ${commentBottom}
+      ${inputHtml}
+    </div>`;
+  }
+
+  // ---- エスケープ ----
+  function esc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ---- 回答送信 ----
+  async function submitAnswer(questionCode, answerValue) {
+    answerCtx.answers[questionCode.toLowerCase()] = answerValue;
+    try {
+      await fetch('/liff/survey/answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: SESSION_ID,
+          assignment_id: ASSIGNMENT_ID,
+          question_code: questionCode,
+          answer_value: answerValue,
+        }),
+      });
+    } catch(e) {
+      console.error('answer submit failed', e);
+    }
+  }
+
+  // ================================================================
+  // survey_question / survey_page モード
+  // ================================================================
+  if (DISPLAY_MODE !== 'interview_chat') {
+    const pages = DISPLAY_MODE === 'survey_page'
+      ? groupByPage(QUESTIONS)
+      : QUESTIONS.filter(isVisible).map(q => ({ pageGroup: null, questions: [q] }));
+
+    const visiblePages = DISPLAY_MODE === 'survey_page'
+      ? pages
+      : null; // survey_question は再評価する
+
+    let visibleQs = QUESTIONS.filter(isVisible);
+    let cursor = 0; // 現在の質問 index (survey_question)
+    let pageCursor = 0; // 現在のページ index (survey_page)
+
+    const questionArea = document.getElementById('questionArea');
+    const btnNext = document.getElementById('btnNext');
+    const btnBack = document.getElementById('btnBack');
+    const progressBar = document.getElementById('progressBar');
+    const completeScreen = document.getElementById('completeScreen');
+
+    function renderCurrentState() {
+      if (DISPLAY_MODE === 'survey_page') {
+        renderPageMode();
+      } else {
+        renderQuestionMode();
+      }
+    }
+
+    function renderQuestionMode() {
+      visibleQs = QUESTIONS.filter(isVisible); // 再評価
+      if (cursor >= visibleQs.length) { showComplete(); return; }
+      const q = visibleQs[cursor];
+      questionArea.innerHTML = renderQuestion(q, cursor, visibleQs.length);
+      bindInputEvents(q);
+      btnBack.style.display = cursor > 0 ? '' : 'none';
+      btnNext.disabled = true;
+      progressBar.style.width = (cursor / visibleQs.length * 100) + '%';
+    }
+
+    function renderPageMode() {
+      const allPages = groupByPage(QUESTIONS);
+      const visiblePagesNow = allPages.map(p => ({
+        ...p,
+        questions: p.questions.filter(isVisible)
+      })).filter(p => p.questions.length > 0);
+
+      if (pageCursor >= visiblePagesNow.length) { showComplete(); return; }
+      const page = visiblePagesNow[pageCursor];
+
+      const pageIndicator = document.getElementById('pageIndicator');
+      const pageTitle     = document.getElementById('pageTitle');
+      if (pageIndicator) pageIndicator.textContent = `ページ ${pageCursor+1} / ${visiblePagesNow.length}`;
+      if (pageTitle && page.pageGroup?.title) pageTitle.textContent = page.pageGroup.title;
+
+      questionArea.innerHTML = page.questions
+        .map((q, i) => renderQuestion(q, i, page.questions.length))
+        .join('');
+      page.questions.forEach(q => bindInputEvents(q));
+      btnBack.style.display = pageCursor > 0 ? '' : 'none';
+      btnNext.disabled = true;
+      progressBar.style.width = (pageCursor / visiblePagesNow.length * 100) + '%';
+    }
+
+    function bindInputEvents(q) {
+      // radio/checkbox
+      questionArea.querySelectorAll(`input[name="q_${q.question_code}"]`).forEach(el => {
+        el.addEventListener('change', () => {
+          const qType = q.question_type;
+          let val;
+          if (['multi_select','multi_choice'].includes(qType)) {
+            val = [...questionArea.querySelectorAll(`input[name="q_${q.question_code}"]:checked`)].map(e => e.value);
+          } else {
+            val = el.value;
+          }
+          questionArea.querySelectorAll(`label.choice-item`).forEach(l => l.classList.remove('selected'));
+          el.closest('label')?.classList.add('selected');
+          answerCtx.answers[q.question_code.toLowerCase()] = val;
+          checkNextEnabled();
+        });
+      });
+      // scale buttons
+      questionArea.querySelectorAll(`.scale-btn[data-code="${q.question_code}"]`).forEach(btn => {
+        btn.addEventListener('click', () => {
+          questionArea.querySelectorAll(`.scale-btn[data-code="${q.question_code}"]`).forEach(b => b.classList.remove('selected'));
+          btn.classList.add('selected');
+          answerCtx.answers[q.question_code.toLowerCase()] = btn.dataset.val;
+          checkNextEnabled();
+        });
+      });
+      // text inputs
+      questionArea.querySelectorAll(`[data-code="${q.question_code}"]`).forEach(el => {
+        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+          el.addEventListener('input', () => {
+            answerCtx.answers[q.question_code.toLowerCase()] = el.value;
+            checkNextEnabled();
+          });
+        }
+      });
+    }
+
+    function checkNextEnabled() {
+      // 必須チェック: survey_question は現在の設問、survey_page は全設問
+      if (DISPLAY_MODE === 'survey_page') {
+        const allPages = groupByPage(QUESTIONS);
+        const page = allPages.filter(p => p.questions.filter(isVisible).length > 0)[pageCursor];
+        if (!page) { btnNext.disabled = false; return; }
+        const allAnswered = page.questions.filter(isVisible).every(q => {
+          if (!q.is_required) return true;
+          const val = answerCtx.answers[q.question_code.toLowerCase()];
+          return val !== undefined && val !== null && val !== '' && (!Array.isArray(val) || val.length > 0);
+        });
+        btnNext.disabled = !allAnswered;
+      } else {
+        const q = visibleQs[cursor];
+        if (!q) { btnNext.disabled = false; return; }
+        if (!q.is_required) { btnNext.disabled = false; return; }
+        const val = answerCtx.answers[q.question_code.toLowerCase()];
+        btnNext.disabled = !(val !== undefined && val !== null && val !== '' && (!Array.isArray(val) || val.length > 0));
+      }
+    }
+
+    btnNext.addEventListener('click', async () => {
+      if (DISPLAY_MODE === 'survey_page') {
+        // 全ページ質問を送信
+        const allPages = groupByPage(QUESTIONS);
+        const page = allPages.filter(p => p.questions.filter(isVisible).length > 0)[pageCursor];
+        if (page) {
+          for (const q of page.questions.filter(isVisible)) {
+            const val = answerCtx.answers[q.question_code.toLowerCase()];
+            if (val !== undefined) await submitAnswer(q.question_code, val);
+          }
+        }
+        pageCursor++;
+        renderPageMode();
+      } else {
+        const q = visibleQs[cursor];
+        if (q) {
+          const val = answerCtx.answers[q.question_code.toLowerCase()];
+          await submitAnswer(q.question_code, val);
+          // 分岐
+          const nextCode = resolveNext(q);
+          if (nextCode) {
+            const nextIdx = QUESTIONS.findIndex(qq => qq.question_code === nextCode);
+            cursor = nextIdx >= 0 ? nextIdx : cursor + 1;
+          } else {
+            cursor++;
+          }
+        }
+        renderQuestionMode();
+      }
+    });
+
+    btnBack.addEventListener('click', () => {
+      if (DISPLAY_MODE === 'survey_page') {
+        if (pageCursor > 0) { pageCursor--; renderPageMode(); }
+      } else {
+        if (cursor > 0) { cursor--; renderQuestionMode(); }
+      }
+    });
+
+    function showComplete() {
+      questionArea.style.display = 'none';
+      document.querySelector('.nav-btns').style.display = 'none';
+      completeScreen.style.display = 'block';
+      progressBar.style.width = '100%';
+      fetch('/liff/survey/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: SESSION_ID, assignment_id: ASSIGNMENT_ID }),
+      }).catch(console.error);
+    }
+
+    renderCurrentState();
+  }
+
+  // ================================================================
+  // interview_chat モード
+  // ================================================================
+  if (DISPLAY_MODE === 'interview_chat') {
+    const chatMessages = document.getElementById('chatMessages');
+    const chatInput    = document.getElementById('chatInput');
+    const chatSend     = document.getElementById('chatSend');
+    let chatQueueIndex = 0;
+    const visibleQs = QUESTIONS.filter(isVisible);
+
+    function addBubble(text, role) {
+      const wrap = document.createElement('div');
+      wrap.className = `chat-bubble-wrap ${role}`;
+      const bubble = document.createElement('div');
+      bubble.className = `chat-bubble ${role}`;
+      bubble.textContent = text;
+      wrap.appendChild(bubble);
+      chatMessages.appendChild(wrap);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function askCurrentQuestion() {
+      if (chatQueueIndex >= visibleQs.length) {
+        addBubble('ご回答ありがとうございました。アンケートが完了しました。', 'ai');
+        chatInput.disabled = true;
+        chatSend.disabled  = true;
+        fetch('/liff/survey/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: SESSION_ID, assignment_id: ASSIGNMENT_ID }),
+        }).catch(console.error);
+        return;
+      }
+      const q = visibleQs[chatQueueIndex];
+      const parsed = q.display_tags_parsed || {};
+      const qText  = applyAns(q.question_text, parsed);
+      addBubble(qText, 'ai');
+    }
+
+    chatInput.addEventListener('input', () => {
+      chatSend.disabled = chatInput.value.trim() === '';
+    });
+
+    async function sendChatAnswer() {
+      const text = chatInput.value.trim();
+      if (!text) return;
+      chatInput.value = '';
+      chatSend.disabled = true;
+      addBubble(text, 'user');
+
+      const q = visibleQs[chatQueueIndex];
+      if (!q) return;
+
+      answerCtx.answers[q.question_code.toLowerCase()] = text;
+      await submitAnswer(q.question_code, text);
+
+      // AI 深掘りは /liff/chat エンドポイントに委譲（既存処理を利用）
+      if (q.ai_probe_enabled) {
+        try {
+          const res = await fetch('/liff/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              session_id: SESSION_ID,
+              assignment_id: ASSIGNMENT_ID,
+              message: text,
+            }),
+          });
+          const data = await res.json();
+          if (data.probe_question) {
+            addBubble(data.probe_question, 'ai');
+            return; // 深掘り中は次の質問へ進まない
+          }
+        } catch(e) { console.error(e); }
+      }
+
+      // 次の質問へ
+      const nextCode = resolveNext(q);
+      if (nextCode) {
+        const nextIdx = QUESTIONS.findIndex(qq => qq.question_code === nextCode);
+        chatQueueIndex = nextIdx >= 0 ? nextIdx : chatQueueIndex + 1;
+      } else {
+        chatQueueIndex++;
+      }
+      askCurrentQuestion();
+    }
+
+    chatSend.addEventListener('click', sendChatAnswer);
+    chatInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatAnswer(); }
+    });
+
+    askCurrentQuestion();
+  }
+
+})();
+</script>
+</body>
+</html>

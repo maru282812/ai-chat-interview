@@ -18,7 +18,7 @@ export interface ResolvedLiffLaunch {
   settings: Record<string, unknown> | null;
 }
 
-type ManagedLiffEntryKey = "rant" | "diary" | "personality";
+type ManagedLiffEntryKey = "rant" | "diary" | "personality" | "mypage";
 
 const fallbackEntrypoints: Record<ManagedLiffEntryKey, LiffEntrypoint> = {
   rant: {
@@ -53,13 +53,25 @@ const fallbackEntrypoints: Record<ManagedLiffEntryKey, LiffEntrypoint> = {
     is_active: true,
     created_at: "",
     updated_at: ""
+  },
+  mypage: {
+    id: "fallback-mypage",
+    entry_key: "mypage",
+    title: "マイページ",
+    path: "/liff/mypage",
+    entry_type: "mypage",
+    settings_json: {},
+    is_active: true,
+    created_at: "",
+    updated_at: ""
   }
 };
 
 const canonicalTitles: Partial<Record<ManagedLiffEntryKey, string>> = {
   rant: "本音・悩み投稿",
   diary: "今日の気持ち・日記",
-  personality: "性格診断"
+  personality: "性格診断",
+  mypage: "マイページ"
 };
 
 function trimToNull(value: unknown): string | null {

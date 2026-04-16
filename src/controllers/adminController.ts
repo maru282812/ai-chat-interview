@@ -37,6 +37,9 @@ import type {
   QuestionType,
   ResearchMode
 } from "../types/domain";
+import { parseDisplayTags, generateTagsFromParsed } from "../lib/tagParser";
+import { validateDisplayTags } from "../lib/tagValidator";
+import type { DisplayTagsParsed, VisibilityCondition } from "../types/questionSchema";
 
 function routeParam(req: Request, key: string): string {
   const value = req.params[key];
@@ -66,17 +69,6 @@ function bodyStringArray(value: unknown): string[] {
   return [];
 }
 
-function parseJsonField<T>(value: string | undefined, fieldName: string, fallback: T): T {
-  if (!value || !value.trim()) {
-    return fallback;
-  }
-
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    throw new HttpError(400, `${fieldName} はJSON形式で入力してください`);
-  }
-}
 
 function parseNullableDateTime(value: unknown): string | null {
   const text = bodyString(value).trim();
@@ -122,18 +114,6 @@ function queryString(value: unknown): string {
   return bodyString(value).trim();
 }
 
-function parseStringArrayJsonField(value: string, fieldName: string): string[] {
-  if (!value.trim()) {
-    return [];
-  }
-
-  const parsed = parseJsonField<unknown[]>(value, fieldName, []);
-  if (!Array.isArray(parsed)) {
-    throw new HttpError(400, `${fieldName} は配列(JSON)で入力してください`);
-  }
-
-  return parsed.map((item) => String(item ?? "").trim()).filter(Boolean);
-}
 
 function resolveNoticeMessage(value: unknown): string | null {
   switch (queryString(value)) {
@@ -253,6 +233,29 @@ function buildPostAnalysisFilters(req: Request) {
   };
 }
 
+function parseScreeningPassAction(value: unknown): import("../types/domain").ScreeningPassAction {
+  const s = bodyString(value).trim();
+  if (s === "interview" || s === "manual_hold") return s;
+  return "survey";
+}
+
+function buildScreeningConfig(req: Request): import("../types/domain").ScreeningConfig {
+  return {
+    pass_action: parseScreeningPassAction(req.body.screening_pass_action),
+    pass_message: bodyString(req.body.screening_pass_message).trim() || null,
+    fail_message: bodyString(req.body.screening_fail_message).trim() || null
+  };
+}
+
+function parseStringListField(value: unknown): string[] | null {
+  const text = bodyString(value).trim();
+  if (!text) {
+    return null;
+  }
+  const items = text.split(",").map((item) => item.trim()).filter(Boolean);
+  return items.length > 0 ? items : null;
+}
+
 function parseAssignmentRule(req: Request): AssignmentRuleFilter {
   return {
     rank_code: bodyString(req.body.rank_code) || null,
@@ -260,7 +263,15 @@ function parseAssignmentRule(req: Request): AssignmentRuleFilter {
     total_points_max: parseOptionalNumber(req.body.total_points_max),
     has_participated: parseBooleanSelect(req.body.has_participated),
     last_participated_before: parseNullableDateTime(req.body.last_participated_before),
-    unanswered_project_id: bodyString(req.body.unanswered_project_id) || null
+    unanswered_project_id: bodyString(req.body.unanswered_project_id) || null,
+    age_min: parseOptionalInteger(req.body.age_min),
+    age_max: parseOptionalInteger(req.body.age_max),
+    prefectures: parseStringListField(req.body.prefectures),
+    occupations: parseStringListField(req.body.occupations),
+    industries: parseStringListField(req.body.industries),
+    marital_statuses: parseStringListField(req.body.marital_statuses) as import("../types/domain").MaritalStatus[] | null,
+    has_children: parseBooleanSelect(req.body.has_children),
+    household_compositions: parseStringListField(req.body.household_compositions)
   };
 }
 
@@ -560,6 +571,40 @@ interface QuestionFormValues {
   extraction_enabled: boolean;
   extraction_items: string[];
   branch_rows: QuestionBranchRowFormValue[];
+  // --- Phase 1 追加フィールド (formV3) ---
+  comment_top: string;
+  comment_bottom: string;
+  answer_output_type: string;
+  default_next: string;
+  visibility_conditions: Array<{ expression: string }>;
+  display_tags_raw: string;
+  display_tags_parsed_json: string;
+  ans_insertions: Array<{ source: string; target: string }>;
+  matrix_rows: string;
+  matrix_cols: string;
+  // タグフォームフィールド (tab4)
+  tag_size: string;
+  tag_min: string;
+  tag_max: string;
+  tag_rows: string;
+  tag_cols: string;
+  tag_code: string;
+  tag_numeric: boolean;
+  tag_numeric_decimal: string;
+  tag_al: boolean;
+  tag_type_year: boolean;
+  tag_type_jyear: boolean;
+  tag_type_month: boolean;
+  tag_type_day: boolean;
+  tag_norep: boolean;
+  tag_fix: boolean;
+  tag_br: boolean;
+  tag_must: boolean;
+  tag_ex: boolean;
+  tag_len_op: string;
+  tag_len_val: string;
+  tag_bf: string;
+  tag_af: string;
 }
 
 function parseQuestionBranchOperator(value: string): QuestionBranchOperator {
@@ -669,7 +714,40 @@ function buildQuestionFormValues(
     scale_max_label: overrides.scale_max_label ?? scale.maxLabel,
     extraction_enabled: overrides.extraction_enabled ?? extractionItems.length > 0,
     extraction_items: overrides.extraction_items ?? extractionItems,
-    branch_rows: overrides.branch_rows ?? branchRows
+    branch_rows: overrides.branch_rows ?? branchRows,
+    // Phase 1 追加フィールド
+    comment_top: overrides.comment_top ?? question?.comment_top ?? "",
+    comment_bottom: overrides.comment_bottom ?? question?.comment_bottom ?? "",
+    answer_output_type: overrides.answer_output_type ?? question?.answer_output_type ?? "",
+    default_next: overrides.default_next ?? (normalizeBranchRule(question?.branch_rule ?? null)?.default_next ?? ""),
+    visibility_conditions: overrides.visibility_conditions ?? (question?.visibility_conditions ?? []).map((c) => ({ expression: c.expression })),
+    display_tags_raw: overrides.display_tags_raw ?? question?.display_tags_raw ?? "",
+    display_tags_parsed_json: overrides.display_tags_parsed_json ?? (question?.display_tags_parsed ? JSON.stringify(question.display_tags_parsed) : ""),
+    ans_insertions: overrides.ans_insertions ?? (question?.display_tags_parsed?.answerInsertions?.map((a) => ({ source: a.source, target: a.target })) ?? []),
+    matrix_rows: overrides.matrix_rows ?? "",
+    matrix_cols: overrides.matrix_cols ?? "",
+    tag_size: overrides.tag_size ?? (question?.display_tags_parsed?.inputSize != null ? String(question.display_tags_parsed.inputSize) : ""),
+    tag_min: overrides.tag_min ?? (question?.display_tags_parsed?.minValue != null ? String(question.display_tags_parsed.minValue) : ""),
+    tag_max: overrides.tag_max ?? (question?.display_tags_parsed?.maxValue != null ? String(question.display_tags_parsed.maxValue) : ""),
+    tag_rows: overrides.tag_rows ?? (question?.display_tags_parsed?.rows != null ? String(question.display_tags_parsed.rows) : ""),
+    tag_cols: overrides.tag_cols ?? (question?.display_tags_parsed?.cols != null ? String(question.display_tags_parsed.cols) : ""),
+    tag_code: overrides.tag_code ?? (question?.display_tags_parsed?.inputCode != null ? String(question.display_tags_parsed.inputCode) : ""),
+    tag_numeric: overrides.tag_numeric ?? (question?.display_tags_parsed?.numericOnly ?? false),
+    tag_numeric_decimal: overrides.tag_numeric_decimal ?? (question?.display_tags_parsed?.numericDecimalPlaces != null ? String(question.display_tags_parsed.numericDecimalPlaces) : ""),
+    tag_al: overrides.tag_al ?? (question?.display_tags_parsed?.alphaNumericOnly ?? false),
+    tag_type_year: overrides.tag_type_year ?? (question?.display_tags_parsed?.inputType?.year ?? false),
+    tag_type_jyear: overrides.tag_type_jyear ?? (question?.display_tags_parsed?.inputType?.jyear ?? false),
+    tag_type_month: overrides.tag_type_month ?? (question?.display_tags_parsed?.inputType?.month ?? false),
+    tag_type_day: overrides.tag_type_day ?? (question?.display_tags_parsed?.inputType?.day ?? false),
+    tag_norep: overrides.tag_norep ?? (question?.display_tags_parsed?.noRepeat ?? false),
+    tag_fix: overrides.tag_fix ?? (question?.display_tags_parsed?.fixedChoice ?? false),
+    tag_br: overrides.tag_br ?? (question?.display_tags_parsed?.lineBreak ?? false),
+    tag_must: overrides.tag_must ?? (question?.display_tags_parsed?.mustInput ?? false),
+    tag_ex: overrides.tag_ex ?? (question?.display_tags_parsed?.exampleInput ?? false),
+    tag_len_op: overrides.tag_len_op ?? (question?.display_tags_parsed?.lengthRule?.operator ?? ""),
+    tag_len_val: overrides.tag_len_val ?? (question?.display_tags_parsed?.lengthRule?.value != null ? String(question.display_tags_parsed.lengthRule.value) : ""),
+    tag_bf: overrides.tag_bf ?? (question?.display_tags_parsed?.beforeText ?? ""),
+    tag_af: overrides.tag_af ?? (question?.display_tags_parsed?.afterText ?? ""),
   };
 }
 
@@ -718,7 +796,50 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
       operator: parseQuestionBranchOperator(branchOperators[index] ?? ""),
       value: branchValues[index] ?? "",
       next: branchNextValues[index] ?? ""
-    })).filter((row) => row.field_label || row.value || row.next) as QuestionBranchRowFormValue[]
+    })).filter((row) => row.field_label || row.value || row.next) as QuestionBranchRowFormValue[],
+    // Phase 1 追加フィールド
+    comment_top: bodyString(req.body.comment_top),
+    comment_bottom: bodyString(req.body.comment_bottom),
+    answer_output_type: bodyString(req.body.answer_output_type),
+    default_next: bodyString(req.body.default_next),
+    visibility_conditions: bodyStringArray(req.body.vis_condition_expr)
+      .filter(Boolean)
+      .map((expression) => ({ expression })),
+    display_tags_raw: bodyString(req.body.display_tags_raw),
+    display_tags_parsed_json: bodyString(req.body.display_tags_parsed_json),
+    ans_insertions: (() => {
+      const sources  = bodyStringArray(req.body.ans_source);
+      const targets  = bodyStringArray(req.body.ans_target);
+      const len = Math.max(sources.length, targets.length);
+      return Array.from({ length: len }, (_, i) => ({
+        source: sources[i] ?? "",
+        target: targets[i] ?? "question_text",
+      })).filter((a) => a.source);
+    })(),
+    matrix_rows: bodyString(req.body.matrix_rows),
+    matrix_cols: bodyString(req.body.matrix_cols),
+    tag_size:           bodyString(req.body.tag_size),
+    tag_min:            bodyString(req.body.tag_min),
+    tag_max:            bodyString(req.body.tag_max),
+    tag_rows:           bodyString(req.body.tag_rows),
+    tag_cols:           bodyString(req.body.tag_cols),
+    tag_code:           bodyString(req.body.tag_code),
+    tag_numeric:        req.body.tag_numeric === "1",
+    tag_numeric_decimal: bodyString(req.body.tag_numeric_decimal),
+    tag_al:             req.body.tag_al === "1",
+    tag_type_year:      req.body.tag_type_year === "1",
+    tag_type_jyear:     req.body.tag_type_jyear === "1",
+    tag_type_month:     req.body.tag_type_month === "1",
+    tag_type_day:       req.body.tag_type_day === "1",
+    tag_norep:          req.body.tag_norep === "1",
+    tag_fix:            req.body.tag_fix === "1",
+    tag_br:             req.body.tag_br === "1",
+    tag_must:           req.body.tag_must === "1",
+    tag_ex:             req.body.tag_ex === "1",
+    tag_len_op:         bodyString(req.body.tag_len_op),
+    tag_len_val:        bodyString(req.body.tag_len_val),
+    tag_bf:             bodyString(req.body.tag_bf),
+    tag_af:             bodyString(req.body.tag_af),
   };
 }
 
@@ -740,7 +861,7 @@ function renderQuestionForm(
     res.status(input.statusCode);
   }
 
-  res.render("admin/questions/formV2", {
+  res.render("admin/questions/formV3", {
     title: input.title,
     project: input.project,
     question: input.question,
@@ -752,6 +873,57 @@ function renderQuestionForm(
     errorMessage: input.errorMessage ?? null,
     successMessage: input.successMessage ?? null
   });
+}
+
+/**
+ * formV3 の新フィールド（Phase 1 追加分）をリクエストから抽出する。
+ * questionRepository.create / update の追加プロパティとして展開して使う。
+ */
+function buildTagFieldsFromRequest(req: Request): {
+  comment_top: string | null;
+  comment_bottom: string | null;
+  answer_output_type: string | null;
+  display_tags_raw: string | null;
+  display_tags_parsed: DisplayTagsParsed | null;
+  visibility_conditions: VisibilityCondition[] | null;
+} {
+  const commentTop       = bodyString(req.body.comment_top).trim() || null;
+  const commentBottom    = bodyString(req.body.comment_bottom).trim() || null;
+  const answerOutputType = bodyString(req.body.answer_output_type).trim() || null;
+
+  // display_tags_raw: タブ5で直接編集した raw 文字列
+  const rawTags = bodyString(req.body.display_tags_raw).trim() || null;
+
+  // display_tags_parsed: hidden フィールド経由で JSON として送信される
+  let parsedTags: DisplayTagsParsed | null = null;
+  const parsedJson = bodyString(req.body.display_tags_parsed_json).trim();
+  if (parsedJson) {
+    try {
+      parsedTags = JSON.parse(parsedJson) as DisplayTagsParsed;
+    } catch {
+      if (rawTags) {
+        parsedTags = parseDisplayTags(rawTags).parsed;
+      }
+    }
+  } else if (rawTags) {
+    parsedTags = parseDisplayTags(rawTags).parsed;
+  }
+
+  // visibility_conditions: vis_condition_expr フィールド群から構築
+  const visExprs = bodyStringArray(req.body.vis_condition_expr).filter(Boolean);
+  const visibilityConditions: VisibilityCondition[] | null =
+    visExprs.length > 0
+      ? visExprs.map((expression) => ({ type: "pipe_expression" as const, expression }))
+      : null;
+
+  return {
+    comment_top: commentTop,
+    comment_bottom: commentBottom,
+    answer_output_type: answerOutputType,
+    display_tags_raw: rawTags,
+    display_tags_parsed: parsedTags,
+    visibility_conditions: visibilityConditions,
+  };
 }
 
 function buildQuestionConfigFromRequest(
@@ -1054,7 +1226,9 @@ export const adminController = {
             ai_state_template_key: aiStateTemplateKey
           }
         }),
-        ai_state_generated_at: new Date().toISOString()
+        ai_state_generated_at: new Date().toISOString(),
+        screening_config: buildScreeningConfig(req),
+        screening_last_question_order: parseOptionalInteger(req.body.screening_last_question_order)
       });
       res.redirect(buildProjectEditRedirectPath(created.id, "project_created"));
     } catch (error) {
@@ -1123,7 +1297,9 @@ export const adminController = {
         response_style: buildProjectResponseStyleFromSimpleInput(displayStyle),
         ai_state_template_key: aiStateTemplateKey,
         ai_state_json: aiStateJson,
-        ai_state_generated_at: new Date().toISOString()
+        ai_state_generated_at: new Date().toISOString(),
+        screening_config: buildScreeningConfig(req),
+        screening_last_question_order: parseOptionalInteger(req.body.screening_last_question_order)
       });
       res.redirect(buildProjectEditRedirectPath(projectId, "project_updated"));
     } catch (error) {
@@ -1185,6 +1361,7 @@ export const adminController = {
       });
 
       const createMaxProbeCount = parseOptionalInteger(bodyString(req.body.max_probe_count));
+      const createTagFields = buildTagFieldsFromRequest(req);
       await questionRepository.create({
         project_id: projectId,
         question_code: questionCode,
@@ -1198,7 +1375,8 @@ export const adminController = {
         ai_probe_enabled: req.body.ai_probe_enabled === "on",
         probe_guideline: bodyString(req.body.probe_guideline) || null,
         max_probe_count: createMaxProbeCount,
-        render_strategy: bodyString(req.body.render_strategy) === "dynamic" ? "dynamic" : "static"
+        render_strategy: bodyString(req.body.render_strategy) === "dynamic" ? "dynamic" : "static",
+        ...createTagFields,
       });
 
       res.redirect(`/admin/projects/${projectId}/questions`);
@@ -1271,6 +1449,7 @@ export const adminController = {
       });
 
       const updateMaxProbeCount = parseOptionalInteger(bodyString(req.body.max_probe_count));
+      const updateTagFields = buildTagFieldsFromRequest(req);
       await questionRepository.update(questionId, {
         question_code: questionCode,
         question_text: bodyString(req.body.question_text),
@@ -1283,7 +1462,8 @@ export const adminController = {
         ai_probe_enabled: req.body.ai_probe_enabled === "on",
         probe_guideline: bodyString(req.body.probe_guideline) || null,
         max_probe_count: updateMaxProbeCount,
-        render_strategy: bodyString(req.body.render_strategy) === "dynamic" ? "dynamic" : "static"
+        render_strategy: bodyString(req.body.render_strategy) === "dynamic" ? "dynamic" : "static",
+        ...updateTagFields,
       });
 
       res.redirect(`/admin/projects/${existing.project_id}/questions`);
@@ -1505,5 +1685,113 @@ export const adminController = {
   async exportProjectExpiredAssignments(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
     res.type("text/csv").send(await csvService.expiredAssignmentsCsv(projectId));
-  }
+  },
+
+  // ------------------------------------------------------------------
+  // Tag API: タグ解析・生成 (formV3.ejs から呼び出される)
+  // ------------------------------------------------------------------
+
+  /**
+   * POST /admin/api/parse-tags
+   * body: { raw: string, question_type: string, question_code?: string, project_id?: string }
+   * → TagParserResult + バリデーション errors を返す
+   */
+  async parseTagsApi(req: Request, res: Response): Promise<void> {
+    const raw = bodyString(req.body.raw);
+    const questionType = bodyString(req.body.question_type) || "text";
+    const questionCode = bodyString(req.body.question_code) || "q_preview";
+    const projectId    = bodyString(req.body.project_id);
+
+    const result = parseDisplayTags(raw);
+
+    // 設問コンテキストがある場合のみバリデーション実行
+    let validationErrors: ReturnType<typeof validateDisplayTags> = [];
+    if (projectId && questionCode) {
+      try {
+        const allQs = await questionRepository.listByProject(projectId);
+        validationErrors = validateDisplayTags(
+          result.parsed,
+          { question_code: questionCode, question_type: questionType as never },
+          allQs
+        );
+      } catch {
+        // プロジェクトが取れない場合はスキップ
+      }
+    }
+
+    res.json({
+      parsed:       result.parsed,
+      errors:       [...result.errors, ...validationErrors.filter(e => e.severity === "error")],
+      warnings:     [...result.warnings, ...validationErrors.filter(e => e.severity === "warning")],
+      rawGenerated: result.rawGenerated,
+    });
+  },
+
+  /**
+   * POST /admin/api/generate-tags
+   * body: フォームの tag_* フィールド群
+   * → { parsed, rawGenerated, errors, warnings }
+   */
+  async generateTagsApi(req: Request, res: Response): Promise<void> {
+    const b = req.body as Record<string, unknown>;
+
+    const parsed: DisplayTagsParsed = {};
+
+    const numOrUndef = (key: string) => {
+      const v = bodyString(b[key]).trim();
+      return v ? Number(v) : undefined;
+    };
+    const boolField = (key: string) => bodyString(b[key]) === "1" || b[key] === true;
+
+    if (numOrUndef("tag_size") !== undefined)  parsed.inputSize = numOrUndef("tag_size");
+    if (numOrUndef("tag_min")  !== undefined)  parsed.minValue  = numOrUndef("tag_min");
+    if (numOrUndef("tag_max")  !== undefined)  parsed.maxValue  = numOrUndef("tag_max");
+    if (numOrUndef("tag_rows") !== undefined)  parsed.rows      = numOrUndef("tag_rows");
+    if (numOrUndef("tag_cols") !== undefined)  parsed.cols      = numOrUndef("tag_cols");
+    if (numOrUndef("tag_code") !== undefined)  parsed.inputCode = numOrUndef("tag_code");
+
+    if (boolField("tag_numeric")) {
+      parsed.numericOnly = true;
+      const dec = numOrUndef("tag_numeric_decimal");
+      if (dec !== undefined) parsed.numericDecimalPlaces = dec;
+    }
+    if (boolField("tag_al"))     parsed.alphaNumericOnly = true;
+    if (boolField("tag_norep"))  parsed.noRepeat         = true;
+    if (boolField("tag_fix"))    parsed.fixedChoice      = true;
+    if (boolField("tag_br"))     parsed.lineBreak        = true;
+    if (boolField("tag_must"))   parsed.mustInput        = true;
+    if (boolField("tag_ex"))     parsed.exampleInput     = true;
+
+    const lenOp  = bodyString(b["tag_len_op"]).trim();
+    const lenVal = numOrUndef("tag_len_val");
+    if (lenOp && lenVal !== undefined) {
+      parsed.lengthRule = { operator: lenOp as import("../types/questionSchema").LengthRule["operator"], value: lenVal };
+    }
+
+    const bf = bodyString(b["tag_bf"]).trim();
+    const af = bodyString(b["tag_af"]).trim();
+    if (bf) parsed.beforeText = bf;
+    if (af) parsed.afterText  = af;
+
+    if (boolField("tag_type_year") || boolField("tag_type_jyear") ||
+        boolField("tag_type_month") || boolField("tag_type_day")) {
+      parsed.inputType = {
+        year:  boolField("tag_type_year")  || undefined,
+        jyear: boolField("tag_type_jyear") || undefined,
+        month: boolField("tag_type_month") || undefined,
+        day:   boolField("tag_type_day")   || undefined,
+      };
+    }
+
+    const rawGenerated = generateTagsFromParsed(parsed);
+    // 生成した raw を再パースしてエラーチェック
+    const reparse = parseDisplayTags(rawGenerated);
+
+    res.json({
+      parsed,
+      rawGenerated,
+      errors:   reparse.errors,
+      warnings: reparse.warnings,
+    });
+  },
 };
