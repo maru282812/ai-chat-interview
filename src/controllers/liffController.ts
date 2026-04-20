@@ -3,9 +3,14 @@ import { env } from "../config/env";
 import { HttpError } from "../lib/http";
 import { userProfileRepository, type UserProfileUpsertInput } from "../repositories/userProfileRepository";
 import { projectRepository } from "../repositories/projectRepository";
+import { questionRepository } from "../repositories/questionRepository";
+import { sessionRepository } from "../repositories/sessionRepository";
+import { answerRepository } from "../repositories/answerRepository";
+import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
+import { questionPageGroupRepository } from "../repositories/questionPageGroupRepository";
 import { analysisService } from "../services/analysisService";
 import { liffAuthService } from "../services/liffAuthService";
-import { liffService } from "../services/liffService";
+import { liffService, getSurveyLiffConfig } from "../services/liffService";
 import { personalityService } from "../services/personalityService";
 import { postService } from "../services/postService";
 import { respondentService } from "../services/respondentService";
@@ -224,6 +229,189 @@ export const liffController = {
       display_name: verifiedUser.displayName,
       profile: profile ?? null
     });
+  },
+
+  // ------------------------------------------------------------------
+  // Survey: アンケート/インタビュー表示
+  // ------------------------------------------------------------------
+
+  async surveyPage(req: Request, res: Response): Promise<void> {
+    const assignmentId = stringValue(req.params.assignmentId ?? req.query.assignment_id ?? "");
+    if (!assignmentId) {
+      // 利用者向けに分かりやすいメッセージを返す
+      res.status(400).render("liff/survey", {
+        title: "アンケート",
+        errorMessage: "このURLは無効です。LINEから届いたリンクを開き直してください。",
+        project: null,
+        projectData: null,
+        questions: [],
+        pageGroups: [],
+        sessionId: null,
+        assignmentId: null,
+        displayMode: "survey_question",
+        liffId: null,
+        liffAuthAvailable: false,
+        authRequired: false,
+      });
+      return;
+    }
+
+    const liffConfig = getSurveyLiffConfig();
+
+    const assignment = await projectAssignmentRepository.getById(assignmentId);
+
+    const project = await projectRepository.getById(assignment.project_id);
+    const questions = await questionRepository.listByProject(project.id);
+    const pageGroups = await questionPageGroupRepository.listByProject(project.id);
+
+    // アクティブなセッションを探す、なければ作成
+    let session = await sessionRepository.getActiveByRespondent(assignment.respondent_id, project.id);
+    if (!session) {
+      const firstQuestion = questions.find(q => !q.is_hidden) ?? null;
+      session = await sessionRepository.create({
+        respondent_id: assignment.respondent_id,
+        project_id: project.id,
+        current_question_id: firstQuestion?.id ?? null,
+        current_phase: "question",
+        status: "active",
+      });
+    }
+
+    // アサインメントを started に更新
+    if (
+      assignment.status === "sent" ||
+      assignment.status === "opened" ||
+      assignment.status === "assigned"
+    ) {
+      await projectAssignmentRepository.update(assignment.id, {
+        status: "started",
+        started_at: new Date().toISOString(),
+      });
+    }
+
+    res.render("liff/survey", {
+      title: project.name,
+      project,
+      projectData: {
+        id: project.id,
+        name: project.name,
+        display_mode: project.display_mode ?? "survey_question",
+      },
+      questions: questions.filter(q => !q.is_hidden),
+      pageGroups,
+      sessionId: session.id,
+      assignmentId: assignment.id,
+      displayMode: project.display_mode ?? "survey_question",
+      // LIFF 設定情報（survey.ejs で使用）
+      liffId: liffConfig.liffId,
+      liffAuthAvailable: liffConfig.liffAuthAvailable,
+      // LIFF 設定が不足している場合でも画面は表示するが本人確認は行えない
+      // 設定が揃えば自動的に本人確認が有効になる
+      authRequired: liffConfig.liffAuthAvailable,
+    });
+  },
+
+  /**
+   * POST /liff/survey/verify-identity
+   * LIFF ID token を受け取り、assignmentId の所有者と一致するか検証する。
+   * 一致した場合は { ok: true } を返し、LIFF 側はそのまま回答を続行できる。
+   * 不一致・未設定・エラーの場合はそれぞれ適切なステータスコードとメッセージを返す。
+   */
+  async verifyIdentity(req: Request, res: Response): Promise<void> {
+    const liffConfig = getSurveyLiffConfig();
+
+    if (!liffConfig.liffAuthAvailable) {
+      // LINE Developers 側で LIFF 設定が未完了
+      res.status(503).json({
+        ok: false,
+        code: "LIFF_NOT_CONFIGURED",
+        message: `LIFF認証が設定されていません。必要な環境変数: ${liffConfig.missingEnvVars.join(", ")}`,
+        missingEnvVars: liffConfig.missingEnvVars,
+      });
+      return;
+    }
+
+    const idToken = stringValue(req.body.id_token).trim();
+    const assignmentId = stringValue(req.body.assignment_id).trim();
+
+    if (!idToken) {
+      res.status(400).json({ ok: false, code: "MISSING_ID_TOKEN", message: "id_token が必要です。" });
+      return;
+    }
+    if (!assignmentId) {
+      res.status(400).json({ ok: false, code: "MISSING_ASSIGNMENT_ID", message: "assignment_id が必要です。" });
+      return;
+    }
+
+    // LIFF ID token を検証して LINE userId を取得
+    const verifiedUser = await liffAuthService.verifyIdToken(idToken);
+
+    // assignment に紐づく respondent の LINE user ID と照合
+    const assignment = await projectAssignmentRepository.getById(assignmentId);
+    if (assignment.user_id !== verifiedUser.userId) {
+      res.status(403).json({
+        ok: false,
+        code: "IDENTITY_MISMATCH",
+        message: "このアンケートは別のアカウントに割り当てられています。",
+      });
+      return;
+    }
+
+    res.json({ ok: true, userId: verifiedUser.userId });
+  },
+
+  async submitSurveyAnswer(req: Request, res: Response): Promise<void> {
+    const sessionId = stringValue(req.body.session_id).trim();
+    const questionCode = stringValue(req.body.question_code).trim();
+    const answerValue = req.body.answer_value;
+
+    if (!sessionId || !questionCode) {
+      res.status(400).json({ ok: false, error: "session_id と question_code は必須です。" });
+      return;
+    }
+
+    const session = await sessionRepository.getById(sessionId);
+    const question = await questionRepository.getByProjectAndCode(session.project_id, questionCode);
+    if (!question) {
+      res.status(404).json({ ok: false, error: `質問コードが見つかりません: ${questionCode}` });
+      return;
+    }
+
+    const answerText = Array.isArray(answerValue)
+      ? answerValue.join(",")
+      : String(answerValue ?? "");
+
+    await answerRepository.create({
+      session_id: sessionId,
+      question_id: question.id,
+      answer_text: answerText,
+      answer_role: "primary",
+    });
+
+    await sessionRepository.update(sessionId, { current_question_id: question.id });
+
+    res.json({ ok: true });
+  },
+
+  async completeSurvey(req: Request, res: Response): Promise<void> {
+    const sessionId = stringValue(req.body.session_id).trim();
+    const assignmentId = stringValue(req.body.assignment_id).trim();
+
+    if (sessionId) {
+      await sessionRepository.update(sessionId, {
+        status: "completed",
+        current_phase: "completed",
+        completed_at: new Date().toISOString(),
+      });
+    }
+    if (assignmentId) {
+      await projectAssignmentRepository.update(assignmentId, {
+        status: "completed",
+        completed_at: new Date().toISOString(),
+      });
+    }
+
+    res.json({ ok: true });
   },
 
   async updateMypageData(req: Request, res: Response): Promise<void> {

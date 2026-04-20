@@ -219,10 +219,16 @@
             <th>Sent</th>
             <th>Started</th>
             <th>Reminder</th>
+            <th>Survey URL</th>
           </tr>
         </thead>
         <tbody>
           <% for (const item of unansweredAssignments) { %>
+            <%
+              const surveyUrl = locals.appBaseUrl
+                ? locals.appBaseUrl.replace(/\/$/, '') + '/liff/survey/' + item.assignment.id
+                : '/liff/survey/' + item.assignment.id;
+            %>
             <tr>
               <td><code><%= item.assignment.user_id || "-" %></code></td>
               <td>
@@ -234,6 +240,14 @@
               <td><%= item.assignment.sent_at || "-" %></td>
               <td><%= item.assignment.started_at || "-" %></td>
               <td><%= item.assignment.reminder_sent_at || "-" %></td>
+              <td>
+                <a href="<%= surveyUrl %>" target="_blank" style="font-size:12px;">
+                  Survey URL
+                </a><br />
+                <input type="text" value="<%= surveyUrl %>"
+                  style="font-size:10px;width:200px;border:1px solid #ccc;padding:2px 4px;border-radius:4px;"
+                  readonly onclick="this.select()" />
+              </td>
             </tr>
           <% } %>
         </tbody>

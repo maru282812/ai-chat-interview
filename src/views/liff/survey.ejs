@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title><%= project?.name || 'アンケート' %></title>
+  <% if (locals.liffId) { %>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <% } %>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -109,6 +112,15 @@
   const isPageMode  = displayMode === 'survey_page';
 %>
 
+<% if (locals.errorMessage) { %>
+  <!-- エラー画面 -->
+  <div style="max-width:480px;margin:40px auto;padding:24px;text-align:center;font-family:sans-serif;">
+    <div style="font-size:40px;margin-bottom:16px;">⚠️</div>
+    <p style="font-size:16px;color:#666;"><%= errorMessage %></p>
+  </div>
+<% return; %>
+<% } %>
+
 <% if (displayMode === 'interview_chat') { %>
   <!-- ============================================================ -->
   <!-- interview_chat モード                                         -->
@@ -164,12 +176,95 @@
   'use strict';
 
   // ---- 初期データ（サーバーから受け取る） ----
-  const PROJECT_DATA = <%- JSON.stringify(projectData || {}) %>;
-  const QUESTIONS    = <%- JSON.stringify(questions || []) %>;
-  const PAGE_GROUPS  = <%- JSON.stringify(pageGroups || []) %>;
-  const DISPLAY_MODE = <%- JSON.stringify(displayMode) %>;
-  const SESSION_ID   = <%- JSON.stringify(sessionId || null) %>;
-  const ASSIGNMENT_ID= <%- JSON.stringify(assignmentId || null) %>;
+  const PROJECT_DATA    = <%- JSON.stringify(projectData || {}) %>;
+  const QUESTIONS       = <%- JSON.stringify(questions || []) %>;
+  const PAGE_GROUPS     = <%- JSON.stringify(pageGroups || []) %>;
+  const DISPLAY_MODE    = <%- JSON.stringify(displayMode) %>;
+  const SESSION_ID      = <%- JSON.stringify(sessionId || null) %>;
+  const ASSIGNMENT_ID   = <%- JSON.stringify(assignmentId || null) %>;
+  const LIFF_ID         = <%- JSON.stringify(locals.liffId || null) %>;
+  const AUTH_REQUIRED   = <%- JSON.stringify(locals.authRequired === true) %>;
+  const LIFF_AUTH_AVAIL = <%- JSON.stringify(locals.liffAuthAvailable === true) %>;
+
+  // ================================================================
+  // LIFF 初期化 + 本人確認
+  // ================================================================
+  async function initLiffAndVerify() {
+    // LIFF 未設定時は本人確認をスキップして回答を続行
+    if (!LIFF_ID || !AUTH_REQUIRED || !LIFF_AUTH_AVAIL) {
+      if (!LIFF_AUTH_AVAIL && ASSIGNMENT_ID) {
+        console.warn('[survey] LIFF auth not configured. Identity check skipped.');
+      }
+      startSurvey();
+      return;
+    }
+
+    try {
+      await liff.init({ liffId: LIFF_ID });
+    } catch (e) {
+      console.error('[survey] liff.init failed', e);
+      // LIFF 初期化失敗時も回答は続行（本人確認なし）
+      startSurvey();
+      return;
+    }
+
+    // LIFF 内で開いていない場合（管理者やテスト用ブラウザ）はスキップ
+    if (!liff.isInClient()) {
+      console.warn('[survey] Not in LIFF client. Identity check skipped.');
+      startSurvey();
+      return;
+    }
+
+    let idToken;
+    try {
+      idToken = await liff.getIDToken();
+    } catch (e) {
+      console.error('[survey] liff.getIDToken failed', e);
+      showAuthError('認証情報を取得できませんでした。LINEアプリから開き直してください。');
+      return;
+    }
+
+    // サーバー側で ID token を検証し、本人確認
+    try {
+      const res = await fetch('/liff/survey/verify-identity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id_token: idToken, assignment_id: ASSIGNMENT_ID }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        if (res.status === 403) {
+          showAuthError('このアンケートはあなたのアカウントに割り当てられていません。');
+        } else if (res.status === 503) {
+          // LIFF 設定不足（管理者向け情報）
+          console.warn('[survey] LIFF auth server error:', data.message);
+          // 設定が揃っていないだけなのでユーザーには回答させる
+          startSurvey();
+        } else {
+          showAuthError('認証に失敗しました。もう一度LINEから開き直してください。');
+        }
+        return;
+      }
+    } catch (e) {
+      console.error('[survey] verify-identity failed', e);
+      // ネットワークエラー時も回答は続行
+    }
+
+    startSurvey();
+  }
+
+  function showAuthError(message) {
+    document.body.innerHTML = `
+      <div style="max-width:480px;margin:60px auto;padding:24px;text-align:center;font-family:sans-serif;">
+        <div style="font-size:40px;margin-bottom:16px;">🔒</div>
+        <p style="font-size:15px;color:#666;">${message}</p>
+      </div>`;
+  }
+
+  // ================================================================
+  // メイン: アンケートエンジン
+  // ================================================================
+  function startSurvey() {
 
   // ---- 回答コンテキスト ----
   const answerCtx = { answers: {} };
@@ -653,6 +748,11 @@
 
     askCurrentQuestion();
   }
+
+  } // end startSurvey()
+
+  // LIFF 初期化 → 本人確認 → アンケート開始
+  initLiffAndVerify();
 
 })();
 </script>

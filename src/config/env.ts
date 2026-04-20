@@ -16,6 +16,10 @@ const envSchema = z.object({
   LINE_LIFF_ID_RANT: z.string().min(1).optional(),
   LINE_LIFF_ID_DIARY: z.string().min(1).optional(),
   LINE_LIFF_ID_PERSONALITY: z.string().min(1).optional(),
+  // survey / mypage 用 LIFF ID（未設定時は LINE_LIFF_ID にフォールバック）
+  // LINE Developers で survey 用 / mypage 用 LIFF App を作成後に設定する
+  LINE_LIFF_ID_SURVEY: z.string().min(1).optional(),
+  LINE_LIFF_ID_MYPAGE: z.string().min(1).optional(),
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_MODEL: z.string().default("gpt-5-mini"),
   DEFAULT_PROJECT_ID: z.string().uuid(),

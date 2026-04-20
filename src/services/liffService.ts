@@ -18,7 +18,7 @@ export interface ResolvedLiffLaunch {
   settings: Record<string, unknown> | null;
 }
 
-type ManagedLiffEntryKey = "rant" | "diary" | "personality" | "mypage";
+type ManagedLiffEntryKey = "rant" | "diary" | "personality" | "mypage" | "survey";
 
 const fallbackEntrypoints: Record<ManagedLiffEntryKey, LiffEntrypoint> = {
   rant: {
@@ -64,6 +64,17 @@ const fallbackEntrypoints: Record<ManagedLiffEntryKey, LiffEntrypoint> = {
     is_active: true,
     created_at: "",
     updated_at: ""
+  },
+  survey: {
+    id: "fallback-survey",
+    entry_key: "survey",
+    title: "アンケート",
+    path: "/liff/survey",
+    entry_type: "survey_support",
+    settings_json: {},
+    is_active: true,
+    created_at: "",
+    updated_at: ""
   }
 };
 
@@ -71,7 +82,8 @@ const canonicalTitles: Partial<Record<ManagedLiffEntryKey, string>> = {
   rant: "本音・悩み投稿",
   diary: "今日の気持ち・日記",
   personality: "性格診断",
-  mypage: "マイページ"
+  mypage: "マイページ",
+  survey: "アンケート"
 };
 
 function trimToNull(value: unknown): string | null {
@@ -94,6 +106,12 @@ function getLiffId(entry: LiffEntrypoint | null): string | null {
   if (entryKey === "personality" && env.LINE_LIFF_ID_PERSONALITY) {
     return env.LINE_LIFF_ID_PERSONALITY;
   }
+  if (entryKey === "survey" && env.LINE_LIFF_ID_SURVEY) {
+    return env.LINE_LIFF_ID_SURVEY;
+  }
+  if (entryKey === "mypage" && env.LINE_LIFF_ID_MYPAGE) {
+    return env.LINE_LIFF_ID_MYPAGE;
+  }
 
   const configured = entry?.settings_json?.liffId;
   if (typeof configured === "string" && configured.trim()) {
@@ -101,6 +119,40 @@ function getLiffId(entry: LiffEntrypoint | null): string | null {
   }
 
   return env.LINE_LIFF_ID ?? null;
+}
+
+/**
+ * survey / mypage 用の LIFF ID が設定されているか確認する。
+ * 未設定でも動作はするが、LIFF 認証（ID token 取得）ができないため本人確認不可になる。
+ */
+export function getSurveyLiffId(): string | null {
+  return env.LINE_LIFF_ID_SURVEY ?? env.LINE_LIFF_ID ?? null;
+}
+
+export function getMypageLiffId(): string | null {
+  return env.LINE_LIFF_ID_MYPAGE ?? env.LINE_LIFF_ID ?? null;
+}
+
+/**
+ * survey の LIFF 設定状態を返す。
+ * LINE Developers 側で以下が必要:
+ *   - LINE_LIFF_CHANNEL_ID: LIFF チャネル ID
+ *   - LINE_LIFF_ID_SURVEY: survey 専用 LIFF App ID
+ * どちらかが未設定の場合、liffAuthAvailable = false になる。
+ */
+export function getSurveyLiffConfig(): {
+  liffId: string | null;
+  liffAuthAvailable: boolean;
+  missingEnvVars: string[];
+} {
+  const missing: string[] = [];
+  if (!env.LINE_LIFF_CHANNEL_ID) missing.push("LINE_LIFF_CHANNEL_ID");
+  if (!env.LINE_LIFF_ID_SURVEY && !env.LINE_LIFF_ID) missing.push("LINE_LIFF_ID_SURVEY");
+  return {
+    liffId: getSurveyLiffId(),
+    liffAuthAvailable: missing.length === 0,
+    missingEnvVars: missing,
+  };
 }
 
 function buildAbsoluteUrl(path: string, params?: Record<string, string | null | undefined>): string {

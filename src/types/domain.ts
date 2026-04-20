@@ -392,6 +392,17 @@ export interface Question {
   updated_at: string;
 }
 
+export interface QuestionPageGroup {
+  id: UUID;
+  project_id: UUID;
+  page_number: number;
+  title: string | null;
+  description: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface PendingNextQuestionCache {
   sessionId: string;
   nextQuestionId: string;

@@ -132,12 +132,21 @@ export const questionRepository = {
   },
 
   async create(input: CreateQuestionInput): Promise<Question> {
-    const payload = {
+    const payload: Record<string, unknown> = {
       ...input,
       ai_probe_enabled: input.ai_probe_enabled ?? false,
       is_system: input.is_system ?? false,
       is_hidden: input.is_hidden ?? false
     };
+    // Phase 1 フィールドは null/undefined の場合はペイロードから除外する
+    // 016_question_schema_redesign.sql 未適用の DB でも動作するため
+    const PHASE1_FIELDS = [
+      "comment_top", "comment_bottom", "answer_output_type",
+      "display_tags_raw", "display_tags_parsed", "visibility_conditions", "page_group_id"
+    ] as const;
+    for (const f of PHASE1_FIELDS) {
+      if (payload[f] == null) delete payload[f];
+    }
     const { data, error } = await supabase.from("questions").insert(payload).select("*").single();
     throwIfError(error);
     return data as Question;
@@ -173,9 +182,19 @@ export const questionRepository = {
       >
     >
   ): Promise<Question> {
+    const payload: Record<string, unknown> = { ...input };
+    // Phase 1 フィールドは null/undefined の場合はペイロードから除外する
+    // 016_question_schema_redesign.sql 未適用の DB でも動作するため
+    const PHASE1_FIELDS = [
+      "comment_top", "comment_bottom", "answer_output_type",
+      "display_tags_raw", "display_tags_parsed", "visibility_conditions", "page_group_id"
+    ] as const;
+    for (const f of PHASE1_FIELDS) {
+      if (payload[f] == null) delete payload[f];
+    }
     const { data, error } = await supabase
       .from("questions")
-      .update(input)
+      .update(payload)
       .eq("id", id)
       .select("*")
       .single();

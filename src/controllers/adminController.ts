@@ -1,5 +1,6 @@
 ﻿import type { Request, Response } from "express";
 import { HttpError } from "../lib/http";
+import { env as appEnv } from "../config/env";
 import {
   getQuestionScaleRange,
   getYesNoLabels,
@@ -39,6 +40,7 @@ import type {
 } from "../types/domain";
 import { parseDisplayTags, generateTagsFromParsed } from "../lib/tagParser";
 import { validateDisplayTags } from "../lib/tagValidator";
+import { questionPageGroupRepository } from "../repositories/questionPageGroupRepository";
 import type { DisplayTagsParsed, VisibilityCondition } from "../types/questionSchema";
 
 function routeParam(req: Request, key: string): string {
@@ -301,16 +303,18 @@ function parseQuestionRole(value: string): QuestionRole {
 }
 
 function parseQuestionType(value: string): QuestionType {
-  if (
-    value === "text" ||
-    value === "single_select" ||
-    value === "multi_select" ||
-    value === "yes_no" ||
-    value === "scale"
-  ) {
-    return value;
+  const ALL_VALID: QuestionType[] = [
+    "text", "single_select", "multi_select", "yes_no", "scale",
+    "single_choice", "multi_choice",
+    "matrix_single", "matrix_multi", "matrix_mixed",
+    "free_text_short", "free_text_long",
+    "numeric", "image_upload",
+    "hidden_single", "hidden_multi",
+    "text_with_image", "sd",
+  ];
+  if (ALL_VALID.includes(value as QuestionType)) {
+    return value as QuestionType;
   }
-
   return "text";
 }
 
@@ -582,6 +586,8 @@ interface QuestionFormValues {
   ans_insertions: Array<{ source: string; target: string }>;
   matrix_rows: string;
   matrix_cols: string;
+  question_display_mode: string;
+  page_group_id: string;
   // タグフォームフィールド (tab4)
   tag_size: string;
   tag_min: string;
@@ -724,8 +730,20 @@ function buildQuestionFormValues(
     display_tags_raw: overrides.display_tags_raw ?? question?.display_tags_raw ?? "",
     display_tags_parsed_json: overrides.display_tags_parsed_json ?? (question?.display_tags_parsed ? JSON.stringify(question.display_tags_parsed) : ""),
     ans_insertions: overrides.ans_insertions ?? (question?.display_tags_parsed?.answerInsertions?.map((a) => ({ source: a.source, target: a.target })) ?? []),
-    matrix_rows: overrides.matrix_rows ?? "",
-    matrix_cols: overrides.matrix_cols ?? "",
+    matrix_rows: overrides.matrix_rows ?? (() => {
+      const opts = question?.question_config?.options;
+      if (MATRIX_QUESTION_TYPES.includes(question?.question_type as QuestionType) && Array.isArray(opts)) {
+        return opts.map((o: { label?: string }) => o.label ?? "").join("\n");
+      }
+      return "";
+    })(),
+    matrix_cols: overrides.matrix_cols ?? (() => {
+      const mc = (question?.question_config as Record<string, unknown> | null)?.matrix_cols;
+      if (Array.isArray(mc)) {
+        return mc.map((c: { label?: string } | string) => (typeof c === "object" ? c.label ?? "" : c)).join("\n");
+      }
+      return "";
+    })(),
     tag_size: overrides.tag_size ?? (question?.display_tags_parsed?.inputSize != null ? String(question.display_tags_parsed.inputSize) : ""),
     tag_min: overrides.tag_min ?? (question?.display_tags_parsed?.minValue != null ? String(question.display_tags_parsed.minValue) : ""),
     tag_max: overrides.tag_max ?? (question?.display_tags_parsed?.maxValue != null ? String(question.display_tags_parsed.maxValue) : ""),
@@ -748,6 +766,8 @@ function buildQuestionFormValues(
     tag_len_val: overrides.tag_len_val ?? (question?.display_tags_parsed?.lengthRule?.value != null ? String(question.display_tags_parsed.lengthRule.value) : ""),
     tag_bf: overrides.tag_bf ?? (question?.display_tags_parsed?.beforeText ?? ""),
     tag_af: overrides.tag_af ?? (question?.display_tags_parsed?.afterText ?? ""),
+    question_display_mode: overrides.question_display_mode ?? "",
+    page_group_id: overrides.page_group_id ?? (question?.page_group_id ?? ""),
   };
 }
 
@@ -840,6 +860,8 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     tag_len_val:        bodyString(req.body.tag_len_val),
     tag_bf:             bodyString(req.body.tag_bf),
     tag_af:             bodyString(req.body.tag_af),
+    question_display_mode: bodyString(req.body.question_display_mode),
+    page_group_id:      bodyString(req.body.page_group_id),
   };
 }
 
@@ -852,6 +874,7 @@ function renderQuestionForm(
     action: string;
     formValues: QuestionFormValues;
     availableQuestions: Question[];
+    pageGroups?: import("../types/domain").QuestionPageGroup[];
     errorMessage?: string | null;
     successMessage?: string | null;
     statusCode?: number;
@@ -870,6 +893,7 @@ function renderQuestionForm(
     availableQuestions: input.availableQuestions.filter(
       (candidate) => !candidate.is_hidden || candidate.id === input.question?.id
     ),
+    pageGroups: input.pageGroups ?? [],
     errorMessage: input.errorMessage ?? null,
     successMessage: input.successMessage ?? null
   });
@@ -886,6 +910,7 @@ function buildTagFieldsFromRequest(req: Request): {
   display_tags_raw: string | null;
   display_tags_parsed: DisplayTagsParsed | null;
   visibility_conditions: VisibilityCondition[] | null;
+  page_group_id: string | null;
 } {
   const commentTop       = bodyString(req.body.comment_top).trim() || null;
   const commentBottom    = bodyString(req.body.comment_bottom).trim() || null;
@@ -916,6 +941,8 @@ function buildTagFieldsFromRequest(req: Request): {
       ? visExprs.map((expression) => ({ type: "pipe_expression" as const, expression }))
       : null;
 
+  const pageGroupId = bodyString(req.body.page_group_id).trim() || null;
+
   return {
     comment_top: commentTop,
     comment_bottom: commentBottom,
@@ -923,8 +950,16 @@ function buildTagFieldsFromRequest(req: Request): {
     display_tags_raw: rawTags,
     display_tags_parsed: parsedTags,
     visibility_conditions: visibilityConditions,
+    page_group_id: pageGroupId,
   };
 }
+
+const CHOICE_QUESTION_TYPES: QuestionType[] = [
+  "single_select", "multi_select", "single_choice", "multi_choice",
+  "yes_no", "hidden_single", "hidden_multi", "text_with_image", "sd",
+];
+const MATRIX_QUESTION_TYPES: QuestionType[] = ["matrix_single", "matrix_multi", "matrix_mixed"];
+const MULTI_CHOICE_TYPES: QuestionType[] = ["multi_select", "multi_choice"];
 
 function buildQuestionConfigFromRequest(
   req: Request,
@@ -941,48 +976,44 @@ function buildQuestionConfigFromRequest(
   const questionConfig: NonNullable<Question["question_config"]> =
     normalizeQuestionConfig(questionType, existing ?? {}) ?? {};
 
-  switch (questionType) {
-    case "text": {
-      const placeholder = bodyString(req.body.placeholder).trim();
-      if (placeholder) {
-        questionConfig.placeholder = placeholder;
-      } else {
-        delete questionConfig.placeholder;
-      }
-      break;
+  if (CHOICE_QUESTION_TYPES.includes(questionType)) {
+    const optionLabels = normalizeTextList(bodyStringArray(req.body.option_labels));
+    questionConfig.options = optionLabels.map((label) => ({ label, value: label }));
+    if (MULTI_CHOICE_TYPES.includes(questionType)) {
+      const minSelect = parseOptionalInteger(req.body.min_select);
+      const maxSelect = parseOptionalInteger(req.body.max_select);
+      if (minSelect !== null) { questionConfig.min_select = minSelect; } else { delete questionConfig.min_select; }
+      if (maxSelect !== null) { questionConfig.max_select = maxSelect; } else { delete questionConfig.max_select; }
     }
-    case "single_select":
-    case "multi_select": {
-      const optionLabels = normalizeTextList(bodyStringArray(req.body.option_labels));
-      questionConfig.options = optionLabels.map((label) => ({ label, value: label }));
-      if (questionType === "multi_select") {
-        const minSelect = parseOptionalInteger(req.body.min_select);
-        const maxSelect = parseOptionalInteger(req.body.max_select);
-        if (minSelect !== null) {
-          questionConfig.min_select = minSelect;
-        } else {
-          delete questionConfig.min_select;
-        }
-        if (maxSelect !== null) {
-          questionConfig.max_select = maxSelect;
-        } else {
-          delete questionConfig.max_select;
-        }
-      }
-      break;
-    }
-    case "yes_no":
+    if (questionType === "yes_no") {
       questionConfig.yes_label = bodyString(req.body.yes_label).trim() || "はい";
       questionConfig.no_label = bodyString(req.body.no_label).trim() || "いいえ";
-      break;
-    case "scale":
-      questionConfig.min = parseOptionalInteger(req.body.scale_min) ?? 1;
-      questionConfig.max = parseOptionalInteger(req.body.scale_max) ?? 5;
-      questionConfig.min_label = bodyString(req.body.scale_min_label).trim() || undefined;
-      questionConfig.max_label = bodyString(req.body.scale_max_label).trim() || undefined;
-      break;
-    default:
-      break;
+    }
+  } else if (MATRIX_QUESTION_TYPES.includes(questionType)) {
+    const rowLabels = parseLineSeparatedList(bodyString(req.body.matrix_rows));
+    const colLabels = parseLineSeparatedList(bodyString(req.body.matrix_cols));
+    if (rowLabels.length === 0) throw new HttpError(400, "マトリクスの行（row）を1つ以上設定してください。");
+    if (colLabels.length === 0) throw new HttpError(400, "マトリクスの列（column）を1つ以上設定してください。");
+    questionConfig.options = rowLabels.map((label) => ({ label, value: label }));
+    (questionConfig as Record<string, unknown>).matrix_cols = colLabels.map((label) => ({ label, value: label }));
+  } else {
+    switch (questionType) {
+      case "text":
+      case "free_text_short":
+      case "free_text_long": {
+        const placeholder = bodyString(req.body.placeholder).trim();
+        if (placeholder) { questionConfig.placeholder = placeholder; } else { delete questionConfig.placeholder; }
+        break;
+      }
+      case "scale":
+        questionConfig.min = parseOptionalInteger(req.body.scale_min) ?? 1;
+        questionConfig.max = parseOptionalInteger(req.body.scale_max) ?? 5;
+        questionConfig.min_label = bodyString(req.body.scale_min_label).trim() || undefined;
+        questionConfig.max_label = bodyString(req.body.scale_max_label).trim() || undefined;
+        break;
+      default:
+        break;
+    }
   }
 
   const meta = buildQuestionMetaFromAuthoringInput({
@@ -1323,22 +1354,29 @@ export const adminController = {
 
   async newQuestion(req: Request, res: Response): Promise<void> {
     const project = await projectRepository.getById(routeParam(req, "projectId"));
-    const availableQuestions = await questionRepository.listByProject(project.id);
-    const nextSortOrder = await questionRepository.getNextSortOrder(project.id);
+    const [availableQuestions, pageGroups, nextSortOrder] = await Promise.all([
+      questionRepository.listByProject(project.id),
+      questionPageGroupRepository.listByProject(project.id),
+      questionRepository.getNextSortOrder(project.id),
+    ]);
     renderQuestionForm(res, {
       title: "質問作成",
       project,
       question: null,
       action: `/admin/projects/${project.id}/questions`,
       formValues: buildQuestionFormValues(null, { sort_order_text: String(nextSortOrder) }),
-      availableQuestions
+      availableQuestions,
+      pageGroups,
     });
   },
 
   async createQuestion(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
-    const project = await projectRepository.getById(projectId);
-    const availableQuestions = await questionRepository.listByProject(projectId, { includeHidden: true });
+    const [project, availableQuestions, pageGroups] = await Promise.all([
+      projectRepository.getById(projectId),
+      questionRepository.listByProject(projectId, { includeHidden: true }),
+      questionPageGroupRepository.listByProject(projectId),
+    ]);
 
     try {
       const questionType = parseQuestionType(bodyString(req.body.question_type || "text"));
@@ -1388,6 +1426,7 @@ export const adminController = {
         action: `/admin/projects/${project.id}/questions`,
         formValues: buildQuestionFormValues(null, buildQuestionFormValuesFromRequest(req)),
         availableQuestions,
+        pageGroups,
         errorMessage: getProjectRenderErrorMessage(error, "質問の作成に失敗しました。"),
         statusCode: getProjectRenderStatusCode(error)
       });
@@ -1396,8 +1435,11 @@ export const adminController = {
 
   async editQuestion(req: Request, res: Response): Promise<void> {
     const question = await questionRepository.getById(routeParam(req, "questionId"));
-    const project = await projectRepository.getById(question.project_id);
-    const availableQuestions = await questionRepository.listByProject(question.project_id);
+    const [project, availableQuestions, pageGroups] = await Promise.all([
+      projectRepository.getById(question.project_id),
+      questionRepository.listByProject(question.project_id),
+      questionPageGroupRepository.listByProject(question.project_id),
+    ]);
     renderQuestionForm(res, {
       title: "質問編集",
       project,
@@ -1405,6 +1447,7 @@ export const adminController = {
       action: `/admin/questions/${question.id}`,
       formValues: buildQuestionFormValues(question),
       availableQuestions,
+      pageGroups,
       successMessage: resolveNoticeMessage(req.query.notice)
     });
   },
@@ -1422,8 +1465,11 @@ export const adminController = {
   async updateQuestion(req: Request, res: Response): Promise<void> {
     const questionId = routeParam(req, "questionId");
     const existing = await questionRepository.getById(questionId);
-    const project = await projectRepository.getById(existing.project_id);
-    const availableQuestions = await questionRepository.listByProject(existing.project_id, { includeHidden: true });
+    const [project, availableQuestions, pageGroups] = await Promise.all([
+      projectRepository.getById(existing.project_id),
+      questionRepository.listByProject(existing.project_id, { includeHidden: true }),
+      questionPageGroupRepository.listByProject(existing.project_id),
+    ]);
 
     try {
       const questionType = parseQuestionType(bodyString(req.body.question_type || "text"));
@@ -1475,6 +1521,7 @@ export const adminController = {
         action: `/admin/questions/${existing.id}`,
         formValues: buildQuestionFormValues(existing, buildQuestionFormValuesFromRequest(req)),
         availableQuestions,
+        pageGroups,
         errorMessage: getProjectRenderErrorMessage(error, "質問の更新に失敗しました。"),
         statusCode: getProjectRenderStatusCode(error)
       });
@@ -1498,6 +1545,7 @@ export const adminController = {
     const detail = await adminService.projectDelivery(routeParam(req, "projectId"));
     res.render("admin/projects/deliveryV2", {
       title: "Project Delivery",
+      appBaseUrl: appEnv.APP_BASE_URL,
       ...detail
     });
   },
@@ -1685,6 +1733,56 @@ export const adminController = {
   async exportProjectExpiredAssignments(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
     res.type("text/csv").send(await csvService.expiredAssignmentsCsv(projectId));
+  },
+
+  // ------------------------------------------------------------------
+  // ページグループ管理 (survey_page モード)
+  // ------------------------------------------------------------------
+
+  async listPageGroups(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const project = await projectRepository.getById(projectId);
+    const pageGroups = await questionPageGroupRepository.listByProject(projectId);
+    const questions = await questionRepository.listByProject(projectId);
+    res.render("admin/projects/pageGroups", {
+      title: "ページグループ管理",
+      project,
+      pageGroups,
+      questions
+    });
+  },
+
+  async createPageGroup(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const existing = await questionPageGroupRepository.listByProject(projectId);
+    const nextPageNumber = existing.reduce((max, pg) => Math.max(max, pg.page_number), 0) + 1;
+    await questionPageGroupRepository.create({
+      project_id: projectId,
+      page_number: parseOptionalInteger(req.body.page_number) ?? nextPageNumber,
+      title: bodyString(req.body.title).trim() || null,
+      description: bodyString(req.body.description).trim() || null,
+      sort_order: parseOptionalInteger(req.body.sort_order) ?? nextPageNumber,
+    });
+    res.redirect(`/admin/projects/${projectId}/page-groups`);
+  },
+
+  async updatePageGroup(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const pageGroupId = routeParam(req, "pageGroupId");
+    await questionPageGroupRepository.update(pageGroupId, {
+      title: bodyString(req.body.title).trim() || null,
+      description: bodyString(req.body.description).trim() || null,
+      sort_order: parseOptionalInteger(req.body.sort_order) ?? undefined,
+      page_number: parseOptionalInteger(req.body.page_number) ?? undefined,
+    });
+    res.redirect(`/admin/projects/${projectId}/page-groups`);
+  },
+
+  async deletePageGroup(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const pageGroupId = routeParam(req, "pageGroupId");
+    await questionPageGroupRepository.deleteById(pageGroupId);
+    res.redirect(`/admin/projects/${projectId}/page-groups`);
   },
 
   // ------------------------------------------------------------------

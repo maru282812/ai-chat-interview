@@ -14,7 +14,7 @@
     .map((item) => ({ code: item.question_code, text: item.question_text }));
   const qType = safeForm.question_type || "text";
   const ALL_TYPES = [
-    { value: "text",           label: "テキスト（旧）" },
+    { value: "text",            label: "テキスト（旧）" },
     { value: "single_select",  label: "単一選択（旧）" },
     { value: "multi_select",   label: "複数選択（旧）" },
     { value: "yes_no",         label: "はい/いいえ（旧）" },
@@ -22,7 +22,7 @@
     { value: "single_choice",  label: "単一選択" },
     { value: "multi_choice",   label: "複数選択" },
     { value: "free_text_short","label": "短文自由記述" },
-    { value: "free_text_long", label: "長文自由記述" },
+    { value: "free_text_long", "label": "長文自由記述" },
     { value: "numeric",        label: "数値入力" },
     { value: "matrix_single",  label: "マトリクス（単一）" },
     { value: "matrix_multi",   label: "マトリクス（複数）" },
@@ -37,6 +37,13 @@
   const CHOICE_TYPES  = ["single_select","multi_select","single_choice","multi_choice",
                          "yes_no","hidden_single","hidden_multi","text_with_image","sd"];
   const SCALE_TYPES   = ["scale"];
+  const DISPLAY_MODES = [
+    { value: "survey_question", label: "1問ずつ表示 (survey_question)" },
+    { value: "survey_page",     label: "ページ単位表示 (survey_page)" },
+    { value: "interview_chat",  label: "チャット形式 (interview_chat)" },
+  ];
+  // 質問側display_mode（project優先、個別上書き用）
+  const qDisplayMode = safeForm.question_display_mode || "";
 %>
 
 <style>
@@ -44,9 +51,14 @@
   .tab-btn {
     padding:8px 16px; border:none; background:none; cursor:pointer;
     border-bottom:3px solid transparent; font-weight:600; color:#60726f;
-    border-radius:6px 6px 0 0;
+    border-radius:6px 6px 0 0; position:relative;
   }
   .tab-btn.active { border-bottom-color:#2ca87a; color:#1a7a57; background:#f0faf6; }
+  .tab-btn.has-error { color:#8a0000; }
+  .tab-btn .err-badge {
+    display:inline-block; background:#e55; color:#fff;
+    border-radius:10px; font-size:10px; padding:1px 5px; margin-left:4px;
+  }
   .tab-pane { display:none; }
   .tab-pane.active { display:block; }
   .authoring-section {
@@ -70,6 +82,17 @@
   .tag-error-list li.error   { color:#8a0000; }
   .tag-error-list li.warning { color:#8a5b00; }
   .form-3col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+  .display-mode-cards { display:flex; gap:10px; flex-wrap:wrap; }
+  .display-mode-card {
+    flex:1; min-width:140px; padding:12px 14px;
+    border:2px solid #d8e3e0; border-radius:12px; cursor:pointer;
+    text-align:center; transition:all 0.15s; background:#fff;
+  }
+  .display-mode-card.selected { border-color:#2ca87a; background:#f0faf6; }
+  .display-mode-card input[type=radio] { display:none; }
+  .display-mode-card .dm-icon { font-size:24px; margin-bottom:4px; }
+  .display-mode-card .dm-label { font-size:13px; font-weight:600; }
+  .display-mode-card .dm-sub   { font-size:11px; color:#60726f; }
 </style>
 
 <form class="card stack" method="post" action="<%= action %>" id="mainForm">
@@ -99,7 +122,7 @@
     <button type="button" class="tab-btn active" data-tab="basic">1. 基本設定</button>
     <button type="button" class="tab-btn" data-tab="answer">2. 回答形式</button>
     <button type="button" class="tab-btn" data-tab="branch">3. 分岐・表示制御</button>
-    <button type="button" class="tab-btn" data-tab="display">4. 表示・装飾</button>
+    <button type="button" class="tab-btn" data-tab="display">4. 表示モード・装飾</button>
     <button type="button" class="tab-btn" data-tab="tags">5. タグ詳細</button>
   </nav>
 
@@ -115,6 +138,21 @@
         設問文 <span style="color:red">*</span>
         <textarea name="question_text" required rows="3"><%= safeForm.question_text || '' %></textarea>
       </label>
+
+      <% const pageGroups = locals.pageGroups || []; %>
+      <% if (pageGroups.length > 0) { %>
+      <label>
+        ページグループ（survey_page モード用）
+        <select name="page_group_id">
+          <option value="">未割当（ページなし）</option>
+          <% for (const pg of pageGroups) { %>
+            <option value="<%= pg.id %>" <%= safeForm.page_group_id === pg.id ? 'selected' : '' %>>
+              P<%= pg.page_number %> <%= pg.title ? '| ' + pg.title : '' %>
+            </option>
+          <% } %>
+        </select>
+      </label>
+      <% } %>
 
       <div class="form-grid">
         <label>
@@ -251,15 +289,17 @@
       <!-- マトリクス設定 -->
       <div id="typeMatrixFields" class="stack-sm <%= !MATRIX_TYPES.includes(qType) ? 'hidden' : '' %>">
         <h3>マトリクス設定</h3>
-        <p class="helper-text">行・列をそれぞれ設定します。列タイプは「5. タグ詳細」の &lt;sa&gt;/&lt;ma&gt;/&lt;fs&gt;/&lt;fl&gt; で設定します。</p>
-        <label>
-          行（改行区切り）
-          <textarea name="matrix_rows" rows="4" placeholder="例:&#10;満足度&#10;使いやすさ&#10;デザイン"><%= safeForm.matrix_rows || '' %></textarea>
-        </label>
-        <label>
-          列（改行区切り）
-          <textarea name="matrix_cols" rows="3" placeholder="例:&#10;そう思う&#10;どちらでもない&#10;そう思わない"><%= safeForm.matrix_cols || '' %></textarea>
-        </label>
+        <div class="form-grid">
+          <label>
+            行（改行区切り）<span style="color:red">*</span>
+            <textarea name="matrix_rows" rows="4" placeholder="例:&#10;満足度&#10;使いやすさ&#10;デザイン"><%= safeForm.matrix_rows || '' %></textarea>
+          </label>
+          <label>
+            列（改行区切り）<span style="color:red">*</span>
+            <textarea name="matrix_cols" rows="4" placeholder="例:&#10;そう思う&#10;どちらでもない&#10;そう思わない"><%= safeForm.matrix_cols || '' %></textarea>
+          </label>
+        </div>
+        <p class="helper-text">マトリクス（複数）の場合、各行で複数選択できます。（混合）は行ごとに列タイプ設定が必要です。</p>
       </div>
 
       <!-- 抽出設定 -->
@@ -410,14 +450,45 @@
   </div>
 
   <!-- ============================================================ -->
-  <!-- Tab 4: 表示・装飾詳細                                         -->
+  <!-- Tab 4: 表示モード・装飾                                       -->
   <!-- ============================================================ -->
   <div class="tab-pane" id="tab-display">
     <section class="authoring-section stack">
-      <h2>4. 表示・装飾詳細</h2>
+      <h2>4. 表示モード・装飾</h2>
+
+      <h3>表示モード（プロジェクト設定を上書きする場合のみ）</h3>
       <p class="helper-text">
-        フォームで入力した内容は内部 JSON に変換され「5. タグ詳細」に反映されます。
+        通常はプロジェクトの表示モード（<strong><%= project.display_mode || 'survey_question' %></strong>）が適用されます。
+        この設問だけ別モードにしたい場合のみ選択してください。
       </p>
+      <div class="display-mode-cards" id="displayModeCards">
+        <label class="display-mode-card <%= !qDisplayMode ? 'selected' : '' %>">
+          <input type="radio" name="question_display_mode" value="" <%= !qDisplayMode ? 'checked' : '' %> />
+          <div class="dm-icon">🔗</div>
+          <div class="dm-label">プロジェクト設定に従う</div>
+          <div class="dm-sub">推奨</div>
+        </label>
+        <label class="display-mode-card <%= qDisplayMode === 'survey_question' ? 'selected' : '' %>">
+          <input type="radio" name="question_display_mode" value="survey_question" <%= qDisplayMode === 'survey_question' ? 'checked' : '' %> />
+          <div class="dm-icon">📋</div>
+          <div class="dm-label">1問ずつ表示</div>
+          <div class="dm-sub">survey_question</div>
+        </label>
+        <label class="display-mode-card <%= qDisplayMode === 'survey_page' ? 'selected' : '' %>">
+          <input type="radio" name="question_display_mode" value="survey_page" <%= qDisplayMode === 'survey_page' ? 'checked' : '' %> />
+          <div class="dm-icon">📄</div>
+          <div class="dm-label">ページ単位</div>
+          <div class="dm-sub">survey_page</div>
+        </label>
+        <label class="display-mode-card <%= qDisplayMode === 'interview_chat' ? 'selected' : '' %>">
+          <input type="radio" name="question_display_mode" value="interview_chat" <%= qDisplayMode === 'interview_chat' ? 'checked' : '' %> />
+          <div class="dm-icon">💬</div>
+          <div class="dm-label">チャット形式</div>
+          <div class="dm-sub">interview_chat</div>
+        </label>
+      </div>
+
+      <hr style="border:none;border-top:1px solid #d8e3e0;margin:12px 0;" />
 
       <h3>入力サイズ・制約</h3>
       <div class="form-3col">
@@ -538,7 +609,7 @@
       <p class="helper-text">
         raw タグ文字列を直接編集できます。
         <strong>「4. 表示・装飾」のフォームから生成したタグ</strong>を確認・上書きできます。<br/>
-        現フェーズでは「フォーム → raw 生成」のみ対応。raw 直接編集は手動で保存可能。
+        保存時は「4. 表示・装飾」のフォーム入力を優先してタグが自動生成されます。
       </p>
 
       <label>
@@ -641,6 +712,16 @@
       CHOICE_TYPES.includes(type) || SCALE_TYPES.includes(type) || MATRIX_TYPES.includes(type));
   }
   document.getElementById('questionType').addEventListener('change', syncTypeVisibility);
+
+  // ----------------------------------------------------------------
+  // 表示モードカード選択
+  // ----------------------------------------------------------------
+  document.querySelectorAll('.display-mode-card input[type=radio]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      document.querySelectorAll('.display-mode-card').forEach(c => c.classList.remove('selected'));
+      radio.closest('.display-mode-card')?.classList.add('selected');
+    });
+  });
 
   // ----------------------------------------------------------------
   // AI 深掘りオプションの表示
@@ -772,6 +853,37 @@
   document.getElementById('addAnsRow').onclick         = () => addTo('ansRows', makeAnsRow);
 
   // ----------------------------------------------------------------
+  // 保存前にタグを自動生成して hidden フィールドへセット
+  // ----------------------------------------------------------------
+  document.getElementById('mainForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const formData = collectTagFormData();
+    const hasTagInput = Object.values(formData).some(v => v === true || (typeof v === 'string' && v.trim() !== ''));
+    if (hasTagInput) {
+      try {
+        const res = await fetch('/admin/api/generate-tags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formData),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.rawGenerated) {
+            document.getElementById('tagsRaw').value = data.rawGenerated;
+          }
+          if (data.parsed) {
+            document.getElementById('displayTagsParsedJson').value = JSON.stringify(data.parsed);
+          }
+        }
+      } catch(err) {
+        console.warn('tag auto-generate on submit failed', err);
+      }
+    }
+    form.submit();
+  });
+
+  // ----------------------------------------------------------------
   // タグ解析（クライアントサイド簡易版）
   // ----------------------------------------------------------------
   document.getElementById('parseTagsBtn').onclick = async () => {
@@ -864,15 +976,17 @@
     const opts  = Array.from(document.querySelectorAll('[name="option_labels"]')).map(el => el.value).filter(Boolean);
     const commentTop    = document.querySelector('[name="comment_top"]')?.value || '';
     const commentBottom = document.querySelector('[name="comment_bottom"]')?.value || '';
+    const matrixRows    = (document.querySelector('[name="matrix_rows"]')?.value || '').split('\n').filter(Boolean);
+    const matrixCols    = (document.querySelector('[name="matrix_cols"]')?.value || '').split('\n').filter(Boolean);
 
-    let html = buildPreviewHtml(qText, qType, mode, opts, commentTop, commentBottom);
+    let html = buildPreviewHtml(qText, qType, mode, opts, commentTop, commentBottom, matrixRows, matrixCols);
     document.getElementById('previewContent').innerHTML = html;
     previewModal.style.display = 'flex';
   };
   document.getElementById('closePreview').onclick  = () => { previewModal.style.display = 'none'; };
   document.getElementById('previewMode').onchange  = () => document.getElementById('previewBtn').click();
 
-  function buildPreviewHtml(qText, qType, mode, opts, commentTop, commentBottom) {
+  function buildPreviewHtml(qText, qType, mode, opts, commentTop, commentBottom, matrixRows, matrixCols) {
     const wrapStyle = mode === 'interview_chat'
       ? 'font-family:sans-serif;background:#f0f0f0;padding:16px;border-radius:12px;'
       : 'font-family:sans-serif;padding:8px;';
@@ -898,7 +1012,27 @@
     } else if (['scale'].includes(qType)) {
       inner += `<input type="range" min="1" max="5" style="width:100%" />`;
     } else if (['matrix_single','matrix_multi','matrix_mixed'].includes(qType)) {
-      inner += `<p style="font-size:12px;color:#888;">[マトリクス表示 - 実際のデータで描画]</p>`;
+      if (matrixRows.length > 0 && matrixCols.length > 0) {
+        const isMulti = qType === 'matrix_multi';
+        inner += `<table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <tr><th style="padding:6px;border-bottom:1px solid #eee;text-align:left;"></th>`;
+        for (const col of matrixCols) {
+          inner += `<th style="padding:6px;border-bottom:1px solid #eee;text-align:center;">${escHtml(col)}</th>`;
+        }
+        inner += `</tr>`;
+        for (const row of matrixRows) {
+          inner += `<tr><td style="padding:6px;border-bottom:1px solid #eee;">${escHtml(row)}</td>`;
+          for (let ci = 0; ci < matrixCols.length; ci++) {
+            inner += `<td style="padding:6px;border-bottom:1px solid #eee;text-align:center;">
+              <input type="${isMulti ? 'checkbox' : 'radio'}" name="prev_row_${escHtml(row)}" />
+            </td>`;
+          }
+          inner += `</tr>`;
+        }
+        inner += `</table>`;
+      } else {
+        inner += `<p style="font-size:12px;color:#888;">[マトリクス - 行・列を「2. 回答形式」タブで設定してください]</p>`;
+      }
     }
 
     if (mode === 'interview_chat') {

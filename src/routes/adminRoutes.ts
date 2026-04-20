@@ -72,6 +72,12 @@ adminRoutes.get("/exports/ranks.csv", asyncHandler(adminController.exportRanks))
 adminRoutes.get("/exports/user-posts.csv", asyncHandler(adminController.exportUserPosts));
 adminRoutes.get("/exports/post-analysis.csv", asyncHandler(adminController.exportPostAnalysis));
 
+// ページグループ管理 (survey_page モード)
+adminRoutes.get("/projects/:projectId/page-groups",           asyncHandler(adminController.listPageGroups));
+adminRoutes.post("/projects/:projectId/page-groups",          asyncHandler(adminController.createPageGroup));
+adminRoutes.post("/projects/:projectId/page-groups/:pageGroupId", asyncHandler(adminController.updatePageGroup));
+adminRoutes.post("/projects/:projectId/page-groups/:pageGroupId/delete", asyncHandler(adminController.deletePageGroup));
+
 // Tag API (formV3.ejs から呼び出される)
 adminRoutes.post("/api/parse-tags",    asyncHandler(adminController.parseTagsApi));
 adminRoutes.post("/api/generate-tags", asyncHandler(adminController.generateTagsApi));

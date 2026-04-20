@@ -1,0 +1,114 @@
+<%- include("../../partials/header", { title }) %>
+
+<div class="card stack">
+  <div class="actions-row" style="justify-content:space-between;">
+    <h1 style="margin:0;">ページグループ管理</h1>
+    <div style="display:flex;gap:8px;">
+      <a class="button-link secondary" href="/admin/projects/<%= project.id %>/questions">設問一覧へ戻る</a>
+    </div>
+  </div>
+
+  <p class="muted">
+    プロジェクト: <strong><%= project.name %></strong>
+    &nbsp;|&nbsp; 表示モード: <strong><%= project.display_mode || 'survey_question' %></strong>
+  </p>
+
+  <% if (project.display_mode !== 'survey_page') { %>
+    <div class="card subtle-card" style="border:1px solid #f2cf88;background:#fff7e8;color:#8a5b00;padding:12px;">
+      このプロジェクトの表示モードは <strong><%= project.display_mode || 'survey_question' %></strong> です。
+      ページグループは <strong>survey_page</strong> モード時のみ有効です。
+      プロジェクト設定から display_mode を変更してください。
+    </div>
+  <% } %>
+
+  <!-- ページグループ一覧 -->
+  <h2>現在のページグループ</h2>
+  <% if (pageGroups.length === 0) { %>
+    <p class="muted">ページグループが未設定です。下のフォームから追加してください。</p>
+  <% } else { %>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+      <thead>
+        <tr style="border-bottom:2px solid #d8e3e0;">
+          <th style="padding:8px;text-align:left;">ページ番号</th>
+          <th style="padding:8px;text-align:left;">タイトル</th>
+          <th style="padding:8px;text-align:left;">説明</th>
+          <th style="padding:8px;text-align:left;">並び順</th>
+          <th style="padding:8px;text-align:left;">所属設問数</th>
+          <th style="padding:8px;text-align:left;">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const pg of pageGroups) { %>
+          <% const pgQuestions = questions.filter(q => q.page_group_id === pg.id && !q.is_hidden); %>
+          <tr style="border-bottom:1px solid #eee;">
+            <td style="padding:8px;">P<%= pg.page_number %></td>
+            <td style="padding:8px;"><%= pg.title || '（未設定）' %></td>
+            <td style="padding:8px;font-size:12px;color:#60726f;"><%= pg.description || '' %></td>
+            <td style="padding:8px;"><%= pg.sort_order %></td>
+            <td style="padding:8px;"><%= pgQuestions.length %> 問</td>
+            <td style="padding:8px;">
+              <details>
+                <summary class="button-link secondary" style="cursor:pointer;list-style:none;display:inline-block;padding:4px 10px;font-size:12px;">編集</summary>
+                <div style="margin-top:8px;padding:12px;border:1px solid #d8e3e0;border-radius:8px;background:#fff;">
+                  <form method="post" action="/admin/projects/<%= project.id %>/page-groups/<%= pg.id %>">
+                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">
+                      <label>ページ番号 <input type="number" name="page_number" value="<%= pg.page_number %>" min="1" /></label>
+                      <label>並び順    <input type="number" name="sort_order"   value="<%= pg.sort_order %>"   min="0" /></label>
+                      <label>タイトル  <input type="text"   name="title"        value="<%= pg.title || '' %>" /></label>
+                    </div>
+                    <label>説明 <input type="text" name="description" value="<%= pg.description || '' %>" style="width:100%;" /></label>
+                    <div style="margin-top:8px;display:flex;gap:8px;">
+                      <button type="submit" class="button-link primary" style="font-size:13px;padding:6px 16px;">更新</button>
+                    </div>
+                  </form>
+                  <form method="post" action="/admin/projects/<%= project.id %>/page-groups/<%= pg.id %>/delete" style="margin-top:8px;">
+                    <button type="submit" class="button-link danger" style="font-size:12px;"
+                      onclick="return confirm('ページグループを削除します。所属設問は未割当になります。')">削除</button>
+                  </form>
+                </div>
+              </details>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } %>
+
+  <!-- ページグループに未割当の設問 -->
+  <% const ungrouped = questions.filter(q => !q.page_group_id && !q.is_hidden); %>
+  <% if (ungrouped.length > 0) { %>
+    <h3>ページ未割当の設問 (<%= ungrouped.length %> 問)</h3>
+    <ul style="font-size:13px;color:#60726f;">
+      <% for (const q of ungrouped) { %>
+        <li><%= q.question_code %> | <%= q.question_text.slice(0,40) %><%= q.question_text.length > 40 ? '...' : '' %></li>
+      <% } %>
+    </ul>
+    <p class="helper-text">各設問の「編集」画面からページグループを割り当ててください。</p>
+  <% } %>
+
+  <hr style="border:none;border-top:1px solid #d8e3e0;margin:12px 0;" />
+
+  <!-- 新規追加フォーム -->
+  <h2>ページグループを追加</h2>
+  <form method="post" action="/admin/projects/<%= project.id %>/page-groups" class="stack-sm">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+      <label>ページ番号 <span style="color:red">*</span>
+        <input type="number" name="page_number" min="1" placeholder="例: 1" required />
+      </label>
+      <label>並び順
+        <input type="number" name="sort_order" min="0" placeholder="例: 1" />
+      </label>
+      <label>タイトル
+        <input type="text" name="title" placeholder="例: 基本情報" />
+      </label>
+    </div>
+    <label>説明
+      <input type="text" name="description" placeholder="例: このページでは基本的な情報をお伺いします" />
+    </label>
+    <div>
+      <button type="submit" class="button-link primary">追加する</button>
+    </div>
+  </form>
+</div>
+
+<%- include("../../partials/footer") %>
