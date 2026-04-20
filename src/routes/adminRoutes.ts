@@ -15,6 +15,7 @@ adminRoutes.post("/projects/:projectId/copy", asyncHandler(adminController.copyP
 adminRoutes.post("/projects/:projectId/delete", asyncHandler(adminController.deleteProject));
 
 adminRoutes.get("/projects/:projectId/questions", asyncHandler(adminController.questions));
+adminRoutes.get("/projects/:projectId/questions/flow", asyncHandler(adminController.questionFlow));
 adminRoutes.get("/projects/:projectId/questions/new", asyncHandler(adminController.newQuestion));
 adminRoutes.post("/projects/:projectId/questions", asyncHandler(adminController.createQuestion));
 adminRoutes.get("/projects/:projectId/respondents", asyncHandler(adminController.projectRespondents));
@@ -81,3 +82,9 @@ adminRoutes.post("/projects/:projectId/page-groups/:pageGroupId/delete", asyncHa
 // Tag API (formV3.ejs から呼び出される)
 adminRoutes.post("/api/parse-tags",    asyncHandler(adminController.parseTagsApi));
 adminRoutes.post("/api/generate-tags", asyncHandler(adminController.generateTagsApi));
+
+// フローデザイナー用 JSON API
+adminRoutes.post("/api/questions/:questionId",                 asyncHandler(adminController.apiUpdateQuestionFlow));
+adminRoutes.post("/api/questions/:questionId/delete",          asyncHandler(adminController.apiDeleteQuestion));
+adminRoutes.post("/api/questions/:questionId/suggest-options", asyncHandler(adminController.apiSuggestAnswerOptions));
+adminRoutes.post("/api/projects/:projectId/questions",         asyncHandler(adminController.apiCreateQuestionFlow));

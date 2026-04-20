@@ -1892,4 +1892,285 @@ export const adminController = {
       warnings: reparse.warnings,
     });
   },
+
+  // ------------------------------------------------------------------
+  // フローデザイナー
+  // ------------------------------------------------------------------
+
+  /**
+   * GET /projects/:projectId/questions/flow
+   * フロー設計画面を表示する
+   */
+  async questionFlow(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const [project, allQuestions, pageGroups] = await Promise.all([
+      projectRepository.getById(projectId),
+      questionRepository.listByProject(projectId, { includeHidden: false }),
+      questionPageGroupRepository.listByProject(projectId),
+    ]);
+
+    const initialData = {
+      projectId,
+      project: {
+        id: project.id,
+        name: project.name,
+        display_mode: project.display_mode ?? null,
+      },
+      questions: allQuestions.map((q) => ({
+        id:               q.id,
+        question_code:    q.question_code,
+        question_text:    q.question_text,
+        question_type:    q.question_type,
+        question_role:    q.question_role,
+        sort_order:       q.sort_order,
+        is_required:      q.is_required,
+        ai_probe_enabled: q.ai_probe_enabled,
+        probe_guideline:  q.probe_guideline ?? null,
+        max_probe_count:  q.max_probe_count ?? null,
+        render_strategy:  q.render_strategy ?? null,
+        branch_rule:      q.branch_rule ?? null,
+        question_config:  q.question_config ?? null,
+        visibility_conditions: q.visibility_conditions ?? null,
+        page_group_id:    q.page_group_id ?? null,
+        answer_options_locked: q.answer_options_locked ?? false,
+      })),
+      pageGroups,
+    };
+
+    res.render("admin/questions/flowDesigner", {
+      title: `フロー設計 - ${project.name}`,
+      project,
+      questions: allQuestions,
+      initialData,
+    });
+  },
+
+  // ------------------------------------------------------------------
+  // フローデザイナー用 JSON API
+  // ------------------------------------------------------------------
+
+  /**
+   * POST /admin/api/questions/:questionId
+   * 右パネルの簡易フォームから質問を保存する（JSON body）
+   */
+  async apiUpdateQuestionFlow(req: Request, res: Response): Promise<void> {
+    const questionId = routeParam(req, "questionId");
+    const existing = await questionRepository.getById(questionId);
+    const body = req.body as Record<string, unknown>;
+
+    const questionType = parseQuestionType(String(body.question_type ?? existing.question_type));
+    const questionText = String(body.question_text ?? "").trim();
+    const questionGoal = String(body.question_goal ?? "").trim();
+    const sortOrder    = Number(body.sort_order)    || existing.sort_order;
+
+    if (!questionText) {
+      res.status(400).json({ error: "question_text は必須です" });
+      return;
+    }
+    if (!questionGoal) {
+      res.status(400).json({ error: "question_goal は必須です" });
+      return;
+    }
+
+    // question_config: 既存を保持しつつ上書き
+    const existingConfig = (existing.question_config ?? {}) as Record<string, unknown>;
+    const newConfig: Record<string, unknown> = { ...existingConfig };
+
+    // 選択肢
+    if (CHOICE_QUESTION_TYPES.includes(questionType) && Array.isArray(body.options)) {
+      newConfig.options = (body.options as string[])
+        .filter((l) => l && l.trim())
+        .map((label) => ({ label: label.trim(), value: label.trim() }));
+    }
+
+    // meta.research_goal
+    const existingMeta = (existingConfig.meta ?? {}) as Record<string, unknown>;
+    newConfig.meta = { ...existingMeta, research_goal: questionGoal };
+
+    await questionRepository.update(questionId, {
+      question_text:    questionText,
+      question_type:    questionType,
+      question_role:    parseQuestionRole(String(body.question_role ?? existing.question_role)),
+      is_required:      Boolean(body.is_required),
+      sort_order:       sortOrder,
+      ai_probe_enabled: Boolean(body.ai_probe_enabled),
+      probe_guideline:  body.ai_probe_enabled && body.probe_guideline
+        ? String(body.probe_guideline).trim() || null
+        : null,
+      max_probe_count:  body.ai_probe_enabled && body.max_probe_count != null
+        ? Math.round(Number(body.max_probe_count)) || null
+        : null,
+      question_config:  newConfig as Question["question_config"],
+      branch_rule:      body.branch_rule as Question["branch_rule"] ?? null,
+      answer_options_locked: body.answer_options_locked === true || body.answer_options_locked === "true",
+    });
+
+    const updated = await questionRepository.getById(questionId);
+    res.json({ ok: true, question: updated });
+  },
+
+  /**
+   * POST /admin/api/projects/:projectId/questions
+   * フローデザイナーから新しい質問を作成する（JSON body）
+   */
+  async apiCreateQuestionFlow(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const body = req.body as Record<string, unknown>;
+
+    const [availableQuestions] = await Promise.all([
+      questionRepository.listByProject(projectId, { includeHidden: false }),
+    ]);
+
+    const questionType = parseQuestionType(String(body.question_type ?? "free_text_short"));
+    const questionText = String(body.question_text ?? "新しい質問").trim();
+    const questionGoal = String(body.question_goal ?? "").trim();
+    const sortOrder    = Number(body.sort_order)
+      || (await questionRepository.getNextSortOrder(projectId));
+
+    const questionCode = buildQuestionCode({
+      requestedCode:   "",
+      questionText,
+      sortOrder,
+      existingQuestions: availableQuestions,
+    });
+
+    const options = Array.isArray(body.options)
+      ? (body.options as string[]).filter(Boolean).map((l) => ({ label: l, value: l }))
+      : [];
+
+    const newConfig: Record<string, unknown> = {};
+    if (CHOICE_QUESTION_TYPES.includes(questionType) && options.length > 0) {
+      newConfig.options = options;
+    }
+    if (questionGoal) {
+      newConfig.meta = { research_goal: questionGoal };
+    }
+
+    const created = await questionRepository.create({
+      project_id:       projectId,
+      question_code:    questionCode,
+      question_text:    questionText,
+      question_role:    parseQuestionRole(String(body.question_role ?? "main")),
+      question_type:    questionType,
+      is_required:      Boolean(body.is_required),
+      sort_order:       sortOrder,
+      ai_probe_enabled: Boolean(body.ai_probe_enabled),
+      probe_guideline:  null,
+      max_probe_count:  null,
+      question_config:  newConfig as Question["question_config"],
+      branch_rule:      null,
+    });
+
+    res.json({ ok: true, question: created });
+  },
+
+  /**
+   * POST /admin/api/questions/:questionId/suggest-options
+   * 設問文に基づいてAIが回答形式候補・選択肢候補を提案する
+   */
+  async apiSuggestAnswerOptions(req: Request, res: Response): Promise<void> {
+    const questionId = routeParam(req, "questionId");
+    const existing = await questionRepository.getById(questionId);
+
+    // 固定フラグが ON の場合は提案しない
+    if (existing.answer_options_locked) {
+      res.json({
+        ok: false,
+        locked: true,
+        message: "回答項目が固定されています。提案を生成するには固定を解除してください。",
+      });
+      return;
+    }
+
+    const questionText = existing.question_text;
+    if (!questionText || questionText.trim().length < 3) {
+      res.status(400).json({ error: "設問文が短すぎます。" });
+      return;
+    }
+
+    const systemPrompt = [
+      "あなたはアンケート設計の専門家です。",
+      "必ず日本語で出力してください。",
+      "JSONを求められた場合はJSON以外を一切出力しないでください。",
+    ].join("\n");
+
+    const userPrompt = `以下のアンケート設問に対して、適切な回答形式と選択肢を提案してください。
+
+設問文: 「${questionText}」
+
+利用可能な回答形式コード:
+- single_choice: 単一選択
+- multi_choice: 複数選択
+- free_text_short: 短文自由記述（50文字以内）
+- free_text_long: 長文自由記述
+- numeric: 数値入力
+- yes_no: はい/いいえ
+- scale: スケール（1-5や1-10）
+- matrix_single: マトリクス（行ごとに単一選択）
+- text_with_image: テキスト+画像選択肢
+
+条件:
+- 選択肢は実用的で、一般的なアンケートで使われる粒度にしてください
+- 自由記述や数値が妥当な場合は selectedOptions を空配列にしてください
+- 選択肢は最大10件までにしてください
+- warnings は提案に注意点がある場合のみ記述してください（通常は空配列）
+
+以下のJSON形式のみで回答してください（前後に余分な文字を入れないこと）:
+{
+  "suggestedQuestionType": "回答形式コード",
+  "suggestedOptions": ["選択肢1", "選択肢2", ...],
+  "reason": "この提案の理由（1-2文）",
+  "warnings": []
+}`;
+
+    try {
+      const { openai } = await import("../config/openai");
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.3,
+        max_tokens: 600,
+        response_format: { type: "json_object" },
+      });
+
+      const raw = response.choices[0]?.message?.content ?? "{}";
+      let suggestions: Record<string, unknown>;
+      try {
+        suggestions = JSON.parse(raw);
+      } catch {
+        res.status(500).json({ error: "AI応答の解析に失敗しました。" });
+        return;
+      }
+
+      res.json({ ok: true, suggestions });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: "AI候補の生成に失敗しました: " + msg });
+    }
+  },
+
+  /**
+   * POST /admin/api/questions/:questionId/delete
+   * フローデザイナーから質問を削除する
+   */
+  async apiDeleteQuestion(req: Request, res: Response): Promise<void> {
+    const questionId = routeParam(req, "questionId");
+    // Verify question exists (throws HttpError 404 if not)
+    await questionRepository.getById(questionId);
+
+    const { supabase } = await import("../config/supabase");
+    const { error } = await supabase
+      .from("questions")
+      .delete()
+      .eq("id", questionId);
+
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.json({ ok: true });
+  },
 };

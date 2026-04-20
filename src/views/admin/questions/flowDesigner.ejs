@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>フロー設計 - <%= project.name %></title>
+  <link rel="stylesheet" href="/public/styles.css" />
+  <link rel="stylesheet" href="/public/flowDesigner.css" />
+</head>
+<body>
+<div class="flow-page-root">
+
+  <!-- ============================================================ -->
+  <!-- Toolbar (Excel ribbon-style)                                  -->
+  <!-- ============================================================ -->
+  <div class="flow-toolbar">
+
+    <!-- ナビ -->
+    <div class="tb-group">
+      <button class="tb-btn" id="tb-back" title="質問一覧へ戻る">
+        <span class="tb-icon">←</span>
+        <span class="tb-label">一覧へ</span>
+      </button>
+    </div>
+
+    <!-- プロジェクト名 -->
+    <div class="tb-group">
+      <span class="tb-project-name" title="<%= project.name %>"><%= project.name %></span>
+    </div>
+
+    <!-- 保存 / プレビュー -->
+    <div class="tb-group">
+      <span class="tb-group-label">ファイル</span>
+      <button class="tb-btn" id="tb-save" disabled title="選択中ノードを保存">
+        <span class="tb-icon">💾</span>
+        <span class="tb-label">保存</span>
+      </button>
+      <button class="tb-btn" id="tb-preview" title="質問一覧を別タブで開く">
+        <span class="tb-icon">👁</span>
+        <span class="tb-label">プレビュー</span>
+      </button>
+    </div>
+
+    <!-- 表示 -->
+    <div class="tb-group">
+      <span class="tb-group-label">表示</span>
+      <button class="tb-btn" id="tb-fit" title="全体表示">
+        <span class="tb-icon">⊞</span>
+        <span class="tb-label">全体</span>
+      </button>
+      <button class="tb-btn" id="tb-zoom-in" title="拡大">
+        <span class="tb-icon">＋</span>
+        <span class="tb-label">拡大</span>
+      </button>
+      <button class="tb-btn" id="tb-zoom-out" title="縮小">
+        <span class="tb-icon">－</span>
+        <span class="tb-label">縮小</span>
+      </button>
+    </div>
+
+    <!-- 追加 -->
+    <div class="tb-group">
+      <span class="tb-group-label">追加</span>
+      <button class="tb-btn" id="tb-add-question" title="質問ノード追加">
+        <span class="tb-icon">📝</span>
+        <span class="tb-label">質問</span>
+      </button>
+      <button class="tb-btn" id="tb-add-ai" title="AI深掘りノード追加">
+        <span class="tb-icon">🤖</span>
+        <span class="tb-label">AI深掘</span>
+      </button>
+      <button class="tb-btn" id="tb-add-end" title="ENDノードへスクロール">
+        <span class="tb-icon">🏁</span>
+        <span class="tb-label">END</span>
+      </button>
+    </div>
+
+    <!-- モード表示 -->
+    <div class="tb-group">
+      <span class="tb-group-label">モード</span>
+      <span style="font-size:11px;color:#4d6b66;padding:0 6px;">
+        <%
+          const dmLabel = project.display_mode === 'interview_chat'
+            ? '🗣 インタビュー'
+            : project.display_mode === 'survey_page'
+            ? '📄 アンケート（ページ）'
+            : '📋 アンケート（1問ずつ）';
+        %>
+        <%= dmLabel %>
+      </span>
+    </div>
+
+    <!-- ステータス -->
+    <div style="flex:1;"></div>
+    <span id="flowStatusText" class=""></span>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Main: left + canvas + right                                   -->
+  <!-- ============================================================ -->
+  <div class="flow-main">
+
+    <!-- ── Left panel (parts palette) ── -->
+    <div class="flow-left">
+      <div class="flow-left-title">部品</div>
+
+      <div class="part-item" data-type="question">
+        <span class="part-icon">📝</span>
+        <span class="part-label">質問</span>
+      </div>
+      <div class="part-item" data-type="ai">
+        <span class="part-icon">🤖</span>
+        <span class="part-label">AI深掘り</span>
+      </div>
+      <div class="part-item" data-type="end">
+        <span class="part-icon">🏁</span>
+        <span class="part-label">END</span>
+      </div>
+
+      <div class="flow-left-title" style="margin-top:16px">凡例</div>
+      <div style="font-size:10px;color:#60726f;line-height:1.9;padding:0 4px;">
+        <span style="color:#2ca87a">━</span> 順番通り<br>
+        <span style="color:#dda020">╌</span> 条件分岐<br>
+        <span style="color:#6abfa0">━</span> START<br>
+        <span style="background:#ede8ff;border-radius:3px;padding:0 3px">紫枠</span> AI深掘<br>
+        <span style="background:#fcd8c8;border-radius:3px;padding:0 3px">橙枠</span> END<br>
+      </div>
+
+      <% if (questions.length > 0) { %>
+      <div class="flow-left-title" style="margin-top:16px">質問一覧</div>
+      <div style="font-size:10px;color:#4d6b66;line-height:1.8;">
+        <% const sortedQ = questions.slice().sort((a,b) => a.sort_order - b.sort_order); %>
+        <% for (const q of sortedQ) { %>
+          <div style="padding:1px 4px;cursor:pointer;border-radius:4px;"
+               onclick="document.getElementById('node-<%= q.id %>')?.scrollIntoView({behavior:'smooth',block:'center'})"
+               title="<%= q.question_text %>">
+            <span style="color:#8aacaa">#<%= q.sort_order %></span>
+            <%= q.question_code %>
+          </div>
+        <% } %>
+      </div>
+      <% } %>
+    </div>
+
+    <!-- ── Canvas ── -->
+    <div class="flow-canvas-wrapper" id="canvasWrapper">
+      <div class="flow-canvas" id="flowCanvas">
+        <svg class="flow-svg" id="flowSvg"></svg>
+        <!-- Nodes are injected by flowCanvas.js -->
+      </div>
+    </div>
+
+    <!-- ── Right panel ── -->
+    <div class="flow-right" id="rightPanel">
+      <!-- Filled by flowCanvas.js -->
+    </div>
+
+  </div><!-- /.flow-main -->
+
+  <!-- ─── Status bar ─── -->
+  <div class="flow-status-bar">
+    <span style="color:#8aacaa;font-size:10px">
+      <%= questions.length %> 質問 ·
+      <%= project.display_mode || 'survey_question' %> モード ·
+      クリックでノード選択 / ドラッグで移動
+    </span>
+  </div>
+
+</div><!-- /.flow-page-root -->
+
+<!-- Initial data for JS -->
+<script>
+window.FLOW_DESIGNER_DATA = <%- JSON.stringify(initialData) %>;
+</script>
+<script src="/public/flowCanvas.js"></script>
+</body>
+</html>

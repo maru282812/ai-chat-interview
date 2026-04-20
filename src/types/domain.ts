@@ -386,6 +386,8 @@ export interface Question {
   probe_guideline?: string | null;
   max_probe_count?: number | null;
   render_strategy?: "static" | "dynamic" | null;
+  /** 回答選択肢固定フラグ。true の場合 AI 候補による自動上書きを行わない (017) */
+  answer_options_locked: boolean;
   is_system: boolean;
   is_hidden: boolean;
   created_at: string;

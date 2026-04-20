@@ -32,6 +32,7 @@ interface CreateQuestionInput {
   display_tags_parsed?: Question["display_tags_parsed"];
   visibility_conditions?: Question["visibility_conditions"];
   page_group_id?: string | null;
+  answer_options_locked?: boolean;
 }
 
 function buildFreeCommentQuestionConfig(): Question["question_config"] {
@@ -179,6 +180,7 @@ export const questionRepository = {
         | "display_tags_parsed"
         | "visibility_conditions"
         | "page_group_id"
+        | "answer_options_locked"
       >
     >
   ): Promise<Question> {
