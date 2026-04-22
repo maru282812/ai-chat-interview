@@ -12,13 +12,8 @@
   const nextQuestionOptions = (availableQuestions || [])
     .filter((item) => item.id !== question?.id)
     .map((item) => ({ code: item.question_code, text: item.question_text }));
-  const qType = safeForm.question_type || "text";
+  const qType = safeForm.question_type || "free_text_short";
   const ALL_TYPES = [
-    { value: "text",            label: "テキスト（旧）" },
-    { value: "single_select",  label: "単一選択（旧）" },
-    { value: "multi_select",   label: "複数選択（旧）" },
-    { value: "yes_no",         label: "はい/いいえ（旧）" },
-    { value: "scale",          label: "スケール（旧）" },
     { value: "single_choice",  label: "単一選択" },
     { value: "multi_choice",   label: "複数選択" },
     { value: "free_text_short","label": "短文自由記述" },
@@ -32,7 +27,15 @@
     { value: "hidden_multi",   label: "隠し項目（複数）" },
     { value: "text_with_image","label": "テキスト+画像選択肢" },
     { value: "sd",             label: "SD法" },
+    // 旧方式（既存データ表示専用・新規選択不可）
+    { value: "text",           label: "テキスト ⚠旧形式" },
+    { value: "single_select",  label: "単一選択 ⚠旧形式" },
+    { value: "multi_select",   label: "複数選択 ⚠旧形式" },
+    { value: "yes_no",         label: "はい/いいえ ⚠旧形式" },
+    { value: "scale",          label: "スケール ⚠旧形式" },
   ];
+  // 旧方式の値（新規選択不可・既存データ後方互換のみ）
+  const LEGACY_TYPES = ["text", "single_select", "multi_select", "yes_no", "scale"];
   const MATRIX_TYPES = ["matrix_single","matrix_multi","matrix_mixed"];
   const CHOICE_TYPES  = ["single_select","multi_select","single_choice","multi_choice",
                          "yes_no","hidden_single","hidden_multi","text_with_image","sd"];

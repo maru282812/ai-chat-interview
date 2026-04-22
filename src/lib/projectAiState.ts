@@ -46,6 +46,22 @@ export interface ProjectSlotCompletionStatus {
 const DEFAULT_VERSION = "v1";
 const DEFAULT_LANGUAGE = "ja";
 
+/**
+ * 深掘り制御の既定値
+ *
+ * default_max_probes:
+ * - 1回答あたりの基本深掘り回数
+ * - 0 を許容することで「深掘りなし」も設定可能
+ *
+ * force_probe_on_bad:
+ * - 回答品質が低い場合に深掘りを強制する
+ *
+ * strict_topic_lock:
+ * - 元の質問主題から逸脱しないようにする
+ *
+ * allow_followup_expansion:
+ * - 深掘り時に少し文脈を広げた追質問を許可する
+ */
 const DEFAULT_PROBE_POLICY: Required<ProjectAIProbePolicy> = {
   default_max_probes: 1,
   force_probe_on_bad: true,
@@ -298,13 +314,15 @@ function normalizeProbePolicy(value: unknown): Required<ProjectAIProbePolicy> {
   }
 
   const candidate = value as Record<string, unknown>;
-  const defaultMaxProbes = Number(candidate.default_max_probes);
+  const rawMaxProbes = Number(candidate.default_max_probes);
+
+  const normalizedMaxProbes =
+    Number.isFinite(rawMaxProbes) && rawMaxProbes >= 0
+      ? Math.floor(rawMaxProbes)
+      : DEFAULT_PROBE_POLICY.default_max_probes;
 
   return {
-    default_max_probes:
-      Number.isFinite(defaultMaxProbes) && defaultMaxProbes >= 0
-        ? Math.round(defaultMaxProbes)
-        : DEFAULT_PROBE_POLICY.default_max_probes,
+    default_max_probes: normalizedMaxProbes,
     force_probe_on_bad:
       typeof candidate.force_probe_on_bad === "boolean"
         ? candidate.force_probe_on_bad

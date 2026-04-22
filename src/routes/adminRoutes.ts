@@ -88,3 +88,10 @@ adminRoutes.post("/api/questions/:questionId",                 asyncHandler(admi
 adminRoutes.post("/api/questions/:questionId/delete",          asyncHandler(adminController.apiDeleteQuestion));
 adminRoutes.post("/api/questions/:questionId/suggest-options", asyncHandler(adminController.apiSuggestAnswerOptions));
 adminRoutes.post("/api/projects/:projectId/questions",         asyncHandler(adminController.apiCreateQuestionFlow));
+
+// フロー流用・自動生成 API
+adminRoutes.get("/api/projects-for-import",                               asyncHandler(adminController.apiListProjectsForImport));
+adminRoutes.get("/api/projects/:sourceProjectId/flow-preview",            asyncHandler(adminController.apiGetProjectFlowPreview));
+adminRoutes.post("/api/projects/:projectId/flow/import-from-project",     asyncHandler(adminController.apiImportFlowFromProject));
+adminRoutes.post("/api/projects/:projectId/flow/generate",                asyncHandler(adminController.apiGenerateFlow));
+adminRoutes.get("/api/projects/:projectId/option-sets",                   asyncHandler(adminController.apiGetOptionSets));

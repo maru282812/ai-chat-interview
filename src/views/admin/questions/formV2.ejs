@@ -219,8 +219,22 @@
         <label>
           回答形式
           <select name="question_type" id="questionType">
-            <% for (const type of ["text", "single_select", "multi_select", "yes_no", "scale"]) { %>
-              <option value="<%= type %>" <%= safeForm.question_type === type ? "selected" : "" %>><%= type %></option>
+            <%
+              const fv2Types = [
+                { value: "single_choice",  label: "単一選択" },
+                { value: "multi_choice",   label: "複数選択" },
+                { value: "free_text_short","label": "短文自由記述" },
+                { value: "free_text_long", label: "長文自由記述" },
+                { value: "numeric",        label: "数値入力" },
+                { value: "text",           label: "テキスト ⚠旧形式" },
+                { value: "single_select",  label: "単一選択 ⚠旧形式" },
+                { value: "multi_select",   label: "複数選択 ⚠旧形式" },
+                { value: "yes_no",         label: "はい/いいえ ⚠旧形式" },
+                { value: "scale",          label: "スケール ⚠旧形式" },
+              ];
+            %>
+            <% for (const t of fv2Types) { %>
+              <option value="<%= t.value %>" <%= safeForm.question_type === t.value ? "selected" : "" %>><%= t.label %></option>
             <% } %>
           </select>
         </label>

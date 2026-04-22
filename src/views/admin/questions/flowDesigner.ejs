@@ -75,6 +75,19 @@
       </button>
     </div>
 
+    <!-- フロー生成 -->
+    <div class="tb-group">
+      <span class="tb-group-label">生成</span>
+      <button class="tb-btn" id="tb-import-flow" title="過去案件からフローを流用">
+        <span class="tb-icon">📂</span>
+        <span class="tb-label">流用</span>
+      </button>
+      <button class="tb-btn" id="tb-generate-flow" title="プロジェクト情報からAIがフローを自動生成">
+        <span class="tb-icon">✨</span>
+        <span class="tb-label">AI生成</span>
+      </button>
+    </div>
+
     <!-- モード表示 -->
     <div class="tb-group">
       <span class="tb-group-label">モード</span>
@@ -124,6 +137,15 @@
         <span style="color:#6abfa0">━</span> START<br>
         <span style="background:#ede8ff;border-radius:3px;padding:0 3px">紫枠</span> AI深掘<br>
         <span style="background:#fcd8c8;border-radius:3px;padding:0 3px">橙枠</span> END<br>
+        <span style="background:#fffaf0;border:2px solid #dda020;border-radius:3px;padding:0 3px">◇</span> 条件分岐<br>
+        <span style="background:#eef2ff;border:1.5px dashed #b0c8e0;border-radius:3px;padding:0 3px">□</span> セクション<br>
+      </div>
+      <div style="font-size:10px;color:#60726f;margin-top:10px;padding:0 4px;line-height:1.6;">
+        <strong>操作</strong><br>
+        ○ドラッグ→接続<br>
+        接続線クリック→選択<br>
+        Delete→接続削除<br>
+        ノードドラッグ→移動
       </div>
 
       <% if (questions.length > 0) { %>
@@ -162,11 +184,122 @@
     <span style="color:#8aacaa;font-size:10px">
       <%= questions.length %> 質問 ·
       <%= project.display_mode || 'survey_question' %> モード ·
-      クリックでノード選択 / ドラッグで移動
+      クリックでノード選択 / ハンドル(○)ドラッグで接続 / 接続線クリック→Deleteで削除
     </span>
   </div>
 
 </div><!-- /.flow-page-root -->
+
+<!-- ============================================================ -->
+<!-- モーダル: 過去案件流用                                         -->
+<!-- ============================================================ -->
+<div id="importFlowModal" class="fd-modal-overlay" style="display:none">
+  <div class="fd-modal">
+    <div class="fd-modal-header">
+      <h3>過去案件からフローを流用</h3>
+      <button class="fd-modal-close" id="importModalClose">✕</button>
+    </div>
+    <div class="fd-modal-body">
+
+      <!-- Step 1: 案件選択 -->
+      <div id="importStep1">
+        <p class="fd-modal-desc">流用元の過去案件を選択してください。選択肢テキストはAIが新規案件向けに自動調整します。</p>
+        <input type="text" id="importProjectSearch" class="fd-modal-search" placeholder="案件名で絞り込み…" />
+        <div id="importProjectList" class="fd-project-list">
+          <div class="fd-loading">読み込み中…</div>
+        </div>
+        <div class="fd-modal-footer">
+          <button class="fd-btn-secondary" id="importModalCancel">キャンセル</button>
+          <button class="fd-btn-primary" id="importStep1Next" disabled>プレビュー →</button>
+        </div>
+      </div>
+
+      <!-- Step 2: プレビュー -->
+      <div id="importStep2" style="display:none">
+        <p class="fd-modal-desc" id="importPreviewDesc"></p>
+        <div id="importPreviewList" class="fd-preview-list"></div>
+        <div class="fd-modal-footer">
+          <button class="fd-btn-secondary" id="importStep2Back">← 戻る</button>
+          <button class="fd-btn-primary" id="importStep2Execute">AIで調整して流用する</button>
+        </div>
+      </div>
+
+      <!-- Step 3: 処理中 -->
+      <div id="importStep3" style="display:none">
+        <div class="fd-working">
+          <div class="fd-spinner"></div>
+          <p>AIがテキストを調整中です。しばらくお待ちください…</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- モーダル: AIフロー自動生成                                     -->
+<!-- ============================================================ -->
+<div id="generateFlowModal" class="fd-modal-overlay" style="display:none">
+  <div class="fd-modal">
+    <div class="fd-modal-header">
+      <h3>AIフロー自動生成</h3>
+      <button class="fd-modal-close" id="generateModalClose">✕</button>
+    </div>
+    <div class="fd-modal-body">
+
+      <!-- 確認画面 -->
+      <div id="generateStep1">
+        <p class="fd-modal-desc">以下のプロジェクト情報をもとに、AIが調査フローを自動生成します。生成後は各設問を自由に編集できます。</p>
+        <div class="fd-info-box">
+          <div class="fd-info-row">
+            <span class="fd-info-label">プロジェクト名</span>
+            <span class="fd-info-value" id="genProjectName">—</span>
+          </div>
+          <div class="fd-info-row">
+            <span class="fd-info-label">調査目的</span>
+            <span class="fd-info-value" id="genProjectObjective">—</span>
+          </div>
+        </div>
+        <p style="font-size:11px;color:#8aacaa;margin-top:8px">※生成には10〜30秒かかる場合があります。既存の質問に追加されます。</p>
+        <div class="fd-modal-footer">
+          <button class="fd-btn-secondary" id="generateModalCancel">キャンセル</button>
+          <button class="fd-btn-primary" id="generateExecute">AIでフローを生成する</button>
+        </div>
+      </div>
+
+      <!-- 処理中 -->
+      <div id="generateStep2" style="display:none">
+        <div class="fd-working">
+          <div class="fd-spinner"></div>
+          <p>AIがフロー構成を生成中です。しばらくお待ちください…</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- モーダル: 選択肢流用                                          -->
+<!-- ============================================================ -->
+<div id="optionReuseModal" class="fd-modal-overlay" style="display:none">
+  <div class="fd-modal fd-modal-sm">
+    <div class="fd-modal-header">
+      <h3>選択肢を流用</h3>
+      <button class="fd-modal-close" id="optionReuseModalClose">✕</button>
+    </div>
+    <div class="fd-modal-body">
+      <p class="fd-modal-desc">流用元の設問を選択してください。選択肢が現在の設問にコピーされます（保存は別途必要）。</p>
+      <input type="text" id="optionReuseSearch" class="fd-modal-search" placeholder="設問コード・設問文で絞り込み…" />
+      <div id="optionReuseList" class="fd-project-list">
+        <div class="fd-loading">読み込み中…</div>
+      </div>
+      <div class="fd-modal-footer">
+        <button class="fd-btn-secondary" id="optionReuseCancel">キャンセル</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Initial data for JS -->
 <script>

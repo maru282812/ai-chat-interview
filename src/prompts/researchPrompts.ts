@@ -1,4 +1,4 @@
-﻿import { getProjectResearchSettings } from "../lib/projectResearch";
+import { getProjectResearchSettings } from "../lib/projectResearch";
 import { getProjectAIState, type ProjectAIStateTemplateDefinition } from "../lib/projectAiState";
 import { normalizeQuestionMeta, resolveAnswerAnalysisContext } from "../lib/questionMetadata";
 import type {
@@ -148,27 +148,27 @@ function renderQuestionObjectiveGuide(input: {
   allowFollowupExpansion: boolean;
 }): string {
   const rules = [
-    "\u4ee5\u4e0b\u3092\u53b3\u5b88\u3057\u3066\u304f\u3060\u3055\u3044:",
-    "\u30fb\u76ee\u7684\u306b\u95a2\u4fc2\u306e\u306a\u3044\u8cea\u554f\u306f\u7981\u6b62",
-    "\u30fb\u65b0\u3057\u3044\u8a71\u984c\u3092\u51fa\u3055\u306a\u3044",
-    "\u30fb\u56de\u7b54\u306e\u4e0d\u8db3\u90e8\u5206\u306e\u307f\u3092\u6df1\u6398\u308a\u3059\u308b"
+    "以下を厳守してください:",
+    "・目的に関係のない質問は禁止",
+    "・新しい話題を出さない",
+    "・回答の不足部分のみを深掘りする"
   ];
 
   if (input.strictTopicLock) {
-    rules.push("\u30fb\u73fe\u5728\u306e\u8cea\u554f\u306e research_goal \u304b\u3089\u9038\u8131\u3057\u3066\u306f\u3044\u3051\u306a\u3044");
-    rules.push("\u30fb\u5225\u30b8\u30e3\u30f3\u30eb\u306e\u8a71\u984c\u3092\u51fa\u3057\u3066\u306f\u3044\u3051\u306a\u3044");
-    rules.push("\u30fb\u4f8b\u793a\u3082\u540c\u30b8\u30e3\u30f3\u30eb\u306e\u307f\u8a31\u53ef");
+    rules.push("・現在の質問の research_goal から逸脱してはいけない");
+    rules.push("・別ジャンルの話題を出してはいけない");
+    rules.push("・例示も同ジャンルのみ許可");
   }
 
   if (!input.allowFollowupExpansion) {
-    rules.push("\u30fb\u8a71\u984c\u3092\u5e83\u3052\u305a\u3001\u4eca\u306e\u8cea\u554f\u306e\u4e0d\u8db3\u90e8\u5206\u3060\u3051\u3092\u88dc\u3046");
+    rules.push("・話題を広げず、今の質問の不足部分だけを補う");
   }
 
   return [
-    "\u3053\u306e\u8cea\u554f\u306e\u76ee\u7684:",
+    "この質問の目的:",
     input.questionGoal ?? "not set",
     "",
-    "\u8abf\u67fb\u306e\u76ee\u7684:",
+    "調査の目的:",
     input.researchGoal ?? "not set",
     "",
     ...rules
@@ -192,6 +192,132 @@ function renderProjectAIStateGuide(project: Project): string {
     `- forbidden_topic_shift: ${aiState.topic_control.forbidden_topic_shift}`,
     `- language: ${aiState.language}`
   ].join("\n");
+}
+
+/**
+ * 選択肢系・数値系の質問について、利用可能な選択肢をプロンプト用テキストに変換する。
+ * 選択肢がない質問タイプや選択肢未設定の場合は null を返す。
+ */
+function renderAnswerOptionsForPrompt(question: Question): string | null {
+  const options = question.question_config?.options ?? [];
+  const type = question.question_type;
+
+  if (
+    ["single_choice", "multi_choice", "single_select", "multi_select", "text_with_image", "sd"].includes(type) &&
+    options.length > 0
+  ) {
+    return options.map((o, i) => `  ${i + 1}. [${o.value}] ${o.label}`).join("\n");
+  }
+
+  if (type === "yes_no") {
+    const opts =
+      options.length > 0
+        ? options
+        : [
+            { value: "yes", label: "はい" },
+            { value: "no", label: "いいえ" }
+          ];
+    return opts.map((o, i) => `  ${i + 1}. [${o.value}] ${o.label}`).join("\n");
+  }
+
+  if (type === "scale") {
+    const min = (question.question_config as Record<string, unknown> | null)?.scale_min ?? 1;
+    const max = (question.question_config as Record<string, unknown> | null)?.scale_max ?? 5;
+    return `  数値スケール: ${min}〜${max}`;
+  }
+
+  if (type === "numeric") {
+    return `  数値入力`;
+  }
+
+  return null;
+}
+
+/**
+ * 質問タイプに応じた汎用深掘りガイダンスを返す。
+ * 特定設問・特定選択肢・特定の回答例に依存したハードコードは含まない。
+ */
+function buildProbeTypeGuidance(questionType: string, aiProbeEnabled: boolean): string {
+  const TEXT_TYPES = new Set(["text", "free_text_short", "free_text_long"]);
+  const CHOICE_TYPES = new Set(["single_choice", "multi_choice", "yes_no", "single_select", "multi_select", "text_with_image"]);
+  const NUMERIC_TYPES = new Set(["numeric", "scale", "sd"]);
+
+  const commonRules = [
+    "深掘り判定の共通ルール（この順序で判断する）:",
+    "1. 不足スロット優先: expected_slots に未取得の情報がある場合、そのスロットを埋める質問を最優先する。",
+    "2. 「特になし」「ない」「わからない」などの辞退回答: そのまま受け入れず、「強いて言うなら」「少しでも気になる点は」「他と比べてどうか」等で一度だけ再確認する。それでも出ない場合のみ次へ進む。",
+    "3. 抽象回答（「便利」「よくない」「なんとなく」等）: 具体化する質問を行う。",
+    "4. 十分具体的かつ必要スロットが埋まっている場合: 深掘りせず次の質問へ進む。",
+    "深掘り禁止条件: 必須スロットが全て埋まっている / max_probes に到達 / 同一論点で既に深掘り済み / ユーザーが明確に拒否している。"
+  ].join("\n");
+
+  if (TEXT_TYPES.has(questionType)) {
+    return [
+      commonRules,
+      "",
+      "テキスト回答の深掘りルール:",
+      "- 回答に具体的な理由・事例・状況・判断軸が不足している場合にのみ深掘りする。",
+      "- 回答で言及された内容に紐づいた1点だけを問う（why / example / scene / impact / comparison のいずれか1つ）。",
+      "- 抽象的な問い（「詳しく教えてください」「なぜですか」のみ）は禁止。",
+      "- 回答に書かれていない情報を勝手に補って問うことは禁止。"
+    ].join("\n");
+  }
+
+  if (CHOICE_TYPES.has(questionType)) {
+    if (!aiProbeEnabled) {
+      return "選択肢回答: ai_probe_enabled が false のため深掘りしない。action は必ず ask_next にする。";
+    }
+    const isMulti = ["multi_choice", "multi_select"].includes(questionType);
+    return [
+      commonRules,
+      "",
+      "【深掘りの目的】",
+      "深掘りは「不足情報を埋める」ためではなく、「回答の解像度を上げる」ために行う。",
+      "回答が十分に具体的な場合は深掘りしない選択も許可する。",
+      "",
+      isMulti ? "複数選択回答の深掘りルール:" : "単数選択回答の深掘りルール:",
+      "- 回答者が選択した選択肢を必ず取得し、深掘りの起点にする。",
+      isMulti
+        ? "- 複数選択された場合: 最も重要そうな1つを深掘り対象にする。判断できない場合は最初の選択肢を対象にする。全項目を一気に聞くことは禁止（「それぞれ教えてください」はNG）。"
+        : "- 単数選択された場合: その選択肢を深掘り対象にする。",
+      "",
+      "深掘り内容の方針:",
+      "- 選択理由を必ず聞く。抽象回答にならないよう、具体化を促す。",
+      "- 以下のいずれか1つの観点を選んで深掘りする（複数観点を同時に聞くことは禁止）:",
+      "  * 理由（なぜその選択肢を選んだか）",
+      "  * 具体的な体験・場面（その選択肢を感じた具体的な状況）",
+      "  * 他との違い・比較（他の選択肢と比べてどう違うか）",
+      "  * 判断基準（何を重視してその選択をしたか）",
+      "",
+      "深掘り文面生成ルール:",
+      "- 選択された内容を必ず文中に含める（例：「〇〇を選ばれたとのことですが...」）。",
+      "- 「詳しく教えてください」などの抽象的な質問は禁止。",
+      "- 1質問で1テーマのみ聞く。回答しやすい自然な会話文にする。",
+      "",
+      "NGパターン（以下は必ず避ける）:",
+      "- 選択内容に触れない深掘り",
+      "- 汎用的すぎる質問（例：「詳しく教えてください」「なぜですか」のみ）",
+      "- 複数の観点を一度に聞く質問",
+      "- 誘導的な質問",
+      "- 選択肢を選び直させる質問や、選択結果そのものを再確認する質問"
+    ].join("\n");
+  }
+
+  if (NUMERIC_TYPES.has(questionType)) {
+    if (!aiProbeEnabled) {
+      return "数値回答: ai_probe_enabled が false のため深掘りしない。action は必ず ask_next にする。";
+    }
+    return [
+      commonRules,
+      "",
+      "数値回答の深掘りルール:",
+      "- 回答者が入力した数値を踏まえて、その値になった理由・背景・判断軸を1点だけ問う。",
+      "- 数値を再入力させる質問や数値の妥当性を問う質問は禁止。",
+      "- 回答者が入力した値を必ず参照し、その内容に紐づいた追質問を生成する。"
+    ].join("\n");
+  }
+
+  return "このタイプは深掘り対象外。action は必ず ask_next にする。";
 }
 
 function buildSharedSections(project: Project, purpose: PromptPurpose): string[] {
@@ -338,26 +464,32 @@ export function buildProbeGenerationPrompt(input: {
   previousAnswerText?: string | null;
   sessionSummary: string;
 }): string {
-  const meta = normalizeQuestionMeta(
-    input.question,
-    input.question.question_role === "free_comment" ? "free_comment" : input.project.research_mode,
-    { projectAiState: input.project.ai_state_json }
-  );
+  const contextType =
+    input.question.question_role === "free_comment" ? "free_comment" : input.project.research_mode;
+  const meta = normalizeQuestionMeta(input.question, contextType, {
+    projectAiState: input.project.ai_state_json
+  });
+  const answerOptionsContext = renderAnswerOptionsForPrompt(input.question);
 
   return [
     ...buildSharedSections(input.project, "probe_generation"),
     "Return JSON only.",
-    'Required keys: probe_question, probe_type, focus',
+    "Required keys: probe_question, probe_type, focus",
     "Ask exactly one follow-up question.",
     "Do not repeat the original question verbatim.",
     "Do not ask multiple questions.",
     "Do not mention internal codes or slots by name.",
     "Do not ignore the user's answer and jump to a new question.",
     "Do not transform the topic into another category.",
-    `Probe type: ${input.probeType}`,
+    "CRITICAL: The probe_question MUST be grounded in the actual answer content below. Do not generate a generic question that ignores what the respondent said.",
     `Question code: ${input.question.question_code}`,
+    `Question type: ${input.question.question_type}`,
     `Question text: ${input.question.question_text}`,
-    `Answer: ${input.answer}`,
+    answerOptionsContext
+      ? `Available answer options:\n${answerOptionsContext}`
+      : null,
+    `Probe type: ${input.probeType}`,
+    `User's answer: ${input.answer}`,
     `Previous answer text: ${input.previousAnswerText ?? "none"}`,
     `Extracted slots: ${JSON.stringify(input.extractedSlots)}`,
     `Completion: ${JSON.stringify(input.completion)}`,
@@ -370,8 +502,11 @@ export function buildProbeGenerationPrompt(input: {
     }),
     `Probe goal: ${meta.probe_goal ?? "none"}`,
     `Probe config: ${JSON.stringify(meta.probe_config)}`,
-    `Session summary: ${input.sessionSummary || "none"}`
-  ].join("\n\n");
+    `Session summary: ${input.sessionSummary || "none"}`,
+    buildProbeTypeGuidance(input.question.question_type, true)
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n\n");
 }
 
 export function buildAnalyzeAnswerPrompt(input: {
@@ -384,15 +519,20 @@ export function buildAnalyzeAnswerPrompt(input: {
   aiProbeEnabled: boolean;
   currentProbeCount: number;
 }): string {
+  const contextType =
+    input.question.question_role === "free_comment" ? "free_comment" : input.project.research_mode;
   const context = resolveAnswerAnalysisContext({
     project: input.project,
     question: input.question,
     nextQuestion: input.nextQuestion,
-    contextType:
-      input.question.question_role === "free_comment" ? "free_comment" : input.project.research_mode
+    contextType
+  });
+  const meta = normalizeQuestionMeta(input.question, contextType, {
+    projectAiState: input.project.ai_state_json
   });
   const projectAiState = getProjectAIState(input.project);
   const probeGuideline = (input.project.ai_state_json as ProjectAIState)?.probe_guideline;
+  const answerOptionsContext = renderAnswerOptionsForPrompt(input.question);
   const freeCommentPolicy =
     input.question.question_role === "free_comment" &&
     (!input.aiProbeEnabled || context.required_slots.length === 0) &&
@@ -463,7 +603,11 @@ export function buildAnalyzeAnswerPrompt(input: {
     `- question_code: ${input.question.question_code}`,
     `- question_type: ${input.question.question_type}`,
     `- question_text: ${input.question.question_text}`,
+    `- probe_goal: ${meta.probe_goal ?? "none"}`,
     `- answer: ${input.answer}`,
+    answerOptionsContext
+      ? `- answer_options:\n${answerOptionsContext}`
+      : "- answer_options: none",
     `- existing_slots: ${JSON.stringify(input.existingSlots)}`,
     `- ai_probe_enabled: ${input.aiProbeEnabled}`,
     `- current_probe_count: ${input.currentProbeCount}`,
@@ -480,9 +624,13 @@ export function buildAnalyzeAnswerPrompt(input: {
     "- action finish is allowed only when the project-level required information is already captured.",
     "- If you probe, ask exactly one focused follow-up.",
     "- Do not expose internal slot keys such as snake_case names to the respondent.",
-    "- If question_type is yes_no, single_select, multi_select, or scale, action MUST be ask_next. Never probe these types.",
-    "- Do not ask about a new topic that is outside the project goal.",
+    "- If ai_probe_enabled is false, action MUST be ask_next regardless of answer quality.",
     probeGuideline ? `- Custom probe guideline: ${probeGuideline}` : null,
+    "",
+    buildProbeTypeGuidance(input.question.question_type, input.aiProbeEnabled),
+    "",
+    "CRITICAL: When action is probe, the question field MUST reference the actual content of the answer above.",
+    "Do not generate a generic probe that ignores what the respondent said.",
     "",
     freeCommentPolicy,
     freeCommentPolicy ? "" : null,
@@ -521,7 +669,7 @@ export function buildSlotFillingPrompt(input: {
   return [
     ...buildSharedSections(input.project, "slot_filling"),
     "Return JSON only.",
-    'Required keys: structured_summary, extracted_slots, comparable_payload',
+    "Required keys: structured_summary, extracted_slots, comparable_payload",
     "extracted_slots must be an array of objects with keys: key, value, confidence, evidence",
     "Use null when a slot is not supported by the answer.",
     "Do not infer facts that are not clearly stated.",
@@ -554,7 +702,7 @@ export function buildCompletionCheckPrompt(input: {
   return [
     ...buildSharedSections(input.project, "completion_check"),
     "Return JSON only.",
-    'Required keys: is_complete, missing_slots, reasons, quality_score',
+    "Required keys: is_complete, missing_slots, reasons, quality_score",
     "Judge strictly but pragmatically.",
     "is_complete must be true only when all expected_slots are filled, bad patterns are absent, and quality_score is high enough.",
     "quality_score must be an integer from 0 to 100.",
@@ -707,6 +855,7 @@ export function buildProbePrompt(input: {
     "Do not repeat the original question.",
     "Do not ask multiple questions.",
     "Do not change the topic or introduce a different category.",
+    "CRITICAL: The follow-up question MUST be grounded in the actual answer content below.",
     `Current question: ${input.question}`,
     `Answer: ${input.answer}`,
     `Session summary: ${input.sessionSummary || "none"}`,
@@ -740,9 +889,15 @@ export function buildInterviewTurnPrompt(input: {
   aiProbeEnabled: boolean;
   conversationSummary?: string | null;
 }): string {
+  const contextType =
+    input.question.question_role === "free_comment" ? "free_comment" : input.project.research_mode;
+  const meta = normalizeQuestionMeta(input.question, contextType, {
+    projectAiState: input.project.ai_state_json
+  });
   const aiState = getProjectAIState(input.project);
   const probeGuideline = (input.project.ai_state_json as ProjectAIState)?.probe_guideline;
   const canProbe = input.aiProbeEnabled && input.currentProbeCount < input.maxProbes && input.maxProbes > 0;
+  const answerOptionsContext = renderAnswerOptionsForPrompt(input.question);
 
   return [
     "Return JSON only.",
@@ -756,7 +911,11 @@ export function buildInterviewTurnPrompt(input: {
     "Current turn",
     `- question: ${input.question.question_text}`,
     `- question_type: ${input.question.question_type}`,
+    `- probe_goal: ${meta.probe_goal ?? "none"}`,
     `- answer: ${input.answer}`,
+    answerOptionsContext
+      ? `- answer_options:\n${answerOptionsContext}`
+      : "- answer_options: none",
     `- collected_so_far: ${JSON.stringify(input.existingSlots)}`,
     `- probe_count: ${input.currentProbeCount} / ${input.maxProbes}`,
     input.nextQuestion
@@ -764,11 +923,13 @@ export function buildInterviewTurnPrompt(input: {
       : "- next_question: none (this is the last question)",
     "",
     "Probe rules",
-    "- Only probe on text-type answers that lack specificity, reason, or concrete detail",
-    "- NEVER probe on yes_no, single_select, multi_select, or scale type answers",
-    "- NEVER probe if probe_count >= max_probes or aiProbeEnabled is false",
     canProbe ? "- Probing is allowed this turn" : "- Probing is NOT allowed this turn (budget exceeded or disabled)",
     probeGuideline ? `- Custom probe guideline: ${probeGuideline}` : null,
+    "",
+    buildProbeTypeGuidance(input.question.question_type, input.aiProbeEnabled),
+    "",
+    "CRITICAL: When action is probe, response_text MUST reference the actual content of the answer above.",
+    "Do not generate a generic probe that ignores what the respondent said.",
     "",
     "Skip rules",
     "- If next_question asks for information already collected in collected_so_far, action can be skip",
@@ -778,7 +939,7 @@ export function buildInterviewTurnPrompt(input: {
     "- Write all user-facing text in natural Japanese conversation style",
     "- Do NOT use Q1/Q2 numbers or internal codes",
     "- Keep messages short and suitable for LINE chat",
-    "- If action is probe: response_text = one follow-up question",
+    "- If action is probe: response_text = one follow-up question grounded in the respondent's answer",
     "- If action is ask_next or skip: response_text = the next question rendered as natural conversation",
     "- If action is finish: response_text = null",
     "",

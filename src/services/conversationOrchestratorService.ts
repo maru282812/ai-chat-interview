@@ -232,6 +232,28 @@ function canReuseQuestionText(
   );
 }
 
+// Returns true if the question requires fixed structured rendering (options, input rules, etc.)
+// and must NOT use AI-generated pendingNextQuestionText.
+function requiresStructuredRendering(question: Question): boolean {
+  const structuredTypes = [
+    "single_choice",
+    "single_select",
+    "text_with_image",
+    "multi_choice",
+    "multi_select",
+    "yes_no",
+    "numeric",
+    "scale",
+    "sd"
+  ];
+  if (structuredTypes.includes(question.question_type)) {
+    return true;
+  }
+  // Free-text with options defined also needs structured rendering
+  const options = question.question_config?.options ?? [];
+  return options.length > 0;
+}
+
 // Structured per-turn log per spec section 8
 function logTurnResult(input: {
   sessionId: string;
@@ -691,7 +713,25 @@ async function buildStructuredAnswer(input: {
   const settings = getProjectResearchSettings(project);
   const baseNormalized = input.baseNormalized ?? {};
 
-  if (input.question.question_type !== "text") {
+  // survey_interview: probe only if ai_probe_enabled === true (strict)
+  // interview: probe if ai_probe_enabled !== false (lenient default)
+  const rawAiProbeAllowed = project.research_mode === "interview"
+    ? input.question.ai_probe_enabled !== false
+    : input.question.ai_probe_enabled === true;
+
+  // テキスト系タイプはスロット抽出・AI分析フル対象
+  const TEXT_ANALYZABLE_TYPES = new Set<string>(["text", "free_text_short", "free_text_long"]);
+  // 深掘りONの場合に回答依存プローブを生成できる選択肢系・数値系タイプ
+  const CHOICE_PROBE_TYPES = new Set<string>([
+    "single_choice", "multi_choice", "yes_no",
+    "single_select", "multi_select",
+    "scale", "numeric", "sd", "text_with_image"
+  ]);
+
+  const isTextAnalyzable = TEXT_ANALYZABLE_TYPES.has(input.question.question_type);
+  const isChoiceProbeCapable = rawAiProbeAllowed && CHOICE_PROBE_TYPES.has(input.question.question_type);
+
+  if (!isTextAnalyzable && !isChoiceProbeCapable) {
     return {
       ...baseNormalized,
       source: input.source,
@@ -711,11 +751,7 @@ async function buildStructuredAnswer(input: {
   const meta = normalizeQuestionMeta(input.question, contextType, {
     projectAiState: project.ai_state_json
   });
-  // survey_interview: probe only if ai_probe_enabled === true (strict)
-  // interview: probe if ai_probe_enabled !== false (lenient default)
-  const aiProbeAllowed = project.research_mode === "interview"
-    ? input.question.ai_probe_enabled !== false
-    : input.question.ai_probe_enabled === true;
+  const aiProbeAllowed = rawAiProbeAllowed;
   const aiProbeEnabled =
     aiProbeAllowed &&
     settings.probe_policy.enabled &&
@@ -878,7 +914,13 @@ async function buildStructuredAnswer(input: {
             ...nextProgress
           }
         : null
-    }
+    },
+    // 深掘り生成元の追跡情報（後からどの回答を基に深掘りしたか分析できるようにする）
+    probe_source_answer: answerAnalysis.action === "probe" ? input.answerText : null,
+    probe_source_normalized_answer:
+      answerAnalysis.action === "probe" ? (input.baseNormalized ?? null) : null,
+    probe_generation_mode: answerAnalysis.action === "probe" ? "ai" : null,
+    probe_generation_reason: answerAnalysis.action === "probe" ? answerAnalysis.reason : null
   };
 }
 
@@ -1490,7 +1532,19 @@ async function maybeAskProbe(input: {
     return false;
   }
 
-  if (input.question.question_type === "text") {
+  // テキスト系タイプは常にプローブ対応
+  const TEXT_PROBE_TYPES = new Set<string>(["text", "free_text_short", "free_text_long"]);
+  // 選択肢系・数値系は ai_probe_enabled === true の場合のみプローブ対応
+  const CHOICE_PROBE_TYPES = new Set<string>([
+    "single_choice", "multi_choice", "yes_no",
+    "single_select", "multi_select",
+    "scale", "numeric", "sd", "text_with_image"
+  ]);
+  const isProbeCapable =
+    TEXT_PROBE_TYPES.has(input.question.question_type) ||
+    (input.question.ai_probe_enabled === true && CHOICE_PROBE_TYPES.has(input.question.question_type));
+
+  if (isProbeCapable) {
     if (!probeBudget.canProbe) {
       recordActionPath(input.diagnostics, "probe_gate:max_probes_answer");
       return false;
@@ -1559,8 +1613,8 @@ async function maybeAskProbe(input: {
     return true;
   }
 
-  // Non-text types (yes_no, single_select, multi_select, scale) are never probed
-  recordActionPath(input.diagnostics, "probe_gate:non_text_type");
+  // このタイプは深掘り非対応（またはai_probe_enabledがfalse）
+  recordActionPath(input.diagnostics, "probe_gate:non_probe_capable_type");
   return false;
 }
 export const conversationOrchestratorService = {
@@ -2219,7 +2273,15 @@ export const conversationOrchestratorService = {
     let parsedAnswer;
     try {
       parsedAnswer = questionFlowService.parseAnswer(currentQuestion, input.text);
-    } catch {
+    } catch (parseErr) {
+      console.error("[parseAnswer] 回答解析失敗", {
+        question_code: currentQuestion.question_code,
+        question_type: currentQuestion.question_type,
+        raw_input: input.text,
+        error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+        session_id: activeSession.id,
+        project_id: activeSession.project_id,
+      });
       const prompt = await questionPrompt(activeSession, currentQuestion, diagnostics);
       await replyWithTiming({
         replyToken: input.replyToken,
@@ -2482,8 +2544,25 @@ export const conversationOrchestratorService = {
       structuredPrimaryAnswer.pending_next_question_text.trim()
         ? structuredPrimaryAnswer.pending_next_question_text
         : null;
+
+    // structured rendering が必要な質問型では AI 生成テキストを無視して固定レンダラを優先する
+    const useStructuredRendering = requiresStructuredRendering(nextQuestion);
+    const effectivePendingText = useStructuredRendering ? null : pendingNextQuestionText;
+
+    logger.info("conversation.next_question_render", {
+      sessionId: activeSession.id,
+      currentQuestionId: currentQuestion.id,
+      nextQuestionId: nextQuestion.id,
+      nextQuestionCode: nextQuestion.question_code,
+      nextQuestionType: nextQuestion.question_type,
+      optionsLength: (nextQuestion.question_config?.options ?? []).length,
+      hasPendingNextQuestionText: Boolean(pendingNextQuestionText),
+      useStructuredRendering,
+      usingPendingNextQuestionText: Boolean(effectivePendingText)
+    });
+
     const prompt =
-      pendingNextQuestionText ??
+      effectivePendingText ??
       (await questionPrompt(
         {
           ...updatedSession,
@@ -2511,7 +2590,7 @@ export const conversationOrchestratorService = {
             sessionId: activeSession.id,
             nextQuestion,
             collectedSlotMap: sessionSlotMapForCache,
-            questionText: pendingNextQuestionText,
+            questionText: effectivePendingText,
             hasBranching,
             hasSkip
           })
@@ -2539,8 +2618,8 @@ export const conversationOrchestratorService = {
       probeExecuted: false,
       probeReason: null,
       skippedReason: hasSkip ? (preferredAction ?? null) : null,
-      usedCache: Boolean(pendingNextQuestionText),
-      cacheType: pendingNextQuestionText ? "text" : "none",
+      usedCache: Boolean(effectivePendingText),
+      cacheType: effectivePendingText ? "text" : "none",
       collectedFieldSignature: buildCollectedFieldSignature(sessionSlotMapForCache)
     });
 

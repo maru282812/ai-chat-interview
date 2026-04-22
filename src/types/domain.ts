@@ -298,6 +298,7 @@ export interface QuestionConfig {
   extraction?: QuestionExtractionConfig | null;
   conversationControl?: {
     probeIntent?: string;
+    probeType?: string;
     coreInfoPrompt?: string;
     answerExample?: string;
     shortAnswerMinLength?: number;

@@ -1,202 +1,201 @@
-# Research Admin / CSV / Analysis Spec
+✅ research-admin-spec（最適化版）
+1. 管理画面：調査設計項目
+Project
+research_mode              : 調査形式（survey / interview / hybrid）
+primary_objectives         : 主目的（分析の最優先軸）
+secondary_objectives       : 副目的（補助的分析軸）
+comparison_constraints     : 比較条件（セグメント・対象制限）
+prompt_rules               : AI応答ルール（禁止・制約）
+probe_policy               : 深掘り制御設定
+response_style             : 回答スタイル制御
+Question
+question_role:
+  - screening         : スクリーニング
+  - main              : 主質問
+  - probe_trigger     : 深掘り対象
+  - attribute         : 属性情報
+  - comparison_core   : 比較分析の核
+  - context           : 前提・説明（分析対象外）
+2. 回答閲覧（Admin UI）
+Respondents 一覧
+project_name
+display_name
+line_user_id
+respondent_status
+total_sessions
+completed_sessions
+latest_session_status
+points
+rank
+Respondent 詳細
+基本情報
+プロジェクト情報
+セッション一覧
+ポイント履歴
+Session 詳細
+質問別回答一覧
+normalized_answer（構造化データ）
+ai_probe_count（深掘り回数）
+ai_probe_answers（深掘り本文一覧）
+conversation_log
+ai_analysis_result（セッション要約）
+3. CSV 出力仕様
+出力単位
+1回答者 = 1行
+対象セッション選定ルール（重要）
+優先順位:
+1. completed AND is_valid = true
+2. completed
+3. latest in_progress
+4. その他は除外
+メタ列
+project_id
+project_name
+client_name
+project_status
+project_objective
+research_mode
+primary_objectives
+secondary_objectives
 
-## 1. 管理画面の追加項目
+respondent_id
+line_user_id
+display_name
+respondent_status
 
-### Project
-- `research_mode`
-- `primary_objectives`
-- `secondary_objectives`
-- `comparison_constraints`
-- `prompt_rules`
-- `probe_policy`
-- `response_style`
+session_id
+session_status
+session_phase
 
-### Question
-- `question_role`
-  - `screening`
-  - `main`
-  - `probe_trigger`
-  - `attribute`
-  - `comparison_core`
+respondent_created_at
+session_started_at
+session_completed_at
+session_last_activity_at
+質問列
+question_code ベース
+<question_code>_answer_text
+<question_code>_normalized_answer
+<question_code>_ai_probe_count
+<question_code>_ai_probe_texts
+question_order ベース（オプション）
+q01_answer_text
+q01_normalized_answer
+q01_ai_probe_count
+q01_ai_probe_texts
+値仕様
+answer_text        : 一次回答（raw）
+normalized_answer  : JSON文字列（DBはJSONB）
+ai_probe_count     : 深掘り回数
+ai_probe_texts     : 深掘り回答配列（JSON）
+4. 分析出力仕様
+分析 dataset
+respondentSummaries
+comparisonUnits
+nonComparableQuestions
+freeAnswerPolicy
+comparisonUnits（構造化分析）
 
-## 2. 回答閲覧の構成
+対象:
 
-### Respondents 一覧
-- プロジェクト名
-- 回答者名
-- LINE User ID
-- 回答者ステータス
-- セッション数
-- 完了セッション数
-- 最新セッション状態
-- ポイント
-- ランク
+single_select
+multi_select
+yes_no
+scale
 
-### Respondent 詳細
-- 回答者の基本情報
-- プロジェクト情報
-- セッション一覧
-- ポイント履歴
+出力:
 
-### Session 詳細
-- 質問ごとの回答
-- `normalized_answer`
-- AI 深掘り有無
-- 深掘り回答本文
-- Conversation Log
-- セッション単位 AI 分析結果
+question_code
+question_role
+question_type
+aggregation_type
+response_count
+values[]
+note
+nonComparableQuestions
+{
+  "question_code": "Q5",
+  "reason": "free_text",
+  "analysis_hint": "テーマ抽出・感情分類のみ実施"
+}
+qualitative（自由回答）
+・比率根拠には使用しない
+・テーマ単位で整理
+・primary_objectivesとの関連を重視
+AI レポート JSON
+{
+  "executive_summary": "",
+  "overall_trends": "",
+  "primary_objectives": "",
+  "secondary_objectives": "",
+  "comparison_focus": "",
+  "free_answer_policy": "",
+  "respondent_summaries": [],
+  "data_sufficiency": "low | medium | high"
+}
+AI 制約
+・回答者要約は簡潔
+・共通傾向を優先
+・単一意見に引っ張られない
+・primary_objectives を最優先
+・secondary_objectives は補助扱い
+5. データ構造 / DB設計
+既存テーブル
+projects
+questions（question_role追加）
+respondents
+sessions（is_valid追加推奨）
+messages（conversation log）
+answers
+ai_analysis_results
+answers テーブル拡張
+answer_role:
+  - primary
+  - ai_probe
 
-## 3. CSV 仕様
+parent_answer_id:
+  primary回答への紐付け
+新規テーブル
+project_analysis_reports
+normalized_answer
+DB: JSONB
+CSV: stringifyして出力
+回答集約ルール
+primary回答:
+  answers.answer_role = primary
 
-### 出力単位
-- 1 回答者 1 行
-- 対象セッションは `latest completed session` を優先し、存在しない場合は `latest session` を採用
+AI深掘り:
+  answers.answer_role = ai_probe
 
-### 行メタ列
-- `project_id`
-- `project_name`
-- `client_name`
-- `project_status`
-- `project_objective`
-- `research_mode`
-- `primary_objectives`
-- `secondary_objectives`
-- `respondent_id`
-- `line_user_id`
-- `display_name`
-- `respondent_status`
-- `session_id`
-- `session_status`
-- `session_phase`
-- `respondent_created_at`
-- `session_started_at`
-- `session_completed_at`
-- `session_last_activity_at`
-
-### 質問列
-- `question_code` ベース
-  - `<question_code>_answer_text`
-  - `<question_code>_normalized_answer`
-  - `<question_code>_ai_probe`
-- `question_order` ベースも選択可
-  - `q01_answer_text`
-  - `q01_normalized_answer`
-  - `q01_ai_probe`
-
-### 値の扱い
-- `answer_text`: 一次回答
-- `normalized_answer`: 一次回答の JSON 文字列
-- `ai_probe`: 該当質問に AI 深掘り回答が 1 件以上ある場合 `true`
-
-## 4. 分析出力仕様
-
-### 分析用 dataset
-- `respondentSummaries`
-- `comparisonUnits`
-- `nonComparableQuestions`
-- `freeAnswerPolicy`
-
-### comparisonUnits
-- 構造化質問
-  - `single_select`
-  - `multi_select`
-  - `yes_no`
-  - `scale`
-- 出力
-  - `question_code`
-  - `question_role`
-  - `question_type`
-  - `aggregation_type`
-  - `response_count`
-  - `values[]`
-  - `note`
-
-### qualitative only
-- `text` 質問は比較不能な自由回答として扱う
-- 比率断定の根拠には使わない
-- 反復テーマと objective への関連で整理する
-
-### AI レポート JSON
-- `executive_summary`
-- `overall_trends`
-- `primary_objectives`
-- `secondary_objectives`
-- `comparison_focus`
-- `free_answer_policy`
-- `respondent_summaries`
-
-### AI 制約
-- 回答者ごとの要約は簡潔にする
-- 複数人比較では共通観点を優先する
-- 面白い 1 回答に引っ張られない
-- `primary_objectives` を中心に分析する
-- `secondary_objectives` は補助扱いにする
-
-## 5. 既存テーブルとの接続方法
-
-### 既存利用
-- `projects`
-  - 調査設計の中核
-- `questions`
-  - 設問定義
-  - `question_role` を追加
-- `respondents`
-  - 回答者単位の管理軸
-- `sessions`
-  - 回答セッション単位
-- `messages`
-  - Conversation Log
-- `answers`
-  - 設問回答
-  - `answer_role` と `parent_answer_id` を追加
-- `ai_analysis_results`
-  - セッション単位の個別要約
-
-### 新規追加
-- `project_analysis_reports`
-  - プロジェクト単位の AI 分析レポート保存先
-
-### 回答集約ルール
-- 一次回答は `answers.answer_role = primary`
-- AI 深掘り回答は `answers.answer_role = ai_probe`
-- 深掘り回答は `answers.parent_answer_id` で一次回答に紐付ける
-
-## 6. 画面別の変更内容
-
-### `/admin/projects`
-- 調査設計の要約表示
-- Respondents / Analysis への導線追加
-
-### `/admin/projects/:projectId/edit`
-- 調査設計項目の編集
-
-### `/admin/projects/:projectId/questions`
-- `question_role` 表示
-
-### `/admin/projects/:projectId/questions/new`
-### `/admin/questions/:questionId/edit`
-- `question_role` 編集
-
-### `/admin/projects/:projectId/respondents`
-- プロジェクト単位の回答者一覧
-- CSV 出力導線
-- 分析画面導線
-
-### `/admin/respondents`
-- 全プロジェクト横断の回答者一覧強化
-
-### `/admin/respondents/:respondentId`
-- セッション一覧への導線整理
-
-### `/admin/sessions/:sessionId`
-- 質問別回答
-- `normalized_answer`
-- AI 深掘り有無
-- Conversation Log
-- セッション AI 分析
-
-### `/admin/projects/:projectId/analysis`
-- 比較単位一覧
-- 個別要約一覧
-- 自由回答の扱い方針
-- 最新 AI レポート表示
+紐付け:
+  parent_answer_id
+6. 管理画面構成
+/admin/projects
+調査設計サマリ表示
+Respondents / Analysis への導線
+/admin/projects/:projectId/edit
+調査設計項目編集
+/admin/projects/:projectId/questions
+question_role 表示
+/admin/projects/:projectId/questions/new
+/admin/questions/:questionId/edit
+question_role 編集
+/admin/projects/:projectId/respondents
+回答者一覧
+CSV出力
+分析画面導線
+/admin/respondents
+全プロジェクト横断一覧
+/admin/respondents/:respondentId
+セッション一覧導線
+/admin/sessions/:sessionId
+質問別回答
+normalized_answer
+ai_probe_count / texts
+conversation_log
+ai_analysis_result
+/admin/projects/:projectId/analysis
+comparisonUnits一覧
+respondentSummaries
+nonComparableQuestions
+freeAnswerPolicy
+最新AIレポート

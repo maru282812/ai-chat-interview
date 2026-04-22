@@ -21,6 +21,7 @@ import { getProjectAIState } from "./projectAiState";
 
 export type QuestionMetaContextType =
   | ResearchMode
+  | "survey"
   | Extract<UserPostType, "free_comment" | "rant" | "diary">;
 
 interface NormalizeQuestionMetaOptions {
@@ -101,17 +102,32 @@ const BAD_ANSWER_NOTE = {
   LOW_SPECIFICITY: "low_specificity"
 } as const;
 
-const DEFAULT_PROBE_PRIORITY: QuestionProbePriority[] = ["missing", "bad_pattern", "low_specificity"];
-const DEFAULT_STOP_CONDITIONS: QuestionProbeStopCondition[] = ["sufficient_slots", "high_quality"];
+const DEFAULT_PROBE_PRIORITY: QuestionProbePriority[] = [
+  "missing",
+  "bad_pattern",
+  "low_specificity"
+];
+
+const DEFAULT_STOP_CONDITIONS: QuestionProbeStopCondition[] = [
+  "sufficient_slots",
+  "high_quality",
+  "no_new_information",
+  "repetition_risk"
+];
+
 const DEFAULT_COMPLETION_QUALITY_THRESHOLD = 60;
 
 const ABSTRACT_KEYWORDS = [
-  "\u306a\u3093\u3068\u306a\u304f",
-  "\u666e\u901a",
-  "\u3044\u308d\u3044\u308d",
-  "\u6f20\u7136",
-  "\u7279\u306b\u7406\u7531\u306f\u306a\u3044",
-  "\u307e\u3042\u307e\u3042"
+  "なんとなく",
+  "普通",
+  "いろいろ",
+  "漠然",
+  "特に理由はない",
+  "まあまあ",
+  "別に",
+  "特には",
+  "特にない",
+  "よくわからない"
 ];
 
 export interface QuestionAuthoringMetaInput {
@@ -284,95 +300,119 @@ export function buildQuestionMetaFromAuthoringInput(input: QuestionAuthoringMeta
   };
 }
 
-function createDefaultBadAnswerPatterns(_maxLength: number): QuestionBadAnswerPattern[] {
+function createDefaultBadAnswerPatterns(maxLength = 12): QuestionBadAnswerPattern[] {
   return [
-    { type: "exact", value: "\u7279\u306b\u306a\u3057", note: BAD_ANSWER_NOTE.NO_CONTENT },
-    { type: "exact", value: "\u7279\u306b\u306a\u3044", note: BAD_ANSWER_NOTE.NO_CONTENT },
-    { type: "exact", value: "\u306a\u3044", note: BAD_ANSWER_NOTE.NO_CONTENT },
-    { type: "exact", value: "\u308f\u304b\u3089\u306a\u3044", note: BAD_ANSWER_NOTE.NO_CONTENT },
-    { type: "exact", value: "\u601d\u3044\u3064\u304b\u306a\u3044", note: BAD_ANSWER_NOTE.NO_CONTENT },
-    { type: "exact", value: "\u899a\u3048\u3066\u3044\u306a\u3044", note: BAD_ANSWER_NOTE.NO_CONTENT },
-    { type: "contains", value: "\u306a\u3093\u3068\u306a\u304f", note: BAD_ANSWER_NOTE.ABSTRACT },
-    { type: "contains", value: "\u666e\u901a", note: BAD_ANSWER_NOTE.ABSTRACT },
-    { type: "contains", value: "\u3044\u308d\u3044\u308d", note: BAD_ANSWER_NOTE.ABSTRACT }
+    { type: "exact", value: "特になし", note: BAD_ANSWER_NOTE.NO_CONTENT },
+    { type: "exact", value: "特にない", note: BAD_ANSWER_NOTE.NO_CONTENT },
+    { type: "exact", value: "ない", note: BAD_ANSWER_NOTE.NO_CONTENT },
+    { type: "exact", value: "わからない", note: BAD_ANSWER_NOTE.NO_CONTENT },
+    { type: "exact", value: "思いつかない", note: BAD_ANSWER_NOTE.NO_CONTENT },
+    { type: "exact", value: "覚えていない", note: BAD_ANSWER_NOTE.NO_CONTENT },
+
+    { type: "contains", value: "なんとなく", note: BAD_ANSWER_NOTE.ABSTRACT },
+    { type: "contains", value: "普通", note: BAD_ANSWER_NOTE.ABSTRACT },
+    { type: "contains", value: "いろいろ", note: BAD_ANSWER_NOTE.ABSTRACT },
+    { type: "contains", value: "まあまあ", note: BAD_ANSWER_NOTE.ABSTRACT },
+
+    { type: "max_length", value: maxLength, note: BAD_ANSWER_NOTE.LOW_SPECIFICITY }
   ];
 }
 
 function createProbeConfig(
-  input: Pick<NormalizedProbeConfig, "max_probes" | "min_probes" | "allow_followup_expansion" | "strict_topic_lock"> & {
+  input: Pick<
+    NormalizedProbeConfig,
+    "max_probes" | "min_probes" | "allow_followup_expansion" | "strict_topic_lock"
+  > & {
     force_probe_on_bad?: boolean;
+    probe_priority?: QuestionProbePriority[];
+    stop_conditions?: QuestionProbeStopCondition[];
   }
 ): NormalizedProbeConfig {
+  const maxProbes = Math.max(0, Math.round(input.max_probes));
+  const minProbes = Math.max(0, Math.round(input.min_probes));
+
   return {
-    max_probes: input.max_probes,
-    min_probes: input.min_probes,
+    max_probes: Math.max(maxProbes, minProbes),
+    min_probes: Math.min(minProbes, Math.max(maxProbes, minProbes)),
     force_probe_on_bad: input.force_probe_on_bad ?? true,
-    probe_priority: [...DEFAULT_PROBE_PRIORITY],
-    stop_conditions: [...DEFAULT_STOP_CONDITIONS],
+    probe_priority:
+      Array.isArray(input.probe_priority) && input.probe_priority.length > 0
+        ? [...input.probe_priority]
+        : [...DEFAULT_PROBE_PRIORITY],
+    stop_conditions:
+      Array.isArray(input.stop_conditions) && input.stop_conditions.length > 0
+        ? [...input.stop_conditions]
+        : [...DEFAULT_STOP_CONDITIONS],
     allow_followup_expansion: input.allow_followup_expansion,
     strict_topic_lock: input.strict_topic_lock
   };
 }
 
 function defaultInterviewMeta(question: Question): NormalizedQuestionMeta {
+  const isText = question.question_type === "text";
+
   return {
     research_goal: null,
     question_goal: null,
-    probe_goal: "Clarify only the missing detail needed for structured comparison.",
+    probe_goal: "比較や理解に必要な不足情報を1点だけ自然に補う。",
     expected_slots: [],
     required_slots: [],
     skippable_if_slots_present: [],
     can_prefill_future_slots: true,
     skip_forbidden_on_bad_answer: true,
-    bad_answer_patterns: createDefaultBadAnswerPatterns(12),
+    bad_answer_patterns: isText ? createDefaultBadAnswerPatterns(12) : [],
     probe_config: createProbeConfig({
-      max_probes: 1,
+      max_probes: isText ? 1 : 0,
       min_probes: 0,
+      force_probe_on_bad: isText,
       allow_followup_expansion: false,
       strict_topic_lock: true
     }),
     completion_conditions: [{ type: "no_bad_patterns" }],
     render_style: {
-      mode: question.question_type === "text" ? "interview_natural" : "default",
+      mode: isText ? "interview_natural" : "default",
       connect_from_previous_answer: true,
       avoid_question_number: true,
-      preserve_options: question.question_type !== "text"
+      preserve_options: !isText
     }
   };
 }
 
 function defaultSurveyMeta(question: Question): NormalizedQuestionMeta {
+  const isText = question.question_type === "text";
+
   return {
     research_goal: null,
     question_goal: null,
-    probe_goal: "Collect only the minimum missing detail needed for comparison.",
+    probe_goal: "必要最小限の補足だけを回収し、回答負荷を増やしすぎない。",
     expected_slots: [],
     required_slots: [],
     skippable_if_slots_present: [],
     can_prefill_future_slots: true,
     skip_forbidden_on_bad_answer: true,
-    bad_answer_patterns: createDefaultBadAnswerPatterns(10),
+    bad_answer_patterns: isText ? createDefaultBadAnswerPatterns(10) : [],
     probe_config: createProbeConfig({
-      max_probes: 1,
+      max_probes: isText ? 1 : 0,
       min_probes: 0,
+      force_probe_on_bad: isText,
       allow_followup_expansion: false,
       strict_topic_lock: true
     }),
     completion_conditions: [{ type: "no_bad_patterns" }],
     render_style: {
       mode: "default",
-      connect_from_previous_answer: true,
+      connect_from_previous_answer: false,
       avoid_question_number: false,
-      preserve_options: question.question_type !== "text"
+      preserve_options: !isText
     }
   };
 }
 
 function defaultFreeCommentMeta(): NormalizedQuestionMeta {
   return {
-    research_goal: "Collect only optional supplemental comments at the end of the session.",
-    question_goal: "Accept any remaining project-relevant comment without forcing structure.",
-    probe_goal: "Do not probe by default. Probe only when free comment follow-up is explicitly configured.",
+    research_goal: "セッション末尾の任意コメントを受け取り、無理に構造化しない。",
+    question_goal: "自由に補足したい内容をそのまま受け取る。",
+    probe_goal: "既定では深掘りしない。明示設定があるときだけ補足を聞く。",
     expected_slots: [],
     required_slots: [],
     skippable_if_slots_present: [],
@@ -399,23 +439,25 @@ function defaultFreeCommentMeta(): NormalizedQuestionMeta {
 function defaultDiaryMeta(): NormalizedQuestionMeta {
   return {
     ...defaultFreeCommentMeta(),
-    research_goal: "Store daily events and feelings in a later-comparable structure.",
-    question_goal: "Capture event context and emotional background concretely.",
-    probe_goal: "Turn a shallow diary entry into concrete context and reasons.",
+    research_goal: "日々の出来事と感情を、あとから比較しやすい粒度で蓄積する。",
+    question_goal: "出来事・感情・理由を最低限おさえて記録する。",
+    probe_goal: "浅い記述なら、背景や理由を1段だけ具体化する。",
     expected_slots: [
-      { key: "event", label: "出来事", description: "何が起きたのか", required: true },
-      { key: "emotion", label: "感情", description: "そのとき感じたこと", required: true },
-      { key: "reason", label: "理由", description: "そう感じた背景", required: true },
-      { key: "pain_point", label: "不満点", description: "嫌だったことや困ったこと", required: false },
-      { key: "desired_state", label: "理想状態", description: "本当はどうなってほしいか", required: false }
+      { key: "event", label: "出来事", description: "何があったか", required: true, examples: [] },
+      { key: "emotion", label: "感情", description: "どう感じたか", required: true, examples: [] },
+      { key: "reason", label: "理由", description: "そう感じた背景や理由", required: true, examples: [] },
+      { key: "pain_point", label: "不満点", description: "困ったことや嫌だったこと", required: false, examples: [] },
+      { key: "desired_state", label: "理想状態", description: "本当はどうなってほしいか", required: false, examples: [] }
     ],
     required_slots: ["event", "emotion", "reason"],
+    skippable_if_slots_present: ["event", "emotion", "reason"],
     can_prefill_future_slots: true,
     skip_forbidden_on_bad_answer: true,
     bad_answer_patterns: createDefaultBadAnswerPatterns(14),
     probe_config: createProbeConfig({
       max_probes: 1,
       min_probes: 0,
+      force_probe_on_bad: true,
       allow_followup_expansion: true,
       strict_topic_lock: true
     }),
@@ -426,23 +468,25 @@ function defaultDiaryMeta(): NormalizedQuestionMeta {
 function defaultRantMeta(): NormalizedQuestionMeta {
   return {
     ...defaultFreeCommentMeta(),
-    research_goal: "Store strong complaints and emotions with comparable background and causes.",
-    question_goal: "Capture complaint context and triggers concretely.",
-    probe_goal: "Turn a shallow rant into concrete context and reasons.",
+    research_goal: "不満や怒りの内容を、原因と影響が比較できる形で蓄積する。",
+    question_goal: "不満の中身・きっかけ・理由を最低限おさえる。",
+    probe_goal: "浅い愚痴なら、発生場面や理由を1段だけ具体化する。",
     expected_slots: [
-      { key: "pain_point", label: "不満点", description: "最も不満に感じたこと", required: true },
-      { key: "trigger", label: "きっかけ", description: "その不満が起きた場面や出来事", required: true },
-      { key: "reason", label: "理由", description: "そう感じた背景", required: true },
-      { key: "impact", label: "影響", description: "困ったことや嫌だったこと", required: false },
-      { key: "desired_state", label: "理想状態", description: "本当はどうなってほしいか", required: false }
+      { key: "pain_point", label: "不満点", description: "最も不満だったこと", required: true, examples: [] },
+      { key: "trigger", label: "きっかけ", description: "その不満が起きた場面や出来事", required: true, examples: [] },
+      { key: "reason", label: "理由", description: "そう感じた背景や理由", required: true, examples: [] },
+      { key: "impact", label: "影響", description: "困ったことや嫌だった影響", required: false, examples: [] },
+      { key: "desired_state", label: "理想状態", description: "本当はどうなってほしいか", required: false, examples: [] }
     ],
     required_slots: ["pain_point", "trigger", "reason"],
+    skippable_if_slots_present: ["pain_point", "trigger", "reason"],
     can_prefill_future_slots: true,
     skip_forbidden_on_bad_answer: true,
     bad_answer_patterns: createDefaultBadAnswerPatterns(14),
     probe_config: createProbeConfig({
       max_probes: 1,
       min_probes: 0,
+      force_probe_on_bad: true,
       allow_followup_expansion: true,
       strict_topic_lock: true
     }),
@@ -644,8 +688,8 @@ function resolveMetaContextType(
     return contextType;
   }
 
-  if (contextType === "survey_interview") {
-    return "survey_interview";
+  if (contextType === "survey" || contextType === "survey_interview") {
+    return contextType;
   }
 
   return "interview";
@@ -656,6 +700,7 @@ function defaultMetaByContext(
   contextType?: QuestionMetaContextType
 ): NormalizedQuestionMeta {
   switch (resolveMetaContextType(question, contextType)) {
+    case "survey":
     case "survey_interview":
       return defaultSurveyMeta(question);
     case "free_comment":
@@ -699,33 +744,33 @@ function normalizeProjectStateSlots(value: unknown, requiredDefault: boolean): Q
   }
 
   const normalizedSlots: Array<QuestionExpectedSlot | null> = value.map((slot) => {
-      if (!slot || typeof slot !== "object" || Array.isArray(slot)) {
-        return null;
-      }
+    if (!slot || typeof slot !== "object" || Array.isArray(slot)) {
+      return null;
+    }
 
-      const candidate = slot as Record<string, unknown>;
-      const key = typeof candidate.key === "string" ? candidate.key.trim() : "";
-      if (!key) {
-        return null;
-      }
+    const candidate = slot as Record<string, unknown>;
+    const key = typeof candidate.key === "string" ? candidate.key.trim() : "";
+    if (!key) {
+      return null;
+    }
 
-      return {
-        key,
-        label:
-          typeof candidate.label === "string" && candidate.label.trim()
-            ? candidate.label.trim()
-            : key,
-        description:
-          typeof candidate.description === "string" && candidate.description.trim()
-            ? candidate.description.trim()
-            : undefined,
-        required:
-          typeof candidate.required === "boolean" ? candidate.required : requiredDefault,
-        examples: Array.isArray(candidate.examples)
-          ? candidate.examples.map((example) => String(example).trim()).filter(Boolean)
-          : []
-      } satisfies QuestionExpectedSlot;
-    });
+    return {
+      key,
+      label:
+        typeof candidate.label === "string" && candidate.label.trim()
+          ? candidate.label.trim()
+          : key,
+      description:
+        typeof candidate.description === "string" && candidate.description.trim()
+          ? candidate.description.trim()
+          : undefined,
+      required:
+        typeof candidate.required === "boolean" ? candidate.required : requiredDefault,
+      examples: Array.isArray(candidate.examples)
+        ? candidate.examples.map((example) => String(example).trim()).filter(Boolean)
+        : []
+    } satisfies QuestionExpectedSlot;
+  });
 
   return normalizedSlots.filter((slot): slot is QuestionExpectedSlot => slot !== null);
 }
@@ -989,9 +1034,7 @@ export function normalizeQuestionMeta(
           metaContext === "free_comment"
             ? getExplicitFreeCommentProjectRequiredSlotKeys(options.projectAiState)
             : getProjectRequiredSlotKeys(options.projectAiState)
-        ).filter((key) =>
-          expectedSlots.some((slot) => slot.key === key)
-        )
+        ).filter((key) => expectedSlots.some((slot) => slot.key === key))
       : [];
   const projectBackedProbeConfig =
     metaContext === "free_comment"
@@ -1318,16 +1361,15 @@ export function evaluateCompletion(input: {
   const text = normalizeFreeText(input.answerText);
   const extractedSlots = input.extractedSlots ?? [];
   const requiredSlots = getRequiredSlotKeys(meta);
-  const missingSlots = requiredSlots
-    .filter((slot) => {
-      const resolved = extractedSlots.find((item) => item.key === slot)?.value?.trim();
-      return !resolved;
-    });
+  const missingSlots = requiredSlots.filter((slot) => {
+    const resolved = extractedSlots.find((item) => item.key === slot)?.value?.trim();
+    return !resolved;
+  });
   const badPatterns = matchBadAnswerPatterns(text, meta.bad_answer_patterns);
   const qualityScore =
     typeof input.qualityScore === "number" && Number.isFinite(input.qualityScore)
       ? Math.max(0, Math.min(100, Math.round(input.qualityScore)))
-        : calculateQualityScore({
+      : calculateQualityScore({
           question: input.question,
           answerText: text,
           extractedSlots,
@@ -1592,7 +1634,7 @@ export function buildInterviewQuestionFallback(input: {
   const lead =
     meta.render_style.lead_in?.trim() ||
     (meta.render_style.connect_from_previous_answer && input.previousAnswerText?.trim()
-      ? "\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\u3082\u3046\u5c11\u3057\u8a73\u3057\u304f\u6559\u3048\u3066\u304f\u3060\u3055\u3044\u3002"
+      ? "ありがとうございます。もう少し詳しく教えてください。"
       : "");
   const base = input.question.question_text.trim();
 

@@ -26,6 +26,15 @@ export interface ProbeDecision {
   prompt: string | null;
 }
 
+type GenericProbeType =
+  | "situation"
+  | "reason"
+  | "detail"
+  | "example"
+  | "comparison"
+  | "dissatisfaction"
+  | "alternative";
+
 const COMMAND_ALIASES: Record<ConversationCommand, string[]> = {
   help: ["help", "ヘルプ"],
   start: ["start", "はじめる", "開始"],
@@ -61,11 +70,14 @@ const DECLINE_PATTERNS = [
   "なしです"
 ];
 
-const FALLBACK_CORE_INFO_PROMPTS: Record<string, string> = {
-  Q2: "比較のため、よく飲む場面を いつ・どこで のどちらかで教えてください。",
-  Q3: "比較のため、一番重視する点を一言で教えてください。",
-  Q5: "比較のため、どの点がいちばん不満か一言で教えてください。",
-  Q6: "比較のため、代わりに選ぶものを一つ教えてください。"
+const GENERIC_FALLBACK_PROMPTS: Record<GenericProbeType, string> = {
+  situation: "具体的な場面を1つ教えてください（いつ・どこ・誰と、のうち答えやすいものだけで大丈夫です）。",
+  reason: "そう思った理由を具体的に教えてください。",
+  detail: "もう少し具体的な内容を教えてください（できれば1つの場面や内容でお願いします）。",
+  example: "具体例を1つ教えてください。",
+  comparison: "他と比べて、どこが違うと感じるか教えてください。",
+  dissatisfaction: "不満に感じた点と、そのときの状況を教えてください。",
+  alternative: "代わりに選ぶものと、その理由を教えてください。"
 };
 
 function normalizeText(text: string): string {
@@ -112,11 +124,14 @@ export function formatTextForLine(
       ? sentences.slice(0, responseStyle.max_sentences)
       : [collapsed.slice(0, responseStyle.max_characters_per_message)];
   const joined = limitedSentences.join(" ");
+
   if (joined.length <= responseStyle.max_characters_per_message) {
     return joined;
   }
 
-  return `${joined.slice(0, Math.max(1, responseStyle.max_characters_per_message - 1)).trimEnd()}…`;
+  return `${joined
+    .slice(0, Math.max(1, responseStyle.max_characters_per_message - 1))
+    .trimEnd()}…`;
 }
 
 function getQuestionControl(question: Question) {
@@ -125,22 +140,34 @@ function getQuestionControl(question: Question) {
 
 function buildProbeBasePrompt(question: Question): string {
   const control = getQuestionControl(question);
+
   if (control.coreInfoPrompt?.trim()) {
     return control.coreInfoPrompt.trim();
   }
 
-  return (
-    FALLBACK_CORE_INFO_PROMPTS[question.question_code] ??
-    "比較のため、差し支えない範囲でもう少し具体的に教えてください。"
-  );
+  const probeType = control.probeType as GenericProbeType | undefined;
+  if (probeType && probeType in GENERIC_FALLBACK_PROMPTS) {
+    return GENERIC_FALLBACK_PROMPTS[probeType];
+  }
+
+  return "差し支えない範囲で、具体的な内容を1つ教えてください。";
 }
 
 function matchesPattern(text: string, patterns: string[]): boolean {
   return patterns.some((pattern) => text.includes(pattern));
 }
 
+function hasConcreteSignal(text: string): boolean {
+  return /(\d+|いつ|どこ|誰|たとえば|例えば|具体|場面|理由|回|円|分|時|日|週|月)/u.test(text);
+}
+
 function isAbstractAnswer(text: string): boolean {
-  return text.length <= 20 || matchesPattern(text, ABSTRACT_PATTERNS);
+  const normalized = collapseWhitespace(text);
+  const shortText = normalized.length <= 15;
+  const abstractPatternMatched = matchesPattern(normalized, ABSTRACT_PATTERNS);
+  const concrete = hasConcreteSignal(normalized);
+
+  return !concrete && (shortText || abstractPatternMatched);
 }
 
 function isDeclinedAnswer(text: string): boolean {
@@ -159,19 +186,30 @@ export function evaluateProbeDecision(input: {
   const { question, answerText, projectSettings } = input;
   const policy = projectSettings.probe_policy;
   const control = getQuestionControl(question);
-  const trimmed = answerText.trim();
+  const trimmed = collapseWhitespace(answerText);
+
   const shortAnswerMinLength =
     control.shortAnswerMinLength ?? policy.short_answer_min_length;
+
   const sufficientAnswerMinLength =
-    control.sufficientAnswerMinLength ?? Math.max(shortAnswerMinLength + 8, shortAnswerMinLength);
+    control.sufficientAnswerMinLength ??
+    Math.max(shortAnswerMinLength + 8, shortAnswerMinLength);
+
   const isShort =
-    policy.conditions.includes("short_answer") && trimmed.length < shortAnswerMinLength;
+    policy.conditions.includes("short_answer") &&
+    trimmed.length < shortAnswerMinLength;
+
   const isAbstract =
-    policy.conditions.includes("abstract_answer") && !isShort && isAbstractAnswer(trimmed);
+    policy.conditions.includes("abstract_answer") &&
+    !isShort &&
+    isAbstractAnswer(trimmed);
+
   const targetQuestionCodes = policy.target_question_codes;
   const blockedQuestionCodes = policy.blocked_question_codes;
+
   const isTargetQuestion =
     targetQuestionCodes.length === 0 || targetQuestionCodes.includes(question.question_code);
+
   const isBlockedQuestion = blockedQuestionCodes.includes(question.question_code);
 
   if (!policy.enabled) {
@@ -222,9 +260,13 @@ export function evaluateProbeDecision(input: {
 
   const followUp =
     input.currentProbeCountForAnswer > 0
-      ? "できれば具体例を一言だけお願いします。"
+      ? "直近の具体的な場面を1つだけ教えてください。短くても大丈夫です。"
       : buildProbeBasePrompt(question);
-  const example = control.answerExample?.trim() ? `例: ${control.answerExample.trim()}` : "";
+
+  const example = control.answerExample?.trim()
+    ? `例: ${control.answerExample.trim()}`
+    : "";
+
   const prompt = [followUp, example].filter(Boolean).join(" ");
 
   return {

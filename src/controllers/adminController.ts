@@ -302,9 +302,17 @@ function parseQuestionRole(value: string): QuestionRole {
   return "main";
 }
 
-function parseQuestionType(value: string): QuestionType {
-  const ALL_VALID: QuestionType[] = [
-    "text", "single_select", "multi_select", "yes_no", "scale",
+// 旧方式 → 新方式 の変換マップ（既存データ互換吸収・新規保存時には使わない）
+const LEGACY_TYPE_MAP: Partial<Record<string, QuestionType>> = {
+  text: "free_text_short",
+  single_select: "single_choice",
+  multi_select: "multi_choice",
+  yes_no: "single_choice",
+  scale: "numeric",
+};
+
+function parseQuestionType(value: string, convertLegacy = false): QuestionType {
+  const CURRENT_VALID: QuestionType[] = [
     "single_choice", "multi_choice",
     "matrix_single", "matrix_multi", "matrix_mixed",
     "free_text_short", "free_text_long",
@@ -312,10 +320,19 @@ function parseQuestionType(value: string): QuestionType {
     "hidden_single", "hidden_multi",
     "text_with_image", "sd",
   ];
-  if (ALL_VALID.includes(value as QuestionType)) {
+  // 現行形式はそのまま返す
+  if (CURRENT_VALID.includes(value as QuestionType)) {
     return value as QuestionType;
   }
-  return "text";
+  // 旧形式: 変換モードならマッピング、そうでなければ旧値を保持（既存データ読み込み時）
+  if (value in LEGACY_TYPE_MAP) {
+    if (convertLegacy) {
+      return LEGACY_TYPE_MAP[value]!;
+    }
+    // 旧値をそのまま保持（parseAnswer側で互換処理済み）
+    return value as QuestionType;
+  }
+  return "free_text_short";
 }
 
 type ProjectDisplayStyle = "survey" | "interview";
@@ -1379,7 +1396,7 @@ export const adminController = {
     ]);
 
     try {
-      const questionType = parseQuestionType(bodyString(req.body.question_type || "text"));
+      const questionType = parseQuestionType(bodyString(req.body.question_type || "free_text_short"));
       const questionConfig = buildQuestionConfigFromRequest(req, questionType, null);
       const sortOrder = numberField(req.body.sort_order, await questionRepository.getNextSortOrder(projectId));
       const questionCode = buildQuestionCode({
@@ -1472,7 +1489,7 @@ export const adminController = {
     ]);
 
     try {
-      const questionType = parseQuestionType(bodyString(req.body.question_type || "text"));
+      const questionType = parseQuestionType(bodyString(req.body.question_type || "free_text_short"));
       const questionConfig = buildQuestionConfigFromRequest(req, questionType, existing.question_config);
       const sortOrder = numberField(req.body.sort_order, existing.sort_order);
       const questionCode = buildQuestionCode({
@@ -1960,7 +1977,10 @@ export const adminController = {
 
     const questionType = parseQuestionType(String(body.question_type ?? existing.question_type));
     const questionText = String(body.question_text ?? "").trim();
-    const questionGoal = String(body.question_goal ?? "").trim();
+    const existingConfig = (existing.question_config ?? {}) as Record<string, unknown>;
+    const existingMeta = (existingConfig.meta ?? {}) as Record<string, unknown>;
+    // body に question_goal が含まれていない場合は既存の research_goal を引き継ぐ
+    const questionGoal = String(body.question_goal ?? existingMeta.research_goal ?? "").trim();
     const sortOrder    = Number(body.sort_order)    || existing.sort_order;
 
     if (!questionText) {
@@ -1973,7 +1993,6 @@ export const adminController = {
     }
 
     // question_config: 既存を保持しつつ上書き
-    const existingConfig = (existing.question_config ?? {}) as Record<string, unknown>;
     const newConfig: Record<string, unknown> = { ...existingConfig };
 
     // 選択肢
@@ -1984,7 +2003,6 @@ export const adminController = {
     }
 
     // meta.research_goal
-    const existingMeta = (existingConfig.meta ?? {}) as Record<string, unknown>;
     newConfig.meta = { ...existingMeta, research_goal: questionGoal };
 
     await questionRepository.update(questionId, {
@@ -2172,5 +2190,482 @@ export const adminController = {
       return;
     }
     res.json({ ok: true });
+  },
+
+  // ------------------------------------------------------------------
+  // フロー流用・自動生成 API
+  // ------------------------------------------------------------------
+
+  /**
+   * GET /admin/api/projects-for-import
+   * フロー流用のための過去案件一覧を取得する
+   */
+  async apiListProjectsForImport(req: Request, res: Response): Promise<void> {
+    const excludeId = queryString(req.query.exclude);
+    const allProjects = await projectRepository.list();
+    const result = allProjects
+      .filter((p) => p.id !== excludeId)
+      .map((p) => ({
+        id: p.id,
+        name: p.name,
+        objective: p.objective ?? "",
+        status: p.status,
+        created_at: p.created_at,
+      }));
+    res.json({ ok: true, projects: result });
+  },
+
+  /**
+   * GET /admin/api/projects/:sourceProjectId/flow-preview
+   * 過去案件の質問一覧をプレビュー用に取得する
+   */
+  async apiGetProjectFlowPreview(req: Request, res: Response): Promise<void> {
+    const sourceProjectId = routeParam(req, "sourceProjectId");
+    const [project, questions] = await Promise.all([
+      projectRepository.getById(sourceProjectId),
+      questionRepository.listByProject(sourceProjectId, { includeHidden: false }),
+    ]);
+
+    const result = questions
+      .filter((q) => !(q as unknown as Record<string, unknown>).is_system)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((q) => ({
+        id: q.id,
+        question_code: q.question_code,
+        question_text: q.question_text,
+        question_type: q.question_type,
+        question_role: q.question_role,
+        sort_order: q.sort_order,
+        is_required: q.is_required,
+        ai_probe_enabled: q.ai_probe_enabled,
+        branch_rule: q.branch_rule ?? null,
+        question_config: q.question_config ?? null,
+      }));
+
+    res.json({
+      ok: true,
+      project: {
+        id: project.id,
+        name: project.name,
+        objective: project.objective ?? "",
+      },
+      questions: result,
+    });
+  },
+
+  /**
+   * POST /admin/api/projects/:projectId/flow/import-from-project
+   * 過去案件のフローをAIでテキスト調整して新規案件に複製する
+   */
+  async apiImportFlowFromProject(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const body = req.body as Record<string, unknown>;
+    const sourceProjectId = String(body.source_project_id ?? "").trim();
+
+    if (!sourceProjectId) {
+      res.status(400).json({ error: "参照元プロジェクトIDが必要です" });
+      return;
+    }
+
+    const IMAGE_QUESTION_TYPES = ["image_upload", "text_with_image"];
+
+    const [targetProject, sourceProject, sourceQuestions, existingQuestions] =
+      await Promise.all([
+        projectRepository.getById(projectId),
+        projectRepository.getById(sourceProjectId),
+        questionRepository.listByProject(sourceProjectId, { includeHidden: false }),
+        questionRepository.listByProject(projectId, { includeHidden: false }),
+      ]);
+
+    const filteredSource = sourceQuestions
+      .filter((q) => !(q as unknown as Record<string, unknown>).is_system)
+      .sort((a, b) => a.sort_order - b.sort_order);
+
+    if (filteredSource.length === 0) {
+      res.status(400).json({ error: "参照元プロジェクトに流用できる質問がありません" });
+      return;
+    }
+
+    // AI によるテキスト調整
+    const questionsForAI = filteredSource.map((q, i) => {
+      const cfg = (q.question_config ?? {}) as Record<string, unknown>;
+      const meta = (cfg.meta ?? {}) as Record<string, unknown>;
+      const opts = (cfg.options ?? []) as Array<{ label?: string; value?: string }>;
+      return {
+        index: i,
+        question_code: q.question_code,
+        question_text: q.question_text,
+        question_type: q.question_type,
+        options: opts.map((o) => o.label ?? o.value ?? "").filter(Boolean),
+        research_goal: String(meta.research_goal ?? ""),
+      };
+    });
+
+    const adjustedMap: Record<
+      number,
+      { question_text: string; options: string[]; research_goal: string }
+    > = {};
+
+    try {
+      const { openai } = await import("../config/openai");
+      const systemPrompt = [
+        "あなたはアンケート設計専門家です。",
+        "参照元案件の設問テキストを、新規案件の「プロジェクト名」と「調査目的」に合わせて自然に書き換えてください。",
+        "設問の構造・順番・回答形式・分岐設定は変更しないこと。",
+        "必ずJSON形式のみで回答すること。日本語で出力すること。",
+      ].join("\n");
+
+      const userPrompt = `新規案件:
+- プロジェクト名: ${targetProject.name}
+- 調査目的: ${targetProject.objective ?? "未設定"}
+
+参照元案件:
+- プロジェクト名: ${sourceProject.name}
+- 調査目的: ${sourceProject.objective ?? "未設定"}
+
+以下の設問リストを新規案件向けに修正し、同じindex配列で返してください:
+${JSON.stringify(questionsForAI, null, 2)}
+
+以下のJSON形式のみで回答:
+{"adjusted_questions":[{"index":0,"question_text":"修正後の設問文","options":["選択肢1"],"research_goal":"修正後のgoal"}]}`;
+
+      const aiResp = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.3,
+        max_tokens: 4000,
+        response_format: { type: "json_object" },
+      });
+
+      const raw = aiResp.choices[0]?.message?.content ?? "{}";
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const list = (parsed.adjusted_questions ?? []) as Array<Record<string, unknown>>;
+      for (const item of list) {
+        if (typeof item.index === "number") {
+          adjustedMap[item.index] = {
+            question_text: String(item.question_text ?? ""),
+            options: Array.isArray(item.options)
+              ? (item.options as unknown[]).map(String)
+              : [],
+            research_goal: String(item.research_goal ?? ""),
+          };
+        }
+      }
+    } catch {
+      // AI 調整失敗時は元テキストをそのまま使用
+    }
+
+    const warnings: string[] = [];
+    const createdQuestions: Question[] = [];
+    const sortOrderBase =
+      existingQuestions.length > 0
+        ? Math.max(...existingQuestions.map((q) => q.sort_order)) + 1
+        : 1;
+
+    // 質問コードのマッピング (旧→新) を事前収集するため2パスで処理
+    const codeMapping: Record<string, string> = {};
+
+    for (const [i, src] of filteredSource.entries()) {
+      const adjusted = adjustedMap[i];
+      const sortOrder = sortOrderBase + i;
+
+      // 画像系タイプを安全な形式に変換
+      let questionType = src.question_type as QuestionType;
+      let hadImageType = false;
+      if (IMAGE_QUESTION_TYPES.includes(questionType)) {
+        const original = questionType;
+        questionType = questionType === "image_upload" ? "free_text_short" : "single_choice";
+        hadImageType = true;
+        warnings.push(
+          `「${src.question_code}」: 画像型（${original}）を ${questionType} に変換しました。画像の再設定が必要です。`
+        );
+      }
+
+      // 選択肢
+      const cfg = (src.question_config ?? {}) as Record<string, unknown>;
+      const meta = (cfg.meta ?? {}) as Record<string, unknown>;
+      const srcOpts = (cfg.options ?? []) as Array<{ label?: string; value?: string }>;
+
+      let newOptions: string[];
+      if (adjusted?.options && adjusted.options.length > 0) {
+        newOptions = adjusted.options;
+      } else if (!hadImageType) {
+        newOptions = srcOpts.map((o) => o.label ?? o.value ?? "").filter(Boolean);
+      } else {
+        newOptions = [];
+      }
+
+      const newConfig: Record<string, unknown> = {};
+      if (CHOICE_QUESTION_TYPES.includes(questionType) && newOptions.length > 0) {
+        newConfig.options = newOptions.map((l) => ({ label: l, value: l }));
+      }
+      const researchGoal =
+        adjusted?.research_goal || String(meta.research_goal ?? "");
+      newConfig.meta = { ...meta, research_goal: researchGoal };
+
+      const questionText =
+        (adjusted?.question_text || src.question_text || "（設問を入力してください）").trim() ||
+        "（設問を入力してください）";
+
+      const allForCode = [
+        ...existingQuestions,
+        ...createdQuestions,
+      ] as typeof existingQuestions;
+      const questionCode = buildQuestionCode({
+        requestedCode: "",
+        questionText,
+        sortOrder,
+        existingQuestions: allForCode,
+      });
+
+      codeMapping[src.question_code] = questionCode;
+
+      const created = await questionRepository.create({
+        project_id: projectId,
+        question_code: questionCode,
+        question_text: questionText,
+        question_role: parseQuestionRole(src.question_role),
+        question_type: questionType,
+        is_required: src.is_required,
+        sort_order: sortOrder,
+        ai_probe_enabled: src.ai_probe_enabled,
+        probe_guideline: src.probe_guideline ?? null,
+        max_probe_count: src.max_probe_count ?? null,
+        question_config: newConfig as Question["question_config"],
+        branch_rule: null,
+      });
+
+      createdQuestions.push(created);
+    }
+
+    // branch_rule を新コードで書き換え
+    for (const [i, src] of filteredSource.entries()) {
+      const created = createdQuestions[i];
+      if (!created) continue;
+      const srcBr = src.branch_rule;
+      if (!srcBr || Array.isArray(srcBr)) continue;
+
+      const br = srcBr as Record<string, unknown>;
+      const newBr: Record<string, unknown> = {};
+
+      if (br.default_next) {
+        const srcCode = String(br.default_next);
+        newBr.default_next =
+          srcCode === "END" ? "END" : (codeMapping[srcCode] ?? null);
+      }
+      if (Array.isArray(br.branches)) {
+        newBr.branches = (br.branches as Array<Record<string, unknown>>).map(
+          (b) => ({
+            ...b,
+            next:
+              b.next === "END"
+                ? "END"
+                : (codeMapping[String(b.next ?? "")] ?? b.next),
+          })
+        );
+      }
+
+      await questionRepository.update(created.id, {
+        branch_rule: newBr as Question["branch_rule"],
+      });
+    }
+
+    // 作成済み質問を再取得して返す
+    const allNew = await questionRepository.listByProject(projectId, {
+      includeHidden: false,
+    });
+    const newOnly = allNew.filter((q) =>
+      createdQuestions.some((c) => c.id === q.id)
+    );
+
+    res.json({ ok: true, questions: newOnly, warnings });
+  },
+
+  /**
+   * POST /admin/api/projects/:projectId/flow/generate
+   * プロジェクト名と調査目的からAIがフローを自動生成する
+   */
+  async apiGenerateFlow(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const [project, existingQuestions] = await Promise.all([
+      projectRepository.getById(projectId),
+      questionRepository.listByProject(projectId, { includeHidden: false }),
+    ]);
+
+    if (!project.name.trim() || !(project.objective ?? "").trim()) {
+      res.status(400).json({
+        error:
+          "プロジェクト名と調査目的を設定してからフロー生成を実行してください",
+      });
+      return;
+    }
+
+    const systemPrompt = [
+      "あなたはアンケート・インタビュー設計専門家です。",
+      "プロジェクト名と調査目的に沿った実用的な設問フローをJSON形式で生成してください。",
+      "設問は調査として成立する自然な流れで構成し、8〜15問程度にしてください。",
+      "日本語で出力し、必ずJSON形式のみで回答してください。",
+    ].join("\n");
+
+    const userPrompt = `プロジェクト名: ${project.name}
+調査目的: ${project.objective ?? ""}
+
+以下のJSON形式でフロー設計を生成してください:
+{
+  "questions": [
+    {
+      "question_text": "設問文",
+      "question_type": "single_choice|multi_choice|free_text_short|free_text_long|numeric|yes_no|scale",
+      "question_role": "screening|main|attribute|free_comment",
+      "is_required": true,
+      "ai_probe_enabled": false,
+      "research_goal": "この設問で知りたいこと（必須）",
+      "options": ["選択肢1", "選択肢2"]
+    }
+  ]
+}
+
+回答形式:
+- single_choice: 単一選択（options必須）
+- multi_choice: 複数選択（options必須）
+- free_text_short: 短文自由記述
+- free_text_long: 長文自由記述
+- numeric: 数値入力
+- yes_no: はい/いいえ
+- scale: スケール（1-5）
+
+注意: options は選択型のみ設定。research_goal は全設問に設定すること。`;
+
+    let generatedList: Array<Record<string, unknown>> = [];
+
+    try {
+      const { openai } = await import("../config/openai");
+      const aiResp = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.7,
+        max_tokens: 4000,
+        response_format: { type: "json_object" },
+      });
+
+      const raw = aiResp.choices[0]?.message?.content ?? "{}";
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      generatedList = (parsed.questions ?? []) as Array<Record<string, unknown>>;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: "AIフロー生成に失敗しました: " + msg });
+      return;
+    }
+
+    if (generatedList.length === 0) {
+      res.status(500).json({
+        error: "AI生成結果が空でした。もう一度お試しください。",
+      });
+      return;
+    }
+
+    const sortOrderBase =
+      existingQuestions.length > 0
+        ? Math.max(...existingQuestions.map((q) => q.sort_order)) + 1
+        : 1;
+
+    const createdQuestions: Question[] = [];
+
+    for (const [i, gen] of generatedList.entries()) {
+      const questionType = parseQuestionType(
+        String(gen.question_type ?? "free_text_short")
+      );
+      const questionText =
+        String(gen.question_text ?? "").trim() || "設問を入力してください";
+      const questionGoal =
+        String(gen.research_goal ?? "").trim() || "調査目的に沿った情報収集";
+      const sortOrder = sortOrderBase + i;
+
+      const allForCode = [
+        ...existingQuestions,
+        ...createdQuestions,
+      ] as typeof existingQuestions;
+      const questionCode = buildQuestionCode({
+        requestedCode: "",
+        questionText,
+        sortOrder,
+        existingQuestions: allForCode,
+      });
+
+      const options = Array.isArray(gen.options)
+        ? (gen.options as unknown[])
+            .map(String)
+            .filter((o) => o.trim())
+        : [];
+
+      const newConfig: Record<string, unknown> = {
+        meta: { research_goal: questionGoal },
+      };
+      if (CHOICE_QUESTION_TYPES.includes(questionType) && options.length > 0) {
+        newConfig.options = options.map((l) => ({ label: l, value: l }));
+      }
+
+      const created = await questionRepository.create({
+        project_id: projectId,
+        question_code: questionCode,
+        question_text: questionText,
+        question_role: parseQuestionRole(String(gen.question_role ?? "main")),
+        question_type: questionType,
+        is_required: Boolean(gen.is_required ?? true),
+        sort_order: sortOrder,
+        ai_probe_enabled: Boolean(gen.ai_probe_enabled ?? false),
+        probe_guideline: null,
+        max_probe_count: null,
+        question_config: newConfig as Question["question_config"],
+        branch_rule: null,
+      });
+
+      createdQuestions.push(created);
+    }
+
+    res.json({
+      ok: true,
+      questions: createdQuestions,
+      generated_count: createdQuestions.length,
+    });
+  },
+
+  /**
+   * GET /admin/api/projects/:projectId/option-sets
+   * 選択肢流用のための同プロジェクト内の選択肢セット一覧を取得
+   */
+  async apiGetOptionSets(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const questions = await questionRepository.listByProject(projectId, {
+      includeHidden: false,
+    });
+
+    const optionSets = questions
+      .filter((q) => {
+        const cfg = (q.question_config ?? {}) as Record<string, unknown>;
+        const opts = (cfg.options ?? []) as Array<{ label?: string }>;
+        return opts.length > 0;
+      })
+      .map((q) => {
+        const cfg = (q.question_config ?? {}) as Record<string, unknown>;
+        const opts = (cfg.options ?? []) as Array<{ label?: string; value?: string }>;
+        return {
+          question_id: q.id,
+          question_code: q.question_code,
+          question_text: q.question_text.slice(0, 60),
+          question_type: q.question_type,
+          options: opts
+            .map((o) => o.label ?? o.value ?? "")
+            .filter(Boolean),
+        };
+      });
+
+    res.json({ ok: true, option_sets: optionSets });
   },
 };

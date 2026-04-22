@@ -32,6 +32,10 @@ export function errorHandler(
   });
 
   const statusCode = error instanceof HttpError ? error.statusCode : 500;
+  if (req.path.startsWith("/admin/api")) {
+    res.status(statusCode).json({ error: error.message });
+    return;
+  }
   if (req.path.startsWith("/admin")) {
     res.status(statusCode).render("error", {
       title: "Error",

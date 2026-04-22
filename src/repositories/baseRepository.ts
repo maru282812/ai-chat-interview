@@ -9,6 +9,6 @@ export function requireData<T>(data: T | null, message: string): T {
 
 export function throwIfError(error: { message: string } | null): void {
   if (error) {
-    throw new Error(error.message);
+    throw new HttpError(500, error.message);
   }
 }
