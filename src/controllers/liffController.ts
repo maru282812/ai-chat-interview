@@ -236,7 +236,19 @@ export const liffController = {
   // ------------------------------------------------------------------
 
   async surveyPage(req: Request, res: Response): Promise<void> {
-    const assignmentId = stringValue(req.params.assignmentId ?? req.query.assignment_id ?? "");
+    // liff.state は LIFF SDK がリダイレクト時に付与するエンコード済みクエリ文字列。
+    // 例: ?liff.state=%3Fassignment_id%3Dxxx → assignment_id=xxx を展開して取得する。
+    let liffStateAssignmentId: string | undefined;
+    const liffState = stringValue(req.query["liff.state"] ?? "");
+    if (liffState) {
+      try {
+        const params = new URLSearchParams(liffState.startsWith("?") ? liffState.slice(1) : liffState);
+        liffStateAssignmentId = params.get("assignment_id") ?? undefined;
+      } catch {
+        // parse failure → fall through
+      }
+    }
+    const assignmentId = stringValue(req.params.assignmentId ?? liffStateAssignmentId ?? req.query.assignment_id ?? "");
     if (!assignmentId) {
       // 利用者向けに分かりやすいメッセージを返す
       res.status(400).render("liff/survey", {
@@ -364,6 +376,10 @@ export const liffController = {
     const sessionId = stringValue(req.body.session_id).trim();
     const questionCode = stringValue(req.body.question_code).trim();
     const answerValue = req.body.answer_value;
+    const freeTextRaw = stringValue(req.body.free_text_answer).trim() || null;
+    const normalizedAnswerRaw = req.body.normalized_answer;
+
+    console.log("RECEIVED_ANSWER", { sessionId, questionCode, answerValue, freeTextRaw });
 
     if (!sessionId || !questionCode) {
       res.status(400).json({ ok: false, error: "session_id と question_code は必須です。" });
@@ -371,6 +387,8 @@ export const liffController = {
     }
 
     const session = await sessionRepository.getById(sessionId);
+    console.log("ASSIGNMENT_STATE", { session_id: session.id, project_id: session.project_id, status: session.status });
+
     const question = await questionRepository.getByProjectAndCode(session.project_id, questionCode);
     if (!question) {
       res.status(404).json({ ok: false, error: `質問コードが見つかりません: ${questionCode}` });
@@ -381,16 +399,94 @@ export const liffController = {
       ? answerValue.join(",")
       : String(answerValue ?? "");
 
+    const normalizedAnswer =
+      normalizedAnswerRaw !== null &&
+      normalizedAnswerRaw !== undefined &&
+      typeof normalizedAnswerRaw === "object"
+        ? (normalizedAnswerRaw as Record<string, unknown>)
+        : null;
+
     await answerRepository.create({
       session_id: sessionId,
       question_id: question.id,
       answer_text: answerText,
+      free_text_answer: freeTextRaw,
       answer_role: "primary",
+      normalized_answer: normalizedAnswer ?? undefined,
     });
 
     await sessionRepository.update(sessionId, { current_question_id: question.id });
 
     res.json({ ok: true });
+  },
+
+  async uploadRespondentImage(req: Request, res: Response): Promise<void> {
+    const body = req.body as {
+      session_id?: unknown;
+      assignment_id?: unknown;
+      data?: unknown;
+      filename?: unknown;
+      mimeType?: unknown;
+    };
+
+    const sessionId = stringValue(body.session_id).trim();
+    const assignmentId = stringValue(body.assignment_id).trim();
+    const base64Data = typeof body.data === "string" ? body.data : null;
+    const filename = typeof body.filename === "string"
+      ? body.filename.replace(/[^a-zA-Z0-9._-]/g, "_")
+      : "upload";
+    const mimeType = typeof body.mimeType === "string" ? body.mimeType : "image/jpeg";
+
+    if (!sessionId || !assignmentId) {
+      res.status(400).json({ ok: false, error: "session_id と assignment_id は必須です。" });
+      return;
+    }
+    if (!base64Data) {
+      res.status(400).json({ ok: false, error: "data (base64) は必須です。" });
+      return;
+    }
+    if (!["image/png", "image/jpeg", "image/jpg", "image/webp", "image/heic"].includes(mimeType)) {
+      res.status(400).json({ ok: false, error: "サポートされていない画像形式です。" });
+      return;
+    }
+
+    const session = await sessionRepository.getById(sessionId);
+    if (!session) {
+      res.status(403).json({ ok: false, error: "セッションが見つかりません。" });
+      return;
+    }
+    const assignment = await projectAssignmentRepository.getById(assignmentId);
+    if (!assignment || assignment.id !== assignmentId) {
+      res.status(403).json({ ok: false, error: "割り当て情報が正しくありません。" });
+      return;
+    }
+
+    const buffer = Buffer.from(base64Data, "base64");
+    const maxSizeMb = 10;
+    if (buffer.byteLength > maxSizeMb * 1024 * 1024) {
+      res.status(400).json({ ok: false, error: `画像サイズは${maxSizeMb}MB以下にしてください。` });
+      return;
+    }
+
+    const { supabase } = await import("../config/supabase");
+    const ext = mimeType === "image/heic" ? "heic" : mimeType.split("/")[1] ?? "jpg";
+    const storagePath = `answers/${assignmentId}/${Date.now()}-${filename}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("respondent-uploads")
+      .upload(storagePath, buffer, { contentType: mimeType, upsert: false });
+
+    if (uploadError) {
+      console.error("respondent-uploads upload error", uploadError);
+      res.status(500).json({ ok: false, error: `アップロードに失敗しました: ${uploadError.message}` });
+      return;
+    }
+
+    const { data: urlData } = supabase.storage
+      .from("respondent-uploads")
+      .getPublicUrl(storagePath);
+
+    res.json({ ok: true, url: urlData.publicUrl, path: storagePath });
   },
 
   async completeSurvey(req: Request, res: Response): Promise<void> {

@@ -1,0 +1,37 @@
+-- ============================================================
+-- 020: 画像機能拡張
+-- 目的: 画像付きマトリクス / 画像カード選択肢 / image_upload 回答
+--      に対応するための Storage バケット設定と補足コメント
+-- ============================================================
+
+-- questions.question_config は既存の JSONB カラム。
+-- 以下のフィールドを新たに利用する（スキーマ変更不要）:
+--   options[].imageUrls   text[]  行/選択肢の複数画像 URL
+--   options[].title       text    カード表示タイトル
+--   options[].description text    補足説明
+--   display_format        text    'list' | 'card'
+--   grid_cols             int     カードグリッド列数
+--   matrix_header_mode    text    'normal' | 'vertical' | 'rotated'
+--   image_upload_config   jsonb   image_upload 設問の設定
+
+-- answers.normalized_answer は既存の JSONB カラム。
+-- image_upload 回答は以下の形式で保存する:
+--   { type: 'image_upload', urls: string[], files: [{ url, path, name, mime, size }] }
+
+-- ============================================================
+-- Supabase Storage バケット設定
+-- ============================================================
+-- 回答者アップロード画像用バケット "respondent-uploads" を作成してください。
+-- Supabase ダッシュボード → Storage → New bucket で作成:
+--   Name: respondent-uploads
+--   Public: false (署名付きURL or サービスロールキーで参照)
+--
+-- RLS ポリシー例（Supabase ダッシュボードまたは SQL エディタで設定）:
+--   INSERT: authenticated ユーザーまたはサービスロールキー経由のみ
+--   SELECT: サービスロールキー経由のみ（管理者のみ閲覧可能）
+--
+-- アプリ側はサービスロールキー（SUPABASE_SERVICE_ROLE_KEY）を使って
+-- アップロード・URL取得を行うため、RLS は INSERT 制限として機能する。
+-- ただし本アプリでは session_id + assignment_id の検証をサーバー側で
+-- 行うため、Storage RLS よりもアプリ側検証を主防御とする。
+-- ============================================================

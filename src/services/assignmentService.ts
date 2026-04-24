@@ -20,6 +20,8 @@ import type {
   UserProfile
 } from "../types/domain";
 import { lineMessagingService } from "./lineMessagingService";
+import { buildProjectStartUrl } from "./liffService";
+import { buildProjectStartFlex } from "../templates/flex";
 
 export interface AssignmentRuleFilter {
   rank_code?: string | null;
@@ -162,12 +164,33 @@ function buildAssignmentPushText(project: Project, deadline: string | null): str
   return lines.join("\n");
 }
 
+function buildAssignmentLinePushText(project: Project, deadline: string | null): string {
+  const lines = [
+    `新しいインタビュー案件「${project.name}」を配信しました。`,
+    "このままLINEトークで回答できます。"
+  ];
+  if (deadline) {
+    lines.push(`回答期限: ${formatDeadline(deadline)}`);
+  }
+  lines.push("開始するには「はじめる」と送信してください。");
+  return lines.join("\n");
+}
+
 function buildReminderPushText(deadline: string | null): string {
   const lines = ["まだ回答が完了していません。期限までにご回答ください。"];
   if (deadline) {
     lines.push(`回答期限: ${formatDeadline(deadline)}`);
   }
   lines.push("続きから再開するには「再開」と送信してください。");
+  return lines.join("\n");
+}
+
+function buildLineReminderPushText(deadline: string | null): string {
+  const lines = ["まだ回答が完了していません。期限までにご回答ください。"];
+  if (deadline) {
+    lines.push(`回答期限: ${formatDeadline(deadline)}`);
+  }
+  lines.push("続きから回答するには「再開」または「はじめる」と送信してください。");
   return lines.join("\n");
 }
 
@@ -592,6 +615,7 @@ export const assignmentService = {
     deadline: string | null;
     assignmentType?: "manual" | "rule_based";
     filterSnapshot?: Record<string, unknown> | null;
+    deliveryChannel?: "liff" | "line";
   }): Promise<{ sentCount: number; failedCount: number }> {
     const uniqueIds = [...new Set(input.sourceRespondentIds.filter(Boolean))];
     if (uniqueIds.length === 0) {
@@ -606,6 +630,8 @@ export const assignmentService = {
       const targetRespondent = await ensureTargetRespondent(input.projectId, sourceRespondentId);
       const nowIso = new Date().toISOString();
 
+      const deliveryChannel = input.deliveryChannel ?? "liff";
+
       let assignment =
         (await projectAssignmentRepository.getByProjectAndRespondent(
           input.projectId,
@@ -617,6 +643,7 @@ export const assignmentService = {
           respondent_id: targetRespondent.id,
           assignment_type: input.assignmentType ?? "manual",
           status: "assigned",
+          delivery_channel: deliveryChannel,
           assigned_at: nowIso,
           deadline: input.deadline,
           filter_snapshot: input.filterSnapshot ?? null
@@ -626,6 +653,7 @@ export const assignmentService = {
       assignment = await projectAssignmentRepository.update(assignment.id, {
         user_id: targetRespondent.line_user_id,
         assignment_type: input.assignmentType ?? "manual",
+        delivery_channel: deliveryChannel,
         filter_snapshot: input.filterSnapshot ?? null,
         deadline: input.deadline,
         last_delivery_error: null,
@@ -659,12 +687,19 @@ export const assignmentService = {
       }
 
       try {
-        await lineMessagingService.push(targetRespondent.line_user_id, [
-          {
-            type: "text",
-            text: buildAssignmentPushText(project, input.deadline)
-          }
-        ]);
+        if (deliveryChannel === "line") {
+          await lineMessagingService.push(targetRespondent.line_user_id, [
+            {
+              type: "text",
+              text: buildAssignmentLinePushText(project, input.deadline)
+            }
+          ]);
+        } else {
+          const { url } = buildProjectStartUrl(assignment.id);
+          await lineMessagingService.push(targetRespondent.line_user_id, [
+            buildProjectStartFlex({ projectName: project.name, url })
+          ]);
+        }
 
         await persistAssignmentDeliveryResult(assignment, {
           status: assignment.status === "assigned" ? "sent" : assignment.status,
@@ -672,7 +707,7 @@ export const assignmentService = {
           deliveryEvent: {
             at: nowIso,
             result: "success",
-            type: "invite_push",
+            type: deliveryChannel === "line" ? "invite_push_line" : "invite_push_liff",
             assignment_type: input.assignmentType ?? "manual"
           }
         });
@@ -688,7 +723,7 @@ export const assignmentService = {
           deliveryEvent: {
             at: nowIso,
             result: "failure",
-            type: "invite_push",
+            type: deliveryChannel === "line" ? "invite_push_line" : "invite_push_liff",
             assignment_type: input.assignmentType ?? "manual",
             error: error instanceof Error ? error.message : String(error)
           }
@@ -745,19 +780,27 @@ export const assignmentService = {
         continue;
       }
 
+      const isLiff = item.assignment.delivery_channel !== "line";
       try {
-        await lineMessagingService.push(lineUserId, [
-          {
-            type: "text",
-            text: buildReminderPushText(item.assignment.deadline)
-          }
-        ]);
+        if (isLiff) {
+          const { url } = buildProjectStartUrl(item.assignment.id);
+          await lineMessagingService.push(lineUserId, [
+            buildProjectStartFlex({ projectName: overview.project.name, url })
+          ]);
+        } else {
+          await lineMessagingService.push(lineUserId, [
+            {
+              type: "text",
+              text: buildLineReminderPushText(item.assignment.deadline)
+            }
+          ]);
+        }
         await persistAssignmentDeliveryResult(item.assignment, {
           reminderSentAt: reminderAt,
           deliveryEvent: {
             at: reminderAt,
             result: "success",
-            type: "reminder_push"
+            type: isLiff ? "reminder_push_liff" : "reminder_push_line"
           }
         });
         remindedCount += 1;
@@ -772,7 +815,7 @@ export const assignmentService = {
           deliveryEvent: {
             at: reminderAt,
             result: "failure",
-            type: "reminder_push",
+            type: isLiff ? "reminder_push_liff" : "reminder_push_line",
             error: error instanceof Error ? error.message : String(error)
           }
         });

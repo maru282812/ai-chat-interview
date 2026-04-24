@@ -134,6 +134,28 @@ export function getMypageLiffId(): string | null {
 }
 
 /**
+ * 案件選択後の LIFF 開始 URL を生成する。
+ * LINE_LIFF_ID_SURVEY が設定されていれば LIFF URL、未設定なら絶対 URL を返す。
+ * survey ページは ?assignment_id= クエリパラムにも対応済み。
+ */
+export function buildProjectStartUrl(assignmentId: string): {
+  url: string;
+  hasLiffId: boolean;
+} {
+  const liffId = getSurveyLiffId();
+  if (liffId) {
+    return {
+      url: buildLiffUrl(liffId, { assignment_id: assignmentId }),
+      hasLiffId: true
+    };
+  }
+  return {
+    url: buildAbsoluteUrl(`/liff/survey/${assignmentId}`),
+    hasLiffId: false
+  };
+}
+
+/**
  * survey の LIFF 設定状態を返す。
  * LINE Developers 側で以下が必要:
  *   - LINE_LIFF_CHANNEL_ID: LIFF チャネル ID

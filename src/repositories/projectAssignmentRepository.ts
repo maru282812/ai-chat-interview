@@ -18,6 +18,7 @@ interface ProjectAssignmentCreateInput {
   respondent_id: string;
   assignment_type: ProjectAssignmentType;
   status?: ProjectAssignmentStatus;
+  delivery_channel?: "liff" | "line";
   filter_snapshot?: Record<string, unknown> | null;
   assigned_at?: string;
   deadline?: string | null;
@@ -30,6 +31,7 @@ type ProjectAssignmentUpdateInput = Partial<
     | "user_id"
     | "assignment_type"
     | "status"
+    | "delivery_channel"
     | "filter_snapshot"
     | "assigned_at"
     | "deadline"

@@ -209,6 +209,45 @@ export function buildMypageFlex(input: {
   };
 }
 
+export function buildProjectStartFlex(input: {
+  projectName: string;
+  url: string;
+}): LineFlexMessage {
+  return {
+    type: "flex",
+    altText: `${input.projectName} - 回答を開始する`,
+    contents: bubble([
+      {
+        type: "text",
+        text: input.projectName,
+        size: "xl",
+        weight: "bold",
+        wrap: true
+      },
+      {
+        type: "text",
+        text: "この案件は専用画面で回答します。以下から開始してください。",
+        size: "sm",
+        wrap: true,
+        color: "#666666"
+      },
+      {
+        type: "separator"
+      },
+      {
+        type: "button",
+        action: {
+          type: "uri",
+          label: "回答を開始する",
+          uri: input.url
+        },
+        style: "primary",
+        color: "#0B7A75"
+      }
+    ])
+  };
+}
+
 export function buildRankUpMessages(newRankName: string): LineMessage[] {
   return [
     {

@@ -7,6 +7,9 @@
   const optionLabels = Array.isArray(safeForm.option_labels) && safeForm.option_labels.length > 0
     ? safeForm.option_labels
     : [""];
+  const optionImageUrls = Array.isArray(safeForm.option_image_urls)
+    ? safeForm.option_image_urls
+    : [];
   const extractionItems = Array.isArray(safeForm.extraction_items) && safeForm.extraction_items.length > 0
     ? safeForm.extraction_items : [""];
   const nextQuestionOptions = (availableQuestions || [])
@@ -243,12 +246,34 @@
       <div id="typeChoiceFields" class="stack-sm <%= !CHOICE_TYPES.includes(qType) ? 'hidden' : '' %>">
         <h3>選択肢</h3>
         <div id="optionRows" class="stack-sm">
-          <% for (const label of optionLabels) { %>
+          <% for (let i = 0; i < optionLabels.length; i++) { %>
+            <% const label = optionLabels[i]; %>
+            <% const imgUrl = optionImageUrls[i] || ''; %>
             <div class="row-card option-row">
-              <label>
-                選択肢テキスト
-                <input type="text" name="option_labels" value="<%= label %>" placeholder="例: 毎日" />
-              </label>
+              <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+                <label style="flex:1;min-width:160px;">
+                  選択肢テキスト
+                  <input type="text" name="option_labels" value="<%= label %>" placeholder="例: 毎日" />
+                </label>
+                <div style="flex:2;min-width:200px;">
+                  <label>画像URL</label>
+                  <div style="display:flex;gap:4px;align-items:center;">
+                    <input type="url" name="option_image_urls" class="option-image-url"
+                      value="<%= imgUrl %>" placeholder="https://... または空欄"
+                      style="flex:1;" oninput="syncImagePreview(this)" />
+                    <label class="button-link secondary" style="white-space:nowrap;cursor:pointer;">
+                      ファイル選択
+                      <input type="file" accept="image/png,image/jpeg,image/webp" class="option-file-input" hidden />
+                    </label>
+                  </div>
+                  <div class="option-image-preview" style="margin-top:4px;<%= imgUrl ? '' : 'display:none;' %>">
+                    <img src="<%= imgUrl %>" alt="preview"
+                      style="max-width:120px;max-height:80px;border-radius:4px;border:1px solid #ddd;"
+                      onerror="this.parentElement.style.display='none'" />
+                    <button type="button" class="button-link danger remove-image" style="font-size:12px;">削除</button>
+                  </div>
+                </div>
+              </div>
               <div class="inline-actions">
                 <button type="button" class="button-link danger remove-row">削除</button>
               </div>
@@ -257,6 +282,31 @@
         </div>
         <div class="inline-actions">
           <button type="button" class="button-link secondary" id="addOptionRow">選択肢を追加</button>
+        </div>
+      </div>
+
+      <!-- 選択肢表示形式 -->
+      <div id="typeChoiceDisplayFields" class="stack-sm <%= !CHOICE_TYPES.includes(qType) ? 'hidden' : '' %>"
+           style="padding:12px;border:1px solid #d8e3e0;border-radius:10px;background:#fafcfb;">
+        <h4 style="margin:0 0 10px 0;font-size:14px;">選択肢の表示形式</h4>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="display_format" value="list"
+              <%= (safeForm.display_format || 'list') === 'list' ? 'checked' : '' %> />
+            リスト表示（従来）
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="display_format" value="card"
+              <%= safeForm.display_format === 'card' ? 'checked' : '' %> />
+            画像カードグリッド表示
+          </label>
+        </div>
+        <div id="gridColsField" style="margin-top:8px;<%= safeForm.display_format === 'card' ? '' : 'display:none;' %>">
+          <label style="font-size:13px;">
+            グリッド列数
+            <input type="number" name="grid_cols" min="1" max="4"
+              value="<%= safeForm.grid_cols || '2' %>" style="width:60px;" />
+          </label>
         </div>
       </div>
 
@@ -292,17 +342,124 @@
       <!-- マトリクス設定 -->
       <div id="typeMatrixFields" class="stack-sm <%= !MATRIX_TYPES.includes(qType) ? 'hidden' : '' %>">
         <h3>マトリクス設定</h3>
+
+        <!-- 行設定（画像・説明付き） -->
+        <div>
+          <label style="font-weight:600;">行設定 <span style="color:red">*</span></label>
+          <p class="helper-text">行ラベルは必須。画像URL・説明は省略可（未設定時はテキストのみ表示）。</p>
+          <div id="matrixRowCards" class="stack-sm" style="margin-top:8px;">
+            <%
+              const matrixRowLabels = (safeForm.matrix_rows || '').split('\n').filter(s => s.trim());
+              const matrixRowImgs = Array.isArray(safeForm.matrix_row_image_urls) ? safeForm.matrix_row_image_urls : [];
+              const matrixRowDescs = Array.isArray(safeForm.matrix_row_descriptions) ? safeForm.matrix_row_descriptions : [];
+              const matrixRowCount = Math.max(matrixRowLabels.length, 1);
+            %>
+            <% for (let ri = 0; ri < matrixRowCount; ri++) { %>
+              <div class="row-card matrix-row-card">
+                <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+                  <label style="flex:1;min-width:140px;">
+                    行ラベル
+                    <input type="text" name="matrix_row_labels"
+                      value="<%= matrixRowLabels[ri] || '' %>" placeholder="例: 満足度" />
+                  </label>
+                  <div style="flex:2;min-width:200px;">
+                    <label>画像URL（省略可）</label>
+                    <div style="display:flex;gap:4px;align-items:center;">
+                      <input type="url" name="matrix_row_image_urls" class="option-image-url"
+                        value="<%= matrixRowImgs[ri] || '' %>" placeholder="https://..."
+                        style="flex:1;" oninput="syncImagePreview(this)" />
+                      <label class="button-link secondary" style="white-space:nowrap;cursor:pointer;">
+                        ファイル選択
+                        <input type="file" accept="image/png,image/jpeg,image/webp" class="option-file-input" hidden />
+                      </label>
+                    </div>
+                    <% const rowImg = matrixRowImgs[ri] || ''; %>
+                    <div class="option-image-preview" style="margin-top:4px;<%= rowImg ? '' : 'display:none;' %>">
+                      <img src="<%= rowImg %>" alt="preview"
+                        style="max-width:120px;max-height:80px;border-radius:4px;border:1px solid #ddd;"
+                        onerror="this.parentElement.style.display='none'" />
+                      <button type="button" class="button-link danger remove-image" style="font-size:12px;">削除</button>
+                    </div>
+                  </div>
+                  <label style="flex:2;min-width:160px;">
+                    補足説明（省略可）
+                    <input type="text" name="matrix_row_descriptions"
+                      value="<%= matrixRowDescs[ri] || '' %>" placeholder="例: ブランド名・商品説明" />
+                  </label>
+                </div>
+                <div class="inline-actions">
+                  <button type="button" class="button-link danger remove-matrix-row">削除</button>
+                </div>
+              </div>
+            <% } %>
+          </div>
+          <div class="inline-actions" style="margin-top:8px;">
+            <button type="button" class="button-link secondary" id="addMatrixRow">行を追加</button>
+          </div>
+          <!-- 旧フォーマット互換用（送信時に JS が同期する） -->
+          <input type="hidden" name="matrix_rows" id="matrixRowsHidden" value="<%= safeForm.matrix_rows || '' %>" />
+        </div>
+
+        <!-- 列設定 -->
+        <label>
+          列（改行区切り）<span style="color:red">*</span>
+          <textarea name="matrix_cols" rows="4"
+            placeholder="例:&#10;そう思う&#10;どちらでもない&#10;そう思わない"><%= safeForm.matrix_cols || '' %></textarea>
+        </label>
+
+        <!-- 列見出し表示モード -->
+        <div>
+          <label style="font-weight:600;">列見出し表示モード</label>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="radio" name="matrix_header_mode" value="normal"
+                <%= (safeForm.matrix_header_mode || 'normal') === 'normal' ? 'checked' : '' %> />
+              通常（横書き）
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="radio" name="matrix_header_mode" value="vertical"
+                <%= safeForm.matrix_header_mode === 'vertical' ? 'checked' : '' %> />
+              縦書き
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="radio" name="matrix_header_mode" value="rotated"
+                <%= safeForm.matrix_header_mode === 'rotated' ? 'checked' : '' %> />
+              90°回転
+            </label>
+          </div>
+        </div>
+
+        <p class="helper-text">マトリクス（複数）の場合、各行で複数選択できます。（混合）は行ごとに列タイプ設定が必要です。</p>
+      </div>
+
+      <!-- image_upload 設定 -->
+      <div id="typeImageUploadFields" class="stack-sm <%= qType !== 'image_upload' ? 'hidden' : '' %>"
+           style="padding:12px;border:1px solid #d8e3e0;border-radius:10px;background:#fafcfb;">
+        <h3 style="margin:0 0 12px 0;">画像アップロード設定</h3>
         <div class="form-grid">
           <label>
-            行（改行区切り）<span style="color:red">*</span>
-            <textarea name="matrix_rows" rows="4" placeholder="例:&#10;満足度&#10;使いやすさ&#10;デザイン"><%= safeForm.matrix_rows || '' %></textarea>
+            最大アップロード枚数
+            <input type="number" name="image_upload_max_count" min="1" max="20"
+              value="<%= safeForm.image_upload_max_count || '1' %>" />
           </label>
           <label>
-            列（改行区切り）<span style="color:red">*</span>
-            <textarea name="matrix_cols" rows="4" placeholder="例:&#10;そう思う&#10;どちらでもない&#10;そう思わない"><%= safeForm.matrix_cols || '' %></textarea>
+            最大ファイルサイズ (MB)
+            <input type="number" name="image_upload_max_size_mb" min="1" max="50"
+              value="<%= safeForm.image_upload_max_size_mb || '10' %>" />
           </label>
         </div>
-        <p class="helper-text">マトリクス（複数）の場合、各行で複数選択できます。（混合）は行ごとに列タイプ設定が必要です。</p>
+        <label>
+          許可ファイル形式（カンマ区切り）
+          <input type="text" name="image_upload_allowed_types"
+            value="<%= safeForm.image_upload_allowed_types || 'image/jpeg,image/png,image/webp' %>"
+            placeholder="image/jpeg,image/png,image/webp" />
+          <span class="helper-text">例: image/jpeg,image/png,image/webp,image/heic</span>
+        </label>
+        <label>
+          回答者への注意書き（省略可）
+          <textarea name="image_upload_instructions" rows="2"
+            placeholder="例: 商品のパッケージが写るように撮影してください"><%= safeForm.image_upload_instructions || '' %></textarea>
+        </label>
       </div>
 
       <!-- 抽出設定 -->
@@ -703,6 +860,8 @@
     const type = document.getElementById('questionType').value;
     document.getElementById('typeChoiceFields').classList.toggle('hidden',
       !CHOICE_TYPES.includes(type));
+    document.getElementById('typeChoiceDisplayFields').classList.toggle('hidden',
+      !CHOICE_TYPES.includes(type));
     document.getElementById('typeMultiFields').classList.toggle('hidden',
       type !== 'multi_select' && type !== 'multi_choice');
     document.getElementById('typeYesNoFields').classList.toggle('hidden',
@@ -711,10 +870,22 @@
       !SCALE_TYPES.includes(type));
     document.getElementById('typeMatrixFields').classList.toggle('hidden',
       !MATRIX_TYPES.includes(type));
+    document.getElementById('typeImageUploadFields').classList.toggle('hidden',
+      type !== 'image_upload');
     document.getElementById('typeTextFields').classList.toggle('hidden',
-      CHOICE_TYPES.includes(type) || SCALE_TYPES.includes(type) || MATRIX_TYPES.includes(type));
+      CHOICE_TYPES.includes(type) || SCALE_TYPES.includes(type) || MATRIX_TYPES.includes(type) || type === 'image_upload');
   }
   document.getElementById('questionType').addEventListener('change', syncTypeVisibility);
+
+  // ----------------------------------------------------------------
+  // display_format 切り替え（カードグリッド設定の表示/非表示）
+  // ----------------------------------------------------------------
+  document.querySelectorAll('[name="display_format"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      const isCard = document.querySelector('[name="display_format"]:checked')?.value === 'card';
+      document.getElementById('gridColsField').style.display = isCard ? '' : 'none';
+    });
+  });
 
   // ----------------------------------------------------------------
   // 表示モードカード選択
@@ -766,14 +937,168 @@
     });
   }
 
-  function makeOptionRow(value = '') {
+  function makeOptionRow(value = '', imageUrl = '') {
     const d = document.createElement('div');
     d.className = 'row-card option-row';
-    d.innerHTML = `<label>選択肢テキスト
-      <input type="text" name="option_labels" value="${escHtml(value)}" placeholder="例: 毎日" />
-    </label><div class="inline-actions"><button type="button" class="button-link danger remove-row">削除</button></div>`;
+    d.innerHTML = `
+      <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+        <label style="flex:1;min-width:160px;">選択肢テキスト
+          <input type="text" name="option_labels" value="${escHtml(value)}" placeholder="例: 毎日" />
+        </label>
+        <div style="flex:2;min-width:200px;">
+          <label>画像URL</label>
+          <div style="display:flex;gap:4px;align-items:center;">
+            <input type="url" name="option_image_urls" class="option-image-url"
+              value="${escHtml(imageUrl)}" placeholder="https://... または空欄"
+              style="flex:1;" oninput="syncImagePreview(this)" />
+            <label class="button-link secondary" style="white-space:nowrap;cursor:pointer;">ファイル選択
+              <input type="file" accept="image/png,image/jpeg,image/webp" class="option-file-input" hidden />
+            </label>
+          </div>
+          <div class="option-image-preview" style="margin-top:4px;${imageUrl ? '' : 'display:none;'}">
+            <img src="${escHtml(imageUrl)}" alt="preview"
+              style="max-width:120px;max-height:80px;border-radius:4px;border:1px solid #ddd;"
+              onerror="this.parentElement.style.display='none'" />
+            <button type="button" class="button-link danger remove-image" style="font-size:12px;">削除</button>
+          </div>
+        </div>
+      </div>
+      <div class="inline-actions"><button type="button" class="button-link danger remove-row">削除</button></div>`;
+    attachImageHandlers(d);
     return d;
   }
+
+  function syncImagePreview(urlInput) {
+    const preview = urlInput.closest('div[style]').querySelector('.option-image-preview');
+    const img = preview.querySelector('img');
+    const url = urlInput.value.trim();
+    if (url) {
+      img.src = url;
+      preview.style.display = '';
+    } else {
+      preview.style.display = 'none';
+    }
+  }
+
+  function attachImageHandlers(container) {
+    container.querySelectorAll('.option-file-input').forEach(fileInput => {
+      fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const urlInput = fileInput.closest('div[style]').querySelector('.option-image-url');
+        const preview = fileInput.closest('div[style]').querySelector('.option-image-preview');
+        const img = preview.querySelector('img');
+        const label = fileInput.closest('label');
+        label.textContent = '送信中...';
+        try {
+          const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          const resp = await fetch('/admin/api/upload/image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: base64, filename: file.name, mimeType: file.type }),
+          });
+          const json = await resp.json();
+          if (!resp.ok || !json.url) throw new Error(json.error || 'Upload failed');
+          urlInput.value = json.url;
+          img.src = json.url;
+          preview.style.display = '';
+        } catch (err) {
+          alert('画像アップロード失敗: ' + err.message);
+        } finally {
+          label.innerHTML = 'ファイル選択<input type="file" accept="image/png,image/jpeg,image/webp" class="option-file-input" hidden />';
+          attachImageHandlers(label.closest('.option-row'));
+        }
+      });
+    });
+    container.querySelectorAll('.remove-image').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = btn.closest('.option-row') || btn.closest('div');
+        const urlInput = row.querySelector('.option-image-url');
+        const preview = btn.closest('.option-image-preview');
+        if (urlInput) urlInput.value = '';
+        if (preview) preview.style.display = 'none';
+      });
+    });
+  }
+  // ----------------------------------------------------------------
+  // マトリクス行カードの追加・削除・hidden 同期
+  // ----------------------------------------------------------------
+  function makeMatrixRowCard(label = '', imageUrl = '', description = '') {
+    const d = document.createElement('div');
+    d.className = 'row-card matrix-row-card';
+    d.innerHTML = `
+      <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+        <label style="flex:1;min-width:140px;">行ラベル
+          <input type="text" name="matrix_row_labels" value="${escHtml(label)}" placeholder="例: 満足度" />
+        </label>
+        <div style="flex:2;min-width:200px;">
+          <label>画像URL（省略可）</label>
+          <div style="display:flex;gap:4px;align-items:center;">
+            <input type="url" name="matrix_row_image_urls" class="option-image-url"
+              value="${escHtml(imageUrl)}" placeholder="https://..."
+              style="flex:1;" oninput="syncImagePreview(this)" />
+            <label class="button-link secondary" style="white-space:nowrap;cursor:pointer;">ファイル選択
+              <input type="file" accept="image/png,image/jpeg,image/webp" class="option-file-input" hidden />
+            </label>
+          </div>
+          <div class="option-image-preview" style="margin-top:4px;${imageUrl ? '' : 'display:none;'}">
+            <img src="${escHtml(imageUrl)}" alt="preview"
+              style="max-width:120px;max-height:80px;border-radius:4px;border:1px solid #ddd;"
+              onerror="this.parentElement.style.display='none'" />
+            <button type="button" class="button-link danger remove-image" style="font-size:12px;">削除</button>
+          </div>
+        </div>
+        <label style="flex:2;min-width:160px;">補足説明（省略可）
+          <input type="text" name="matrix_row_descriptions" value="${escHtml(description)}" placeholder="例: 商品名・説明" />
+        </label>
+      </div>
+      <div class="inline-actions"><button type="button" class="button-link danger remove-matrix-row">削除</button></div>`;
+    attachImageHandlers(d);
+    attachRemoveMatrixRow(d);
+    return d;
+  }
+
+  function attachRemoveMatrixRow(container) {
+    container.querySelectorAll('.remove-matrix-row').forEach(btn => {
+      btn.onclick = () => {
+        const rows = document.getElementById('matrixRowCards').querySelectorAll('.matrix-row-card');
+        if (rows.length <= 1) {
+          btn.closest('.matrix-row-card').querySelectorAll('input').forEach(f => f.value = '');
+          return;
+        }
+        btn.closest('.matrix-row-card').remove();
+        syncMatrixRowsHidden();
+      };
+    });
+  }
+
+  function syncMatrixRowsHidden() {
+    const labels = [...document.querySelectorAll('[name="matrix_row_labels"]')]
+      .map(el => el.value.trim()).filter(Boolean);
+    const hidden = document.getElementById('matrixRowsHidden');
+    if (hidden) hidden.value = labels.join('\n');
+  }
+
+  document.getElementById('addMatrixRow')?.addEventListener('click', () => {
+    const container = document.getElementById('matrixRowCards');
+    const card = makeMatrixRowCard();
+    container.appendChild(card);
+  });
+
+  // 既存行の削除ボタンをバインド
+  document.querySelectorAll('.matrix-row-card').forEach(card => attachRemoveMatrixRow(card));
+  document.querySelectorAll('#matrixRowCards .option-file-input').forEach(fi => attachImageHandlers(fi.closest('.matrix-row-card')));
+
+  // フォーム送信前に matrix_rows hidden を同期
+  document.querySelector('form').addEventListener('submit', () => {
+    syncMatrixRowsHidden();
+  });
+
   function makeExtractionRow(value = '') {
     const d = document.createElement('div');
     d.className = 'row-card extraction-row';
@@ -847,6 +1172,15 @@
   ['optionRows','extractionRows','branchRows','visCondRows','ansRows'].forEach(id => {
     const el = document.getElementById(id);
     if (el) attachRemoveRow(el);
+  });
+
+  // 既存の選択肢行の画像ハンドラを初期化
+  const optionRowsEl = document.getElementById('optionRows');
+  if (optionRowsEl) attachImageHandlers(optionRowsEl);
+
+  // URL直入力の既存行にも syncImagePreview を紐付け
+  optionRowsEl && optionRowsEl.querySelectorAll('.option-image-url').forEach(inp => {
+    inp.addEventListener('input', () => syncImagePreview(inp));
   });
 
   document.getElementById('addOptionRow').onclick      = () => addTo('optionRows', makeOptionRow);

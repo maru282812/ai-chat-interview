@@ -19,6 +19,7 @@ liffRoutes.post("/mypage-data", asyncHandler(liffController.updateMypageData));
 //       /survey/:assignmentId よりも先に定義しないとルーティングが衝突する
 liffRoutes.post("/survey/answer", asyncHandler(liffController.submitSurveyAnswer));
 liffRoutes.post("/survey/complete", asyncHandler(liffController.completeSurvey));
+liffRoutes.post("/survey/upload-image", asyncHandler(liffController.uploadRespondentImage));
 // LIFF ID token による本人確認エンドポイント
 // LINE Developers 側の LINE_LIFF_CHANNEL_ID + LINE_LIFF_ID_SURVEY 設定後に有効になる
 liffRoutes.post("/survey/verify-identity", asyncHandler(liffController.verifyIdentity));

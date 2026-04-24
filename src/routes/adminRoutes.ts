@@ -95,3 +95,6 @@ adminRoutes.get("/api/projects/:sourceProjectId/flow-preview",            asyncH
 adminRoutes.post("/api/projects/:projectId/flow/import-from-project",     asyncHandler(adminController.apiImportFlowFromProject));
 adminRoutes.post("/api/projects/:projectId/flow/generate",                asyncHandler(adminController.apiGenerateFlow));
 adminRoutes.get("/api/projects/:projectId/option-sets",                   asyncHandler(adminController.apiGetOptionSets));
+
+// 画像アップロード
+adminRoutes.post("/api/upload/image", asyncHandler(adminController.uploadImage));

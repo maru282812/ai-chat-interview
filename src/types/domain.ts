@@ -212,6 +212,20 @@ export interface Project {
 export interface QuestionOption {
   value: string;
   label: string;
+  imageUrl?: string;
+  /** 複数画像（画像付きマトリクス行や画像カード複数画像対応） */
+  imageUrls?: string[];
+  /** カード表示時のタイトル（labelと別に設定する場合） */
+  title?: string;
+  /** 補足説明（マトリクス行・カード選択肢） */
+  description?: string;
+}
+
+export interface ImageUploadConfig {
+  max_count?: number;
+  allowed_types?: string[];
+  max_size_mb?: number;
+  instructions?: string;
 }
 
 export interface LegacyBranchRuleCondition {
@@ -279,6 +293,7 @@ export interface QuestionExtractionConfig {
 
 export interface QuestionConfig {
   options?: QuestionOption[];
+  matrix_cols?: QuestionOption[];
   placeholder?: string;
   max_length?: number;
   example_answer?: string;
@@ -294,6 +309,14 @@ export interface QuestionConfig {
   scaleMax?: number;
   scaleLabels?: Record<string, string>;
   helpText?: string;
+  /** 選択肢表示形式: list=従来リスト, card=画像カードグリッド */
+  display_format?: "list" | "card";
+  /** カード表示時のグリッド列数 (デフォルト: 2) */
+  grid_cols?: number;
+  /** マトリクス列見出し表示モード */
+  matrix_header_mode?: "normal" | "vertical" | "rotated";
+  /** image_upload 設問の設定 */
+  image_upload_config?: ImageUploadConfig;
   meta?: QuestionMeta;
   extraction?: QuestionExtractionConfig | null;
   conversationControl?: {
@@ -449,6 +472,7 @@ export interface ProjectAssignment {
   respondent_id: UUID;
   assignment_type: ProjectAssignmentType;
   status: ProjectAssignmentStatus;
+  delivery_channel: "liff" | "line";
   filter_snapshot: Record<string, unknown> | null;
   assigned_at: string;
   deadline: string | null;
@@ -605,6 +629,7 @@ export interface Answer {
   session_id: UUID;
   question_id: UUID;
   answer_text: string;
+  free_text_answer: string | null;
   answer_role: AnswerRole;
   parent_answer_id: UUID | null;
   normalized_answer: Record<string, unknown> | null;

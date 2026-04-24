@@ -920,6 +920,24 @@
       });
     }
 
+    // 回答形式変更時 → 型別UI（#rp-type-specific）を即時切り替え
+    var rpBodyEl = document.getElementById('rpBody');
+    if (rpBodyEl) {
+      rpBodyEl.addEventListener('change', function (e) {
+        if (e.target.id !== 'rp-question_type') return;
+        var newType  = e.target.value;
+        var typeArea = document.getElementById('rp-type-specific');
+        if (!typeArea) return;
+        var currentConfig = q.question_config || {};
+        var currentOpts   = currentConfig.options || [];
+        typeArea.innerHTML = buildRpTypeSpecific(newType, currentOpts, currentConfig);
+        // AI候補キャッシュをクリア（型が変わったため）
+        delete aiSuggestionCache[q.id];
+        var aiArea = document.getElementById('rp-ai-suggestion-area');
+        if (aiArea) aiArea.innerHTML = '';
+      });
+    }
+
     // Restore AI suggestion if cached
     var cached = aiSuggestionCache[q.id];
     if (cached) {
@@ -966,10 +984,115 @@
     );
   }
 
+  // 回答形式ごとの型別設定UIを生成する
+  function buildRpTypeSpecific(qType, opts, config) {
+    var CHOICE_TYPES  = ['single_select','multi_select','single_choice','multi_choice','yes_no','hidden_single','hidden_multi','text_with_image','sd'];
+    var MATRIX_TYPES  = ['matrix_single','matrix_multi','matrix_mixed'];
+    var MULTI_TYPES   = ['multi_select','multi_choice'];
+    var TEXT_TYPES    = ['free_text_short','free_text_long','text'];
+
+    if (MATRIX_TYPES.includes(qType)) {
+      var matrixRowsText = (config.options || []).map(function (o) { return o.label; }).join('\n');
+      var matrixColsText = (config.matrix_cols || []).map(function (c) { return c.label; }).join('\n');
+      return (
+        '<div class="rp-section-title">マトリクス設定</div>' +
+        '<div class="rp-row">' +
+          '<div class="rp-field" style="flex:1">' +
+            '<label>行項目（1行1項目）<span style="color:red">*</span></label>' +
+            '<textarea id="rp-matrix-rows" rows="5" placeholder="例:&#10;満足度&#10;使いやすさ&#10;デザイン">' + esc(matrixRowsText) + '</textarea>' +
+          '</div>' +
+          '<div class="rp-field" style="flex:1">' +
+            '<label>列項目（1行1項目）<span style="color:red">*</span></label>' +
+            '<textarea id="rp-matrix-cols" rows="5" placeholder="例:&#10;そう思う&#10;どちらでもない&#10;そう思わない">' + esc(matrixColsText) + '</textarea>' +
+          '</div>' +
+        '</div>'
+      );
+    }
+
+    if (qType === 'numeric') {
+      var numMin  = config.min != null ? config.min : '';
+      var numMax  = config.max != null ? config.max : '';
+      var numUnit = config.unit || '';
+      var allowDec = config.allow_decimal ? ' checked' : '';
+      return (
+        '<div class="rp-section-title">数値設定</div>' +
+        '<div class="rp-row">' +
+          '<div class="rp-field"><label>最小値</label><input type="number" id="rp-num_min" value="' + esc(String(numMin)) + '" /></div>' +
+          '<div class="rp-field"><label>最大値</label><input type="number" id="rp-num_max" value="' + esc(String(numMax)) + '" /></div>' +
+          '<div class="rp-field"><label>単位</label><input type="text" id="rp-num_unit" value="' + esc(numUnit) + '" placeholder="例: 円・回・歳" /></div>' +
+        '</div>' +
+        '<label class="rp-check"><input type="checkbox" id="rp-allow_decimal"' + allowDec + ' /> 小数入力を許可する</label>'
+      );
+    }
+
+    if (TEXT_TYPES.includes(qType)) {
+      var ph  = config.placeholder || '';
+      var ml  = config.max_length != null ? config.max_length : '';
+      return (
+        '<div class="rp-section-title">テキスト設定</div>' +
+        '<div class="rp-field"><label>入力補助テキスト</label>' +
+          '<input type="text" id="rp-placeholder" value="' + esc(ph) + '" placeholder="例: できるだけ具体的に記入してください" /></div>' +
+        '<div class="rp-field"><label>最大文字数</label>' +
+          '<input type="number" id="rp-max_length" value="' + esc(String(ml)) + '" min="1" /></div>'
+      );
+    }
+
+    if (qType === 'image_upload') {
+      var maxImg = config.max_images != null ? config.max_images : 1;
+      var imgNotes = config.notes || '';
+      return (
+        '<div class="rp-section-title">画像アップロード設定</div>' +
+        '<div class="rp-field"><label>最大枚数</label>' +
+          '<input type="number" id="rp-max_images" value="' + maxImg + '" min="1" max="10" /></div>' +
+        '<div class="rp-field"><label>注意文・補足条件</label>' +
+          '<textarea id="rp-image_notes" rows="2">' + esc(imgNotes) + '</textarea></div>'
+      );
+    }
+
+    if (CHOICE_TYPES.includes(qType)) {
+      var optRows = opts.map(function (o, i) {
+        return '<div class="rp-option-row" data-idx="' + i + '">' +
+          '<input type="text" class="rp-opt-input" value="' + esc(o.label || '') + '" />' +
+          '<button type="button" class="rp-del-btn" data-del-opt="' + i + '">✕</button>' +
+        '</div>';
+      }).join('');
+
+      var multiHtml = MULTI_TYPES.includes(qType) ? (
+        '<div class="rp-row">' +
+          '<div class="rp-field"><label>最小選択数</label>' +
+            '<input type="number" id="rp-min_select" value="' + (config.min_select != null ? config.min_select : '') + '" min="0" /></div>' +
+          '<div class="rp-field"><label>最大選択数</label>' +
+            '<input type="number" id="rp-max_select" value="' + (config.max_select != null ? config.max_select : '') + '" min="1" /></div>' +
+        '</div>'
+      ) : '';
+
+      var yesNoHtml = qType === 'yes_no' ? (
+        '<div class="rp-row">' +
+          '<div class="rp-field"><label>はいラベル</label>' +
+            '<input type="text" id="rp-yes_label" value="' + esc(config.yes_label || 'はい') + '" /></div>' +
+          '<div class="rp-field"><label>いいえラベル</label>' +
+            '<input type="text" id="rp-no_label" value="' + esc(config.no_label || 'いいえ') + '" /></div>' +
+        '</div>'
+      ) : '';
+
+      return (
+        '<div class="rp-section-title">選択肢</div>' +
+        '<div id="rp-option-rows">' + optRows + '</div>' +
+        '<button type="button" class="rp-add-btn" id="rp-add-opt">＋ 選択肢追加</button>' +
+        multiHtml +
+        yesNoHtml +
+        '<div style="margin:4px 0 8px">' +
+          '<button type="button" class="rp-add-btn" id="rp-reuse-options-btn" style="width:100%;font-size:11px">📋 他の設問から選択肢を流用</button>' +
+        '</div>'
+      );
+    }
+
+    return '';
+  }
+
   function buildRpTabAnswer(q, opts, config) {
     var activeClass = activeRpTab === 'answer' ? ' active' : '';
-    var CHOICE_TYPES = ['single_select','multi_select','single_choice','multi_choice','yes_no','hidden_single','hidden_multi','text_with_image','sd'];
-    var isChoice = CHOICE_TYPES.includes(q.question_type);
+    var qType = q.question_type;
     var allTypeOpts = [
       ['single_choice','単一選択'],['multi_choice','複数選択'],
       ['free_text_short','短文自由記述'],['free_text_long','長文自由記述'],
@@ -982,15 +1105,8 @@
       ['yes_no','はい/いいえ ⚠旧形式'],['scale','スケール ⚠旧形式'],
     ];
     var typeSelOpts = allTypeOpts.map(function (t) {
-      return '<option value="' + t[0] + '"' + (q.question_type === t[0] ? ' selected' : '') + '>' + t[1] + '</option>';
+      return '<option value="' + t[0] + '"' + (qType === t[0] ? ' selected' : '') + '>' + t[1] + '</option>';
     }).join('');
-
-    var optRows = isChoice ? opts.map(function (o, i) {
-      return '<div class="rp-option-row" data-idx="' + i + '">' +
-        '<input type="text" class="rp-opt-input" value="' + esc(o.label || '') + '" />' +
-        '<button type="button" class="rp-del-btn" data-del-opt="' + i + '">✕</button>' +
-      '</div>';
-    }).join('') : '';
 
     var lockedNotice = q.answer_options_locked
       ? '<div class="rp-locked-notice">🔒 選択肢固定中 - AI自動上書き無効</div>'
@@ -1002,21 +1118,14 @@
           '<label>回答形式 <span style="color:red">*</span></label>' +
           '<select id="rp-question_type">' + typeSelOpts + '</select>' +
         '</div>' +
-        (isChoice
-          ? '<div class="rp-section-title">選択肢</div>' +
-            '<div id="rp-option-rows">' + optRows + '</div>' +
-            '<button type="button" class="rp-add-btn" id="rp-add-opt">＋ 選択肢追加</button>'
-          : '') +
-        '<div class="rp-section-title">選択肢オプション</div>' +
+        '<div id="rp-type-specific">' + buildRpTypeSpecific(qType, opts, config) + '</div>' +
+        '<div class="rp-section-title">オプション</div>' +
         '<label class="rp-check"><input type="checkbox" id="rp-answer_options_locked"' + (q.answer_options_locked ? ' checked' : '') + ' /> 回答項目を固定 <span style="font-size:10px;color:#60726f">（AI候補による自動反映を無効化）</span></label>' +
         lockedNotice +
         '<div class="rp-ai-section" id="rp-ai-section">' +
           '<div class="rp-ai-section-title">🤖 AI候補</div>' +
           '<button type="button" class="rp-ai-btn" id="rp-ai-suggest-btn">候補を取得</button>' +
           '<div id="rp-ai-suggestion-area"></div>' +
-        '</div>' +
-        '<div style="margin:4px 0 8px">' +
-          '<button type="button" class="rp-add-btn" id="rp-reuse-options-btn" style="width:100%;font-size:11px">📋 他の設問から選択肢を流用</button>' +
         '</div>' +
       '</div>'
     );
@@ -1164,11 +1273,27 @@
     var btn = document.getElementById('rp-ai-suggest-btn');
     if (btn) { btn.disabled = true; btn.textContent = '取得中…'; }
 
+    // 基本タブの入力欄の最新値を優先して使用（未保存でも反映）
+    var questionTextInput = document.getElementById('rp-question_text');
+    var currentQuestionText = questionTextInput ? questionTextInput.value.trim() : null;
+    var questionText = currentQuestionText || q.question_text || '';
+
+    if (!questionText || questionText.length < 3) {
+      var area = document.getElementById('rp-ai-suggestion-area');
+      if (area) area.innerHTML = '<p style="font-size:11px;color:#8a2020;">設問文を入力してからAI候補を取得してください。</p>';
+      if (btn) { btn.disabled = false; btn.textContent = '候補を取得'; }
+      return;
+    }
+
+    // 現在の回答形式をリクエストに含める
+    var currentTypeEl = document.getElementById('rp-question_type');
+    var currentQuestionType = currentTypeEl ? currentTypeEl.value : q.question_type;
+
     try {
       var resp = await fetch('/admin/api/questions/' + q.id + '/suggest-options', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ questionText: questionText, currentQuestionType: currentQuestionType }),
       });
       var data = await resp.json();
       if (!resp.ok) {
@@ -1193,14 +1318,53 @@
     var area = document.getElementById('rp-ai-suggestion-area');
     if (!area) return;
 
-    var typeLabel = getTypeLabel(suggestions.suggestedQuestionType || '');
-    var opts = suggestions.suggestedOptions || [];
-    var reason = suggestions.reason || '';
+    var qType = (document.getElementById('rp-question_type') || {}).value || q.question_type;
+    var MATRIX_TYPES_ARR = ['matrix_single','matrix_multi','matrix_mixed'];
+    var CHOICE_TYPES_ARR = ['single_select','multi_select','single_choice','multi_choice','yes_no','hidden_single','hidden_multi','text_with_image','sd'];
+
+    var reason   = suggestions.reason   || '';
     var warnings = suggestions.warnings || [];
 
-    var optsHtml = opts.map(function (o) {
-      return '<div class="rp-ai-opt-row">• ' + esc(o) + '</div>';
-    }).join('');
+    var contentHtml = '';
+
+    if (MATRIX_TYPES_ARR.includes(qType)) {
+      var rows = suggestions.suggestedRows || [];
+      var cols = suggestions.suggestedCols || [];
+      contentHtml =
+        (rows.length > 0
+          ? '<div style="font-size:11px;font-weight:600;margin:4px 0 2px">行項目:</div>' +
+            '<div class="rp-ai-suggestion-opts">' + rows.map(function (r) { return '<div class="rp-ai-opt-row">• ' + esc(r) + '</div>'; }).join('') + '</div>'
+          : '') +
+        (cols.length > 0
+          ? '<div style="font-size:11px;font-weight:600;margin:4px 0 2px">列項目:</div>' +
+            '<div class="rp-ai-suggestion-opts">' + cols.map(function (c) { return '<div class="rp-ai-opt-row">• ' + esc(c) + '</div>'; }).join('') + '</div>'
+          : '');
+    } else if (qType === 'numeric') {
+      var lines = [];
+      if (suggestions.suggestedMin != null) lines.push('最小値: ' + suggestions.suggestedMin);
+      if (suggestions.suggestedMax != null) lines.push('最大値: ' + suggestions.suggestedMax);
+      if (suggestions.suggestedUnit)        lines.push('単位: ' + esc(suggestions.suggestedUnit));
+      contentHtml = '<div class="rp-ai-suggestion-opts">' + lines.map(function (l) { return '<div class="rp-ai-opt-row">' + l + '</div>'; }).join('') + '</div>';
+    } else if (qType === 'free_text_short' || qType === 'free_text_long' || qType === 'text') {
+      var lines2 = [];
+      if (suggestions.suggestedPlaceholder) lines2.push('補助テキスト: ' + esc(suggestions.suggestedPlaceholder));
+      if (suggestions.suggestedMaxLength)   lines2.push('最大文字数: ' + suggestions.suggestedMaxLength);
+      contentHtml = '<div class="rp-ai-suggestion-opts">' + lines2.map(function (l) { return '<div class="rp-ai-opt-row">' + l + '</div>'; }).join('') + '</div>';
+    } else if (qType === 'image_upload') {
+      var lines3 = [];
+      if (suggestions.suggestedMaxImages) lines3.push('最大枚数: ' + suggestions.suggestedMaxImages);
+      if (suggestions.suggestedNotes)     lines3.push('注意文: ' + esc(suggestions.suggestedNotes));
+      contentHtml = '<div class="rp-ai-suggestion-opts">' + lines3.map(function (l) { return '<div class="rp-ai-opt-row">' + l + '</div>'; }).join('') + '</div>';
+    } else {
+      // 選択型（または汎用）
+      var opts = suggestions.suggestedOptions || [];
+      var typeLabel = suggestions.suggestedQuestionType ? getTypeLabel(suggestions.suggestedQuestionType) : '';
+      contentHtml =
+        (typeLabel ? '<div class="rp-ai-suggestion-type">推奨形式: ' + esc(typeLabel) + '</div>' : '') +
+        (opts.length > 0
+          ? '<div class="rp-ai-suggestion-opts">' + opts.map(function (o) { return '<div class="rp-ai-opt-row">• ' + esc(o) + '</div>'; }).join('') + '</div>'
+          : '<div style="font-size:11px;color:#8aacaa;">候補なし</div>');
+    }
 
     var warningsHtml = warnings.length > 0
       ? '<p style="font-size:10px;color:#8a6000;margin-top:4px">⚠ ' + esc(warnings.join(' / ')) + '</p>'
@@ -1208,12 +1372,10 @@
 
     area.innerHTML =
       '<div class="rp-ai-suggestion-box">' +
-        '<div class="rp-ai-suggestion-type">推奨形式: ' + esc(typeLabel || suggestions.suggestedQuestionType) + '</div>' +
-        (opts.length > 0 ? '<div class="rp-ai-suggestion-opts">' + optsHtml + '</div>' : '') +
+        contentHtml +
         '<div class="rp-ai-reason">' + esc(reason) + '</div>' +
         warningsHtml +
-        '<button type="button" class="rp-ai-apply-btn" id="rp-ai-apply-all">選択肢を適用</button>' +
-        '<button type="button" class="rp-ai-apply-type-btn" id="rp-ai-apply-type">回答形式のみ適用</button>' +
+        '<button type="button" class="rp-ai-apply-btn" id="rp-ai-apply-all">適用</button>' +
       '</div>';
   }
 
@@ -1224,30 +1386,68 @@
     var suggestions = aiSuggestionCache[q.id];
     if (!suggestions) return;
 
-    var opts = suggestions.suggestedOptions || [];
+    var qType = (document.getElementById('rp-question_type') || {}).value || q.question_type;
+    var MATRIX_TYPES_ARR  = ['matrix_single','matrix_multi','matrix_mixed'];
+    var CHOICE_TYPES_ARR  = ['single_select','multi_select','single_choice','multi_choice','yes_no','hidden_single','hidden_multi','text_with_image','sd'];
+
+    if (MATRIX_TYPES_ARR.includes(qType)) {
+      var rowsEl = document.getElementById('rp-matrix-rows');
+      var colsEl = document.getElementById('rp-matrix-cols');
+      if (rowsEl && Array.isArray(suggestions.suggestedRows)) rowsEl.value = suggestions.suggestedRows.join('\n');
+      if (colsEl && Array.isArray(suggestions.suggestedCols)) colsEl.value = suggestions.suggestedCols.join('\n');
+      showStatus('マトリクス候補を適用しました ✓', 'success');
+      return;
+    }
+
+    if (qType === 'numeric') {
+      var minEl = document.getElementById('rp-num_min');
+      var maxEl = document.getElementById('rp-num_max');
+      var unitEl = document.getElementById('rp-num_unit');
+      if (minEl  && suggestions.suggestedMin  != null) minEl.value  = suggestions.suggestedMin;
+      if (maxEl  && suggestions.suggestedMax  != null) maxEl.value  = suggestions.suggestedMax;
+      if (unitEl && suggestions.suggestedUnit)         unitEl.value = suggestions.suggestedUnit;
+      showStatus('数値設定候補を適用しました ✓', 'success');
+      return;
+    }
+
+    if (qType === 'free_text_short' || qType === 'free_text_long' || qType === 'text') {
+      var phEl = document.getElementById('rp-placeholder');
+      var mlEl = document.getElementById('rp-max_length');
+      if (phEl && suggestions.suggestedPlaceholder) phEl.value = suggestions.suggestedPlaceholder;
+      if (mlEl && suggestions.suggestedMaxLength)   mlEl.value = suggestions.suggestedMaxLength;
+      showStatus('テキスト設定候補を適用しました ✓', 'success');
+      return;
+    }
+
+    if (qType === 'image_upload') {
+      var miEl = document.getElementById('rp-max_images');
+      var niEl = document.getElementById('rp-image_notes');
+      if (miEl && suggestions.suggestedMaxImages) miEl.value = suggestions.suggestedMaxImages;
+      if (niEl && suggestions.suggestedNotes)     niEl.value = suggestions.suggestedNotes;
+      showStatus('画像設定候補を適用しました ✓', 'success');
+      return;
+    }
+
+    // 選択型（汎用フォールバック含む）
+    var opts   = suggestions.suggestedOptions || [];
     var newType = suggestions.suggestedQuestionType;
 
-    // タイプが変わる場合 or rp-option-rows がまだ DOM にない場合は右パネルを再描画する。
-    // 再描画前に q.question_type を更新しておくことで buildRpTabAnswer が正しい isChoice で描画する。
+    // 新しい型が指定されて現在と異なる場合はパネルを再描画
     var needsRedraw = false;
     if (newType && newType !== q.question_type) {
       q.question_type = newType;
       needsRedraw = true;
     }
-    if (!document.getElementById('rp-option-rows')) {
-      needsRedraw = true;
-    }
+    if (!document.getElementById('rp-option-rows')) needsRedraw = true;
 
     if (needsRedraw) {
       activeRpTab = 'answer';
       showRightPanel(q);
     } else {
-      // すでに描画済みの場合はセレクトだけ更新
-      var typeEl = document.getElementById('rp-question_type');
-      if (typeEl && newType) typeEl.value = newType;
+      var typeEl2 = document.getElementById('rp-question_type');
+      if (typeEl2 && newType) typeEl2.value = newType;
     }
 
-    // 再描画後に container を取得して選択肢を投入する
     var container = document.getElementById('rp-option-rows');
     if (container && opts.length > 0) {
       container.innerHTML = '';
@@ -1260,21 +1460,7 @@
         container.appendChild(row);
       });
     }
-
     showStatus('AI候補を適用しました ✓', 'success');
-  }
-
-  function applyAiSuggestionType() {
-    if (!selectedId) return;
-    var q = questions.find(function (x) { return x.id === selectedId; });
-    if (!q) return;
-    var suggestions = aiSuggestionCache[q.id];
-    if (!suggestions) return;
-    var typeEl = document.getElementById('rp-question_type');
-    if (typeEl && suggestions.suggestedQuestionType) {
-      typeEl.value = suggestions.suggestedQuestionType;
-    }
-    showStatus('回答形式を適用しました ✓', 'success');
   }
 
   // ─── Collect right panel data ─────────────────
@@ -1298,8 +1484,60 @@
     var pageGroupId   = val('rp-page_group_id') || null;
     var answerOptionsLocked = checked('rp-answer_options_locked');
 
+    // 選択型の選択肢
     var optInputs = document.querySelectorAll('#rp-option-rows .rp-opt-input');
     var options = Array.from(optInputs).map(function (i) { return i.value.trim(); }).filter(Boolean);
+
+    // 回答形式別の追加設定
+    var MATRIX_TYPES_ARR = ['matrix_single','matrix_multi','matrix_mixed'];
+    var MULTI_TYPES_ARR  = ['multi_select','multi_choice'];
+    var TEXT_TYPES_ARR   = ['free_text_short','free_text_long','text'];
+
+    var typeConfig = {};
+
+    if (MATRIX_TYPES_ARR.includes(questionType)) {
+      var rowsEl = document.getElementById('rp-matrix-rows');
+      var colsEl = document.getElementById('rp-matrix-cols');
+      typeConfig.matrix_rows = rowsEl
+        ? rowsEl.value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean)
+        : [];
+      typeConfig.matrix_cols = colsEl
+        ? colsEl.value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean)
+        : [];
+    } else if (questionType === 'numeric') {
+      var nMinEl  = document.getElementById('rp-num_min');
+      var nMaxEl  = document.getElementById('rp-num_max');
+      var nUnitEl = document.getElementById('rp-num_unit');
+      var nDecEl  = document.getElementById('rp-allow_decimal');
+      if (nMinEl  && nMinEl.value  !== '') typeConfig.numeric_min  = Number(nMinEl.value);
+      if (nMaxEl  && nMaxEl.value  !== '') typeConfig.numeric_max  = Number(nMaxEl.value);
+      if (nUnitEl && nUnitEl.value.trim()) typeConfig.numeric_unit = nUnitEl.value.trim();
+      typeConfig.numeric_allow_decimal = nDecEl ? nDecEl.checked : false;
+    } else if (TEXT_TYPES_ARR.includes(questionType)) {
+      var phEl = document.getElementById('rp-placeholder');
+      var mlEl = document.getElementById('rp-max_length');
+      if (phEl && phEl.value.trim()) typeConfig.text_placeholder = phEl.value.trim();
+      if (mlEl && mlEl.value !== '')  typeConfig.text_max_length  = Number(mlEl.value);
+    } else if (questionType === 'image_upload') {
+      var miEl = document.getElementById('rp-max_images');
+      var niEl = document.getElementById('rp-image_notes');
+      typeConfig.image_max_images = miEl ? (Number(miEl.value) || 1) : 1;
+      if (niEl && niEl.value.trim()) typeConfig.image_notes = niEl.value.trim();
+    }
+
+    if (MULTI_TYPES_ARR.includes(questionType)) {
+      var minSelEl = document.getElementById('rp-min_select');
+      var maxSelEl = document.getElementById('rp-max_select');
+      if (minSelEl && minSelEl.value !== '') typeConfig.min_select = Number(minSelEl.value);
+      if (maxSelEl && maxSelEl.value !== '') typeConfig.max_select = Number(maxSelEl.value);
+    }
+
+    if (questionType === 'yes_no') {
+      var ylEl = document.getElementById('rp-yes_label');
+      var nlEl = document.getElementById('rp-no_label');
+      typeConfig.yes_label = (ylEl ? ylEl.value.trim() : '') || 'はい';
+      typeConfig.no_label  = (nlEl ? nlEl.value.trim() : '') || 'いいえ';
+    }
 
     var branchRowEls = document.querySelectorAll('#rp-branch-rows .rp-branch-row');
     var branches = [];
@@ -1316,7 +1554,7 @@
       branches: branches.length > 0 ? branches : undefined,
     } : null;
 
-    return {
+    return Object.assign({
       question_text:    questionText,
       question_type:    questionType,
       question_role:    questionRole,
@@ -1330,7 +1568,7 @@
       branch_rule:      branchRule,
       page_group_id:    pageGroupId,
       answer_options_locked: answerOptionsLocked,
-    };
+    }, typeConfig);
   }
 
   function parseBranchCond(str) {
@@ -1787,7 +2025,9 @@
     document.getElementById('generateStep1').style.display = '';
     document.getElementById('generateStep2').style.display = 'none';
     document.getElementById('genProjectName').textContent = DATA.project.name || '（未設定）';
-    document.getElementById('genProjectObjective').textContent = DATA.project.objective || '（未設定）';
+    const objective = DATA.project.objective;
+    document.getElementById('genProjectObjective').textContent =
+      objective && objective.trim() !== '' ? objective : '（未設定）';
     document.getElementById('generateFlowModal').style.display = 'flex';
   }
 

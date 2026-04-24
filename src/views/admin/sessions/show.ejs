@@ -42,6 +42,10 @@
             <td><strong><%= group.question.question_text %></strong></td>
             <td>
               <%= group.primaryAnswer?.answer_text || "-" %>
+              <% if (group.primaryAnswer?.free_text_answer) { %>
+                <div class="muted" style="margin-top: 6px; font-size: 12px;">自由記述:</div>
+                <div class="prelike" style="white-space: pre-wrap;"><%= group.primaryAnswer.free_text_answer %></div>
+              <% } %>
               <% if (group.probeAnswers.length > 0) { %>
                 <div class="muted" style="margin-top: 8px;">Probe answers:</div>
                 <% for (const probe of group.probeAnswers) { %>

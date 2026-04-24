@@ -7,6 +7,7 @@ export const answerRepository = {
     session_id: string;
     question_id: string;
     answer_text: string;
+    free_text_answer?: string | null;
     answer_role?: AnswerRole;
     parent_answer_id?: string | null;
     normalized_answer?: Record<string, unknown> | null;

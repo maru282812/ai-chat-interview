@@ -31,14 +31,26 @@
     .question-text     { font-size: 16px; font-weight: 600; line-height: 1.5; margin-bottom: 12px; }
     .comment-bottom    { font-size: 13px; color: #4a6060; margin-bottom: 10px; }
     .choice-list       { display: flex; flex-direction: column; gap: 8px; }
+    .choice-list.has-images { flex-direction: row; flex-wrap: wrap; gap: 10px; }
     .choice-item       {
       display: flex; align-items: center; gap: 10px;
       padding: 10px 14px; border: 1px solid #d8e3e0; border-radius: 10px;
       cursor: pointer; transition: background 0.15s;
       background: #fff;
     }
+    .choice-item.has-img {
+      flex-direction: column; align-items: stretch; gap: 6px;
+      padding: 8px; min-width: 120px; max-width: 160px; flex: 1;
+    }
+    .choice-item.has-img input { margin: 0 auto; }
+    .choice-img {
+      width: 100%; height: 90px; object-fit: cover;
+      border-radius: 6px; display: block;
+    }
+    .choice-label { font-size: 14px; line-height: 1.4; }
+    .choice-item.has-img .choice-label { text-align: center; font-size: 13px; }
     .choice-item.selected { background: #e8f7f0; border-color: #2ca87a; }
-    .choice-item input    { accent-color: #2ca87a; }
+    .choice-item input    { accent-color: #2ca87a; flex-shrink: 0; }
     .free-text-input {
       width: 100%; padding: 10px; border: 1px solid #d8e3e0;
       border-radius: 10px; font-size: 15px; resize: vertical; line-height: 1.5;
@@ -62,9 +74,52 @@
       border: 2px solid #2ca87a; border-radius: 12px; font-size: 15px; cursor: pointer;
     }
     .required-badge { font-size: 10px; color: #fff; background: #e55; border-radius: 4px; padding: 2px 5px; margin-left: 6px; vertical-align: middle; }
+    .free-text-required { border: 1.5px solid #e55 !important; }
+    .free-text-error { font-size: 12px; color: #e55; margin-top: 4px; display: none; }
     .matrix-table { width: 100%; border-collapse: collapse; font-size: 13px; }
     .matrix-table th, .matrix-table td { padding: 8px 6px; border-bottom: 1px solid #eee; text-align: center; }
-    .matrix-table th:first-child, .matrix-table td:first-child { text-align: left; }
+    .matrix-table th:first-child, .matrix-table td:first-child { text-align: left; min-width: 100px; }
+    .matrix-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .matrix-row-cell { display: flex; flex-direction: column; gap: 4px; }
+    .matrix-row-img { width: 80px; height: 60px; object-fit: cover; border-radius: 6px; display: block; }
+    .matrix-row-imgs { display: flex; flex-wrap: wrap; gap: 4px; }
+    .matrix-row-desc { font-size: 11px; color: #60726f; line-height: 1.3; }
+    .matrix-header-vertical th { writing-mode: vertical-rl; text-orientation: mixed; white-space: nowrap; height: 80px; vertical-align: bottom; }
+    .matrix-header-rotated th { transform: rotate(-90deg); white-space: nowrap; height: 80px; vertical-align: bottom; }
+
+    /* ---- 画像カードグリッド ---- */
+    .card-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    @media (max-width: 320px) { .card-grid { grid-template-columns: 1fr; } }
+    .card-item {
+      border: 2px solid #d8e3e0; border-radius: 12px; padding: 10px;
+      cursor: pointer; transition: all 0.15s; background: #fff;
+      display: flex; flex-direction: column; gap: 6px; align-items: center;
+    }
+    .card-item.selected { border-color: #2ca87a; background: #e8f7f0; }
+    .card-item input { accent-color: #2ca87a; }
+    .card-item-img { width: 100%; height: 100px; object-fit: cover; border-radius: 8px; display: block; }
+    .card-item-title { font-size: 13px; font-weight: 600; text-align: center; line-height: 1.3; }
+    .card-item-desc { font-size: 11px; color: #60726f; text-align: center; line-height: 1.3; }
+
+    /* ---- image_upload ---- */
+    .upload-area {
+      border: 2px dashed #b0ccc4; border-radius: 12px; padding: 20px;
+      text-align: center; background: #f8fbfa; cursor: pointer;
+    }
+    .upload-area:hover { border-color: #2ca87a; }
+    .upload-instructions { font-size: 13px; color: #60726f; margin: 6px 0 0 0; }
+    .upload-preview-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .upload-thumb-wrap {
+      position: relative; width: 80px; height: 80px;
+    }
+    .upload-thumb { width: 80px; height: 80px; object-fit: cover; border-radius: 8px; display: block; }
+    .upload-thumb-del {
+      position: absolute; top: -6px; right: -6px; width: 20px; height: 20px;
+      background: #e55; color: #fff; border: none; border-radius: 50%;
+      font-size: 12px; cursor: pointer; line-height: 20px; text-align: center; padding: 0;
+    }
+    .upload-loading { font-size: 13px; color: #2ca87a; margin-top: 6px; }
+    .upload-error { font-size: 12px; color: #e55; margin-top: 4px; }
 
     /* ---- interview_chat モード ---- */
     .chat-container    { max-width: 480px; margin: 0 auto; padding: 12px; }
@@ -266,6 +321,20 @@
   // ================================================================
   function startSurvey() {
 
+  // ---- 定型文（未入力扱い） ----
+  const BOILERPLATE_EXACT = new Set([
+    'なし','ない','特になし','特にない','とくになし','不明','わからない','わかりません',
+    '該当なし','該当なし','無','なし。','特になし。','ない。',
+  ]);
+
+  function isFreeTextValid(text) {
+    if (!text) return false;
+    const t = text.trim().replace(/[\r\n　]+/g, '').replace(/\s+/g, ' ').trim();
+    if (t === '') return false;
+    if (BOILERPLATE_EXACT.has(t)) return false;
+    return true;
+  }
+
   // ---- 回答コンテキスト ----
   const answerCtx = { answers: {} };
 
@@ -402,25 +471,81 @@
     const reqBadge = q.is_required ? '<span class="required-badge">必須</span>' : '';
     let inputHtml = '';
 
-    const rawChoices = (q.question_config?.options || []).map(o => ({ value: o.value, label: o.label }));
-    const choices = filterChoices(rawChoices, parsed);
-
     const qType = q.question_type;
 
+    let rawChoices;
+    if (qType === 'yes_no') {
+      const yesLabel = q.question_config?.yes_label || 'はい';
+      const noLabel  = q.question_config?.no_label  || 'いいえ';
+      rawChoices = [
+        { value: 'yes', label: yesLabel },
+        { value: 'no',  label: noLabel  },
+      ];
+    } else {
+      rawChoices = (q.question_config?.options || []).map(o => ({
+        value: o.value, label: o.label,
+        imageUrl: o.imageUrl || '',
+        imageUrls: o.imageUrls || [],
+        title: o.title || '',
+        description: o.description || '',
+      }));
+    }
+    const choices = filterChoices(rawChoices, parsed);
+
+    const cfg = q.question_config || {};
+    const displayFormat = cfg.display_format || 'list';
+    const gridCols = cfg.grid_cols || 2;
+    const hasImages = choices.some(c => c.imageUrl || (c.imageUrls && c.imageUrls.length > 0));
+    const choiceClass = hasImages ? 'choice-list has-images' : 'choice-list';
+
+    function choiceImg(c) {
+      if (!c.imageUrl) return '';
+      return `<img class="choice-img" src="${esc(c.imageUrl)}" alt="" loading="lazy" onerror="this.style.display='none'" />`;
+    }
+
     if (['single_select','single_choice','yes_no'].includes(qType)) {
-      inputHtml = `<div class="choice-list" data-type="single">` +
-        choices.map(c => `<label class="choice-item">
-          <input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />
-          ${esc(c.label)}
-        </label>`).join('') + `</div>`;
+      if (displayFormat === 'card' && hasImages) {
+        const cols = Math.min(gridCols, 4);
+        inputHtml = `<div class="card-grid" style="grid-template-columns:repeat(${cols},1fr);" data-type="single">` +
+          choices.map(c => {
+            const imgSrc = c.imageUrl || (c.imageUrls && c.imageUrls[0]) || '';
+            return `<label class="card-item">
+              <input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" style="display:none" />
+              ${imgSrc ? `<img class="card-item-img" src="${esc(imgSrc)}" alt="" loading="lazy" onerror="this.style.display='none'" />` : ''}
+              <span class="card-item-title">${esc(c.title || c.label)}</span>
+              ${c.description ? `<span class="card-item-desc">${esc(c.description)}</span>` : ''}
+            </label>`;
+          }).join('') + `</div>`;
+      } else {
+        inputHtml = `<div class="${choiceClass}" data-type="single">` +
+          choices.map(c => `<label class="choice-item${c.imageUrl ? ' has-img' : ''}">
+            <input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />
+            ${choiceImg(c)}
+            <span class="choice-label">${esc(c.label)}</span>
+          </label>`).join('') + `</div>`;
+      }
     } else if (['multi_select','multi_choice'].includes(qType)) {
-      inputHtml = `<div class="choice-list" data-type="multi">` +
-        choices.map(c => `<label class="choice-item">
-          <input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />
-          ${esc(c.label)}
-        </label>`).join('') + `</div>`;
+      if (displayFormat === 'card' && hasImages) {
+        const cols = Math.min(gridCols, 4);
+        inputHtml = `<div class="card-grid" style="grid-template-columns:repeat(${cols},1fr);" data-type="multi">` +
+          choices.map(c => {
+            const imgSrc = c.imageUrl || (c.imageUrls && c.imageUrls[0]) || '';
+            return `<label class="card-item">
+              <input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" style="display:none" />
+              ${imgSrc ? `<img class="card-item-img" src="${esc(imgSrc)}" alt="" loading="lazy" onerror="this.style.display='none'" />` : ''}
+              <span class="card-item-title">${esc(c.title || c.label)}</span>
+              ${c.description ? `<span class="card-item-desc">${esc(c.description)}</span>` : ''}
+            </label>`;
+          }).join('') + `</div>`;
+      } else {
+        inputHtml = `<div class="${choiceClass}" data-type="multi">` +
+          choices.map(c => `<label class="choice-item${c.imageUrl ? ' has-img' : ''}">
+            <input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />
+            ${choiceImg(c)}
+            <span class="choice-label">${esc(c.label)}</span>
+          </label>`).join('') + `</div>`;
+      }
     } else if (['scale'].includes(qType)) {
-      const cfg = q.question_config || {};
       const mn = cfg.scaleMin || cfg.min || 1;
       const mx = cfg.scaleMax || cfg.max || 5;
       const nums = [];
@@ -429,18 +554,58 @@
         nums.map(n => `<button type="button" class="scale-btn" data-val="${n}" data-code="${esc(q.question_code)}">${n}</button>`).join('') +
         `</div>`;
     } else if (['matrix_single','matrix_multi','matrix_mixed'].includes(qType)) {
-      const rows = (q.question_config?.options || []).map(o => o.label);
+      const matrixRows = (q.question_config?.options || []);
       const cols = (q.question_config?.matrix_cols || []).map(c => c.label || c);
-      inputHtml = `<table class="matrix-table"><tr><th></th>` +
+      const headerMode = cfg.matrix_header_mode || 'normal';
+      const headerClass = headerMode === 'vertical' ? 'matrix-header-vertical'
+                        : headerMode === 'rotated'  ? 'matrix-header-rotated'
+                        : '';
+      inputHtml = `<div class="matrix-table-wrap"><table class="matrix-table ${headerClass}"><tr><th></th>` +
         cols.map(c => `<th>${esc(c)}</th>`).join('') + `</tr>` +
-        rows.map((r, ri) => `<tr><td>${esc(r)}</td>` +
-          cols.map((c, ci) => `<td><input type="${qType==='matrix_multi'?'checkbox':'radio'}" name="mq_${esc(q.question_code)}_${ri}" value="${ci}" /></td>`).join('') +
-          `</tr>`).join('') + `</table>`;
+        matrixRows.map((row, ri) => {
+          const rowLabel = row.label || '';
+          const rowImg = row.imageUrl || (row.imageUrls && row.imageUrls[0]) || '';
+          const rowDesc = row.description || '';
+          let cellHtml = `<span>${esc(rowLabel)}</span>`;
+          if (rowImg) {
+            cellHtml = `<div class="matrix-row-cell">
+              <span>${esc(rowLabel)}</span>
+              <img class="matrix-row-img" src="${esc(rowImg)}" alt="" loading="lazy" onerror="this.style.display='none'" />
+              ${rowDesc ? `<span class="matrix-row-desc">${esc(rowDesc)}</span>` : ''}
+            </div>`;
+          } else if (rowDesc) {
+            cellHtml = `<div class="matrix-row-cell">
+              <span>${esc(rowLabel)}</span>
+              <span class="matrix-row-desc">${esc(rowDesc)}</span>
+            </div>`;
+          }
+          return `<tr><td>${cellHtml}</td>` +
+            cols.map((_c, ci) => `<td><input type="${qType==='matrix_multi'?'checkbox':'radio'}" name="mq_${esc(q.question_code)}_${ri}" value="${ci}" /></td>`).join('') +
+            `</tr>`;
+        }).join('') + `</table></div>`;
     } else if (['free_text_long','text'].includes(qType)) {
       const rows = parsed.rows || 4;
-      inputHtml = `<textarea class="free-text-input" data-code="${esc(q.question_code)}" rows="${rows}" placeholder="回答を入力..."></textarea>`;
+      inputHtml = `<textarea class="free-text-input" data-code="${esc(q.question_code)}" rows="${rows}" placeholder="回答を入力してください"></textarea>`;
+    } else if (qType === 'image_upload') {
+      const uploadCfg = cfg.image_upload_config || {};
+      const maxCount = uploadCfg.max_count || 1;
+      const allowedTypes = (uploadCfg.allowed_types || ['image/jpeg','image/png','image/webp']).join(',');
+      const instructions = uploadCfg.instructions || '';
+      const maxSizeMb = uploadCfg.max_size_mb || 10;
+      inputHtml = `<div class="upload-area" data-code="${esc(q.question_code)}"
+          data-max-count="${maxCount}" data-max-size-mb="${maxSizeMb}" data-allowed="${esc(allowedTypes)}">
+          <input type="file" class="upload-file-input" accept="${esc(allowedTypes)}"
+            ${maxCount > 1 ? 'multiple' : ''} style="display:none" />
+          <p style="font-size:28px;margin:0;">📷</p>
+          <p style="font-size:14px;font-weight:600;margin:4px 0;">タップして画像を選択</p>
+          ${instructions ? `<p class="upload-instructions">${esc(instructions)}</p>` : ''}
+          <p class="upload-instructions">最大 ${maxCount} 枚 / 1枚 ${maxSizeMb}MB まで</p>
+          <div class="upload-preview-grid"></div>
+          <p class="upload-loading" style="display:none">アップロード中...</p>
+          <p class="upload-error" style="display:none"></p>
+        </div>`;
     } else {
-      inputHtml = `<input type="text" class="free-text-input" data-code="${esc(q.question_code)}" placeholder="回答を入力..." />`;
+      inputHtml = `<input type="text" class="free-text-input" data-code="${esc(q.question_code)}" placeholder="回答を入力してください" />`;
     }
 
     const numLabel = total ? `Q${index+1} / ${total}` : `Q${index+1}`;
@@ -458,20 +623,96 @@
     return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  // ---- 選択肢系タイプ一覧 ----
+  const CHOICE_TYPES = ['single_select','single_choice','yes_no','multi_select','multi_choice','scale',
+    'matrix_single','matrix_multi','matrix_mixed'];
+  // image_upload はファイル添付後に URL 配列を answerCtx に格納
+  const IMAGE_UPLOAD_TYPES = ['image_upload'];
+
+  // ---- image_upload ヘルパー ----
+  async function uploadImageToServer(file, questionCode) {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const resp = await fetch('/liff/survey/upload-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: SESSION_ID,
+        assignment_id: ASSIGNMENT_ID,
+        data: base64,
+        filename: file.name,
+        mimeType: file.type,
+      }),
+    });
+    const json = await resp.json().catch(() => ({}));
+    if (!resp.ok || !json.url) throw new Error(json.error || 'upload failed');
+    return json.url;
+  }
+
+  function addUploadThumb(container, url, questionCode, errorEl) {
+    const wrap = document.createElement('div');
+    wrap.className = 'upload-thumb-wrap';
+    wrap.innerHTML = `<img class="upload-thumb" src="${url}" alt="" loading="lazy" />
+      <button type="button" class="upload-thumb-del" title="削除">✕</button>`;
+    wrap.querySelector('.upload-thumb-del').addEventListener('click', (e) => {
+      e.stopPropagation();
+      wrap.remove();
+      const urls = answerCtx.answers[questionCode.toLowerCase()] || [];
+      const idx = urls.indexOf(url);
+      if (idx >= 0) urls.splice(idx, 1);
+      answerCtx.answers[questionCode.toLowerCase()] = urls;
+      if (errorEl) hideUploadError(errorEl);
+      checkNextEnabled();
+    });
+    container.appendChild(wrap);
+  }
+
+  function showUploadError(el, msg) {
+    if (!el) return;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+  function hideUploadError(el) {
+    if (!el) return;
+    el.style.display = 'none';
+    el.textContent = '';
+  }
+
   // ---- 回答送信 ----
   async function submitAnswer(questionCode, answerValue) {
+    console.log('SUBMIT_START', { questionCode });
+    console.log('INPUT_VALUE', answerValue);
     answerCtx.answers[questionCode.toLowerCase()] = answerValue;
+
+    const q = QUESTIONS.find(qq => qq.question_code === questionCode);
+    const qType = q ? q.question_type : '';
+    const isTextType = q && !CHOICE_TYPES.includes(qType) && !IMAGE_UPLOAD_TYPES.includes(qType);
+    const freeText = isTextType ? String(answerValue || '') : '';
+
+    let normalizedAnswer = null;
+    if (IMAGE_UPLOAD_TYPES.includes(qType) && Array.isArray(answerValue)) {
+      normalizedAnswer = { type: 'image_upload', urls: answerValue };
+    }
+
     try {
-      await fetch('/liff/survey/answer', {
+      const response = await fetch('/liff/survey/answer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: SESSION_ID,
           assignment_id: ASSIGNMENT_ID,
           question_code: questionCode,
-          answer_value: answerValue,
+          answer_value: Array.isArray(answerValue) ? answerValue.join(',') : answerValue,
+          free_text_answer: freeText,
+          normalized_answer: normalizedAnswer,
         }),
       });
+      const data = await response.json().catch(() => ({}));
+      console.log('API_RESPONSE', data);
     } catch(e) {
       console.error('answer submit failed', e);
     }
@@ -498,6 +739,47 @@
     const btnBack = document.getElementById('btnBack');
     const progressBar = document.getElementById('progressBar');
     const completeScreen = document.getElementById('completeScreen');
+
+    // ---- 次へボタン押下前のバリデーション（表示中の設問のみ検証） ----
+    function validateCurrentView() {
+      try {
+        let qs;
+        if (DISPLAY_MODE === 'survey_page') {
+          const allPages = groupByPage(QUESTIONS);
+          const page = allPages.filter(p => p.questions.filter(isVisible).length > 0)[pageCursor];
+          qs = page ? page.questions.filter(isVisible) : [];
+        } else {
+          qs = (visibleQs && visibleQs[cursor]) ? [visibleQs[cursor]] : [];
+        }
+
+        if (!qs || qs.length === 0) {
+          console.warn('[survey] validateCurrentView: no visible questions');
+          return true;
+        }
+
+        let valid = true;
+        for (const q of qs) {
+          if (!isQuestionAnswered(q)) {
+            const inputEl = questionArea.querySelector(`[data-code="${q.question_code}"]`);
+            const errEl = questionArea.querySelector(`[data-free-err="${q.question_code}"]`);
+            if (inputEl) {
+              if (q.question_type === 'image_upload') {
+                const errP = inputEl.querySelector('.upload-error');
+                if (errP) { errP.textContent = '画像を1枚以上追加してください。'; errP.style.display = ''; }
+              } else {
+                inputEl.classList.add('free-text-required');
+              }
+            }
+            if (errEl) errEl.style.display = 'block';
+            valid = false;
+          }
+        }
+        return valid;
+      } catch (e) {
+        console.error('[survey] validateCurrentView error:', e);
+        return true;
+      }
+    }
 
     function renderCurrentState() {
       if (DISPLAY_MODE === 'survey_page') {
@@ -543,6 +825,88 @@
     }
 
     function bindInputEvents(q) {
+      // ---- 画像カードグリッド（click で label 全体を選択） ----
+      questionArea.querySelectorAll('.card-item').forEach(card => {
+        card.addEventListener('click', (e) => {
+          if (e.target.tagName === 'INPUT') return;
+          const input = card.querySelector('input');
+          if (!input) return;
+          if (input.type === 'radio') {
+            questionArea.querySelectorAll('.card-item').forEach(c => c.classList.remove('selected'));
+            input.checked = true;
+            card.classList.add('selected');
+          } else {
+            input.checked = !input.checked;
+            card.classList.toggle('selected', input.checked);
+          }
+          const qType = q.question_type;
+          let val;
+          if (['multi_select','multi_choice'].includes(qType)) {
+            val = [...questionArea.querySelectorAll(`input[name="q_${q.question_code}"]:checked`)].map(e => e.value);
+          } else {
+            const checked = questionArea.querySelector(`input[name="q_${q.question_code}"]:checked`);
+            val = checked ? checked.value : '';
+          }
+          answerCtx.answers[q.question_code.toLowerCase()] = val;
+          checkNextEnabled();
+        });
+      });
+
+      // ---- image_upload ----
+      const uploadArea = questionArea.querySelector(`.upload-area[data-code="${q.question_code}"]`);
+      if (uploadArea) {
+        const fileInput = uploadArea.querySelector('.upload-file-input');
+        const previewGrid = uploadArea.querySelector('.upload-preview-grid');
+        const loadingEl = uploadArea.querySelector('.upload-loading');
+        const errorEl = uploadArea.querySelector('.upload-error');
+        const maxCount = parseInt(uploadArea.dataset.maxCount || '1', 10);
+        const maxSizeMb = parseFloat(uploadArea.dataset.maxSizeMb || '10');
+        const allowedTypes = (uploadArea.dataset.allowed || '').split(',').filter(Boolean);
+
+        uploadArea.addEventListener('click', (e) => {
+          if (e.target === fileInput || e.target.classList.contains('upload-thumb-del')) return;
+          fileInput.click();
+        });
+
+        fileInput.addEventListener('change', async () => {
+          const files = [...fileInput.files];
+          fileInput.value = '';
+          if (!files.length) return;
+
+          const currentUrls = answerCtx.answers[q.question_code.toLowerCase()] || [];
+          if (currentUrls.length + files.length > maxCount) {
+            showUploadError(errorEl, `最大 ${maxCount} 枚までアップロードできます。`);
+            return;
+          }
+          hideUploadError(errorEl);
+
+          for (const file of files) {
+            if (allowedTypes.length && !allowedTypes.includes(file.type)) {
+              showUploadError(errorEl, `${file.name}: 対応していないファイル形式です。`);
+              continue;
+            }
+            if (file.size > maxSizeMb * 1024 * 1024) {
+              showUploadError(errorEl, `${file.name}: ファイルサイズが${maxSizeMb}MBを超えています。`);
+              continue;
+            }
+
+            loadingEl.style.display = '';
+            try {
+              const url = await uploadImageToServer(file, q.question_code);
+              const urls = answerCtx.answers[q.question_code.toLowerCase()] || [];
+              urls.push(url);
+              answerCtx.answers[q.question_code.toLowerCase()] = urls;
+              addUploadThumb(previewGrid, url, q.question_code, errorEl);
+              checkNextEnabled();
+            } catch(err) {
+              showUploadError(errorEl, `アップロード失敗: ${err.message}`);
+            } finally {
+              loadingEl.style.display = 'none';
+            }
+          }
+        });
+      }
+
       // radio/checkbox
       questionArea.querySelectorAll(`input[name="q_${q.question_code}"]`).forEach(el => {
         el.addEventListener('change', () => {
@@ -573,36 +937,50 @@
         if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
           el.addEventListener('input', () => {
             answerCtx.answers[q.question_code.toLowerCase()] = el.value;
+            el.classList.remove('free-text-required');
             checkNextEnabled();
           });
         }
       });
     }
 
+    function isQuestionAnswered(q) {
+      const val = answerCtx.answers[q.question_code.toLowerCase()];
+      const qType = q.question_type;
+      if (IMAGE_UPLOAD_TYPES.includes(qType)) {
+        return Array.isArray(val) && val.length > 0;
+      }
+      const isChoiceType = CHOICE_TYPES.includes(qType);
+      if (isChoiceType) {
+        // 選択肢・スケール系は何か選んでいればOK
+        return val !== undefined && val !== null && val !== '' && (!Array.isArray(val) || val.length > 0);
+      }
+      // テキスト系は定型文禁止の入力チェック
+      return isFreeTextValid(String(val || ''));
+    }
+
     function checkNextEnabled() {
-      // 必須チェック: survey_question は現在の設問、survey_page は全設問
       if (DISPLAY_MODE === 'survey_page') {
         const allPages = groupByPage(QUESTIONS);
         const page = allPages.filter(p => p.questions.filter(isVisible).length > 0)[pageCursor];
         if (!page) { btnNext.disabled = false; return; }
-        const allAnswered = page.questions.filter(isVisible).every(q => {
-          if (!q.is_required) return true;
-          const val = answerCtx.answers[q.question_code.toLowerCase()];
-          return val !== undefined && val !== null && val !== '' && (!Array.isArray(val) || val.length > 0);
-        });
-        btnNext.disabled = !allAnswered;
+        btnNext.disabled = !page.questions.filter(isVisible).every(isQuestionAnswered);
       } else {
         const q = visibleQs[cursor];
         if (!q) { btnNext.disabled = false; return; }
-        if (!q.is_required) { btnNext.disabled = false; return; }
-        const val = answerCtx.answers[q.question_code.toLowerCase()];
-        btnNext.disabled = !(val !== undefined && val !== null && val !== '' && (!Array.isArray(val) || val.length > 0));
+        btnNext.disabled = !isQuestionAnswered(q);
       }
     }
 
     btnNext.addEventListener('click', async () => {
+      try {
+        if (!validateCurrentView()) return;
+      } catch (e) {
+        console.error('[survey] Validation error:', e);
+        return;
+      }
+
       if (DISPLAY_MODE === 'survey_page') {
-        // 全ページ質問を送信
         const allPages = groupByPage(QUESTIONS);
         const page = allPages.filter(p => p.questions.filter(isVisible).length > 0)[pageCursor];
         if (page) {
@@ -618,8 +996,8 @@
         if (q) {
           const val = answerCtx.answers[q.question_code.toLowerCase()];
           await submitAnswer(q.question_code, val);
-          // 分岐
           const nextCode = resolveNext(q);
+          console.log('NEXT_QUESTION_ID', nextCode ?? '(end)');
           if (nextCode) {
             const nextIdx = QUESTIONS.findIndex(qq => qq.question_code === nextCode);
             cursor = nextIdx >= 0 ? nextIdx : cursor + 1;

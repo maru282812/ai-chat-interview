@@ -32,6 +32,13 @@ export type MenuActionResolution =
       session: Session;
       assignmentId: string | null;
       leadMessage?: string | null;
+    }
+  | {
+      handled: true;
+      behavior: "liff_redirect";
+      assignmentId: string;
+      projectId: string;
+      projectName: string;
     };
 
 interface ProjectContext {
@@ -233,28 +240,16 @@ async function resolveSelectionAction(input: {
     };
   }
 
-  const activeSession = selectActiveSession(selectedContext.sessions);
   const assignment =
     (await assignmentService.markAssignmentOpened(selectedContext.assignment.id)) ??
     selectedContext.assignment;
 
-  if (activeSession?.current_question_id) {
-    return {
-      handled: true,
-      behavior: "resume",
-      session: activeSession,
-      assignmentId: assignment.id,
-      leadMessage: `「${selectedContext.project.name}」を再開します。`
-    };
-  }
-
   return {
     handled: true,
-    behavior: "start",
-    respondentId: selectedContext.respondent.id,
-    projectId: selectedContext.project.id,
+    behavior: "liff_redirect",
     assignmentId: assignment.id,
-    leadMessage: `「${selectedContext.project.name}」を開始します。`
+    projectId: selectedContext.project.id,
+    projectName: selectedContext.project.name
   };
 }
 

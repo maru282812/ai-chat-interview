@@ -581,6 +581,7 @@ interface QuestionFormValues {
   max_probes: string;
   placeholder: string;
   option_labels: string[];
+  option_image_urls: string[];
   min_select_text: string;
   max_select_text: string;
   yes_label: string;
@@ -603,6 +604,16 @@ interface QuestionFormValues {
   ans_insertions: Array<{ source: string; target: string }>;
   matrix_rows: string;
   matrix_cols: string;
+  // --- 画像拡張フィールド ---
+  matrix_row_image_urls: string[];
+  matrix_row_descriptions: string[];
+  matrix_header_mode: string;
+  display_format: string;
+  grid_cols: string;
+  image_upload_max_count: string;
+  image_upload_allowed_types: string;
+  image_upload_max_size_mb: string;
+  image_upload_instructions: string;
   question_display_mode: string;
   page_group_id: string;
   // タグフォームフィールド (tab4)
@@ -701,6 +712,10 @@ function buildQuestionFormValues(
     Array.isArray(question?.question_config?.options) && question?.question_config?.options.length > 0
       ? question.question_config.options.map((option) => option.label)
       : [];
+  const optionImageUrls =
+    Array.isArray(question?.question_config?.options) && question?.question_config?.options.length > 0
+      ? question.question_config.options.map((option) => option.imageUrl ?? "")
+      : [];
   const yesNoLabels = getYesNoLabels(question?.question_config ?? null);
   const scale = getQuestionScaleRange(question?.question_config ?? null);
 
@@ -723,6 +738,7 @@ function buildQuestionFormValues(
       String(typeof meta.probe_config?.max_probes === "number" ? meta.probe_config.max_probes : 1),
     placeholder: overrides.placeholder ?? question?.question_config?.placeholder ?? "",
     option_labels: overrides.option_labels ?? optionLabels,
+    option_image_urls: overrides.option_image_urls ?? optionImageUrls,
     min_select_text:
       overrides.min_select_text ??
       (typeof question?.question_config?.min_select === "number" ? String(question.question_config.min_select) : ""),
@@ -785,6 +801,28 @@ function buildQuestionFormValues(
     tag_af: overrides.tag_af ?? (question?.display_tags_parsed?.afterText ?? ""),
     question_display_mode: overrides.question_display_mode ?? "",
     page_group_id: overrides.page_group_id ?? (question?.page_group_id ?? ""),
+    // 画像拡張フィールド
+    matrix_row_image_urls: overrides.matrix_row_image_urls ?? (() => {
+      const opts = question?.question_config?.options;
+      if (MATRIX_QUESTION_TYPES.includes(question?.question_type as QuestionType) && Array.isArray(opts)) {
+        return opts.map((o) => (o as { imageUrl?: string }).imageUrl ?? "");
+      }
+      return [];
+    })(),
+    matrix_row_descriptions: overrides.matrix_row_descriptions ?? (() => {
+      const opts = question?.question_config?.options;
+      if (MATRIX_QUESTION_TYPES.includes(question?.question_type as QuestionType) && Array.isArray(opts)) {
+        return opts.map((o) => (o as { description?: string }).description ?? "");
+      }
+      return [];
+    })(),
+    matrix_header_mode: overrides.matrix_header_mode ?? (question?.question_config?.matrix_header_mode ?? "normal"),
+    display_format: overrides.display_format ?? (question?.question_config?.display_format ?? "list"),
+    grid_cols: overrides.grid_cols ?? String(question?.question_config?.grid_cols ?? "2"),
+    image_upload_max_count: overrides.image_upload_max_count ?? String(question?.question_config?.image_upload_config?.max_count ?? ""),
+    image_upload_allowed_types: overrides.image_upload_allowed_types ?? (question?.question_config?.image_upload_config?.allowed_types ?? []).join(","),
+    image_upload_max_size_mb: overrides.image_upload_max_size_mb ?? String(question?.question_config?.image_upload_config?.max_size_mb ?? ""),
+    image_upload_instructions: overrides.image_upload_instructions ?? (question?.question_config?.image_upload_config?.instructions ?? ""),
   };
 }
 
@@ -817,6 +855,7 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     max_probes: bodyString(req.body.max_probes) || "1",
     placeholder: bodyString(req.body.placeholder),
     option_labels: normalizeTextList(bodyStringArray(req.body.option_labels)),
+    option_image_urls: bodyStringArray(req.body.option_image_urls).map((u) => u.trim()),
     min_select_text: bodyString(req.body.min_select),
     max_select_text: bodyString(req.body.max_select),
     yes_label: bodyString(req.body.yes_label) || "はい",
@@ -855,6 +894,15 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     })(),
     matrix_rows: bodyString(req.body.matrix_rows),
     matrix_cols: bodyString(req.body.matrix_cols),
+    matrix_row_image_urls: bodyStringArray(req.body.matrix_row_image_urls).map((u) => u.trim()),
+    matrix_row_descriptions: bodyStringArray(req.body.matrix_row_descriptions).map((d) => d.trim()),
+    matrix_header_mode: bodyString(req.body.matrix_header_mode) || "normal",
+    display_format: bodyString(req.body.display_format) || "list",
+    grid_cols: bodyString(req.body.grid_cols) || "2",
+    image_upload_max_count: bodyString(req.body.image_upload_max_count),
+    image_upload_allowed_types: bodyString(req.body.image_upload_allowed_types),
+    image_upload_max_size_mb: bodyString(req.body.image_upload_max_size_mb),
+    image_upload_instructions: bodyString(req.body.image_upload_instructions),
     tag_size:           bodyString(req.body.tag_size),
     tag_min:            bodyString(req.body.tag_min),
     tag_max:            bodyString(req.body.tag_max),
@@ -995,7 +1043,11 @@ function buildQuestionConfigFromRequest(
 
   if (CHOICE_QUESTION_TYPES.includes(questionType)) {
     const optionLabels = normalizeTextList(bodyStringArray(req.body.option_labels));
-    questionConfig.options = optionLabels.map((label) => ({ label, value: label }));
+    const optionImageUrls = bodyStringArray(req.body.option_image_urls).map((u) => u.trim());
+    questionConfig.options = optionLabels.map((label, i) => {
+      const imageUrl = optionImageUrls[i] ?? "";
+      return imageUrl ? { label, value: label, imageUrl } : { label, value: label };
+    });
     if (MULTI_CHOICE_TYPES.includes(questionType)) {
       const minSelect = parseOptionalInteger(req.body.min_select);
       const maxSelect = parseOptionalInteger(req.body.max_select);
@@ -1011,8 +1063,23 @@ function buildQuestionConfigFromRequest(
     const colLabels = parseLineSeparatedList(bodyString(req.body.matrix_cols));
     if (rowLabels.length === 0) throw new HttpError(400, "マトリクスの行（row）を1つ以上設定してください。");
     if (colLabels.length === 0) throw new HttpError(400, "マトリクスの列（column）を1つ以上設定してください。");
-    questionConfig.options = rowLabels.map((label) => ({ label, value: label }));
+    const rowImageUrls = bodyStringArray(req.body.matrix_row_image_urls).map((u) => u.trim());
+    const rowDescriptions = bodyStringArray(req.body.matrix_row_descriptions).map((d) => d.trim());
+    questionConfig.options = rowLabels.map((label, i) => {
+      const opt: import("../types/domain").QuestionOption = { label, value: label };
+      const imageUrl = rowImageUrls[i] ?? "";
+      const description = rowDescriptions[i] ?? "";
+      if (imageUrl) opt.imageUrl = imageUrl;
+      if (description) opt.description = description;
+      return opt;
+    });
     (questionConfig as Record<string, unknown>).matrix_cols = colLabels.map((label) => ({ label, value: label }));
+    const headerMode = bodyString(req.body.matrix_header_mode).trim();
+    if (headerMode === "vertical" || headerMode === "rotated") {
+      questionConfig.matrix_header_mode = headerMode;
+    } else {
+      delete questionConfig.matrix_header_mode;
+    }
   } else {
     switch (questionType) {
       case "text":
@@ -1028,8 +1095,36 @@ function buildQuestionConfigFromRequest(
         questionConfig.min_label = bodyString(req.body.scale_min_label).trim() || undefined;
         questionConfig.max_label = bodyString(req.body.scale_max_label).trim() || undefined;
         break;
+      case "image_upload": {
+        const maxCount = parseOptionalInteger(req.body.image_upload_max_count);
+        const allowedTypesRaw = bodyString(req.body.image_upload_allowed_types).trim();
+        const maxSizeMb = parseOptionalInteger(req.body.image_upload_max_size_mb);
+        const instructions = bodyString(req.body.image_upload_instructions).trim();
+        questionConfig.image_upload_config = {
+          max_count: maxCount ?? 1,
+          allowed_types: allowedTypesRaw
+            ? allowedTypesRaw.split(",").map((t) => t.trim()).filter(Boolean)
+            : ["image/jpeg", "image/png", "image/webp"],
+          max_size_mb: maxSizeMb ?? 10,
+          instructions: instructions || undefined,
+        };
+        break;
+      }
       default:
         break;
+    }
+  }
+
+  // 選択肢系の display_format / grid_cols
+  if (CHOICE_QUESTION_TYPES.includes(questionType)) {
+    const displayFormat = bodyString(req.body.display_format).trim();
+    if (displayFormat === "card") {
+      questionConfig.display_format = "card";
+      const gridCols = parseOptionalInteger(req.body.grid_cols);
+      questionConfig.grid_cols = gridCols && gridCols > 0 ? gridCols : 2;
+    } else {
+      delete questionConfig.display_format;
+      delete questionConfig.grid_cols;
     }
   }
 
@@ -1569,10 +1664,13 @@ export const adminController = {
 
   async assignProjectManual(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
+    const deliveryChannel: "liff" | "line" =
+      req.body.use_liff_delivery === "on" ? "liff" : "line";
     await assignmentService.assignManual({
       projectId,
       sourceRespondentIds: bodyStringArray(req.body.selected_respondent_ids),
-      deadline: parseNullableDateTime(req.body.deadline)
+      deadline: parseNullableDateTime(req.body.deadline),
+      deliveryChannel
     });
     res.redirect(`/admin/projects/${projectId}/delivery`);
   },
@@ -1931,6 +2029,7 @@ export const adminController = {
       project: {
         id: project.id,
         name: project.name,
+        objective: project.objective ?? null,
         display_mode: project.display_mode ?? null,
       },
       questions: allQuestions.map((q) => ({
@@ -1995,11 +2094,57 @@ export const adminController = {
     // question_config: 既存を保持しつつ上書き
     const newConfig: Record<string, unknown> = { ...existingConfig };
 
-    // 選択肢
+    // 選択肢（選択型）
     if (CHOICE_QUESTION_TYPES.includes(questionType) && Array.isArray(body.options)) {
       newConfig.options = (body.options as string[])
         .filter((l) => l && l.trim())
         .map((label) => ({ label: label.trim(), value: label.trim() }));
+    }
+
+    // マトリクス設定
+    if (MATRIX_QUESTION_TYPES.includes(questionType)) {
+      if (Array.isArray(body.matrix_rows)) {
+        newConfig.options = (body.matrix_rows as string[])
+          .map((r) => String(r).trim()).filter(Boolean)
+          .map((r) => ({ label: r, value: r }));
+      }
+      if (Array.isArray(body.matrix_cols)) {
+        newConfig.matrix_cols = (body.matrix_cols as string[])
+          .map((c) => String(c).trim()).filter(Boolean)
+          .map((c) => ({ label: c, value: c }));
+      }
+    }
+
+    // 数値入力設定
+    if (questionType === "numeric") {
+      if (body.numeric_min != null && body.numeric_min !== "") newConfig.min = Number(body.numeric_min);
+      if (body.numeric_max != null && body.numeric_max !== "") newConfig.max = Number(body.numeric_max);
+      if (body.numeric_unit != null && String(body.numeric_unit).trim()) newConfig.unit = String(body.numeric_unit).trim();
+      newConfig.allow_decimal = Boolean(body.numeric_allow_decimal);
+    }
+
+    // テキスト系設定
+    if (["free_text_short", "free_text_long", "text"].includes(questionType)) {
+      if (body.text_placeholder != null) newConfig.placeholder = String(body.text_placeholder).trim() || undefined;
+      if (body.text_max_length != null && body.text_max_length !== "") newConfig.max_length = Number(body.text_max_length);
+    }
+
+    // 複数選択の選択数制約
+    if (["multi_choice", "multi_select"].includes(questionType)) {
+      newConfig.min_select = body.min_select != null && body.min_select !== "" ? Number(body.min_select) : undefined;
+      newConfig.max_select = body.max_select != null && body.max_select !== "" ? Number(body.max_select) : undefined;
+    }
+
+    // はい/いいえ ラベル
+    if (questionType === "yes_no") {
+      newConfig.yes_label = String(body.yes_label ?? "はい").trim() || "はい";
+      newConfig.no_label  = String(body.no_label  ?? "いいえ").trim() || "いいえ";
+    }
+
+    // 画像アップロード設定
+    if (questionType === "image_upload") {
+      if (body.image_max_images != null && body.image_max_images !== "") newConfig.max_images = Math.max(1, Number(body.image_max_images));
+      if (body.image_notes != null) newConfig.notes = String(body.image_notes).trim() || undefined;
     }
 
     // meta.research_goal
@@ -2100,11 +2245,28 @@ export const adminController = {
       return;
     }
 
-    const questionText = existing.question_text;
+    // フロントの入力値を優先し、未送信の場合はDBの値にフォールバック
+    const questionText =
+      (typeof req.body?.questionText === "string" && req.body.questionText.trim().length >= 3
+        ? req.body.questionText.trim()
+        : null) ?? existing.question_text;
+
     if (!questionText || questionText.trim().length < 3) {
       res.status(400).json({ error: "設問文が短すぎます。" });
       return;
     }
+
+    // フロントから受け取った現在の回答形式（未指定ならDBの値を使用）
+    const currentQuestionType = String(
+      req.body?.currentQuestionType ?? existing.question_type ?? "free_text_short"
+    );
+
+    const CHOICE_TYPES_SET = new Set([
+      "single_choice", "multi_choice", "single_select", "multi_select",
+      "yes_no", "hidden_single", "hidden_multi", "text_with_image", "sd",
+    ]);
+    const MATRIX_TYPES_SET = new Set(["matrix_single", "matrix_multi", "matrix_mixed"]);
+    const MULTI_CHOICE_SET = new Set(["multi_choice", "multi_select"]);
 
     const systemPrompt = [
       "あなたはアンケート設計の専門家です。",
@@ -2112,34 +2274,83 @@ export const adminController = {
       "JSONを求められた場合はJSON以外を一切出力しないでください。",
     ].join("\n");
 
-    const userPrompt = `以下のアンケート設問に対して、適切な回答形式と選択肢を提案してください。
+    // 回答形式に応じたプロンプトとレスポンス形式を構築
+    let typeInstruction: string;
+    let responseFormat: string;
+
+    if (MATRIX_TYPES_SET.has(currentQuestionType)) {
+      typeInstruction =
+        "マトリクス形式（行ごとに選択）として、評価する行項目（評価対象）と列項目（評価軸）を提案してください。" +
+        "行は3〜6件、列は3〜5件を目安にしてください。";
+      responseFormat = JSON.stringify({
+        suggestedRows: ["行項目1", "行項目2"],
+        suggestedCols: ["列項目1", "列項目2"],
+        reason: "提案理由（1-2文）",
+        warnings: [],
+      }, null, 2);
+    } else if (currentQuestionType === "numeric") {
+      typeInstruction =
+        "数値入力形式として、この設問に適した最小値・最大値・単位を提案してください。";
+      responseFormat = JSON.stringify({
+        suggestedMin: 0,
+        suggestedMax: 100,
+        suggestedUnit: "単位（例: 円・回・歳）",
+        suggestedStep: 1,
+        reason: "提案理由（1-2文）",
+        warnings: [],
+      }, null, 2);
+    } else if (currentQuestionType === "free_text_short" || currentQuestionType === "free_text_long" || currentQuestionType === "text") {
+      typeInstruction =
+        "自由記述形式として、回答者の入力を助ける補助テキスト（プレースホルダー）と適切な最大文字数を提案してください。";
+      responseFormat = JSON.stringify({
+        suggestedPlaceholder: "例: 具体的に記入してください",
+        suggestedMaxLength: 200,
+        reason: "提案理由（1-2文）",
+        warnings: [],
+      }, null, 2);
+    } else if (currentQuestionType === "image_upload") {
+      typeInstruction =
+        "画像アップロード形式として、回答者への注意事項・補足条件テキストと最大枚数を提案してください。";
+      responseFormat = JSON.stringify({
+        suggestedMaxImages: 1,
+        suggestedNotes: "例: 実際の状況が分かる写真を添付してください",
+        reason: "提案理由（1-2文）",
+        warnings: [],
+      }, null, 2);
+    } else if (CHOICE_TYPES_SET.has(currentQuestionType)) {
+      const isMulti = MULTI_CHOICE_SET.has(currentQuestionType);
+      typeInstruction = isMulti
+        ? "「複数選択」形式として、複数選べることを前提にバランスよく選択肢を5〜8件提案してください。"
+        : "「単一選択」形式として、1つだけ選ぶ排他的な選択肢を5〜8件提案してください。";
+      responseFormat = JSON.stringify({
+        suggestedOptions: ["選択肢1", "選択肢2"],
+        reason: "提案理由（1-2文）",
+        warnings: [],
+      }, null, 2);
+    } else {
+      // 回答形式未確定の場合は形式ごと提案
+      typeInstruction = "最も適切な回答形式と選択肢（またはその他設定）を提案してください。";
+      responseFormat = JSON.stringify({
+        suggestedQuestionType: "single_choice",
+        suggestedOptions: ["選択肢1", "選択肢2"],
+        reason: "提案理由（1-2文）",
+        warnings: [],
+      }, null, 2);
+    }
+
+    const userPrompt = `以下のアンケート設問に対して、回答設定の候補を提案してください。
 
 設問文: 「${questionText}」
+現在の回答形式: ${currentQuestionType}
 
-利用可能な回答形式コード:
-- single_choice: 単一選択
-- multi_choice: 複数選択
-- free_text_short: 短文自由記述（50文字以内）
-- free_text_long: 長文自由記述
-- numeric: 数値入力
-- yes_no: はい/いいえ
-- scale: スケール（1-5や1-10）
-- matrix_single: マトリクス（行ごとに単一選択）
-- text_with_image: テキスト+画像選択肢
+${typeInstruction}
 
-条件:
-- 選択肢は実用的で、一般的なアンケートで使われる粒度にしてください
-- 自由記述や数値が妥当な場合は selectedOptions を空配列にしてください
-- 選択肢は最大10件までにしてください
-- warnings は提案に注意点がある場合のみ記述してください（通常は空配列）
+注意:
+- 選択肢・行・列は実用的で一般的なアンケートで使われる粒度にしてください
+- warnings は注意点がある場合のみ記述してください（通常は空配列）
 
 以下のJSON形式のみで回答してください（前後に余分な文字を入れないこと）:
-{
-  "suggestedQuestionType": "回答形式コード",
-  "suggestedOptions": ["選択肢1", "選択肢2", ...],
-  "reason": "この提案の理由（1-2文）",
-  "warnings": []
-}`;
+${responseFormat}`;
 
     try {
       const { openai } = await import("../config/openai");
@@ -2667,5 +2878,43 @@ ${JSON.stringify(questionsForAI, null, 2)}
       });
 
     res.json({ ok: true, option_sets: optionSets });
+  },
+
+  async uploadImage(req: Request, res: Response): Promise<void> {
+    const body = req.body as { data?: unknown; filename?: unknown; mimeType?: unknown };
+    const base64Data = typeof body.data === "string" ? body.data : null;
+    const filename = typeof body.filename === "string" ? body.filename.replace(/[^a-zA-Z0-9._-]/g, "_") : "image";
+    const mimeType = typeof body.mimeType === "string" ? body.mimeType : "image/png";
+
+    if (!base64Data) {
+      res.status(400).json({ error: "data (base64) は必須です" });
+      return;
+    }
+    if (!["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"].includes(mimeType)) {
+      res.status(400).json({ error: "サポートされていない画像形式です" });
+      return;
+    }
+
+    const buffer = Buffer.from(base64Data, "base64");
+    if (buffer.byteLength > 5 * 1024 * 1024) {
+      res.status(400).json({ error: "画像サイズは5MB以下にしてください" });
+      return;
+    }
+
+    const { supabase } = await import("../config/supabase");
+    const ext = mimeType.split("/")[1] ?? "png";
+    const storagePath = `question-options/${Date.now()}-${filename}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("question-images")
+      .upload(storagePath, buffer, { contentType: mimeType, upsert: false });
+
+    if (uploadError) {
+      res.status(500).json({ error: `アップロード失敗: ${uploadError.message}` });
+      return;
+    }
+
+    const { data: urlData } = supabase.storage.from("question-images").getPublicUrl(storagePath);
+    res.json({ ok: true, url: urlData.publicUrl });
   },
 };

@@ -28,8 +28,8 @@ import { projectRepository } from "../repositories/projectRepository";
 import { questionRepository } from "../repositories/questionRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
-import { buildMypageLiffFlex, buildRankFlex, buildWelcomeMessages } from "../templates/flex";
-import { liffService } from "./liffService";
+import { buildMypageLiffFlex, buildProjectStartFlex, buildRankFlex, buildWelcomeMessages } from "../templates/flex";
+import { buildProjectStartUrl, liffService } from "./liffService";
 import type {
   AnswerAnalysisAction,
   LineMessage,
@@ -1729,6 +1729,29 @@ export const conversationOrchestratorService = {
           });
           throw error;
         }
+        return;
+      }
+
+      if (menuAction.behavior === "liff_redirect") {
+        const { url, hasLiffId } = buildProjectStartUrl(menuAction.assignmentId);
+        logger.info("menu_action.liff_redirect", {
+          userId: input.userId,
+          assignmentId: menuAction.assignmentId,
+          projectId: menuAction.projectId,
+          projectName: menuAction.projectName,
+          hasLiffId,
+          url
+        });
+        if (!hasLiffId) {
+          logger.warn("menu_action.liff_redirect.no_liff_id", {
+            userId: input.userId,
+            assignmentId: menuAction.assignmentId,
+            hint: "LINE_LIFF_ID_SURVEY を設定するとネイティブ LIFF が有効になります"
+          });
+        }
+        await lineMessagingService.reply(input.replyToken, [
+          buildProjectStartFlex({ projectName: menuAction.projectName, url })
+        ]);
         return;
       }
 
