@@ -100,6 +100,11 @@
     .card-item-img { width: 100%; height: 100px; object-fit: cover; border-radius: 8px; display: block; }
     .card-item-title { font-size: 13px; font-weight: 600; text-align: center; line-height: 1.3; }
     .card-item-desc { font-size: 11px; color: #60726f; text-align: center; line-height: 1.3; }
+    .card-extra-imgs { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; margin-top: 4px; }
+    .card-extra-img  { width: calc(50% - 2px); height: 60px; object-fit: cover; border-radius: 4px; }
+    .choice-desc { font-size: 12px; color: #60726f; line-height: 1.3; display: block; }
+    .choice-extra-imgs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+    .choice-extra-img  { height: 60px; width: auto; max-width: 100%; object-fit: cover; border-radius: 4px; }
 
     /* ---- image_upload ---- */
     .upload-area {
@@ -503,26 +508,40 @@
       return `<img class="choice-img" src="${esc(c.imageUrl)}" alt="" loading="lazy" onerror="this.style.display='none'" />`;
     }
 
+    function choiceAdditionalImgs(c) {
+      const additionals = (c.imageUrls || []).filter(u => u && u !== c.imageUrl);
+      if (!additionals.length) return '';
+      return `<div class="choice-extra-imgs">${additionals.map(u => `<img class="choice-extra-img" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.display='none'" />`).join('')}</div>`;
+    }
+
+    function choiceListItem(inputEl, c) {
+      return `<label class="choice-item${c.imageUrl ? ' has-img' : ''}">
+        ${inputEl}
+        ${choiceImg(c)}
+        <span class="choice-label">${esc(c.label)}</span>
+        ${c.description ? `<span class="choice-desc">${esc(c.description)}</span>` : ''}
+        ${choiceAdditionalImgs(c)}
+      </label>`;
+    }
+
     if (['single_select','single_choice','yes_no'].includes(qType)) {
       if (displayFormat === 'card' && hasImages) {
         const cols = Math.min(gridCols, 4);
         inputHtml = `<div class="card-grid" style="grid-template-columns:repeat(${cols},1fr);" data-type="single">` +
           choices.map(c => {
             const imgSrc = c.imageUrl || (c.imageUrls && c.imageUrls[0]) || '';
+            const additionals = (c.imageUrls || []).filter(u => u && u !== imgSrc);
             return `<label class="card-item">
               <input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" style="display:none" />
               ${imgSrc ? `<img class="card-item-img" src="${esc(imgSrc)}" alt="" loading="lazy" onerror="this.style.display='none'" />` : ''}
               <span class="card-item-title">${esc(c.title || c.label)}</span>
               ${c.description ? `<span class="card-item-desc">${esc(c.description)}</span>` : ''}
+              ${additionals.length ? `<div class="card-extra-imgs">${additionals.map(u => `<img class="card-extra-img" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.display='none'" />`).join('')}</div>` : ''}
             </label>`;
           }).join('') + `</div>`;
       } else {
         inputHtml = `<div class="${choiceClass}" data-type="single">` +
-          choices.map(c => `<label class="choice-item${c.imageUrl ? ' has-img' : ''}">
-            <input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />
-            ${choiceImg(c)}
-            <span class="choice-label">${esc(c.label)}</span>
-          </label>`).join('') + `</div>`;
+          choices.map(c => choiceListItem(`<input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />`, c)).join('') + `</div>`;
       }
     } else if (['multi_select','multi_choice'].includes(qType)) {
       if (displayFormat === 'card' && hasImages) {
@@ -530,20 +549,18 @@
         inputHtml = `<div class="card-grid" style="grid-template-columns:repeat(${cols},1fr);" data-type="multi">` +
           choices.map(c => {
             const imgSrc = c.imageUrl || (c.imageUrls && c.imageUrls[0]) || '';
+            const additionals = (c.imageUrls || []).filter(u => u && u !== imgSrc);
             return `<label class="card-item">
               <input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" style="display:none" />
               ${imgSrc ? `<img class="card-item-img" src="${esc(imgSrc)}" alt="" loading="lazy" onerror="this.style.display='none'" />` : ''}
               <span class="card-item-title">${esc(c.title || c.label)}</span>
               ${c.description ? `<span class="card-item-desc">${esc(c.description)}</span>` : ''}
+              ${additionals.length ? `<div class="card-extra-imgs">${additionals.map(u => `<img class="card-extra-img" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.display='none'" />`).join('')}</div>` : ''}
             </label>`;
           }).join('') + `</div>`;
       } else {
         inputHtml = `<div class="${choiceClass}" data-type="multi">` +
-          choices.map(c => `<label class="choice-item${c.imageUrl ? ' has-img' : ''}">
-            <input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />
-            ${choiceImg(c)}
-            <span class="choice-label">${esc(c.label)}</span>
-          </label>`).join('') + `</div>`;
+          choices.map(c => choiceListItem(`<input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />`, c)).join('') + `</div>`;
       }
     } else if (['scale'].includes(qType)) {
       const mn = cfg.scaleMin || cfg.min || 1;
@@ -555,22 +572,41 @@
         `</div>`;
     } else if (['matrix_single','matrix_multi','matrix_mixed'].includes(qType)) {
       const matrixRows = (q.question_config?.options || []);
-      const cols = (q.question_config?.matrix_cols || []).map(c => c.label || c);
+      const colObjects = (q.question_config?.matrix_cols || []).map(c => typeof c === 'string' ? { label: c, value: c } : c);
+      const cols = colObjects.map(c => c.label || c);
       const headerMode = cfg.matrix_header_mode || 'normal';
       const headerClass = headerMode === 'vertical' ? 'matrix-header-vertical'
                         : headerMode === 'rotated'  ? 'matrix-header-rotated'
                         : '';
       inputHtml = `<div class="matrix-table-wrap"><table class="matrix-table ${headerClass}"><tr><th></th>` +
-        cols.map(c => `<th>${esc(c)}</th>`).join('') + `</tr>` +
+        colObjects.map(c => {
+          const label = c.label || c;
+          const imgUrl = c.imageUrl || '';
+          if (imgUrl) {
+            return `<th><div style="display:flex;flex-direction:column;align-items:center;gap:4px;"><img src="${esc(imgUrl)}" alt="" style="max-width:60px;max-height:40px;border-radius:4px;" onerror="this.style.display='none'" /><span>${esc(label)}</span></div></th>`;
+          }
+          return `<th>${esc(label)}</th>`;
+        }).join('') + `</tr>` +
         matrixRows.map((row, ri) => {
           const rowLabel = row.label || '';
-          const rowImg = row.imageUrl || (row.imageUrls && row.imageUrls[0]) || '';
           const rowDesc = row.description || '';
+          // imageUrls 配列優先、なければ imageUrl 単体をラップ
+          const rowImgs = (row.imageUrls && row.imageUrls.length > 0)
+            ? row.imageUrls
+            : (row.imageUrl ? [row.imageUrl] : []);
           let cellHtml = `<span>${esc(rowLabel)}</span>`;
-          if (rowImg) {
+          if (rowImgs.length > 1) {
             cellHtml = `<div class="matrix-row-cell">
               <span>${esc(rowLabel)}</span>
-              <img class="matrix-row-img" src="${esc(rowImg)}" alt="" loading="lazy" onerror="this.style.display='none'" />
+              <div class="matrix-row-imgs">
+                ${rowImgs.map(u => `<img class="matrix-row-img" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.display='none'" />`).join('')}
+              </div>
+              ${rowDesc ? `<span class="matrix-row-desc">${esc(rowDesc)}</span>` : ''}
+            </div>`;
+          } else if (rowImgs.length === 1) {
+            cellHtml = `<div class="matrix-row-cell">
+              <span>${esc(rowLabel)}</span>
+              <img class="matrix-row-img" src="${esc(rowImgs[0])}" alt="" loading="lazy" onerror="this.style.display='none'" />
               ${rowDesc ? `<span class="matrix-row-desc">${esc(rowDesc)}</span>` : ''}
             </div>`;
           } else if (rowDesc) {
@@ -706,7 +742,11 @@
           session_id: SESSION_ID,
           assignment_id: ASSIGNMENT_ID,
           question_code: questionCode,
-          answer_value: Array.isArray(answerValue) ? answerValue.join(',') : answerValue,
+          answer_value: Array.isArray(answerValue)
+            ? answerValue.join(',')
+            : (answerValue !== null && typeof answerValue === 'object'
+                ? JSON.stringify(answerValue)
+                : answerValue),
           free_text_answer: freeText,
           normalized_answer: normalizedAnswer,
         }),
@@ -932,6 +972,25 @@
           checkNextEnabled();
         });
       });
+      // matrix inputs（mq_<code>_<rowIndex> という name を使う）
+      if (['matrix_single','matrix_multi','matrix_mixed'].includes(q.question_type)) {
+        const matrixRows = q.question_config?.options || [];
+        questionArea.querySelectorAll(`input[name^="mq_${q.question_code}_"]`).forEach(input => {
+          input.addEventListener('change', () => {
+            const answer = {};
+            matrixRows.forEach((_, ri) => {
+              const checked = [...questionArea.querySelectorAll(`input[name="mq_${q.question_code}_${ri}"]:checked`)];
+              if (checked.length > 0) {
+                answer[ri] = q.question_type === 'matrix_multi'
+                  ? checked.map(i => i.value)
+                  : checked[0].value;
+              }
+            });
+            answerCtx.answers[q.question_code.toLowerCase()] = answer;
+            checkNextEnabled();
+          });
+        });
+      }
       // text inputs
       questionArea.querySelectorAll(`[data-code="${q.question_code}"]`).forEach(el => {
         if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
@@ -949,6 +1008,16 @@
       const qType = q.question_type;
       if (IMAGE_UPLOAD_TYPES.includes(qType)) {
         return Array.isArray(val) && val.length > 0;
+      }
+      // マトリクス: 全行に少なくとも1つの選択が必要
+      if (['matrix_single','matrix_multi','matrix_mixed'].includes(qType)) {
+        if (!val || typeof val !== 'object' || Array.isArray(val)) return false;
+        const rows = q.question_config?.options || [];
+        if (rows.length === 0) return false;
+        return rows.every((_, ri) => {
+          const rv = val[ri];
+          return rv !== undefined && rv !== null && (!Array.isArray(rv) || rv.length > 0);
+        });
       }
       const isChoiceType = CHOICE_TYPES.includes(qType);
       if (isChoiceType) {

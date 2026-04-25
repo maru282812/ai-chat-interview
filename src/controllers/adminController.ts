@@ -582,6 +582,8 @@ interface QuestionFormValues {
   placeholder: string;
   option_labels: string[];
   option_image_urls: string[];
+  option_extra_image_urls: string[];
+  option_descriptions: string[];
   min_select_text: string;
   max_select_text: string;
   yes_label: string;
@@ -606,7 +608,9 @@ interface QuestionFormValues {
   matrix_cols: string;
   // --- 画像拡張フィールド ---
   matrix_row_image_urls: string[];
+  matrix_row_extra_image_urls: string[];
   matrix_row_descriptions: string[];
+  matrix_col_image_urls: string[];
   matrix_header_mode: string;
   display_format: string;
   grid_cols: string;
@@ -712,6 +716,18 @@ function buildQuestionFormValues(
     Array.isArray(question?.question_config?.options) && question?.question_config?.options.length > 0
       ? question.question_config.options.map((option) => option.label)
       : [];
+  const optionExtraImageUrls =
+    Array.isArray(question?.question_config?.options) && CHOICE_QUESTION_TYPES.includes(question?.question_type as QuestionType)
+      ? question!.question_config!.options!.map((o) => {
+          const primary = (o as { imageUrl?: string }).imageUrl ?? "";
+          const all = (o as { imageUrls?: string[] }).imageUrls ?? [];
+          return all.filter((u) => u && u !== primary).join("\n");
+        })
+      : [];
+  const optionDescriptions =
+    Array.isArray(question?.question_config?.options) && CHOICE_QUESTION_TYPES.includes(question?.question_type as QuestionType)
+      ? question!.question_config!.options!.map((o) => (o as { description?: string }).description ?? "")
+      : [];
   const optionImageUrls =
     Array.isArray(question?.question_config?.options) && question?.question_config?.options.length > 0
       ? question.question_config.options.map((option) => option.imageUrl ?? "")
@@ -739,6 +755,8 @@ function buildQuestionFormValues(
     placeholder: overrides.placeholder ?? question?.question_config?.placeholder ?? "",
     option_labels: overrides.option_labels ?? optionLabels,
     option_image_urls: overrides.option_image_urls ?? optionImageUrls,
+    option_extra_image_urls: overrides.option_extra_image_urls ?? optionExtraImageUrls,
+    option_descriptions: overrides.option_descriptions ?? optionDescriptions,
     min_select_text:
       overrides.min_select_text ??
       (typeof question?.question_config?.min_select === "number" ? String(question.question_config.min_select) : ""),
@@ -809,10 +827,28 @@ function buildQuestionFormValues(
       }
       return [];
     })(),
+    matrix_row_extra_image_urls: overrides.matrix_row_extra_image_urls ?? (() => {
+      const opts = question?.question_config?.options;
+      if (MATRIX_QUESTION_TYPES.includes(question?.question_type as QuestionType) && Array.isArray(opts)) {
+        return opts.map((o) => {
+          const primary = (o as { imageUrl?: string }).imageUrl ?? "";
+          const all = (o as { imageUrls?: string[] }).imageUrls ?? [];
+          return all.filter((u) => u && u !== primary).join("\n");
+        });
+      }
+      return [];
+    })(),
     matrix_row_descriptions: overrides.matrix_row_descriptions ?? (() => {
       const opts = question?.question_config?.options;
       if (MATRIX_QUESTION_TYPES.includes(question?.question_type as QuestionType) && Array.isArray(opts)) {
         return opts.map((o) => (o as { description?: string }).description ?? "");
+      }
+      return [];
+    })(),
+    matrix_col_image_urls: overrides.matrix_col_image_urls ?? (() => {
+      const mc = (question?.question_config as Record<string, unknown> | null)?.matrix_cols;
+      if (Array.isArray(mc)) {
+        return mc.map((c: { imageUrl?: string } | string) => (typeof c === "object" ? c.imageUrl ?? "" : ""));
       }
       return [];
     })(),
@@ -856,6 +892,8 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     placeholder: bodyString(req.body.placeholder),
     option_labels: normalizeTextList(bodyStringArray(req.body.option_labels)),
     option_image_urls: bodyStringArray(req.body.option_image_urls).map((u) => u.trim()),
+    option_extra_image_urls: bodyStringArray(req.body.option_extra_image_urls).map((s) => s.trim()),
+    option_descriptions: bodyStringArray(req.body.option_descriptions).map((d) => d.trim()),
     min_select_text: bodyString(req.body.min_select),
     max_select_text: bodyString(req.body.max_select),
     yes_label: bodyString(req.body.yes_label) || "はい",
@@ -895,7 +933,9 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     matrix_rows: bodyString(req.body.matrix_rows),
     matrix_cols: bodyString(req.body.matrix_cols),
     matrix_row_image_urls: bodyStringArray(req.body.matrix_row_image_urls).map((u) => u.trim()),
+    matrix_row_extra_image_urls: bodyStringArray(req.body.matrix_row_extra_image_urls).map((s) => s.trim()),
     matrix_row_descriptions: bodyStringArray(req.body.matrix_row_descriptions).map((d) => d.trim()),
+    matrix_col_image_urls: bodyStringArray(req.body.matrix_col_image_urls).map((u) => u.trim()),
     matrix_header_mode: bodyString(req.body.matrix_header_mode) || "normal",
     display_format: bodyString(req.body.display_format) || "list",
     grid_cols: bodyString(req.body.grid_cols) || "2",
@@ -1044,9 +1084,20 @@ function buildQuestionConfigFromRequest(
   if (CHOICE_QUESTION_TYPES.includes(questionType)) {
     const optionLabels = normalizeTextList(bodyStringArray(req.body.option_labels));
     const optionImageUrls = bodyStringArray(req.body.option_image_urls).map((u) => u.trim());
+    const optionExtraImageUrls = bodyStringArray(req.body.option_extra_image_urls).map((s) =>
+      s.trim().split("\n").map((u) => u.trim()).filter(Boolean)
+    );
+    const optionDescriptions = bodyStringArray(req.body.option_descriptions).map((d) => d.trim());
     questionConfig.options = optionLabels.map((label, i) => {
+      const opt: import("../types/domain").QuestionOption = { label, value: label };
       const imageUrl = optionImageUrls[i] ?? "";
-      return imageUrl ? { label, value: label, imageUrl } : { label, value: label };
+      const extraImages = optionExtraImageUrls[i] ?? [];
+      const description = optionDescriptions[i] ?? "";
+      if (imageUrl) opt.imageUrl = imageUrl;
+      const allImages = [imageUrl, ...extraImages].filter(Boolean);
+      if (allImages.length > 0) opt.imageUrls = allImages;
+      if (description) opt.description = description;
+      return opt;
     });
     if (MULTI_CHOICE_TYPES.includes(questionType)) {
       const minSelect = parseOptionalInteger(req.body.min_select);
@@ -1064,16 +1115,28 @@ function buildQuestionConfigFromRequest(
     if (rowLabels.length === 0) throw new HttpError(400, "マトリクスの行（row）を1つ以上設定してください。");
     if (colLabels.length === 0) throw new HttpError(400, "マトリクスの列（column）を1つ以上設定してください。");
     const rowImageUrls = bodyStringArray(req.body.matrix_row_image_urls).map((u) => u.trim());
+    const rowExtraImageUrls = bodyStringArray(req.body.matrix_row_extra_image_urls).map((s) =>
+      s.trim().split("\n").map((u) => u.trim()).filter(Boolean)
+    );
     const rowDescriptions = bodyStringArray(req.body.matrix_row_descriptions).map((d) => d.trim());
+    const colImageUrls = bodyStringArray(req.body.matrix_col_image_urls).map((u) => u.trim());
     questionConfig.options = rowLabels.map((label, i) => {
       const opt: import("../types/domain").QuestionOption = { label, value: label };
       const imageUrl = rowImageUrls[i] ?? "";
+      const extraImages = rowExtraImageUrls[i] ?? [];
       const description = rowDescriptions[i] ?? "";
       if (imageUrl) opt.imageUrl = imageUrl;
+      const allImages = [imageUrl, ...extraImages].filter(Boolean);
+      if (allImages.length > 0) opt.imageUrls = allImages;
       if (description) opt.description = description;
       return opt;
     });
-    (questionConfig as Record<string, unknown>).matrix_cols = colLabels.map((label) => ({ label, value: label }));
+    (questionConfig as Record<string, unknown>).matrix_cols = colLabels.map((label, i) => {
+      const entry: Record<string, string> = { label, value: label };
+      const colImageUrl = colImageUrls[i] ?? "";
+      if (colImageUrl) entry.imageUrl = colImageUrl;
+      return entry;
+    });
     const headerMode = bodyString(req.body.matrix_header_mode).trim();
     if (headerMode === "vertical" || headerMode === "rotated") {
       questionConfig.matrix_header_mode = headerMode;
