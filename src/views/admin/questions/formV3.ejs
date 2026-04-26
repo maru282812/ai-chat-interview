@@ -151,6 +151,49 @@
         <textarea name="question_text" required rows="3"><%= safeForm.question_text || '' %></textarea>
       </label>
 
+      <!-- 設問文画像（省略可） -->
+      <%
+        const qtImgUrl = safeForm.question_text_image_url || '';
+        const qtExtraImgs = safeForm.question_text_extra_image_urls || '';
+        const qtCaption = safeForm.question_text_caption || '';
+      %>
+      <div style="padding:10px 12px;border:1px solid #d8e3e0;border-radius:10px;background:#fafcfb;">
+        <label style="font-weight:600;font-size:13px;color:#60726f;display:block;margin-bottom:8px;">設問文の画像（省略可）</label>
+        <div class="row-card question-text-image-card" style="padding:10px;">
+          <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+            <div style="flex:2;min-width:200px;">
+              <label>メイン画像URL</label>
+              <div style="display:flex;gap:4px;align-items:center;">
+                <input type="url" name="question_text_image_url" class="option-image-url"
+                  value="<%= qtImgUrl %>" placeholder="https://..."
+                  style="flex:1;" oninput="syncImagePreview(this)" />
+                <label class="button-link secondary" style="white-space:nowrap;cursor:pointer;">
+                  ファイル選択
+                  <input type="file" accept="image/png,image/jpeg,image/webp" class="option-file-input" hidden />
+                </label>
+              </div>
+              <div class="option-image-preview" style="margin-top:4px;<%= qtImgUrl ? '' : 'display:none;' %>">
+                <img src="<%= qtImgUrl %>" alt="preview"
+                  style="max-width:160px;max-height:100px;border-radius:4px;border:1px solid #ddd;"
+                  onerror="this.parentElement.style.display='none'" />
+                <button type="button" class="button-link danger remove-image" style="font-size:12px;">削除</button>
+              </div>
+              <label style="margin-top:6px;font-size:12px;color:#60726f;">
+                追加画像URL（改行区切り・複数枚表示）
+                <textarea name="question_text_extra_image_urls" rows="2"
+                  placeholder="https://...&#10;https://..."
+                  style="font-size:12px;"><%= qtExtraImgs %></textarea>
+              </label>
+            </div>
+            <label style="flex:2;min-width:160px;">
+              画像の説明（caption・省略可）
+              <input type="text" name="question_text_caption"
+                value="<%= qtCaption %>" placeholder="例: 図1. 商品パッケージ" />
+            </label>
+          </div>
+        </div>
+      </div>
+
       <% const pageGroups = locals.pageGroups || []; %>
       <% if (pageGroups.length > 0) { %>
       <label>
@@ -375,6 +418,8 @@
               const matrixRowCount = Math.max(matrixRowLabels.length, 1);
               const matrixColLabels = (safeForm.matrix_cols || '').split('\n').filter(s => s.trim());
               const matrixColImgs = Array.isArray(safeForm.matrix_col_image_urls) ? safeForm.matrix_col_image_urls : [];
+              const matrixColExtraImgs = Array.isArray(safeForm.matrix_col_extra_image_urls) ? safeForm.matrix_col_extra_image_urls : [];
+              const matrixColDescs = Array.isArray(safeForm.matrix_col_descriptions) ? safeForm.matrix_col_descriptions : [];
               const matrixColCount = Math.max(matrixColLabels.length, 1);
             %>
             <% for (let ri = 0; ri < matrixRowCount; ri++) { %>
@@ -437,6 +482,8 @@
           <div id="matrixColCards" class="stack-sm" style="margin-top:8px;">
             <% for (let ci = 0; ci < matrixColCount; ci++) { %>
               <% const colImg = matrixColImgs[ci] || ''; %>
+              <% const colExtraImgs = matrixColExtraImgs[ci] || ''; %>
+              <% const colDesc = matrixColDescs[ci] || ''; %>
               <div class="row-card matrix-col-card">
                 <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
                   <label style="flex:1;min-width:140px;">
@@ -445,7 +492,7 @@
                       value="<%= matrixColLabels[ci] || '' %>" placeholder="例: そう思う" />
                   </label>
                   <div style="flex:2;min-width:200px;">
-                    <label>画像URL（省略可）</label>
+                    <label>メイン画像URL（省略可）</label>
                     <div style="display:flex;gap:4px;align-items:center;">
                       <input type="url" name="matrix_col_image_urls" class="option-image-url"
                         value="<%= colImg %>" placeholder="https://..."
@@ -461,7 +508,18 @@
                         onerror="this.parentElement.style.display='none'" />
                       <button type="button" class="button-link danger remove-image" style="font-size:12px;">削除</button>
                     </div>
+                    <label style="margin-top:6px;font-size:12px;color:#60726f;">
+                      追加画像URL（改行区切り・複数枚表示）
+                      <textarea name="matrix_col_extra_image_urls" rows="2"
+                        placeholder="https://...&#10;https://..."
+                        style="font-size:12px;"><%= colExtraImgs %></textarea>
+                    </label>
                   </div>
+                  <label style="flex:2;min-width:160px;">
+                    補足説明（省略可）
+                    <input type="text" name="matrix_col_descriptions"
+                      value="<%= colDesc %>" placeholder="例: ブランド名・商品説明" />
+                  </label>
                 </div>
                 <div class="inline-actions">
                   <button type="button" class="button-link danger remove-matrix-col">削除</button>
@@ -1070,6 +1128,16 @@
       };
 
       const uploadFile = async (file) => {
+        const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+        const MAX_BYTES = 5 * 1024 * 1024;
+        if (!ALLOWED_TYPES.includes(file.type)) {
+          alert('対応形式はPNG・JPEG・WebPのみです（選択: ' + (file.type || '不明') + '）');
+          return;
+        }
+        if (file.size > MAX_BYTES) {
+          alert('画像サイズは5MB以下にしてください（現在: ' + (file.size / 1024 / 1024).toFixed(1) + 'MB）');
+          return;
+        }
         const outerDiv = getOuterDiv(fileInput);
         if (!outerDiv) return;
         const urlInput = outerDiv.querySelector('.option-image-url');
@@ -1077,7 +1145,6 @@
         const img      = preview ? preview.querySelector('img') : null;
         const label    = fileInput.closest('label');
         if (!urlInput) return;
-        const prevHtml = label ? label.innerHTML : '';
         if (label) label.textContent = '送信中...';
         try {
           const base64 = await new Promise((resolve, reject) => {
@@ -1091,9 +1158,10 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ data: base64, filename: file.name, mimeType: file.type }),
           });
-          const json = await resp.json();
+          const json = await resp.json().catch(() => ({ error: 'サーバーエラー (HTTP ' + resp.status + ')' }));
           if (!resp.ok || !json.url) throw new Error(json.error || 'Upload failed');
           urlInput.value = json.url;
+          urlInput.dispatchEvent(new Event('input'));
           if (img) img.src = json.url;
           if (preview) preview.style.display = '';
         } catch (err) {
@@ -1101,7 +1169,7 @@
         } finally {
           if (label) {
             label.innerHTML = 'ファイル選択<input type="file" accept="image/png,image/jpeg,image/webp" class="option-file-input" hidden />';
-            const card = label.closest('.option-row') || label.closest('.matrix-row-card') || label.closest('.matrix-col-card');
+            const card = label.closest('.option-row') || label.closest('.matrix-row-card') || label.closest('.matrix-col-card') || label.closest('.question-text-image-card');
             if (card) attachImageHandlers(card);
           }
         }
@@ -1116,17 +1184,24 @@
       const outerDiv = getOuterDiv(fileInput);
       if (outerDiv && !outerDiv.dataset.dropBound) {
         outerDiv.dataset.dropBound = '1';
+        outerDiv.title = '画像をここにドロップできます';
+        outerDiv.addEventListener('dragenter', (e) => { e.preventDefault(); });
         outerDiv.addEventListener('dragover', (e) => {
           e.preventDefault();
           outerDiv.style.outline = '2px dashed #2ca87a';
           outerDiv.style.borderRadius = '6px';
+          outerDiv.style.background = 'rgba(44,168,122,0.06)';
         });
-        outerDiv.addEventListener('dragleave', () => {
-          outerDiv.style.outline = '';
+        outerDiv.addEventListener('dragleave', (e) => {
+          if (!outerDiv.contains(e.relatedTarget)) {
+            outerDiv.style.outline = '';
+            outerDiv.style.background = '';
+          }
         });
         outerDiv.addEventListener('drop', async (e) => {
           e.preventDefault();
           outerDiv.style.outline = '';
+          outerDiv.style.background = '';
           const file = e.dataTransfer?.files?.[0];
           if (file) await uploadFile(file);
         });
@@ -1220,7 +1295,7 @@
   // ----------------------------------------------------------------
   // マトリクス列カードの追加・削除・hidden 同期
   // ----------------------------------------------------------------
-  function makeMatrixColCard(label = '', imageUrl = '') {
+  function makeMatrixColCard(label = '', imageUrl = '', extraImages = '', description = '') {
     const d = document.createElement('div');
     d.className = 'row-card matrix-col-card';
     d.innerHTML = `
@@ -1229,7 +1304,7 @@
           <input type="text" name="matrix_col_labels" value="${escHtml(label)}" placeholder="例: そう思う" />
         </label>
         <div style="flex:2;min-width:200px;">
-          <label>画像URL（省略可）</label>
+          <label>メイン画像URL（省略可）</label>
           <div style="display:flex;gap:4px;align-items:center;">
             <input type="url" name="matrix_col_image_urls" class="option-image-url"
               value="${escHtml(imageUrl)}" placeholder="https://..."
@@ -1244,7 +1319,16 @@
               onerror="this.parentElement.style.display='none'" />
             <button type="button" class="button-link danger remove-image" style="font-size:12px;">削除</button>
           </div>
+          <label style="margin-top:6px;font-size:12px;color:#60726f;">
+            追加画像URL（改行区切り・複数枚表示）
+            <textarea name="matrix_col_extra_image_urls" rows="2"
+              placeholder="https://...&#10;https://..."
+              style="font-size:12px;">${escHtml(extraImages)}</textarea>
+          </label>
         </div>
+        <label style="flex:2;min-width:160px;">補足説明（省略可）
+          <input type="text" name="matrix_col_descriptions" value="${escHtml(description)}" placeholder="例: ブランド名・商品説明" />
+        </label>
       </div>
       <div class="inline-actions"><button type="button" class="button-link danger remove-matrix-col">削除</button></div>`;
     attachImageHandlers(d);
@@ -1282,6 +1366,10 @@
   // 既存列の削除ボタンをバインド
   document.querySelectorAll('.matrix-col-card').forEach(card => attachRemoveMatrixCol(card));
   document.querySelectorAll('#matrixColCards .option-file-input').forEach(fi => attachImageHandlers(fi.closest('.matrix-col-card')));
+
+  // 設問文画像カードのハンドラを初期化
+  const qtImgCard = document.querySelector('.question-text-image-card');
+  if (qtImgCard) attachImageHandlers(qtImgCard);
 
   // フォーム送信前に matrix_rows / matrix_cols hidden を同期
   document.querySelector('form').addEventListener('submit', () => {

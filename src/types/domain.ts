@@ -228,6 +228,12 @@ export interface ImageUploadConfig {
   instructions?: string;
 }
 
+export interface QuestionTextImage {
+  mainUrl: string | null;
+  additionalUrls: string[];
+  caption: string | null;
+}
+
 export interface LegacyBranchRuleCondition {
   operator: "equals" | "not_equals" | "includes" | "gte" | "lte";
   value: string | number | boolean;
@@ -317,6 +323,8 @@ export interface QuestionConfig {
   matrix_header_mode?: "normal" | "vertical" | "rotated";
   /** image_upload 設問の設定 */
   image_upload_config?: ImageUploadConfig;
+  /** 設問文に付ける画像パッケージ */
+  question_text_image?: QuestionTextImage;
   meta?: QuestionMeta;
   extraction?: QuestionExtractionConfig | null;
   conversationControl?: {

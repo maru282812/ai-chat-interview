@@ -611,6 +611,8 @@ interface QuestionFormValues {
   matrix_row_extra_image_urls: string[];
   matrix_row_descriptions: string[];
   matrix_col_image_urls: string[];
+  matrix_col_extra_image_urls: string[];
+  matrix_col_descriptions: string[];
   matrix_header_mode: string;
   display_format: string;
   grid_cols: string;
@@ -618,6 +620,10 @@ interface QuestionFormValues {
   image_upload_allowed_types: string;
   image_upload_max_size_mb: string;
   image_upload_instructions: string;
+  // --- 設問文画像 ---
+  question_text_image_url: string;
+  question_text_extra_image_urls: string;
+  question_text_caption: string;
   question_display_mode: string;
   page_group_id: string;
   // タグフォームフィールド (tab4)
@@ -852,6 +858,25 @@ function buildQuestionFormValues(
       }
       return [];
     })(),
+    matrix_col_extra_image_urls: overrides.matrix_col_extra_image_urls ?? (() => {
+      const mc = (question?.question_config as Record<string, unknown> | null)?.matrix_cols;
+      if (Array.isArray(mc)) {
+        return mc.map((c: { imageUrl?: string; imageUrls?: string[] } | string) => {
+          if (typeof c !== "object") return "";
+          const primary = c.imageUrl ?? "";
+          const all = c.imageUrls ?? [];
+          return all.filter((u) => u && u !== primary).join("\n");
+        });
+      }
+      return [];
+    })(),
+    matrix_col_descriptions: overrides.matrix_col_descriptions ?? (() => {
+      const mc = (question?.question_config as Record<string, unknown> | null)?.matrix_cols;
+      if (Array.isArray(mc)) {
+        return mc.map((c: { description?: string } | string) => (typeof c === "object" ? c.description ?? "" : ""));
+      }
+      return [];
+    })(),
     matrix_header_mode: overrides.matrix_header_mode ?? (question?.question_config?.matrix_header_mode ?? "normal"),
     display_format: overrides.display_format ?? (question?.question_config?.display_format ?? "list"),
     grid_cols: overrides.grid_cols ?? String(question?.question_config?.grid_cols ?? "2"),
@@ -859,6 +884,9 @@ function buildQuestionFormValues(
     image_upload_allowed_types: overrides.image_upload_allowed_types ?? (question?.question_config?.image_upload_config?.allowed_types ?? []).join(","),
     image_upload_max_size_mb: overrides.image_upload_max_size_mb ?? String(question?.question_config?.image_upload_config?.max_size_mb ?? ""),
     image_upload_instructions: overrides.image_upload_instructions ?? (question?.question_config?.image_upload_config?.instructions ?? ""),
+    question_text_image_url: overrides.question_text_image_url ?? (question?.question_config?.question_text_image?.mainUrl ?? ""),
+    question_text_extra_image_urls: overrides.question_text_extra_image_urls ?? (question?.question_config?.question_text_image?.additionalUrls ?? []).join("\n"),
+    question_text_caption: overrides.question_text_caption ?? (question?.question_config?.question_text_image?.caption ?? ""),
   };
 }
 
@@ -936,6 +964,8 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     matrix_row_extra_image_urls: bodyStringArray(req.body.matrix_row_extra_image_urls).map((s) => s.trim()),
     matrix_row_descriptions: bodyStringArray(req.body.matrix_row_descriptions).map((d) => d.trim()),
     matrix_col_image_urls: bodyStringArray(req.body.matrix_col_image_urls).map((u) => u.trim()),
+    matrix_col_extra_image_urls: bodyStringArray(req.body.matrix_col_extra_image_urls).map((s) => s.trim()),
+    matrix_col_descriptions: bodyStringArray(req.body.matrix_col_descriptions).map((d) => d.trim()),
     matrix_header_mode: bodyString(req.body.matrix_header_mode) || "normal",
     display_format: bodyString(req.body.display_format) || "list",
     grid_cols: bodyString(req.body.grid_cols) || "2",
@@ -943,6 +973,9 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     image_upload_allowed_types: bodyString(req.body.image_upload_allowed_types),
     image_upload_max_size_mb: bodyString(req.body.image_upload_max_size_mb),
     image_upload_instructions: bodyString(req.body.image_upload_instructions),
+    question_text_image_url: bodyString(req.body.question_text_image_url).trim(),
+    question_text_extra_image_urls: bodyString(req.body.question_text_extra_image_urls).trim(),
+    question_text_caption: bodyString(req.body.question_text_caption).trim(),
     tag_size:           bodyString(req.body.tag_size),
     tag_min:            bodyString(req.body.tag_min),
     tag_max:            bodyString(req.body.tag_max),
@@ -1120,6 +1153,10 @@ function buildQuestionConfigFromRequest(
     );
     const rowDescriptions = bodyStringArray(req.body.matrix_row_descriptions).map((d) => d.trim());
     const colImageUrls = bodyStringArray(req.body.matrix_col_image_urls).map((u) => u.trim());
+    const colExtraImageUrls = bodyStringArray(req.body.matrix_col_extra_image_urls).map((s) =>
+      s.trim().split("\n").map((u) => u.trim()).filter(Boolean)
+    );
+    const colDescriptions = bodyStringArray(req.body.matrix_col_descriptions).map((d) => d.trim());
     questionConfig.options = rowLabels.map((label, i) => {
       const opt: import("../types/domain").QuestionOption = { label, value: label };
       const imageUrl = rowImageUrls[i] ?? "";
@@ -1132,9 +1169,14 @@ function buildQuestionConfigFromRequest(
       return opt;
     });
     (questionConfig as Record<string, unknown>).matrix_cols = colLabels.map((label, i) => {
-      const entry: Record<string, string> = { label, value: label };
+      const entry: Record<string, unknown> = { label, value: label };
       const colImageUrl = colImageUrls[i] ?? "";
+      const colExtraImages = colExtraImageUrls[i] ?? [];
+      const colDescription = colDescriptions[i] ?? "";
       if (colImageUrl) entry.imageUrl = colImageUrl;
+      const allColImages = [colImageUrl, ...colExtraImages].filter(Boolean);
+      if (allColImages.length > 0) entry.imageUrls = allColImages;
+      if (colDescription) entry.description = colDescription;
       return entry;
     });
     const headerMode = bodyString(req.body.matrix_header_mode).trim();
@@ -1176,6 +1218,21 @@ function buildQuestionConfigFromRequest(
       default:
         break;
     }
+  }
+
+  // 設問文画像（全設問タイプ共通）
+  const qtImageUrl = bodyString(req.body.question_text_image_url).trim();
+  const qtExtraUrls = bodyString(req.body.question_text_extra_image_urls).trim()
+    .split("\n").map((u) => u.trim()).filter(Boolean);
+  const qtCaption = bodyString(req.body.question_text_caption).trim();
+  if (qtImageUrl || qtExtraUrls.length > 0 || qtCaption) {
+    questionConfig.question_text_image = {
+      mainUrl: qtImageUrl || null,
+      additionalUrls: qtExtraUrls,
+      caption: qtCaption || null,
+    };
+  } else {
+    delete questionConfig.question_text_image;
   }
 
   // 選択肢系の display_format / grid_cols
