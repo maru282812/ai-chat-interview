@@ -217,7 +217,7 @@ export const questionRepository = {
           is_system: true,
           is_hidden: true,
           is_required: true,
-          question_type: "text",
+          question_type: "free_text_long",
           ai_probe_enabled: false,
           question_text: "\u6700\u5f8c\u306b\u3001\u3053\u3053\u307e\u3067\u3067\u8a71\u3057\u304d\u308c\u306a\u304b\u3063\u305f\u3053\u3068\u304c\u3042\u308c\u3070\u81ea\u7531\u306b\u6559\u3048\u3066\u304f\u3060\u3055\u3044\u3002",
           question_config: buildFreeCommentQuestionConfig()
@@ -233,7 +233,7 @@ export const questionRepository = {
       question_code: FREE_COMMENT_QUESTION_CODE,
       question_text: "\u6700\u5f8c\u306b\u3001\u3053\u3053\u307e\u3067\u3067\u8a71\u3057\u304d\u308c\u306a\u304b\u3063\u305f\u3053\u3068\u304c\u3042\u308c\u3070\u81ea\u7531\u306b\u6559\u3048\u3066\u304f\u3060\u3055\u3044\u3002",
       question_role: "free_comment",
-      question_type: "text",
+      question_type: "free_text_long",
       is_required: true,
       sort_order: maxSortOrder + 1,
       branch_rule: null,

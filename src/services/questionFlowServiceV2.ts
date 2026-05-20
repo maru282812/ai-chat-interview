@@ -1,7 +1,5 @@
 import { HttpError } from "../lib/http";
 import {
-  getQuestionScaleRange,
-  getYesNoLabels,
   normalizeBranchRule,
   resolveMatchedBranchCode
 } from "../lib/questionDesign";
@@ -48,31 +46,19 @@ export const questionFlowService = {
     const help = question.question_config?.helpText ? `\n${question.question_config.helpText}` : "";
 
     switch (question.question_type) {
-      // 選択系（旧・新共通）
-      case "single_select":
+      // 選択系
       case "single_choice":
       case "text_with_image": {
         const options = question.question_config?.options ?? [];
         const optionsText = options.map((option, index) => `${index + 1}. ${option.label}`).join("\n");
         return `${header}${question.question_text}\n${optionsText}${help}`;
       }
-      case "multi_select":
       case "multi_choice": {
         const options = question.question_config?.options ?? [];
         const optionsText = options.map((option, index) => `${index + 1}. ${option.label}`).join("\n");
         return `${header}${question.question_text}\n${optionsText}\n複数選択の場合は 1,3 のようにカンマ区切りで入力してください。${help}`;
       }
-      case "yes_no": {
-        const { yesLabel, noLabel } = getYesNoLabels(question.question_config);
-        return `${header}${question.question_text}\n1. ${yesLabel}\n2. ${noLabel}${help}`;
-      }
       // 数値系
-      case "scale": {
-        const { min, max, minLabel, maxLabel } = getQuestionScaleRange(question.question_config);
-        const labels =
-          minLabel || maxLabel ? `\n${min}: ${minLabel || "-"} / ${max}: ${maxLabel || "-"}` : "";
-        return `${header}${question.question_text}\n${min}〜${max} の数字で入力してください。${labels}${help}`;
-      }
       case "numeric": {
         return `${header}${question.question_text}\n数値で入力してください。${help}`;
       }
@@ -102,35 +88,17 @@ export const questionFlowService = {
     }
 
     switch (question.question_type) {
-      // ─── テキスト系（旧: text / 新: free_text_short / free_text_long） ───
-      case "text":
+      // ─── テキスト系 ───
       case "free_text_short":
       case "free_text_long": {
         const maxLength = question.question_config?.max_length ?? null;
         if (maxLength !== null && text.length > maxLength) {
           throw new HttpError(400, `${maxLength}文字以内で入力してください。`);
         }
-        // textタイプで選択肢が設定されている場合の番号入力互換
-        if (question.question_type === "text" && configuredOptions.length > 0) {
-          const numericOption = findOption(text, configuredOptions);
-          if (numericOption) {
-            const optionIndex = configuredOptions.findIndex((option) => option.value === numericOption.value) + 1;
-            return {
-              answerText: numericOption.label,
-              normalizedAnswer: {
-                value: numericOption.value,
-                label: numericOption.label,
-                option_index: optionIndex > 0 ? optionIndex : null,
-                selection_source: "option_number"
-              }
-            };
-          }
-        }
         return { answerText: text, normalizedAnswer: { value: text } };
       }
 
-      // ─── 単一選択（旧: single_select / yes_no / 新: single_choice / text_with_image） ───
-      case "single_select":
+      // ─── 単一選択 ───
       case "single_choice":
       case "text_with_image": {
         const options = configuredOptions;
@@ -144,20 +112,7 @@ export const questionFlowService = {
         };
       }
 
-      case "yes_no": {
-        const { yesLabel, noLabel } = getYesNoLabels(question.question_config);
-        const lower = text.toLowerCase();
-        if (["1", yesLabel.toLowerCase(), "yes", "y", "true"].includes(lower)) {
-          return { answerText: yesLabel, normalizedAnswer: { value: "yes", boolean: true, label: yesLabel } };
-        }
-        if (["2", noLabel.toLowerCase(), "no", "n", "false"].includes(lower)) {
-          return { answerText: noLabel, normalizedAnswer: { value: "no", boolean: false, label: noLabel } };
-        }
-        throw new HttpError(400, `${yesLabel} / ${noLabel} のいずれかで回答してください。`);
-      }
-
-      // ─── 複数選択（旧: multi_select / 新: multi_choice） ───
-      case "multi_select":
+      // ─── 複数選択 ───
       case "multi_choice": {
         const options = configuredOptions;
         const parts = text
@@ -186,16 +141,7 @@ export const questionFlowService = {
         };
       }
 
-      // ─── 数値系（旧: scale / 新: numeric / sd） ───
-      case "scale": {
-        const { min, max } = getQuestionScaleRange(question.question_config);
-        const value = Number(text);
-        if (Number.isNaN(value) || value < min || value > max) {
-          throw new HttpError(400, `${min}〜${max} の数字で入力してください。`);
-        }
-        return { answerText: String(value), normalizedAnswer: { value } };
-      }
-
+      // ─── 数値系 ───
       case "numeric": {
         const value = Number(text);
         if (Number.isNaN(value)) {

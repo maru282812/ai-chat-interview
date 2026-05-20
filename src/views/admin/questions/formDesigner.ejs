@@ -88,7 +88,7 @@
     <label>
       question_type
       <select name="question_type" id="questionTypeSelect">
-        <% for (const type of ["text", "single_select", "multi_select", "yes_no", "scale"]) { %>
+        <% for (const type of ["single_choice", "multi_choice", "free_text_short", "free_text_long", "numeric", "matrix_single", "matrix_multi", "matrix_mixed", "image_upload", "hidden_single", "hidden_multi", "text_with_image", "sd"]) { %>
           <option value="<%= type %>" <%= (safeForm.question_type || "text") === type ? "selected" : "" %>><%= type %></option>
         <% } %>
       </select>
@@ -399,25 +399,13 @@
             max_length: typeof current.max_length === "number" ? current.max_length : "",
             example_answer: typeof current.example_answer === "string" ? current.example_answer : ""
           };
-        case "single_select":
+        case "single_choice":
           return { options: options.length > 0 ? options : [{ label: "", value: "" }] };
-        case "multi_select":
+        case "multi_choice":
           return {
             options: options.length > 0 ? options : [{ label: "", value: "" }],
             min_select: typeof current.min_select === "number" ? current.min_select : "",
             max_select: typeof current.max_select === "number" ? current.max_select : ""
-          };
-        case "yes_no":
-          return {
-            yes_label: typeof current.yes_label === "string" ? current.yes_label : "はい",
-            no_label: typeof current.no_label === "string" ? current.no_label : "いいえ"
-          };
-        case "scale":
-          return {
-            min: typeof current.min === "number" ? current.min : typeof current.scaleMin === "number" ? current.scaleMin : 1,
-            max: typeof current.max === "number" ? current.max : typeof current.scaleMax === "number" ? current.scaleMax : 5,
-            min_label: typeof current.min_label === "string" ? current.min_label : "",
-            max_label: typeof current.max_label === "string" ? current.max_label : ""
           };
         default:
           return {};
@@ -437,7 +425,7 @@
         if (exampleAnswer) config.example_answer = exampleAnswer;
       }
 
-      if (questionType === "single_select" || questionType === "multi_select") {
+      if (questionType === "single_choice" || questionType === "multi_choice") {
         const optionRows = [...document.querySelectorAll("[data-option-row]")];
         const options = optionRows
           .map((row) => ({
@@ -447,7 +435,7 @@
           .filter((row) => row.label && row.value);
         config.options = options;
 
-        if (questionType === "multi_select") {
+        if (questionType === "multi_choice") {
           const minSelect = document.querySelector("[data-config='min_select']")?.value?.trim() || "";
           const maxSelect = document.querySelector("[data-config='max_select']")?.value?.trim() || "";
           if (minSelect) config.min_select = Number(minSelect);
@@ -455,7 +443,7 @@
         }
       }
 
-      if (questionType === "yes_no") {
+      if (false) {
         const yesLabel = document.querySelector("[data-config='yes_label']")?.value?.trim() || "";
         const noLabel = document.querySelector("[data-config='no_label']")?.value?.trim() || "";
         if (yesLabel) config.yes_label = yesLabel;
@@ -545,11 +533,11 @@
         `;
       }
 
-      if (questionType === "single_select") {
+      if (questionType === "single_choice") {
         questionConfigDesigner.appendChild(renderOptionRows(state.options || [{ label: "", value: "" }]));
       }
 
-      if (questionType === "multi_select") {
+      if (questionType === "multi_choice") {
         questionConfigDesigner.appendChild(renderOptionRows(state.options || [{ label: "", value: "" }]));
         const extra = document.createElement("div");
         extra.className = "form-grid";
@@ -560,7 +548,7 @@
         questionConfigDesigner.appendChild(extra);
       }
 
-      if (questionType === "yes_no") {
+      if (false) {
         questionConfigDesigner.innerHTML = `
           <div class="form-grid">
             <label>yes_label<input type="text" data-config="yes_label" value="${escapeHtml(state.yes_label || "はい")}" /></label>

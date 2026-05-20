@@ -203,21 +203,10 @@ function renderAnswerOptionsForPrompt(question: Question): string | null {
   const type = question.question_type;
 
   if (
-    ["single_choice", "multi_choice", "single_select", "multi_select", "text_with_image", "sd"].includes(type) &&
+    ["single_choice", "multi_choice", "text_with_image", "sd"].includes(type) &&
     options.length > 0
   ) {
     return options.map((o, i) => `  ${i + 1}. [${o.value}] ${o.label}`).join("\n");
-  }
-
-  if (type === "yes_no") {
-    const opts =
-      options.length > 0
-        ? options
-        : [
-            { value: "yes", label: "はい" },
-            { value: "no", label: "いいえ" }
-          ];
-    return opts.map((o, i) => `  ${i + 1}. [${o.value}] ${o.label}`).join("\n");
   }
 
   if (type === "scale") {
@@ -238,9 +227,9 @@ function renderAnswerOptionsForPrompt(question: Question): string | null {
  * 特定設問・特定選択肢・特定の回答例に依存したハードコードは含まない。
  */
 function buildProbeTypeGuidance(questionType: string, aiProbeEnabled: boolean): string {
-  const TEXT_TYPES = new Set(["text", "free_text_short", "free_text_long"]);
-  const CHOICE_TYPES = new Set(["single_choice", "multi_choice", "yes_no", "single_select", "multi_select", "text_with_image"]);
-  const NUMERIC_TYPES = new Set(["numeric", "scale", "sd"]);
+  const TEXT_TYPES = new Set(["free_text_short", "free_text_long"]);
+  const CHOICE_TYPES = new Set(["single_choice", "multi_choice", "text_with_image"]);
+  const NUMERIC_TYPES = new Set(["numeric", "sd"]);
 
   const commonRules = [
     "深掘り判定の共通ルール（この順序で判断する）:",
@@ -267,7 +256,7 @@ function buildProbeTypeGuidance(questionType: string, aiProbeEnabled: boolean): 
     if (!aiProbeEnabled) {
       return "選択肢回答: ai_probe_enabled が false のため深掘りしない。action は必ず ask_next にする。";
     }
-    const isMulti = ["multi_choice", "multi_select"].includes(questionType);
+    const isMulti = questionType === "multi_choice";
     return [
       commonRules,
       "",

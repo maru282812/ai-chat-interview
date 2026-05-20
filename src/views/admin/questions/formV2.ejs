@@ -226,11 +226,7 @@
                 { value: "free_text_short","label": "短文自由記述" },
                 { value: "free_text_long", label: "長文自由記述" },
                 { value: "numeric",        label: "数値入力" },
-                { value: "text",           label: "テキスト ⚠旧形式" },
-                { value: "single_select",  label: "単一選択 ⚠旧形式" },
-                { value: "multi_select",   label: "複数選択 ⚠旧形式" },
-                { value: "yes_no",         label: "はい/いいえ ⚠旧形式" },
-                { value: "scale",          label: "スケール ⚠旧形式" },
+
               ];
             %>
             <% for (const t of fv2Types) { %>
@@ -354,11 +350,11 @@
       document.getElementById("typeTextFields").classList.toggle("hidden", type !== "text");
       document.getElementById("typeOptionFields").classList.toggle(
         "hidden",
-        type !== "single_select" && type !== "multi_select"
+        type !== "single_choice" && type !== "multi_choice"
       );
-      document.getElementById("typeMultiFields").classList.toggle("hidden", type !== "multi_select");
-      document.getElementById("typeYesNoFields").classList.toggle("hidden", type !== "yes_no");
-      document.getElementById("typeScaleFields").classList.toggle("hidden", type !== "scale");
+      document.getElementById("typeMultiFields").classList.toggle("hidden", type !== "multi_choice");
+      
+      document.getElementById("typeScaleFields").classList.toggle("hidden", true);
     }
 
     function syncBranchFieldOptions() {

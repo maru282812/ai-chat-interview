@@ -6,7 +6,9 @@
       "Bash(grep -i \"research_mode\" supabase/migrations/*.sql)",
       "Bash(grep -i \"question_role.*check\\\\|check.*question_role\" supabase/migrations/*.sql)",
       "Bash(npm run:*)",
-      "Bash(ls -la c:/work/ai-chat-interview/.env*)"
+      "Bash(ls -la c:/work/ai-chat-interview/.env*)",
+      "Bash(python -c ' *)",
+      "Bash(python)"
     ]
   }
 }

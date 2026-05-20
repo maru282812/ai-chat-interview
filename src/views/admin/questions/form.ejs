@@ -20,7 +20,7 @@
   <label>
     question_type
     <select name="question_type">
-      <% for (const type of ["text", "single_select", "multi_select", "yes_no", "scale"]) { %>
+      <% for (const type of ["single_choice", "multi_choice", "free_text_short", "free_text_long", "numeric", "matrix_single", "matrix_multi", "matrix_mixed", "image_upload", "hidden_single", "hidden_multi", "text_with_image", "sd"]) { %>
         <option value="<%= type %>" <%= question?.question_type === type ? "selected" : "" %>><%= type %></option>
       <% } %>
     </select>

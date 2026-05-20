@@ -475,82 +475,6 @@ export function normalizeQuestionConfig(
   const normalized = removeManagedConfigKeys(value);
 
   switch (questionType) {
-    case "text": {
-      const placeholder = normalizeString(value.placeholder);
-      const maxLength = normalizeNumber(value.max_length);
-      const exampleAnswer = normalizeString(value.example_answer);
-
-      if (placeholder) {
-        normalized.placeholder = placeholder;
-      }
-      if (maxLength !== null) {
-        normalized.max_length = maxLength;
-      }
-      if (exampleAnswer) {
-        normalized.example_answer = exampleAnswer;
-      }
-      break;
-    }
-    case "single_select": {
-      const options = normalizeOptions(value.options);
-      if (options.length > 0) {
-        normalized.options = options;
-      }
-      break;
-    }
-    case "multi_select": {
-      const options = normalizeOptions(value.options);
-      const minSelect = normalizeNumber(value.min_select);
-      const maxSelect = normalizeNumber(value.max_select);
-
-      if (options.length > 0) {
-        normalized.options = options;
-      }
-      if (minSelect !== null) {
-        normalized.min_select = minSelect;
-      }
-      if (maxSelect !== null) {
-        normalized.max_select = maxSelect;
-      }
-      break;
-    }
-    case "yes_no": {
-      const yesLabel = normalizeString(value.yes_label);
-      const noLabel = normalizeString(value.no_label);
-
-      if (yesLabel) {
-        normalized.yes_label = yesLabel;
-      }
-      if (noLabel) {
-        normalized.no_label = noLabel;
-      }
-      break;
-    }
-    case "scale": {
-      const min = normalizeNumber(value.min ?? value.scaleMin);
-      const max = normalizeNumber(value.max ?? value.scaleMax);
-      const scaleLabels = isPlainObject(value.scaleLabels) ? value.scaleLabels : null;
-      const minLabel =
-        normalizeString(value.min_label) ??
-        (scaleLabels && min !== null ? normalizeString(scaleLabels[String(min)]) : null);
-      const maxLabel =
-        normalizeString(value.max_label) ??
-        (scaleLabels && max !== null ? normalizeString(scaleLabels[String(max)]) : null);
-
-      if (min !== null) {
-        normalized.min = min;
-      }
-      if (max !== null) {
-        normalized.max = max;
-      }
-      if (minLabel) {
-        normalized.min_label = minLabel;
-      }
-      if (maxLabel) {
-        normalized.max_label = maxLabel;
-      }
-      break;
-    }
     default:
       break;
   }
@@ -718,7 +642,7 @@ export function validateQuestionConfig(questionType: QuestionType, config: Quest
     }
   }
 
-  if (questionType === "single_select" || questionType === "multi_select") {
+  if (questionType === "single_choice" || questionType === "multi_choice") {
     const options = normalized?.options ?? [];
     if (options.length === 0) {
       errors.push(`${questionType} requires at least one option.`);
@@ -729,38 +653,27 @@ export function validateQuestionConfig(questionType: QuestionType, config: Quest
       errors.push("Option values must be unique.");
     }
 
-    if (questionType === "multi_select") {
+    if (questionType === "multi_choice") {
       const minSelect = normalizeNumber(normalized?.min_select);
       const maxSelect = normalizeNumber(normalized?.max_select);
       if (minSelect !== null && minSelect < 0) {
-        errors.push("multi_select min_select must be 0 or greater.");
+        errors.push("multi_choice min_select must be 0 or greater.");
       }
       if (maxSelect !== null && maxSelect <= 0) {
-        errors.push("multi_select max_select must be 1 or greater.");
+        errors.push("multi_choice max_select must be 1 or greater.");
       }
       if (minSelect !== null && maxSelect !== null && minSelect > maxSelect) {
-        errors.push("multi_select min_select must not exceed max_select.");
+        errors.push("multi_choice min_select must not exceed max_select.");
       }
       if (maxSelect !== null && options.length > 0 && maxSelect > options.length) {
-        errors.push("multi_select max_select must not exceed option count.");
+        errors.push("multi_choice max_select must not exceed option count.");
       }
-    }
-  }
-
-  if (questionType === "yes_no" && Array.isArray(config?.options) && config.options.length > 0) {
-    errors.push("yes_no cannot define options. Use yes_label / no_label.");
-  }
-
-  if (questionType === "scale") {
-    const { min, max } = getQuestionScaleRange(config);
-    if (min >= max) {
-      errors.push("scale min must be smaller than max.");
     }
   }
 
   const extractionConfig = normalizeExtractionConfig(config?.extraction);
   if (extractionConfig && extractionConfig.mode !== "none") {
-    if (questionType !== "text") {
+    if (!["free_text_short", "free_text_long"].includes(questionType)) {
       errors.push("extraction is available only for text questions.");
     }
 

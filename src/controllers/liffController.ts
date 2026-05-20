@@ -1,13 +1,19 @@
 import type { Request, Response } from "express";
 import { env } from "../config/env";
+import { STORAGE_BUCKET, storagePaths } from "../config/storage";
 import { HttpError } from "../lib/http";
+import { logger } from "../lib/logger";
+import { getProjectResearchSettings } from "../lib/projectResearch";
+import { normalizeQuestionMeta } from "../lib/questionMetadata";
 import { userProfileRepository, type UserProfileUpsertInput } from "../repositories/userProfileRepository";
 import { projectRepository } from "../repositories/projectRepository";
+import { respondentRepository } from "../repositories/respondentRepository";
 import { questionRepository } from "../repositories/questionRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
 import { answerRepository } from "../repositories/answerRepository";
 import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
 import { questionPageGroupRepository } from "../repositories/questionPageGroupRepository";
+import { aiService } from "../services/aiService";
 import { analysisService } from "../services/analysisService";
 import { liffAuthService } from "../services/liffAuthService";
 import { liffService, getSurveyLiffConfig } from "../services/liffService";
@@ -15,6 +21,7 @@ import { personalityService } from "../services/personalityService";
 import { postService } from "../services/postService";
 import { respondentService } from "../services/respondentService";
 import type { MaritalStatus } from "../types/domain";
+import { runPostCompleteProcess } from "../services/postCompleteService";
 
 type SupportedPostEntryKey = "rant" | "diary";
 
@@ -470,20 +477,20 @@ export const liffController = {
 
     const { supabase } = await import("../config/supabase");
     const ext = mimeType === "image/heic" ? "heic" : mimeType.split("/")[1] ?? "jpg";
-    const storagePath = `answers/${assignmentId}/${Date.now()}-${filename}.${ext}`;
+    const storagePath = storagePaths.respondent(sessionId, `${Date.now()}-${filename}.${ext}`);
 
     const { error: uploadError } = await supabase.storage
-      .from("respondent-uploads")
+      .from(STORAGE_BUCKET)
       .upload(storagePath, buffer, { contentType: mimeType, upsert: false });
 
     if (uploadError) {
-      console.error("respondent-uploads upload error", uploadError);
+      console.error("Storage upload error", uploadError);
       res.status(500).json({ ok: false, error: `アップロードに失敗しました: ${uploadError.message}` });
       return;
     }
 
     const { data: urlData } = supabase.storage
-      .from("respondent-uploads")
+      .from(STORAGE_BUCKET)
       .getPublicUrl(storagePath);
 
     res.json({ ok: true, url: urlData.publicUrl, path: storagePath });
@@ -508,6 +515,227 @@ export const liffController = {
     }
 
     res.json({ ok: true });
+  },
+
+  /**
+   * POST /liff/survey/:assignmentId/complete
+   * サーバー側で完了を確定する。べき等性あり・ポイント付与・LINE通知を行う。
+   */
+  async completeSurveyByAssignment(req: Request, res: Response): Promise<void> {
+    const assignmentId = stringValue(req.params.assignmentId).trim();
+    const sessionIdFromBody = stringValue(req.body.session_id).trim() || null;
+
+    if (!assignmentId) {
+      res.status(400).json({ ok: false, error: "assignment_id は必須です。" });
+      return;
+    }
+
+    const assignment = await projectAssignmentRepository.getById(assignmentId);
+
+    // べき等性: 既に完了済みの場合は処理をスキップして成功を返す
+    if (assignment.status === "completed") {
+      res.json({ ok: true, alreadyCompleted: true });
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    const [project, respondent] = await Promise.all([
+      projectRepository.getById(assignment.project_id),
+      respondentRepository.getById(assignment.respondent_id),
+    ]);
+
+    // セッションを取得（body 指定 → アクティブ検索 の優先順）
+    let session = null as import("../types/domain").Session | null;
+    if (sessionIdFromBody) {
+      try {
+        session = await sessionRepository.getById(sessionIdFromBody);
+      } catch {
+        logger.warn("completeSurveyByAssignment.session.notFound", { assignmentId, sessionIdFromBody });
+      }
+    }
+    if (!session) {
+      session = await sessionRepository.getActiveByRespondent(assignment.respondent_id, assignment.project_id);
+    }
+
+    // セッションを完了状態へ更新
+    if (session && session.status !== "completed") {
+      session = await sessionRepository.update(session.id, {
+        status: "completed",
+        current_phase: "completed",
+        completed_at: now,
+        state_json: {
+          ...session.state_json,
+          phase: "completed",
+          pendingQuestionId: null,
+          pendingProbeQuestion: null,
+          pendingProbeSourceQuestionId: null,
+          pendingProbeSourceAnswerId: null,
+          pendingProbeReason: null,
+          pendingProbeType: null,
+          pendingProbeMissingSlots: [],
+          pendingFreeComment: false,
+          freeCommentPromptShown: false,
+          freeCommentProbeAsked: false,
+          pendingFreeCommentPrompt: null,
+          pendingFreeCommentSourceAnswerId: null,
+          pendingFreeCommentSourceText: null,
+          pendingFreeCommentReason: null,
+          pendingFreeCommentProbeType: null,
+          pendingFreeCommentMissingSlots: [],
+        },
+      });
+    }
+
+    // アサインメントを完了状態へ更新
+    await projectAssignmentRepository.update(assignmentId, {
+      status: "completed",
+      completed_at: now,
+    });
+
+    // DB更新完了後すぐにレスポンスを返し、重い後処理は非同期で実行する
+    res.json({ ok: true, alreadyCompleted: false });
+
+    if (!session) {
+      logger.warn("completeSurveyByAssignment.noSession", {
+        assignmentId,
+        respondentId: respondent.id,
+      });
+    }
+
+    void runPostCompleteProcess({
+      assignmentId,
+      session,
+      respondent,
+      project,
+      lineUserId: assignment.user_id,
+    }).catch((err: unknown) => {
+      logger.error("completeSurveyByAssignment.postComplete.unhandled", {
+        assignmentId,
+        error: String(err),
+      });
+    });
+  },
+
+  async chatMessage(req: Request, res: Response): Promise<void> {
+    const sessionId = stringValue(req.body.session_id).trim();
+    const message = stringValue(req.body.message).trim();
+
+    if (!sessionId || !message) {
+      res.json({ probe_question: null });
+      return;
+    }
+
+    const session = await sessionRepository.getById(sessionId);
+    if (!session || session.status !== "active") {
+      res.json({ probe_question: null });
+      return;
+    }
+
+    const currentQuestionId = session.current_question_id;
+    if (!currentQuestionId) {
+      res.json({ probe_question: null });
+      return;
+    }
+
+    const question = await questionRepository.getById(currentQuestionId);
+    const project = await projectRepository.getById(session.project_id);
+    const settings = getProjectResearchSettings(project);
+
+    if (!settings.probe_policy.enabled) {
+      res.json({ probe_question: null });
+      return;
+    }
+
+    // survey_interview: ai_probe_enabled === true が必須。interview: false でなければOK
+    const rawAiProbeAllowed = project.research_mode === "interview"
+      ? question.ai_probe_enabled !== false
+      : question.ai_probe_enabled === true;
+
+    if (!rawAiProbeAllowed) {
+      res.json({ probe_question: null });
+      return;
+    }
+
+    const contextType = question.question_role === "free_comment" ? "free_comment" : project.research_mode;
+    const meta = normalizeQuestionMeta(question, contextType, { projectAiState: project.ai_state_json });
+    const probeCountPerQuestion = session.state_json?.aiProbeCountPerQuestion ?? {};
+    const currentProbeCountForAnswer = probeCountPerQuestion[currentQuestionId] ?? 0;
+    const currentProbeCountForSession = session.state_json?.aiProbeCount ?? 0;
+
+    const maxProbesPerAnswer = Math.min(
+      env.MAX_AI_PROBES_PER_ANSWER,
+      settings.probe_policy.max_probes_per_answer,
+      meta.probe_config.max_probes
+    );
+    const maxProbesPerSession = Math.min(
+      env.MAX_AI_PROBES_PER_SESSION,
+      settings.probe_policy.max_probes_per_session
+    );
+
+    logger.info("PROBE_CHECK_LIFF", {
+      sessionId,
+      questionId: question.id,
+      questionCode: question.question_code,
+      questionType: question.question_type,
+      ai_probe_enabled: question.ai_probe_enabled,
+      answerText: message,
+      currentProbeCountForAnswer,
+      currentProbeCountForSession,
+      maxProbesPerAnswer,
+      maxProbesPerSession,
+      probePolicyEnabled: settings.probe_policy.enabled,
+      maxProbesFromMeta: meta.probe_config.max_probes
+    });
+
+    if (currentProbeCountForAnswer >= maxProbesPerAnswer || currentProbeCountForSession >= maxProbesPerSession) {
+      res.json({ probe_question: null });
+      return;
+    }
+
+    try {
+      const analysis = await aiService.analyzeAnswer({
+        sessionId: session.id,
+        project,
+        question,
+        nextQuestion: null,
+        answer: message,
+        existingSlots: {},
+        maxProbes: maxProbesPerAnswer,
+        aiProbeEnabled: true,
+        currentProbeCount: currentProbeCountForAnswer
+      });
+
+      logger.info("PROBE_CHECK_LIFF_RESULT", {
+        sessionId,
+        questionCode: question.question_code,
+        analysisAction: analysis.action,
+        probeType: analysis.probe_type,
+        suggestedProbeQuestion: analysis.question,
+        reason: analysis.reason
+      });
+
+      if (analysis.action === "probe" && analysis.question) {
+        await sessionRepository.update(session.id, {
+          current_phase: "ai_probe",
+          state_json: {
+            ...session.state_json,
+            aiProbeCount: currentProbeCountForSession + 1,
+            aiProbeCountCurrentAnswer: currentProbeCountForAnswer + 1,
+            aiProbeCountPerQuestion: {
+              ...probeCountPerQuestion,
+              [currentQuestionId]: currentProbeCountForAnswer + 1
+            }
+          }
+        });
+        res.json({ probe_question: analysis.question });
+        return;
+      }
+    } catch (err) {
+      logger.warn("chatMessage.probe.failed", { sessionId, error: String(err) });
+    }
+
+    res.json({ probe_question: null });
   },
 
   async updateMypageData(req: Request, res: Response): Promise<void> {

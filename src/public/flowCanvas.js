@@ -123,8 +123,6 @@
 
   function getTypeLabel(type) {
     var map = {
-      'text':'テキスト', 'single_select':'単一選択', 'multi_select':'複数選択',
-      'yes_no':'はい/いいえ', 'scale':'スケール',
       'single_choice':'単一選択', 'multi_choice':'複数選択',
       'free_text_short':'短文', 'free_text_long':'長文', 'numeric':'数値',
       'matrix_single':'マトリクス', 'matrix_multi':'マトリクス(複)', 'matrix_mixed':'マトリクス(混)',
@@ -986,10 +984,10 @@
 
   // 回答形式ごとの型別設定UIを生成する
   function buildRpTypeSpecific(qType, opts, config) {
-    var CHOICE_TYPES  = ['single_select','multi_select','single_choice','multi_choice','yes_no','hidden_single','hidden_multi','text_with_image','sd'];
+    var CHOICE_TYPES  = ['single_choice','multi_choice','hidden_single','hidden_multi','text_with_image','sd'];
     var MATRIX_TYPES  = ['matrix_single','matrix_multi','matrix_mixed'];
-    var MULTI_TYPES   = ['multi_select','multi_choice'];
-    var TEXT_TYPES    = ['free_text_short','free_text_long','text'];
+    var MULTI_TYPES   = ['multi_choice'];
+    var TEXT_TYPES    = ['free_text_short','free_text_long'];
 
     if (MATRIX_TYPES.includes(qType)) {
       var matrixRowsText = (config.options || []).map(function (o) { return o.label; }).join('\n');
@@ -1066,22 +1064,12 @@
         '</div>'
       ) : '';
 
-      var yesNoHtml = qType === 'yes_no' ? (
-        '<div class="rp-row">' +
-          '<div class="rp-field"><label>はいラベル</label>' +
-            '<input type="text" id="rp-yes_label" value="' + esc(config.yes_label || 'はい') + '" /></div>' +
-          '<div class="rp-field"><label>いいえラベル</label>' +
-            '<input type="text" id="rp-no_label" value="' + esc(config.no_label || 'いいえ') + '" /></div>' +
-        '</div>'
-      ) : '';
-
       return (
         '<div class="rp-section-title">選択肢</div>' +
         '<div id="rp-option-rows">' + optRows + '</div>' +
         '<button type="button" class="rp-add-btn" id="rp-add-opt">＋ 選択肢追加</button>' +
         multiHtml +
-        yesNoHtml +
-        '<div style="margin:4px 0 8px">' +
+          '<div style="margin:4px 0 8px">' +
           '<button type="button" class="rp-add-btn" id="rp-reuse-options-btn" style="width:100%;font-size:11px">📋 他の設問から選択肢を流用</button>' +
         '</div>'
       );
@@ -1100,9 +1088,6 @@
       ['matrix_mixed','マトリクス（混合）'],['image_upload','画像アップロード'],
       ['hidden_single','隠し項目（単一）'],['hidden_multi','隠し項目（複数）'],
       ['text_with_image','テキスト+画像選択肢'],['sd','SD法'],
-      // 旧形式（既存データ表示専用・新規選択不可）
-      ['text','テキスト ⚠旧形式'],['single_select','単一選択 ⚠旧形式'],['multi_select','複数選択 ⚠旧形式'],
-      ['yes_no','はい/いいえ ⚠旧形式'],['scale','スケール ⚠旧形式'],
     ];
     var typeSelOpts = allTypeOpts.map(function (t) {
       return '<option value="' + t[0] + '"' + (qType === t[0] ? ' selected' : '') + '>' + t[1] + '</option>';
@@ -1320,7 +1305,7 @@
 
     var qType = (document.getElementById('rp-question_type') || {}).value || q.question_type;
     var MATRIX_TYPES_ARR = ['matrix_single','matrix_multi','matrix_mixed'];
-    var CHOICE_TYPES_ARR = ['single_select','multi_select','single_choice','multi_choice','yes_no','hidden_single','hidden_multi','text_with_image','sd'];
+    var CHOICE_TYPES_ARR = ['single_choice','multi_choice','hidden_single','hidden_multi','text_with_image','sd'];
 
     var reason   = suggestions.reason   || '';
     var warnings = suggestions.warnings || [];
@@ -1388,7 +1373,7 @@
 
     var qType = (document.getElementById('rp-question_type') || {}).value || q.question_type;
     var MATRIX_TYPES_ARR  = ['matrix_single','matrix_multi','matrix_mixed'];
-    var CHOICE_TYPES_ARR  = ['single_select','multi_select','single_choice','multi_choice','yes_no','hidden_single','hidden_multi','text_with_image','sd'];
+    var CHOICE_TYPES_ARR  = ['single_choice','multi_choice','hidden_single','hidden_multi','text_with_image','sd'];
 
     if (MATRIX_TYPES_ARR.includes(qType)) {
       var rowsEl = document.getElementById('rp-matrix-rows');
@@ -1490,8 +1475,8 @@
 
     // 回答形式別の追加設定
     var MATRIX_TYPES_ARR = ['matrix_single','matrix_multi','matrix_mixed'];
-    var MULTI_TYPES_ARR  = ['multi_select','multi_choice'];
-    var TEXT_TYPES_ARR   = ['free_text_short','free_text_long','text'];
+    var MULTI_TYPES_ARR  = ['multi_choice'];
+    var TEXT_TYPES_ARR   = ['free_text_short','free_text_long'];
 
     var typeConfig = {};
 
@@ -1532,12 +1517,6 @@
       if (maxSelEl && maxSelEl.value !== '') typeConfig.max_select = Number(maxSelEl.value);
     }
 
-    if (questionType === 'yes_no') {
-      var ylEl = document.getElementById('rp-yes_label');
-      var nlEl = document.getElementById('rp-no_label');
-      typeConfig.yes_label = (ylEl ? ylEl.value.trim() : '') || 'はい';
-      typeConfig.no_label  = (nlEl ? nlEl.value.trim() : '') || 'いいえ';
-    }
 
     var branchRowEls = document.querySelectorAll('#rp-branch-rows .rp-branch-row');
     var branches = [];
@@ -2138,7 +2117,7 @@
     // 回答形式も合わせる（互換性がある場合）
     var typeEl = document.getElementById('rp-question_type');
     if (typeEl) {
-      var CHOICE_TYPES = ['single_choice','multi_choice','single_select','multi_select','yes_no','hidden_single','hidden_multi','text_with_image','sd'];
+      var CHOICE_TYPES = ['single_choice','multi_choice','hidden_single','hidden_multi','text_with_image','sd'];
       if (CHOICE_TYPES.includes(src.question_type)) {
         // 現在のタイプが選択型でなければ single_choice に変える
         var currentType = typeEl.value;

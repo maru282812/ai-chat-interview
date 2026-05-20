@@ -1,6 +1,7 @@
 ﻿import type { Request, Response } from "express";
 import { HttpError } from "../lib/http";
 import { env as appEnv } from "../config/env";
+import { STORAGE_BUCKET } from "../config/storage";
 import {
   getQuestionScaleRange,
   getYesNoLabels,
@@ -302,17 +303,8 @@ function parseQuestionRole(value: string): QuestionRole {
   return "main";
 }
 
-// 旧方式 → 新方式 の変換マップ（既存データ互換吸収・新規保存時には使わない）
-const LEGACY_TYPE_MAP: Partial<Record<string, QuestionType>> = {
-  text: "free_text_short",
-  single_select: "single_choice",
-  multi_select: "multi_choice",
-  yes_no: "single_choice",
-  scale: "numeric",
-};
-
-function parseQuestionType(value: string, convertLegacy = false): QuestionType {
-  const CURRENT_VALID: QuestionType[] = [
+function parseQuestionType(value: string): QuestionType {
+  const VALID: QuestionType[] = [
     "single_choice", "multi_choice",
     "matrix_single", "matrix_multi", "matrix_mixed",
     "free_text_short", "free_text_long",
@@ -320,16 +312,7 @@ function parseQuestionType(value: string, convertLegacy = false): QuestionType {
     "hidden_single", "hidden_multi",
     "text_with_image", "sd",
   ];
-  // 現行形式はそのまま返す
-  if (CURRENT_VALID.includes(value as QuestionType)) {
-    return value as QuestionType;
-  }
-  // 旧形式: 変換モードならマッピング、そうでなければ旧値を保持（既存データ読み込み時）
-  if (value in LEGACY_TYPE_MAP) {
-    if (convertLegacy) {
-      return LEGACY_TYPE_MAP[value]!;
-    }
-    // 旧値をそのまま保持（parseAnswer側で互換処理済み）
+  if (VALID.includes(value as QuestionType)) {
     return value as QuestionType;
   }
   return "free_text_short";
@@ -620,6 +603,7 @@ interface QuestionFormValues {
   image_upload_allowed_types: string;
   image_upload_max_size_mb: string;
   image_upload_instructions: string;
+  image_upload_text_mode: string;
   // --- 設問文画像 ---
   question_text_image_url: string;
   question_text_extra_image_urls: string;
@@ -884,6 +868,7 @@ function buildQuestionFormValues(
     image_upload_allowed_types: overrides.image_upload_allowed_types ?? (question?.question_config?.image_upload_config?.allowed_types ?? []).join(","),
     image_upload_max_size_mb: overrides.image_upload_max_size_mb ?? String(question?.question_config?.image_upload_config?.max_size_mb ?? ""),
     image_upload_instructions: overrides.image_upload_instructions ?? (question?.question_config?.image_upload_config?.instructions ?? ""),
+    image_upload_text_mode: overrides.image_upload_text_mode ?? (question?.question_config?.image_upload_config?.text_input_mode ?? "optional"),
     question_text_image_url: overrides.question_text_image_url ?? (question?.question_config?.question_text_image?.mainUrl ?? ""),
     question_text_extra_image_urls: overrides.question_text_extra_image_urls ?? (question?.question_config?.question_text_image?.additionalUrls ?? []).join("\n"),
     question_text_caption: overrides.question_text_caption ?? (question?.question_config?.question_text_image?.caption ?? ""),
@@ -973,6 +958,7 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     image_upload_allowed_types: bodyString(req.body.image_upload_allowed_types),
     image_upload_max_size_mb: bodyString(req.body.image_upload_max_size_mb),
     image_upload_instructions: bodyString(req.body.image_upload_instructions),
+    image_upload_text_mode: bodyString(req.body.image_upload_text_mode) || "hidden",
     question_text_image_url: bodyString(req.body.question_text_image_url).trim(),
     question_text_extra_image_urls: bodyString(req.body.question_text_extra_image_urls).trim(),
     question_text_caption: bodyString(req.body.question_text_caption).trim(),
@@ -1016,6 +1002,8 @@ function renderQuestionForm(
     errorMessage?: string | null;
     successMessage?: string | null;
     statusCode?: number;
+    prevQuestion?: { id: string; question_code: string } | null;
+    nextQuestion?: { id: string; question_code: string } | null;
   }
 ): void {
   if (typeof input.statusCode === "number") {
@@ -1033,7 +1021,9 @@ function renderQuestionForm(
     ),
     pageGroups: input.pageGroups ?? [],
     errorMessage: input.errorMessage ?? null,
-    successMessage: input.successMessage ?? null
+    successMessage: input.successMessage ?? null,
+    prevQuestion: input.prevQuestion ?? null,
+    nextQuestion: input.nextQuestion ?? null,
   });
 }
 
@@ -1093,11 +1083,11 @@ function buildTagFieldsFromRequest(req: Request): {
 }
 
 const CHOICE_QUESTION_TYPES: QuestionType[] = [
-  "single_select", "multi_select", "single_choice", "multi_choice",
-  "yes_no", "hidden_single", "hidden_multi", "text_with_image", "sd",
+  "single_choice", "multi_choice",
+  "hidden_single", "hidden_multi", "text_with_image", "sd",
 ];
 const MATRIX_QUESTION_TYPES: QuestionType[] = ["matrix_single", "matrix_multi", "matrix_mixed"];
-const MULTI_CHOICE_TYPES: QuestionType[] = ["multi_select", "multi_choice"];
+const MULTI_CHOICE_TYPES: QuestionType[] = ["multi_choice"];
 
 function buildQuestionConfigFromRequest(
   req: Request,
@@ -1105,8 +1095,9 @@ function buildQuestionConfigFromRequest(
   existing: Question["question_config"] | null
 ) {
   const questionGoal = bodyString(req.body.question_goal).trim();
-  if (!questionGoal) {
-    throw new HttpError(400, "question_goal は必須です");
+  const aiProbeEnabled = req.body.ai_probe_enabled === "on";
+  if (aiProbeEnabled && !questionGoal) {
+    throw new HttpError(400, "AI深掘り有効時は「この質問で知りたいこと」は必須です");
   }
 
   const extractionEnabled = req.body.extraction_enabled === "on";
@@ -1137,10 +1128,6 @@ function buildQuestionConfigFromRequest(
       const maxSelect = parseOptionalInteger(req.body.max_select);
       if (minSelect !== null) { questionConfig.min_select = minSelect; } else { delete questionConfig.min_select; }
       if (maxSelect !== null) { questionConfig.max_select = maxSelect; } else { delete questionConfig.max_select; }
-    }
-    if (questionType === "yes_no") {
-      questionConfig.yes_label = bodyString(req.body.yes_label).trim() || "はい";
-      questionConfig.no_label = bodyString(req.body.no_label).trim() || "いいえ";
     }
   } else if (MATRIX_QUESTION_TYPES.includes(questionType)) {
     const rowLabels = parseLineSeparatedList(bodyString(req.body.matrix_rows));
@@ -1205,6 +1192,8 @@ function buildQuestionConfigFromRequest(
         const allowedTypesRaw = bodyString(req.body.image_upload_allowed_types).trim();
         const maxSizeMb = parseOptionalInteger(req.body.image_upload_max_size_mb);
         const instructions = bodyString(req.body.image_upload_instructions).trim();
+        const textModeRaw = bodyString(req.body.image_upload_text_mode).trim();
+        const textMode = (textModeRaw === 'optional' || textModeRaw === 'required') ? textModeRaw : undefined;
         questionConfig.image_upload_config = {
           max_count: maxCount ?? 1,
           allowed_types: allowedTypesRaw
@@ -1212,6 +1201,7 @@ function buildQuestionConfigFromRequest(
             : ["image/jpeg", "image/png", "image/webp"],
           max_size_mb: maxSizeMb ?? 10,
           instructions: instructions || undefined,
+          text_input_mode: textMode,
         };
         break;
       }
@@ -1493,7 +1483,7 @@ export const adminController = {
         screening_config: buildScreeningConfig(req),
         screening_last_question_order: parseOptionalInteger(req.body.screening_last_question_order)
       });
-      res.redirect(buildProjectEditRedirectPath(created.id, "project_created"));
+      res.redirect(`/admin/projects/${created.id}/questions`);
     } catch (error) {
       renderProjectResearchForm(res, {
         title: "新規プロジェクト作成",
@@ -1672,6 +1662,11 @@ export const adminController = {
       questionRepository.listByProject(question.project_id),
       questionPageGroupRepository.listByProject(question.project_id),
     ]);
+    const currentIndex = availableQuestions.findIndex(q => q.id === question.id);
+    const prevQ = currentIndex > 0 ? availableQuestions[currentIndex - 1] : undefined;
+    const nextQ = currentIndex !== -1 && currentIndex < availableQuestions.length - 1 ? availableQuestions[currentIndex + 1] : undefined;
+    const prevQuestion = prevQ ? { id: prevQ.id, question_code: prevQ.question_code } : null;
+    const nextQuestion = nextQ ? { id: nextQ.id, question_code: nextQ.question_code } : null;
     renderQuestionForm(res, {
       title: "質問編集",
       project,
@@ -1680,7 +1675,9 @@ export const adminController = {
       formValues: buildQuestionFormValues(question),
       availableQuestions,
       pageGroups,
-      successMessage: resolveNoticeMessage(req.query.notice)
+      successMessage: resolveNoticeMessage(req.query.notice),
+      prevQuestion,
+      nextQuestion,
     });
   },
 
@@ -2250,16 +2247,11 @@ export const adminController = {
     }
 
     // 複数選択の選択数制約
-    if (["multi_choice", "multi_select"].includes(questionType)) {
+    if (questionType === "multi_choice") {
       newConfig.min_select = body.min_select != null && body.min_select !== "" ? Number(body.min_select) : undefined;
       newConfig.max_select = body.max_select != null && body.max_select !== "" ? Number(body.max_select) : undefined;
     }
 
-    // はい/いいえ ラベル
-    if (questionType === "yes_no") {
-      newConfig.yes_label = String(body.yes_label ?? "はい").trim() || "はい";
-      newConfig.no_label  = String(body.no_label  ?? "いいえ").trim() || "いいえ";
-    }
 
     // 画像アップロード設定
     if (questionType === "image_upload") {
@@ -2382,11 +2374,11 @@ export const adminController = {
     );
 
     const CHOICE_TYPES_SET = new Set([
-      "single_choice", "multi_choice", "single_select", "multi_select",
-      "yes_no", "hidden_single", "hidden_multi", "text_with_image", "sd",
+      "single_choice", "multi_choice",
+      "hidden_single", "hidden_multi", "text_with_image", "sd",
     ]);
     const MATRIX_TYPES_SET = new Set(["matrix_single", "matrix_multi", "matrix_mixed"]);
-    const MULTI_CHOICE_SET = new Set(["multi_choice", "multi_select"]);
+    const MULTI_CHOICE_SET = new Set(["multi_choice"]);
 
     const systemPrompt = [
       "あなたはアンケート設計の専門家です。",
@@ -2849,7 +2841,7 @@ ${JSON.stringify(questionsForAI, null, 2)}
   "questions": [
     {
       "question_text": "設問文",
-      "question_type": "single_choice|multi_choice|free_text_short|free_text_long|numeric|yes_no|scale",
+      "question_type": "single_choice|multi_choice|free_text_short|free_text_long|numeric",
       "question_role": "screening|main|attribute|free_comment",
       "is_required": true,
       "ai_probe_enabled": false,
@@ -2865,8 +2857,6 @@ ${JSON.stringify(questionsForAI, null, 2)}
 - free_text_short: 短文自由記述
 - free_text_long: 長文自由記述
 - numeric: 数値入力
-- yes_no: はい/いいえ
-- scale: スケール（1-5）
 
 注意: options は選択型のみ設定。research_goal は全設問に設定すること。`;
 
@@ -3023,10 +3013,10 @@ ${JSON.stringify(questionsForAI, null, 2)}
 
     const { supabase } = await import("../config/supabase");
     const ext = mimeType.split("/")[1] ?? "png";
-    const storagePath = `question-options/${Date.now()}-${filename}.${ext}`;
+    const storagePath = `questions/${Date.now()}-${filename}.${ext}`;
 
     const { error: uploadError } = await supabase.storage
-      .from("question-images")
+      .from(STORAGE_BUCKET)
       .upload(storagePath, buffer, { contentType: mimeType, upsert: false });
 
     if (uploadError) {
@@ -3034,7 +3024,7 @@ ${JSON.stringify(questionsForAI, null, 2)}
       return;
     }
 
-    const { data: urlData } = supabase.storage.from("question-images").getPublicUrl(storagePath);
+    const { data: urlData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(storagePath);
     res.json({ ok: true, url: urlData.publicUrl });
   },
 };

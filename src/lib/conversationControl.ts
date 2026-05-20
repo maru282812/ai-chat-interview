@@ -1,5 +1,4 @@
 import type { NormalizedProjectResearchSettings } from "./projectResearch";
-import { getQuestionScaleRange } from "./questionDesign";
 import type { Question } from "../types/domain";
 
 export type ConversationCommand =
@@ -379,16 +378,6 @@ export function buildInvalidAnswerText(input: {
 
   const guide = (() => {
     switch (question.question_type) {
-      case "single_select":
-        return "番号か選択肢名で1つだけ返信してください。";
-      case "multi_select":
-        return "番号か選択肢名をカンマ区切りで返信してください。";
-      case "yes_no":
-        return "1 が はい、2 が いいえ です。";
-      case "scale": {
-        const { min, max } = getQuestionScaleRange(question.question_config);
-        return `${min}〜${max} の数字で返信してください。`;
-      }
       default:
         return "文字で短く教えてください。";
     }

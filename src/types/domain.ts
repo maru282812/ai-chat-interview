@@ -32,16 +32,10 @@ export type QuestionRole =
   | "free_comment";
 
 /**
- * QuestionType: 既存5種 + Phase1 拡張
+ * QuestionType: Phase1 拡張型
  * DB 制約は 016_question_schema_redesign.sql 参照
  */
 export type QuestionType =
-  // 既存（後方互換）
-  | "text"
-  | "single_select"
-  | "multi_select"
-  | "yes_no"
-  | "scale"
   // 選択系
   | "single_choice"
   | "multi_choice"
@@ -226,6 +220,8 @@ export interface ImageUploadConfig {
   allowed_types?: string[];
   max_size_mb?: number;
   instructions?: string;
+  /** テキスト補足入力モード: optional=任意, required=必須, hidden=非表示(デフォルト) */
+  text_input_mode?: 'optional' | 'required' | 'hidden';
 }
 
 export interface QuestionTextImage {
@@ -542,6 +538,7 @@ export interface SessionState {
   answersSinceSummary?: number;
   aiProbeCount?: number;
   aiProbeCountCurrentAnswer?: number;
+  aiProbeCountPerQuestion?: Record<string, number>;
   lastQuestionText?: string | null;
   lastQuestionEmbedding?: string[] | null;
   lastProbeType?: StructuredProbeType | null;

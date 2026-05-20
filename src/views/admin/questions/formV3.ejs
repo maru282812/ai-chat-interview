@@ -36,19 +36,11 @@
     { value: "hidden_multi",   label: "隠し項目（複数）" },
     { value: "text_with_image","label": "テキスト+画像選択肢" },
     { value: "sd",             label: "SD法" },
-    // 旧方式（既存データ表示専用・新規選択不可）
-    { value: "text",           label: "テキスト ⚠旧形式" },
-    { value: "single_select",  label: "単一選択 ⚠旧形式" },
-    { value: "multi_select",   label: "複数選択 ⚠旧形式" },
-    { value: "yes_no",         label: "はい/いいえ ⚠旧形式" },
-    { value: "scale",          label: "スケール ⚠旧形式" },
   ];
-  // 旧方式の値（新規選択不可・既存データ後方互換のみ）
-  const LEGACY_TYPES = ["text", "single_select", "multi_select", "yes_no", "scale"];
   const MATRIX_TYPES = ["matrix_single","matrix_multi","matrix_mixed"];
-  const CHOICE_TYPES  = ["single_select","multi_select","single_choice","multi_choice",
-                         "yes_no","hidden_single","hidden_multi","text_with_image","sd"];
-  const SCALE_TYPES   = ["scale"];
+  const CHOICE_TYPES  = ["single_choice","multi_choice",
+                         "hidden_single","hidden_multi","text_with_image","sd"];
+  const SCALE_TYPES   = [];
   const DISPLAY_MODES = [
     { value: "survey_question", label: "1問ずつ表示 (survey_question)" },
     { value: "survey_page",     label: "ページ単位表示 (survey_page)" },
@@ -117,6 +109,26 @@
       <a class="button-link secondary" href="/admin/projects/<%= project.id %>/questions">一覧へ戻る</a>
     </div>
   </div>
+
+  <% if (question) { %>
+  <div style="display:flex;gap:8px;align-items:center;border-top:1px solid #e0ece8;border-bottom:1px solid #e0ece8;padding:8px 0;">
+    <% if (prevQuestion) { %>
+      <button type="button" class="button-link secondary nav-question-btn" data-nav-key="prev" data-href="/admin/questions/<%= prevQuestion.id %>/edit" style="font-size:13px;">
+        ← 前の質問 (<%= prevQuestion.question_code %>)
+      </button>
+    <% } else { %>
+      <button type="button" class="button-link secondary" disabled style="font-size:13px;opacity:0.4;cursor:not-allowed;">← 前の質問</button>
+    <% } %>
+    <span style="flex:1;text-align:center;font-size:12px;color:#60726f;font-weight:600;"><%= question.question_code %></span>
+    <% if (nextQuestion) { %>
+      <button type="button" class="button-link secondary nav-question-btn" data-nav-key="next" data-href="/admin/questions/<%= nextQuestion.id %>/edit" style="font-size:13px;">
+        次の質問 (<%= nextQuestion.question_code %>) →
+      </button>
+    <% } else { %>
+      <button type="button" class="button-link secondary" disabled style="font-size:13px;opacity:0.4;cursor:not-allowed;">次の質問 →</button>
+    <% } %>
+  </div>
+  <% } %>
 
   <% if (errorMessage) { %>
     <section class="card subtle-card error-card"><strong><%= errorMessage %></strong></section>
@@ -267,8 +279,8 @@
       </div>
 
       <label>
-        この質問で知りたいこと <span style="color:red">*</span>
-        <textarea name="question_goal" rows="2" required
+        この質問で知りたいこと <span id="questionGoalRequired" style="color:red;display:none">*</span>
+        <textarea name="question_goal" id="questionGoalInput" rows="2"
           placeholder="例: なぜその選択をしたのか"><%= safeForm.question_goal || '' %></textarea>
       </label>
     </section>
@@ -373,19 +385,13 @@
       </div>
 
       <!-- 複数選択制約 -->
-      <div id="typeMultiFields" class="form-grid <%= qType !== 'multi_select' && qType !== 'multi_choice' ? 'hidden' : '' %>">
+      <div id="typeMultiFields" class="form-grid <%= qType !== 'multi_choice' ? 'hidden' : '' %>">
         <label>最小選択数 <input type="number" name="min_select" min="0" value="<%= safeForm.min_select_text || '' %>" /></label>
         <label>最大選択数 <input type="number" name="max_select" min="1" value="<%= safeForm.max_select_text || '' %>" /></label>
       </div>
 
-      <!-- Yes/No ラベル -->
-      <div id="typeYesNoFields" class="form-grid <%= qType !== 'yes_no' ? 'hidden' : '' %>">
-        <label>はいラベル <input type="text" name="yes_label" value="<%= safeForm.yes_label || 'はい' %>" /></label>
-        <label>いいえラベル <input type="text" name="no_label" value="<%= safeForm.no_label || 'いいえ' %>" /></label>
-      </div>
-
-      <!-- スケール設定 -->
-      <div id="typeScaleFields" class="form-grid <%= !SCALE_TYPES.includes(qType) ? 'hidden' : '' %>">
+      <!-- スケール設定（未使用） -->
+      <div id="typeScaleFields" class="form-grid hidden">
         <label>最小値 <input type="number" name="scale_min" value="<%= safeForm.scale_min_text || '1' %>" /></label>
         <label>最小ラベル <input type="text" name="scale_min_label" value="<%= safeForm.scale_min_label || '' %>" /></label>
         <label>最大値 <input type="number" name="scale_max" value="<%= safeForm.scale_max_text || '5' %>" /></label>
@@ -586,6 +592,15 @@
           回答者への注意書き（省略可）
           <textarea name="image_upload_instructions" rows="2"
             placeholder="例: 商品のパッケージが写るように撮影してください"><%= safeForm.image_upload_instructions || '' %></textarea>
+        </label>
+        <label>
+          補足テキスト入力
+          <select name="image_upload_text_mode">
+            <option value="hidden" <%= (safeForm.image_upload_text_mode || 'hidden') === 'hidden' ? 'selected' : '' %>>非表示（画像のみ）</option>
+            <option value="optional" <%= safeForm.image_upload_text_mode === 'optional' ? 'selected' : '' %>>任意（画像＋テキスト）</option>
+            <option value="required" <%= safeForm.image_upload_text_mode === 'required' ? 'selected' : '' %>>必須（テキスト未入力で次へ進めない）</option>
+          </select>
+          <span class="helper-text">任意・必須にすると画像アップロード欄の下にテキスト入力欄が表示されます</span>
         </label>
       </div>
 
@@ -933,7 +948,27 @@
   <!-- ============================================================ -->
   <!-- Submit                                                        -->
   <!-- ============================================================ -->
-  <div style="display:flex;gap:12px;justify-content:flex-end;">
+  <div style="display:flex;gap:12px;align-items:center;justify-content:space-between;">
+    <% if (question) { %>
+    <div style="display:flex;gap:8px;">
+      <% if (prevQuestion) { %>
+        <button type="button" class="button-link secondary nav-question-btn" data-nav-key="prev" data-href="/admin/questions/<%= prevQuestion.id %>/edit" style="font-size:13px;">
+          ← 前の質問
+        </button>
+      <% } else { %>
+        <button type="button" class="button-link secondary" disabled style="font-size:13px;opacity:0.4;cursor:not-allowed;">← 前の質問</button>
+      <% } %>
+      <% if (nextQuestion) { %>
+        <button type="button" class="button-link secondary nav-question-btn" data-nav-key="next" data-href="/admin/questions/<%= nextQuestion.id %>/edit" style="font-size:13px;">
+          次の質問 →
+        </button>
+      <% } else { %>
+        <button type="button" class="button-link secondary" disabled style="font-size:13px;opacity:0.4;cursor:not-allowed;">次の質問 →</button>
+      <% } %>
+    </div>
+    <% } else { %>
+    <div></div>
+    <% } %>
     <button type="submit" class="button-link primary" style="font-size:16px;padding:12px 32px;">
       <%= question ? '更新する' : '作成する' %>
     </button>
@@ -990,11 +1025,8 @@
     document.getElementById('typeChoiceDisplayFields').classList.toggle('hidden',
       !CHOICE_TYPES.includes(type));
     document.getElementById('typeMultiFields').classList.toggle('hidden',
-      type !== 'multi_select' && type !== 'multi_choice');
-    document.getElementById('typeYesNoFields').classList.toggle('hidden',
-      type !== 'yes_no');
-    document.getElementById('typeScaleFields').classList.toggle('hidden',
-      !SCALE_TYPES.includes(type));
+      type !== 'multi_choice');
+    document.getElementById('typeScaleFields').classList.toggle('hidden', true);
     document.getElementById('typeMatrixFields').classList.toggle('hidden',
       !MATRIX_TYPES.includes(type));
     document.getElementById('typeImageUploadFields').classList.toggle('hidden',
@@ -1030,6 +1062,10 @@
   function syncProbeOptions() {
     const enabled = document.getElementById('aiProbeEnabled').checked;
     document.getElementById('aiProbeOptions').style.display = enabled ? '' : 'none';
+    const goalInput    = document.getElementById('questionGoalInput');
+    const goalRequired = document.getElementById('questionGoalRequired');
+    goalInput.required = enabled;
+    goalRequired.style.display = enabled ? '' : 'none';
   }
   document.getElementById('aiProbeEnabled').addEventListener('change', syncProbeOptions);
   syncProbeOptions();
@@ -1616,9 +1652,9 @@
 
     if (commentBottom) inner += `<p style="font-size:12px;color:#60726f;margin:0 0 8px">${escHtml(commentBottom)}</p>`;
 
-    if (['single_select','single_choice','yes_no'].includes(qType) && opts.length > 0) {
+    if (['single_choice','text_with_image'].includes(qType) && opts.length > 0) {
       inner += opts.map(o => `<label style="display:block;margin:4px 0;"><input type="radio" /> ${escHtml(o)}</label>`).join('');
-    } else if (['multi_select','multi_choice'].includes(qType) && opts.length > 0) {
+    } else if (qType === 'multi_choice' && opts.length > 0) {
       inner += opts.map(o => `<label style="display:block;margin:4px 0;"><input type="checkbox" /> ${escHtml(o)}</label>`).join('');
     } else if (['text','free_text_short','numeric'].includes(qType)) {
       inner += `<input type="text" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;" placeholder="回答を入力..." />`;
@@ -1672,6 +1708,40 @@
   }
 
   syncTypeVisibility();
+
+  // ----------------------------------------------------------------
+  // 未保存変更検知 + 設問ナビゲーション
+  // ----------------------------------------------------------------
+  let isDirty = false;
+  const mainForm = document.getElementById('mainForm');
+  mainForm.addEventListener('change', () => { isDirty = true; });
+  mainForm.addEventListener('input', () => { isDirty = true; });
+  mainForm.addEventListener('submit', () => { isDirty = false; });
+
+  function navigateTo(href) {
+    if (isDirty) {
+      if (!confirm('未保存の変更があります。保存せずに移動しますか？')) return;
+      isDirty = false;
+    }
+    window.location.href = href;
+  }
+
+  document.querySelectorAll('.nav-question-btn').forEach(btn => {
+    btn.addEventListener('click', () => navigateTo(btn.dataset.href));
+  });
+
+  // キーボードナビゲーション（←→キー、テキスト入力中は無効）
+  document.addEventListener('keydown', (e) => {
+    const tag = document.activeElement ? document.activeElement.tagName : '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (e.key === 'ArrowLeft') {
+      const btn = document.querySelector('.nav-question-btn[data-nav-key="prev"]');
+      if (btn) btn.click();
+    } else if (e.key === 'ArrowRight') {
+      const btn = document.querySelector('.nav-question-btn[data-nav-key="next"]');
+      if (btn) btn.click();
+    }
+  });
 })();
 </script>
 

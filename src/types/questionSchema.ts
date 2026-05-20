@@ -24,12 +24,6 @@ export type DisplayMode = "survey_page" | "survey_question" | "interview_chat";
 // ------------------------------------------------------------------
 
 export type QuestionTypeV2 =
-  // ---- 既存（後方互換）----
-  | "text"
-  | "single_select"
-  | "multi_select"
-  | "yes_no"
-  | "scale"
   // ---- 選択系 ----
   | "single_choice"
   | "multi_choice"
@@ -61,7 +55,6 @@ export const MATRIX_TYPES: QuestionTypeV2[] = [
 
 /** テキスト入力系かどうか */
 export const TEXT_INPUT_TYPES: QuestionTypeV2[] = [
-  "text",
   "free_text_short",
   "free_text_long",
   "numeric",
@@ -69,11 +62,8 @@ export const TEXT_INPUT_TYPES: QuestionTypeV2[] = [
 
 /** 選択肢を持つ型かどうか */
 export const CHOICE_TYPES: QuestionTypeV2[] = [
-  "single_select",
-  "multi_select",
   "single_choice",
   "multi_choice",
-  "yes_no",
   "hidden_single",
   "hidden_multi",
   "text_with_image",

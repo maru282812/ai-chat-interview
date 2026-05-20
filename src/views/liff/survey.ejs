@@ -156,6 +156,63 @@
     }
     .chat-send:disabled { background: #b0ccc4; }
 
+    /* ---- interview_chat 回答エリア ---- */
+    .chat-answer-area {
+      width: 100%; max-height: 50vh; overflow-y: auto;
+      padding: 8px 0 8px; border-top: 1px solid #eee; margin-bottom: 4px;
+    }
+    .chat-question-block {
+      margin-bottom: 16px;
+    }
+    .chat-question-block .chat-bubble-wrap {
+      margin-bottom: 8px;
+    }
+    .chat-answer-inline {
+      width: 88%;
+      max-width: 420px;
+      margin-top: 8px;
+      padding-left: 8px;
+    }
+    .chat-answer-inline .choice-item {
+      display: flex;
+      width: 100%;
+      margin-bottom: 8px;
+    }
+    .chat-answer-inline .choice-button {
+      display: block;
+      width: 100%;
+      margin-bottom: 8px;
+    }
+    #chatAnswerArea .choice-item { padding: 8px 12px; }
+    .chat-answer-inline .choice-item { padding: 8px 12px; }
+    #chatAnswerArea .scale-btn { width: 44px; height: 44px; font-size: 14px; }
+    .chat-answer-inline .scale-btn { width: 44px; height: 44px; font-size: 14px; }
+    #chatAnswerArea .matrix-table-wrap { max-height: 220px; overflow-y: auto; }
+    .chat-answer-inline .matrix-table-wrap { max-height: 220px; overflow-y: auto; }
+    #chatAnswerArea .free-text-input { font-size: 14px; }
+    .chat-answer-inline .free-text-input { font-size: 14px; }
+
+    /* ---- interview_chat インライン送信ボタン ---- */
+    .chat-next-row {
+      width: 100%;
+      padding-top: 10px;
+    }
+    .chat-next-btn {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      background: #2ca87a;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+    }
+    .chat-next-btn:disabled { background: #b0ccc4; cursor: not-allowed; }
+    .chat-selection-error { font-size: 12px; color: #e55; margin-top: 4px; display: none; }
+
     /* ---- 完了画面 ---- */
     .complete-screen { text-align: center; padding: 40px 20px; }
     .complete-icon   { font-size: 48px; margin-bottom: 16px; }
@@ -193,9 +250,15 @@
       <!-- メッセージは JS で動的追加 -->
     </div>
   </div>
-  <div class="chat-input-area">
-    <textarea id="chatInput" class="chat-input" rows="1" placeholder="返信する..."></textarea>
-    <button id="chatSend" class="chat-send" disabled>↑</button>
+  <div class="chat-input-area" id="chatInputArea">
+    <div id="chatAnswerArea" class="chat-answer-area" style="display:none"></div>
+    <div id="chatTextRow" style="display:flex;gap:8px;align-items:flex-end;width:100%;">
+      <textarea id="chatInput" class="chat-input" rows="1" placeholder="返信する..."></textarea>
+      <button id="chatSend" class="chat-send" disabled>↑</button>
+    </div>
+    <div id="chatNextRow" style="display:none;width:100%;padding-top:6px;">
+      <button id="chatNext" class="btn-next" style="margin:0;" disabled>次へ →</button>
+    </div>
   </div>
 
 <% } else { %>
@@ -218,6 +281,17 @@
       <!-- 質問カードは JS で動的レンダリング -->
     </div>
 
+    <div id="probeArea" style="display:none; margin-bottom:12px;">
+      <div class="question-card" style="border:1.5px solid #2ca87a; background:#f0faf5;">
+        <div style="font-size:12px;color:#2ca87a;font-weight:600;margin-bottom:8px;">追加質問</div>
+        <div class="question-text" id="probeQuestionText" style="font-size:15px;margin-bottom:12px;"></div>
+        <textarea id="probeAnswerInput" class="free-text-input" rows="3" placeholder="こちらに入力してください"></textarea>
+        <div style="margin-top:10px;">
+          <button id="probeSubmitBtn" class="btn-next" disabled>送信</button>
+        </div>
+      </div>
+    </div>
+
     <div class="nav-btns">
       <button class="btn-back" id="btnBack" style="display:none">← 戻る</button>
       <button class="btn-next" id="btnNext" disabled>次へ →</button>
@@ -227,6 +301,11 @@
       <div class="complete-icon">✅</div>
       <p class="complete-title">回答が完了しました</p>
       <p class="complete-sub">ご協力ありがとうございます。</p>
+      <div id="completeActions" style="margin-top:20px;display:none">
+        <button id="btnCloseLiff" class="btn-next" style="min-width:160px;">LINEに戻る</button>
+        <p id="completeCloseTip" style="display:none;font-size:13px;color:#60726f;margin-top:8px;">アンケートは完了しました。この画面を閉じてください。</p>
+      </div>
+      <p id="completeError" style="display:none;color:#e53e3e;font-size:14px;margin-top:12px;">完了処理に失敗しました。時間をおいて再度お試しください。</p>
     </div>
   </div>
 <% } %>
@@ -344,7 +423,7 @@
   }
 
   // ---- 回答コンテキスト ----
-  const answerCtx = { answers: {} };
+  const answerCtx = { answers: {}, imageTexts: {} };
 
   // ---- 現在位置 ----
   let currentQuestionIndex = 0;    // survey_question 用
@@ -459,11 +538,22 @@
         const actual = String(latestAnswer ?? '');
         let matched = false;
         const w = b.when;
-        if (w.equals !== undefined)        matched = actual === String(w.equals);
-        else if (w.includes !== undefined)  matched = actual.includes(String(w.includes));
-        else if (Array.isArray(w.any_of))   matched = w.any_of.map(String).includes(actual);
-        else if (w.gte !== undefined)        matched = parseFloat(actual) >= Number(w.gte);
-        else if (w.lte !== undefined)        matched = parseFloat(actual) <= Number(w.lte);
+        if (w.equals !== undefined) {
+          matched = actual === String(w.equals);
+        } else if (w.includes !== undefined) {
+          // multi_choice は配列で保持されるため配列メンバーシップで判定
+          if (Array.isArray(latestAnswer)) {
+            matched = latestAnswer.map(String).includes(String(w.includes));
+          } else {
+            matched = actual.includes(String(w.includes));
+          }
+        } else if (Array.isArray(w.any_of)) {
+          matched = w.any_of.map(String).includes(actual);
+        } else if (w.gte !== undefined) {
+          matched = parseFloat(actual) >= Number(w.gte);
+        } else if (w.lte !== undefined) {
+          matched = parseFloat(actual) <= Number(w.lte);
+        }
         if (matched) return b.next;
       }
     }
@@ -473,46 +563,46 @@
   // ---- 設問文画像 HTML 生成 ----
   function questionTextImageHtml(q) {
     const img = q.question_config && q.question_config.question_text_image;
-    if (!img || !img.mainUrl) return '';
-    const additionals = (img.additionalUrls || []).filter(u => u && u !== img.mainUrl);
+    if (!img) return '';
+    // mainUrl (domain型) と url (シードSQL直書き) の両方に対応
+    const mainUrl = img.mainUrl || img.url;
+    if (!mainUrl) return '';
+    const additionals = (img.additionalUrls || []).filter(u => u && u !== mainUrl);
     return `<div class="question-text-images">
-      <img class="question-text-img" src="${esc(img.mainUrl)}" alt="" loading="lazy" onerror="this.style.display='none'" />
+      <img class="question-text-img" src="${esc(mainUrl)}" alt="${esc(img.alt || '')}" loading="lazy" onerror="this.style.display='none'" />
       ${additionals.map(u => `<img class="question-text-img" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.display='none'" />`).join('')}
       ${img.caption ? `<p class="question-text-caption">${esc(img.caption)}</p>` : ''}
     </div>`;
   }
 
-  // ---- 設問カード HTML 生成 ----
-  function renderQuestion(q, index, total) {
+  // ---- 共通回答レイアウト（チャットモードのインライン送信ボタン付き） ----
+  function buildAnswerLayout(q, answerHtml, showSubmitButton) {
+    if (!showSubmitButton) return answerHtml;
+    return `${answerHtml}
+      <p class="chat-selection-error" data-sel-err="${esc(q.question_code)}"></p>
+      <div class="chat-next-row">
+        <button type="button" class="chat-next-btn" disabled>回答する</button>
+      </div>`;
+  }
+
+  // ---- 回答 UI HTML 生成（タイプ別、チャットモードからも呼び出す） ----
+  function buildAnswerInputHtml(q, showSubmitButton = false) {
     const parsed = q.display_tags_parsed || {};
-    const qText  = applyAns(q.question_text, parsed);
-    const commentTop    = q.comment_top    ? `<p class="comment-top">${esc(q.comment_top)}</p>` : '';
-    const commentBottom = q.comment_bottom ? `<p class="comment-bottom">${esc(q.comment_bottom)}</p>` : '';
-    const reqBadge = q.is_required ? '<span class="required-badge">必須</span>' : '';
+    const qType = q.question_type;
+    console.log('[survey] question_type:', qType, '| code:', q.question_code);
+    console.log('[survey] answer_options:', q.question_config?.options);
     let inputHtml = '';
 
-    const qType = q.question_type;
-
-    let rawChoices;
-    if (qType === 'yes_no') {
-      const yesLabel = q.question_config?.yes_label || 'はい';
-      const noLabel  = q.question_config?.no_label  || 'いいえ';
-      rawChoices = [
-        { value: 'yes', label: yesLabel },
-        { value: 'no',  label: noLabel  },
-      ];
-    } else {
-      rawChoices = (q.question_config?.options || []).map(o => ({
-        value: o.value, label: o.label,
-        imageUrl: o.imageUrl || '',
-        imageUrls: o.imageUrls || [],
-        title: o.title || '',
-        description: o.description || '',
-      }));
-    }
+    const cfg = q.question_config || {};
+    const rawChoices = (cfg.options || []).map(o => ({
+      value: o.value, label: o.label,
+      imageUrl: o.imageUrl || '',
+      imageUrls: o.imageUrls || [],
+      title: o.title || '',
+      description: o.description || '',
+    }));
     const choices = filterChoices(rawChoices, parsed);
 
-    const cfg = q.question_config || {};
     const displayFormat = cfg.display_format || 'list';
     const gridCols = cfg.grid_cols || 2;
     const hasImages = choices.some(c => c.imageUrl || (c.imageUrls && c.imageUrls.length > 0));
@@ -539,8 +629,14 @@
       </label>`;
     }
 
-    if (['single_select','single_choice','yes_no'].includes(qType)) {
-      if (displayFormat === 'card' && hasImages) {
+    if (['single_choice','text_with_image'].includes(qType)) {
+      console.log('[survey] render_type: single_choice | choices:', choices.length);
+      if (choices.length === 0) {
+        console.warn('[survey] single_choice/text_with_image: no choices found, falling back to textarea');
+        const ph = cfg.placeholder || '回答を入力してください';
+        inputHtml = `<textarea class="free-text-input" data-code="${esc(q.question_code)}" rows="2" placeholder="${esc(ph)}"></textarea>
+          <p style="font-size:11px;color:#e55;margin-top:4px;">※選択肢が設定されていません（管理画面で設定してください）</p>`;
+      } else if (displayFormat === 'card' && hasImages) {
         const cols = Math.min(gridCols, 4);
         inputHtml = `<div class="card-grid" style="grid-template-columns:repeat(${cols},1fr);" data-type="single">` +
           choices.map(c => {
@@ -558,8 +654,14 @@
         inputHtml = `<div class="${choiceClass}" data-type="single">` +
           choices.map(c => choiceListItem(`<input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />`, c)).join('') + `</div>`;
       }
-    } else if (['multi_select','multi_choice'].includes(qType)) {
-      if (displayFormat === 'card' && hasImages) {
+    } else if (qType === 'multi_choice') {
+      console.log('[survey] render_type: multi_choice | choices:', choices.length);
+      if (choices.length === 0) {
+        console.warn('[survey] multi_choice: no choices found, falling back to textarea');
+        const ph = cfg.placeholder || '回答を入力してください';
+        inputHtml = `<textarea class="free-text-input" data-code="${esc(q.question_code)}" rows="2" placeholder="${esc(ph)}"></textarea>
+          <p style="font-size:11px;color:#e55;margin-top:4px;">※選択肢が設定されていません（管理画面で設定してください）</p>`;
+      } else if (displayFormat === 'card' && hasImages) {
         const cols = Math.min(gridCols, 4);
         inputHtml = `<div class="card-grid" style="grid-template-columns:repeat(${cols},1fr);" data-type="multi">` +
           choices.map(c => {
@@ -577,16 +679,25 @@
         inputHtml = `<div class="${choiceClass}" data-type="multi">` +
           choices.map(c => choiceListItem(`<input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />`, c)).join('') + `</div>`;
       }
-    } else if (['scale'].includes(qType)) {
-      const mn = cfg.scaleMin || cfg.min || 1;
-      const mx = cfg.scaleMax || cfg.max || 5;
-      const nums = [];
-      for (let i = mn; i <= mx; i++) nums.push(i);
-      inputHtml = `<div class="scale-row">` +
-        nums.map(n => `<button type="button" class="scale-btn" data-val="${n}" data-code="${esc(q.question_code)}">${n}</button>`).join('') +
-        `</div>`;
+    } else if (['numeric', 'sd'].includes(qType)) {
+      if (cfg.options && cfg.options.length > 0) {
+        inputHtml = `<div class="scale-row">` +
+          cfg.options.map(o => `<button type="button" class="scale-btn" data-val="${esc(o.value)}" data-code="${esc(q.question_code)}">${esc(o.label || o.value)}</button>`).join('') +
+          `</div>`;
+      } else {
+        const mn = cfg.min || 1;
+        const mx = cfg.max || 5;
+        const nums = [];
+        for (let i = mn; i <= mx; i++) nums.push(i);
+        const minLabel = cfg.min_label ? `<span style="font-size:11px;color:#60726f;">${esc(cfg.min_label)}</span>` : '';
+        const maxLabel = cfg.max_label ? `<span style="font-size:11px;color:#60726f;">${esc(cfg.max_label)}</span>` : '';
+        inputHtml = `<div class="scale-row">` +
+          nums.map(n => `<button type="button" class="scale-btn" data-val="${n}" data-code="${esc(q.question_code)}">${n}</button>`).join('') +
+          `</div>` +
+          (minLabel || maxLabel ? `<div style="display:flex;justify-content:space-between;margin-top:4px;">${minLabel}${maxLabel}</div>` : '');
+      }
     } else if (['matrix_single','matrix_multi','matrix_mixed'].includes(qType)) {
-      const matrixRows = (q.question_config?.options || []);
+      const matrixRows = (q.question_config?.matrix_rows || q.question_config?.options || []);
       const colObjects = (q.question_config?.matrix_cols || []).map(c => typeof c === 'string' ? { label: c, value: c } : c);
       const cols = colObjects.map(c => c.label || c);
       const headerMode = cfg.matrix_header_mode || 'normal';
@@ -606,7 +717,6 @@
         matrixRows.map((row, ri) => {
           const rowLabel = row.label || '';
           const rowDesc = row.description || '';
-          // imageUrls 配列優先、なければ imageUrl 単体をラップ
           const rowImgs = (row.imageUrls && row.imageUrls.length > 0)
             ? row.imageUrls
             : (row.imageUrl ? [row.imageUrl] : []);
@@ -635,17 +745,28 @@
             cols.map((_c, ci) => `<td><input type="${qType==='matrix_multi'?'checkbox':'radio'}" name="mq_${esc(q.question_code)}_${ri}" value="${ci}" /></td>`).join('') +
             `</tr>`;
         }).join('') + `</table></div>`;
-    } else if (['free_text_long','text'].includes(qType)) {
-      const rows = parsed.rows || 4;
-      inputHtml = `<textarea class="free-text-input" data-code="${esc(q.question_code)}" rows="${rows}" placeholder="回答を入力してください"></textarea>`;
+    } else if (['free_text_long', 'free_text_short'].includes(qType)) {
+      const rows = qType === 'free_text_short' ? 2 : (parsed.rows || 4);
+      const ph = cfg.placeholder || '回答を入力してください';
+      const maxLen = cfg.max_length || cfg.maxLength || '';
+      inputHtml = `<textarea class="free-text-input" data-code="${esc(q.question_code)}" rows="${rows}" placeholder="${esc(ph)}"${maxLen ? ` maxlength="${maxLen}"` : ''}></textarea>`;
     } else if (qType === 'image_upload') {
       const uploadCfg = cfg.image_upload_config || {};
       const maxCount = uploadCfg.max_count || 1;
       const allowedTypes = (uploadCfg.allowed_types || ['image/jpeg','image/png','image/webp']).join(',');
       const instructions = uploadCfg.instructions || '';
       const maxSizeMb = uploadCfg.max_size_mb || 10;
+      const textMode = uploadCfg.text_input_mode || 'optional';
+      const textPlaceholder = '画像について補足があれば入力してください';
+      const textAreaHtml = textMode !== 'hidden'
+        ? `<textarea class="image-text-input" data-img-text-code="${esc(q.question_code)}"
+            rows="3" placeholder="${esc(textPlaceholder)}"
+            style="width:100%;margin-top:10px;padding:8px;border:1px solid #c8d8d5;border-radius:8px;font-size:14px;resize:vertical;box-sizing:border-box;"></textarea>
+           ${textMode === 'required' ? `<p class="image-text-error" data-img-text-err="${esc(q.question_code)}" style="display:none;color:#e53e3e;font-size:13px;margin-top:4px;">補足テキストを入力してください</p>` : ''}`
+        : '';
       inputHtml = `<div class="upload-area" data-code="${esc(q.question_code)}"
-          data-max-count="${maxCount}" data-max-size-mb="${maxSizeMb}" data-allowed="${esc(allowedTypes)}">
+          data-max-count="${maxCount}" data-max-size-mb="${maxSizeMb}" data-allowed="${esc(allowedTypes)}"
+          data-text-mode="${esc(textMode)}">
           <input type="file" class="upload-file-input" accept="${esc(allowedTypes)}"
             ${maxCount > 1 ? 'multiple' : ''} style="display:none" />
           <p style="font-size:28px;margin:0;">📷</p>
@@ -655,11 +776,32 @@
           <div class="upload-preview-grid"></div>
           <p class="upload-loading" style="display:none">アップロード中...</p>
           <p class="upload-error" style="display:none"></p>
-        </div>`;
+        </div>${textAreaHtml}`;
+    } else if (['hidden_single', 'hidden_multi'].includes(qType)) {
+      const defVal = qType === 'hidden_multi'
+        ? JSON.stringify(cfg.default_values || [])
+        : (cfg.default_value || '');
+      inputHtml = `<input type="hidden" data-code="${esc(q.question_code)}" value="${esc(defVal)}" />
+        <p style="font-size:13px;color:#60726f;margin:4px 0;">（システム設定項目）</p>`;
     } else {
-      inputHtml = `<input type="text" class="free-text-input" data-code="${esc(q.question_code)}" placeholder="回答を入力してください" />`;
+      console.warn('[survey] unknown question_type:', qType);
+      const ph = cfg.placeholder || '回答を入力してください';
+      inputHtml = `<textarea class="free-text-input" data-code="${esc(q.question_code)}" rows="3" placeholder="${esc(ph)}"></textarea>`;
     }
 
+    // hidden系・テキスト系はボタン不要（テキスト系はchatTextRow/chatSendで送信）
+    const NO_BUTTON_TYPES = ['free_text_short', 'free_text_long', 'hidden_single', 'hidden_multi'];
+    return buildAnswerLayout(q, inputHtml, showSubmitButton && !NO_BUTTON_TYPES.includes(qType));
+  }
+
+  // ---- 設問カード HTML 生成 ----
+  function renderQuestion(q, index, total) {
+    const parsed = q.display_tags_parsed || {};
+    const qText  = applyAns(q.question_text, parsed);
+    const commentTop    = q.comment_top    ? `<p class="comment-top">${esc(q.comment_top)}</p>` : '';
+    const commentBottom = q.comment_bottom ? `<p class="comment-bottom">${esc(q.comment_bottom)}</p>` : '';
+    const reqBadge = q.is_required ? '<span class="required-badge">必須</span>' : '';
+    const inputHtml = buildAnswerInputHtml(q);
     const numLabel = total ? `Q${index+1} / ${total}` : `Q${index+1}`;
     return `<div class="question-card" data-code="${esc(q.question_code)}">
       <p class="question-number">${numLabel}${reqBadge}</p>
@@ -676,9 +818,21 @@
     return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  // ---- 選択肢系タイプ一覧 ----
-  const CHOICE_TYPES = ['single_select','single_choice','yes_no','multi_select','multi_choice','scale',
-    'matrix_single','matrix_multi','matrix_mixed'];
+  // ---- image_upload 補足テキストの必須チェック ----
+  function isImageTextRequired(q) {
+    return q.question_config?.image_upload_config?.text_input_mode === 'required';
+  }
+  function isImageTextAnswered(q) {
+    const text = answerCtx.imageTexts[q.question_code.toLowerCase()] || '';
+    return text.trim().length > 0;
+  }
+
+  // ---- 選択肢・スケール系タイプ（値が入れば OK、定型文チェック不要） ----
+  const CHOICE_TYPES = [
+    'single_choice', 'multi_choice', 'text_with_image',
+    'matrix_single', 'matrix_multi', 'matrix_mixed',
+    'numeric', 'sd',
+  ];
   // image_upload はファイル添付後に URL 配列を answerCtx に格納
   const IMAGE_UPLOAD_TYPES = ['image_upload'];
 
@@ -747,8 +901,16 @@
     const freeText = isTextType ? String(answerValue || '') : '';
 
     let normalizedAnswer = null;
+    let freeTextOverride = null;
     if (IMAGE_UPLOAD_TYPES.includes(qType) && Array.isArray(answerValue)) {
-      normalizedAnswer = { type: 'image_upload', urls: answerValue };
+      const supplementText = answerCtx.imageTexts[questionCode.toLowerCase()] || '';
+      const textMode = q?.question_config?.image_upload_config?.text_input_mode || 'hidden';
+      if (textMode !== 'hidden' && supplementText) {
+        normalizedAnswer = { type: 'image_upload', imageUrls: answerValue, text: supplementText };
+        freeTextOverride = supplementText;
+      } else {
+        normalizedAnswer = { type: 'image_upload', imageUrls: answerValue };
+      }
     }
 
     try {
@@ -764,7 +926,7 @@
             : (answerValue !== null && typeof answerValue === 'object'
                 ? JSON.stringify(answerValue)
                 : answerValue),
-          free_text_answer: freeText,
+          free_text_answer: freeTextOverride !== null ? freeTextOverride : freeText,
           normalized_answer: normalizedAnswer,
         }),
       });
@@ -821,8 +983,14 @@
             const errEl = questionArea.querySelector(`[data-free-err="${q.question_code}"]`);
             if (inputEl) {
               if (q.question_type === 'image_upload') {
-                const errP = inputEl.querySelector('.upload-error');
-                if (errP) { errP.textContent = '画像を1枚以上追加してください。'; errP.style.display = ''; }
+                const urls = answerCtx.answers[q.question_code.toLowerCase()];
+                if (!(Array.isArray(urls) && urls.length > 0)) {
+                  const errP = inputEl.querySelector('.upload-error');
+                  if (errP) { errP.textContent = '画像を1枚以上追加してください。'; errP.style.display = ''; }
+                } else if (isImageTextRequired(q) && !isImageTextAnswered(q)) {
+                  const textErrEl = questionArea.querySelector(`[data-img-text-err="${q.question_code}"]`);
+                  if (textErrEl) textErrEl.style.display = '';
+                }
               } else {
                 inputEl.classList.add('free-text-required');
               }
@@ -855,6 +1023,7 @@
       btnBack.style.display = cursor > 0 ? '' : 'none';
       btnNext.disabled = true;
       progressBar.style.width = (cursor / visibleQs.length * 100) + '%';
+      checkNextEnabled(); // 非必須・hidden 設問では即時活性化
     }
 
     function renderPageMode() {
@@ -879,6 +1048,7 @@
       btnBack.style.display = pageCursor > 0 ? '' : 'none';
       btnNext.disabled = true;
       progressBar.style.width = (pageCursor / visiblePagesNow.length * 100) + '%';
+      checkNextEnabled(); // 非必須・hidden 設問では即時活性化
     }
 
     function bindInputEvents(q) {
@@ -898,7 +1068,7 @@
           }
           const qType = q.question_type;
           let val;
-          if (['multi_select','multi_choice'].includes(qType)) {
+          if (qType === 'multi_choice') {
             val = [...questionArea.querySelectorAll(`input[name="q_${q.question_code}"]:checked`)].map(e => e.value);
           } else {
             const checked = questionArea.querySelector(`input[name="q_${q.question_code}"]:checked`);
@@ -962,6 +1132,17 @@
             }
           }
         });
+
+        // image-text-input (補足テキスト)
+        const imgTextEl = questionArea.querySelector(`.image-text-input[data-img-text-code="${q.question_code}"]`);
+        if (imgTextEl) {
+          imgTextEl.addEventListener('input', () => {
+            answerCtx.imageTexts[q.question_code.toLowerCase()] = imgTextEl.value;
+            const errEl = questionArea.querySelector(`[data-img-text-err="${q.question_code}"]`);
+            if (errEl) errEl.style.display = 'none';
+            checkNextEnabled();
+          });
+        }
       }
 
       // radio/checkbox
@@ -969,13 +1150,16 @@
         el.addEventListener('change', () => {
           const qType = q.question_type;
           let val;
-          if (['multi_select','multi_choice'].includes(qType)) {
+          if (qType === 'multi_choice') {
             val = [...questionArea.querySelectorAll(`input[name="q_${q.question_code}"]:checked`)].map(e => e.value);
+            // チェックボックスは個別に toggle（全解除してから追加すると他の選択が消える）
+            el.closest('label')?.classList.toggle('selected', el.checked);
           } else {
             val = el.value;
+            // ラジオは排他選択なので全解除→選択項目のみ追加
+            questionArea.querySelectorAll(`label.choice-item`).forEach(l => l.classList.remove('selected'));
+            el.closest('label')?.classList.add('selected');
           }
-          questionArea.querySelectorAll(`label.choice-item`).forEach(l => l.classList.remove('selected'));
-          el.closest('label')?.classList.add('selected');
           answerCtx.answers[q.question_code.toLowerCase()] = val;
           checkNextEnabled();
         });
@@ -991,7 +1175,7 @@
       });
       // matrix inputs（mq_<code>_<rowIndex> という name を使う）
       if (['matrix_single','matrix_multi','matrix_mixed'].includes(q.question_type)) {
-        const matrixRows = q.question_config?.options || [];
+        const matrixRows = q.question_config?.matrix_rows || q.question_config?.options || [];
         questionArea.querySelectorAll(`input[name^="mq_${q.question_code}_"]`).forEach(input => {
           input.addEventListener('change', () => {
             const answer = {};
@@ -1008,9 +1192,22 @@
           });
         });
       }
+      // hidden_single / hidden_multi: デフォルト値を answerCtx に設定
+      if (['hidden_single', 'hidden_multi'].includes(q.question_type)) {
+        const hiddenEl = questionArea.querySelector(`input[type="hidden"][data-code="${q.question_code}"]`);
+        if (hiddenEl) {
+          const raw = hiddenEl.value;
+          answerCtx.answers[q.question_code.toLowerCase()] =
+            q.question_type === 'hidden_multi'
+              ? (raw ? JSON.parse(raw) : [])
+              : raw;
+        }
+      }
+
       // text inputs
       questionArea.querySelectorAll(`[data-code="${q.question_code}"]`).forEach(el => {
         if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+          if (el.type === 'hidden') return; // hidden は input イベントなし
           el.addEventListener('input', () => {
             answerCtx.answers[q.question_code.toLowerCase()] = el.value;
             el.classList.remove('free-text-required');
@@ -1021,15 +1218,21 @@
     }
 
     function isQuestionAnswered(q) {
+      // 非必須・hidden系は常に通過
+      if (!q.is_required) return true;
+      if (['hidden_single', 'hidden_multi'].includes(q.question_type)) return true;
+
       const val = answerCtx.answers[q.question_code.toLowerCase()];
       const qType = q.question_type;
       if (IMAGE_UPLOAD_TYPES.includes(qType)) {
-        return Array.isArray(val) && val.length > 0;
+        if (!(Array.isArray(val) && val.length > 0)) return false;
+        if (isImageTextRequired(q) && !isImageTextAnswered(q)) return false;
+        return true;
       }
       // マトリクス: 全行に少なくとも1つの選択が必要
       if (['matrix_single','matrix_multi','matrix_mixed'].includes(qType)) {
         if (!val || typeof val !== 'object' || Array.isArray(val)) return false;
-        const rows = q.question_config?.options || [];
+        const rows = q.question_config?.matrix_rows || q.question_config?.options || [];
         if (rows.length === 0) return false;
         return rows.every((_, ri) => {
           const rv = val[ri];
@@ -1058,6 +1261,55 @@
       }
     }
 
+    // probe 状態管理（survey_question モード用）
+    let probeActiveQ = null;
+    let probeNextCursor = null;
+    const probeArea     = document.getElementById('probeArea');
+    const probeQuestionText = document.getElementById('probeQuestionText');
+    const probeAnswerInput  = document.getElementById('probeAnswerInput');
+    const probeSubmitBtn    = document.getElementById('probeSubmitBtn');
+
+    probeAnswerInput.addEventListener('input', () => {
+      probeSubmitBtn.disabled = probeAnswerInput.value.trim() === '';
+    });
+
+    async function checkAndShowProbe(q, val, nextCursor) {
+      if (!q.ai_probe_enabled) return false;
+      try {
+        const res = await fetch('/liff/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: SESSION_ID, message: String(val || '') })
+        });
+        const data = await res.json().catch(() => ({}));
+        console.log('PROBE_RESPONSE', data);
+        if (data.probe_question) {
+          probeActiveQ = q;
+          probeNextCursor = nextCursor;
+          probeQuestionText.textContent = data.probe_question;
+          probeAnswerInput.value = '';
+          probeSubmitBtn.disabled = true;
+          probeArea.style.display = '';
+          btnNext.disabled = true;
+          btnBack.style.display = 'none';
+          return true;
+        }
+      } catch(e) { console.error('probe check failed', e); }
+      return false;
+    }
+
+    probeSubmitBtn.addEventListener('click', async () => {
+      const probeText = probeAnswerInput.value.trim();
+      if (!probeText || !probeActiveQ) return;
+      probeSubmitBtn.disabled = true;
+      await submitAnswer(probeActiveQ.question_code, probeText);
+      probeArea.style.display = 'none';
+      probeActiveQ = null;
+      cursor = probeNextCursor;
+      probeNextCursor = null;
+      renderQuestionMode();
+    });
+
     btnNext.addEventListener('click', async () => {
       try {
         if (!validateCurrentView()) return;
@@ -1084,12 +1336,16 @@
           await submitAnswer(q.question_code, val);
           const nextCode = resolveNext(q);
           console.log('NEXT_QUESTION_ID', nextCode ?? '(end)');
+          let nextCursor;
           if (nextCode) {
             const nextIdx = QUESTIONS.findIndex(qq => qq.question_code === nextCode);
-            cursor = nextIdx >= 0 ? nextIdx : cursor + 1;
+            nextCursor = nextIdx >= 0 ? nextIdx : cursor + 1;
           } else {
-            cursor++;
+            nextCursor = cursor + 1;
           }
+          const probeShown = await checkAndShowProbe(q, val, nextCursor);
+          if (probeShown) return;
+          cursor = nextCursor;
         }
         renderQuestionMode();
       }
@@ -1103,16 +1359,38 @@
       }
     });
 
-    function showComplete() {
+    async function showComplete() {
       questionArea.style.display = 'none';
       document.querySelector('.nav-btns').style.display = 'none';
       completeScreen.style.display = 'block';
       progressBar.style.width = '100%';
-      fetch('/liff/survey/complete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: SESSION_ID, assignment_id: ASSIGNMENT_ID }),
-      }).catch(console.error);
+
+      const completeActions = document.getElementById('completeActions');
+      const completeError = document.getElementById('completeError');
+      const btnCloseLiff = document.getElementById('btnCloseLiff');
+      const completeCloseTip = document.getElementById('completeCloseTip');
+
+      try {
+        const resp = await fetch('/liff/survey/' + ASSIGNMENT_ID + '/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: SESSION_ID }),
+        });
+        if (!resp.ok) throw new Error('complete API error');
+
+        completeActions.style.display = 'block';
+        const inLiff = window.liff && typeof liff.isInClient === 'function' && liff.isInClient();
+        if (inLiff) {
+          btnCloseLiff.style.display = '';
+          btnCloseLiff.addEventListener('click', () => { liff.closeWindow(); });
+        } else {
+          btnCloseLiff.style.display = 'none';
+          completeCloseTip.style.display = '';
+        }
+      } catch(e) {
+        console.error('complete failed', e);
+        completeError.style.display = '';
+      }
     }
 
     renderCurrentState();
@@ -1122,11 +1400,27 @@
   // interview_chat モード
   // ================================================================
   if (DISPLAY_MODE === 'interview_chat') {
-    const chatMessages = document.getElementById('chatMessages');
-    const chatInput    = document.getElementById('chatInput');
-    const chatSend     = document.getElementById('chatSend');
+    const chatMessages   = document.getElementById('chatMessages');
+    const chatInput      = document.getElementById('chatInput');
+    const chatSend       = document.getElementById('chatSend');
+    const chatAnswerArea = document.getElementById('chatAnswerArea');
+    const chatTextRow    = document.getElementById('chatTextRow');
+    const chatNextRow    = document.getElementById('chatNextRow');
+    const chatNext       = document.getElementById('chatNext');
+
     let chatQueueIndex = 0;
     const visibleQs = QUESTIONS.filter(isVisible);
+
+    // テキスト入力で答えるタイプ（textarea を使う）
+    const CHAT_TEXT_TYPES = new Set(['free_text_short', 'free_text_long']);
+
+    function isChatTextType(q) {
+      return CHAT_TEXT_TYPES.has(q.question_type);
+    }
+
+    function scrollToBottom() {
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
 
     function addBubble(text, role) {
       const wrap = document.createElement('div');
@@ -1136,60 +1430,377 @@
       bubble.textContent = text;
       wrap.appendChild(bubble);
       chatMessages.appendChild(wrap);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
+      scrollToBottom();
+    }
+
+    // ---- チャットモードで回答済みか判定 ----
+    function isChatAnswered(q) {
+      if (!q.is_required) return true;
+      if (['hidden_single', 'hidden_multi'].includes(q.question_type)) return true;
+      const val = answerCtx.answers[q.question_code.toLowerCase()];
+      const qType = q.question_type;
+      if (IMAGE_UPLOAD_TYPES.includes(qType)) {
+        if (!(Array.isArray(val) && val.length > 0)) return false;
+        if (isImageTextRequired(q) && !isImageTextAnswered(q)) return false;
+        return true;
+      }
+      if (['matrix_single','matrix_multi','matrix_mixed'].includes(qType)) {
+        if (!val || typeof val !== 'object' || Array.isArray(val)) return false;
+        const rows = q.question_config?.matrix_rows || q.question_config?.options || [];
+        return rows.length > 0 && rows.every((_, ri) => {
+          const rv = val[ri];
+          return rv !== undefined && rv !== null && (!Array.isArray(rv) || rv.length > 0);
+        });
+      }
+      if (CHOICE_TYPES.includes(qType)) {
+        return val !== undefined && val !== null && val !== '' && (!Array.isArray(val) || val.length > 0);
+      }
+      return isFreeTextValid(String(val || ''));
+    }
+
+    function checkChatNextEnabled() {
+      const q = visibleQs[chatQueueIndex];
+      if (!q) return;
+      const answered = isChatAnswered(q);
+      chatNext.disabled = !answered;
+      // 最新のインラインブロックの送信ボタンも更新
+      const blocks = chatMessages.querySelectorAll('.chat-question-block');
+      const latestBlock = blocks[blocks.length - 1];
+      if (latestBlock) {
+        const inlineBtn = latestBlock.querySelector('.chat-next-btn');
+        if (inlineBtn) inlineBtn.disabled = !answered;
+      }
+    }
+
+    // ---- 選択肢 UI イベントをバインド（chatAnswerArea スコープ） ----
+    function bindChatAnswerEvents(q, root = chatAnswerArea) {
+      const answerRoot = root;
+      // image_upload
+      const uploadArea = answerRoot.querySelector(`.upload-area[data-code="${q.question_code}"]`);
+      if (uploadArea) {
+        const fileInput    = uploadArea.querySelector('.upload-file-input');
+        const previewGrid  = uploadArea.querySelector('.upload-preview-grid');
+        const loadingEl    = uploadArea.querySelector('.upload-loading');
+        const errorEl      = uploadArea.querySelector('.upload-error');
+        const maxCount     = parseInt(uploadArea.dataset.maxCount || '1', 10);
+        const maxSizeMb    = parseFloat(uploadArea.dataset.maxSizeMb || '10');
+        const allowedTypes = (uploadArea.dataset.allowed || '').split(',').filter(Boolean);
+        uploadArea.addEventListener('click', (e) => {
+          if (e.target === fileInput || e.target.classList.contains('upload-thumb-del')) return;
+          fileInput.click();
+        });
+        fileInput.addEventListener('change', async () => {
+          const files = [...fileInput.files];
+          fileInput.value = '';
+          if (!files.length) return;
+          const currentUrls = answerCtx.answers[q.question_code.toLowerCase()] || [];
+          if (currentUrls.length + files.length > maxCount) {
+            showUploadError(errorEl, `最大 ${maxCount} 枚までアップロードできます。`); return;
+          }
+          hideUploadError(errorEl);
+          for (const file of files) {
+            if (allowedTypes.length && !allowedTypes.includes(file.type)) {
+              showUploadError(errorEl, `${file.name}: 対応していないファイル形式です。`); continue;
+            }
+            if (file.size > maxSizeMb * 1024 * 1024) {
+              showUploadError(errorEl, `${file.name}: ファイルサイズが${maxSizeMb}MBを超えています。`); continue;
+            }
+            loadingEl.style.display = '';
+            try {
+              const url = await uploadImageToServer(file, q.question_code);
+              const urls = answerCtx.answers[q.question_code.toLowerCase()] || [];
+              urls.push(url);
+              answerCtx.answers[q.question_code.toLowerCase()] = urls;
+              addUploadThumb(previewGrid, url, q.question_code, errorEl);
+              checkChatNextEnabled();
+            } catch(err) {
+              showUploadError(errorEl, `アップロード失敗: ${err.message}`);
+            } finally {
+              loadingEl.style.display = 'none';
+            }
+          }
+        });
+
+        // image-text-input (補足テキスト) - チャットモード
+        const imgTextEl = answerRoot.querySelector(`.image-text-input[data-img-text-code="${q.question_code}"]`);
+        if (imgTextEl) {
+          imgTextEl.addEventListener('input', () => {
+            answerCtx.imageTexts[q.question_code.toLowerCase()] = imgTextEl.value;
+            checkChatNextEnabled();
+          });
+        }
+      }
+
+      // card-item (radio/checkbox with image)
+      answerRoot.querySelectorAll('.card-item').forEach(card => {
+        card.addEventListener('click', (e) => {
+          if (e.target.tagName === 'INPUT') return;
+          const input = card.querySelector('input');
+          if (!input) return;
+          if (input.type === 'radio') {
+            answerRoot.querySelectorAll('.card-item').forEach(c => c.classList.remove('selected'));
+            input.checked = true; card.classList.add('selected');
+          } else {
+            input.checked = !input.checked;
+            card.classList.toggle('selected', input.checked);
+          }
+          let val;
+          if (q.question_type === 'multi_choice') {
+            val = [...answerRoot.querySelectorAll(`input[name="q_${q.question_code}"]:checked`)].map(e => e.value);
+          } else {
+            const checked = answerRoot.querySelector(`input[name="q_${q.question_code}"]:checked`);
+            val = checked ? checked.value : '';
+          }
+          answerCtx.answers[q.question_code.toLowerCase()] = val;
+          checkChatNextEnabled();
+        });
+      });
+
+      // radio / checkbox (list style)
+      answerRoot.querySelectorAll(`input[name="q_${q.question_code}"]`).forEach(el => {
+        el.addEventListener('change', () => {
+          let val;
+          if (q.question_type === 'multi_choice') {
+            val = [...answerRoot.querySelectorAll(`input[name="q_${q.question_code}"]:checked`)].map(e => e.value);
+            el.closest('label')?.classList.toggle('selected', el.checked);
+          } else {
+            val = el.value;
+            answerRoot.querySelectorAll('label.choice-item').forEach(l => l.classList.remove('selected'));
+            el.closest('label')?.classList.add('selected');
+          }
+          answerCtx.answers[q.question_code.toLowerCase()] = val;
+          checkChatNextEnabled();
+        });
+      });
+
+      // scale buttons (numeric / sd)
+      answerRoot.querySelectorAll(`.scale-btn[data-code="${q.question_code}"]`).forEach(btn => {
+        btn.addEventListener('click', () => {
+          answerRoot.querySelectorAll(`.scale-btn[data-code="${q.question_code}"]`).forEach(b => b.classList.remove('selected'));
+          btn.classList.add('selected');
+          answerCtx.answers[q.question_code.toLowerCase()] = btn.dataset.val;
+          checkChatNextEnabled();
+        });
+      });
+
+      // matrix inputs
+      if (['matrix_single','matrix_multi','matrix_mixed'].includes(q.question_type)) {
+        const matrixRows = q.question_config?.matrix_rows || q.question_config?.options || [];
+        answerRoot.querySelectorAll(`input[name^="mq_${q.question_code}_"]`).forEach(input => {
+          input.addEventListener('change', () => {
+            const answer = {};
+            matrixRows.forEach((_, ri) => {
+              const checked = [...answerRoot.querySelectorAll(`input[name="mq_${q.question_code}_${ri}"]:checked`)];
+              if (checked.length > 0) {
+                answer[ri] = q.question_type === 'matrix_multi' ? checked.map(i => i.value) : checked[0].value;
+              }
+            });
+            answerCtx.answers[q.question_code.toLowerCase()] = answer;
+            checkChatNextEnabled();
+          });
+        });
+      }
+
+      // hidden default values
+      if (['hidden_single', 'hidden_multi'].includes(q.question_type)) {
+        const hiddenEl = answerRoot.querySelector(`input[type="hidden"][data-code="${q.question_code}"]`);
+        if (hiddenEl) {
+          const raw = hiddenEl.value;
+          answerCtx.answers[q.question_code.toLowerCase()] =
+            q.question_type === 'hidden_multi' ? (raw ? JSON.parse(raw) : []) : raw;
+        }
+      }
+
+      // textarea (free_text rendered inside chatAnswerArea for matrix_mixed free rows, etc.)
+      answerRoot.querySelectorAll(`[data-code="${q.question_code}"]`).forEach(el => {
+        if ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.type !== 'hidden') {
+          el.addEventListener('input', () => {
+            answerCtx.answers[q.question_code.toLowerCase()] = el.value;
+            el.classList.remove('free-text-required');
+            checkChatNextEnabled();
+          });
+        }
+      });
+
+      // ---- インライン送信ボタン（選択式・スケール・マトリクス・画像アップロード） ----
+      const inlineSubmitBtn = answerRoot.querySelector('.chat-next-btn');
+      if (inlineSubmitBtn) {
+        inlineSubmitBtn.addEventListener('click', async () => {
+          if (!isChatAnswered(q)) {
+            const errEl = answerRoot.querySelector(`[data-sel-err="${q.question_code}"]`);
+            if (errEl) { errEl.textContent = '選択してください'; errEl.style.display = ''; }
+            return;
+          }
+          inlineSubmitBtn.disabled = true;
+          const val = answerCtx.answers[q.question_code.toLowerCase()];
+          await submitAnswer(q.question_code, val);
+          freezeLatestQuestionBlock();
+
+          // 表示テキスト生成
+          const cfg = q.question_config || {};
+          const opts = cfg.options || [];
+          let displayText;
+          if (Array.isArray(val)) {
+            displayText = val.map(v => { const o = opts.find(o => o.value === v); return o ? o.label : v; }).join('、');
+          } else if (val !== null && typeof val === 'object') {
+            displayText = JSON.stringify(val);
+          } else {
+            const o = opts.find(o => String(o.value) === String(val));
+            displayText = o ? o.label : String(val ?? '');
+          }
+
+          await advanceAfterAnswer(q, displayText);
+        });
+      }
+    }
+
+    // ---- 回答 UI を chatAnswerArea に描画 ----
+    function renderChatAnswerArea(q) {
+      chatAnswerArea.innerHTML = questionTextImageHtml(q) + buildAnswerInputHtml(q);
+      chatAnswerArea.style.display = '';
+      bindChatAnswerEvents(q);
+
+      // hidden 系は即時通過（次へを有効化）
+      if (['hidden_single', 'hidden_multi'].includes(q.question_type)) {
+        checkChatNextEnabled();
+      }
+    }
+
+    // ---- 次の質問を表示 ----
+    function addQuestionBlock(q) {
+      const parsed = q.display_tags_parsed || {};
+      const qText = applyAns(q.question_text, parsed);
+      const container = document.createElement('div');
+      container.className = 'chat-question-block';
+      container.innerHTML = `
+        <div class="chat-bubble-wrap ai">
+          <div class="chat-bubble ai">
+            <div>${esc(qText)}</div>
+            ${questionTextImageHtml(q)}
+          </div>
+        </div>
+        <div class="chat-answer-inline">
+          ${buildAnswerInputHtml(q, true)}
+        </div>
+      `;
+      chatMessages.appendChild(container);
+      const answerRoot = container.querySelector('.chat-answer-inline');
+      bindChatAnswerEvents(q, answerRoot);
+      scrollToBottom();
+
+      if (['hidden_single', 'hidden_multi'].includes(q.question_type)) {
+        checkChatNextEnabled();
+      }
+    }
+
+    function freezeLatestQuestionBlock() {
+      const blocks = chatMessages.querySelectorAll('.chat-question-block');
+      const latestBlock = blocks[blocks.length - 1];
+      if (!latestBlock) return;
+      latestBlock.querySelectorAll('input, textarea, button').forEach(el => {
+        el.disabled = true;
+      });
     }
 
     function askCurrentQuestion() {
       if (chatQueueIndex >= visibleQs.length) {
         addBubble('ご回答ありがとうございました。アンケートが完了しました。', 'ai');
-        chatInput.disabled = true;
-        chatSend.disabled  = true;
-        fetch('/liff/survey/complete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: SESSION_ID, assignment_id: ASSIGNMENT_ID }),
-        }).catch(console.error);
+        chatAnswerArea.style.display = 'none';
+        chatAnswerArea.innerHTML = '';
+        chatTextRow.style.display = 'none';
+        chatNextRow.style.display = 'none';
+        (async () => {
+          try {
+            const resp = await fetch('/liff/survey/' + ASSIGNMENT_ID + '/complete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ session_id: SESSION_ID }),
+            });
+            if (!resp.ok) throw new Error('complete API error');
+
+            const closeBtnWrap = document.createElement('div');
+            closeBtnWrap.style.cssText = 'text-align:center;margin-top:16px;';
+            const inLiff = window.liff && typeof liff.isInClient === 'function' && liff.isInClient();
+            if (inLiff) {
+              const closeBtn = document.createElement('button');
+              closeBtn.className = 'btn-next';
+              closeBtn.style.minWidth = '160px';
+              closeBtn.textContent = 'LINEに戻る';
+              closeBtn.addEventListener('click', () => { liff.closeWindow(); });
+              closeBtnWrap.appendChild(closeBtn);
+            } else {
+              const tip = document.createElement('p');
+              tip.style.cssText = 'font-size:13px;color:#60726f;';
+              tip.textContent = 'アンケートは完了しました。この画面を閉じてください。';
+              closeBtnWrap.appendChild(tip);
+            }
+            chatMessages.appendChild(closeBtnWrap);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+          } catch(e) {
+            console.error('complete failed', e);
+            const errWrap = document.createElement('p');
+            errWrap.style.cssText = 'color:#e53e3e;font-size:14px;text-align:center;margin-top:12px;';
+            errWrap.textContent = '完了処理に失敗しました。時間をおいて再度お試しください。';
+            chatMessages.appendChild(errWrap);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+          }
+        })();
         return;
       }
+
       const q = visibleQs[chatQueueIndex];
       const parsed = q.display_tags_parsed || {};
       const qText  = applyAns(q.question_text, parsed);
-      addBubble(qText, 'ai');
+      if (isChatTextType(q)) {
+        addBubble(qText, 'ai');
+        // テキスト入力モード
+        chatAnswerArea.style.display = 'none';
+        chatAnswerArea.innerHTML = '';
+        chatTextRow.style.display = 'flex';
+        chatNextRow.style.display = 'none';
+        chatInput.disabled = false;
+        chatInput.value = '';
+        chatSend.disabled = true;
+        chatInput.focus();
+      } else {
+        // 選択肢・スケール・マトリクス・画像アップロードモード（送信ボタンはインライン）
+        chatAnswerArea.style.display = 'none';
+        chatAnswerArea.innerHTML = '';
+        chatTextRow.style.display = 'none';
+        chatNextRow.style.display = 'none';
+        chatNext.disabled = true;
+        addQuestionBlock(q);
+        checkChatNextEnabled();
+      }
     }
 
+    // ---- テキスト入力 → 送信 ----
     chatInput.addEventListener('input', () => {
       chatSend.disabled = chatInput.value.trim() === '';
     });
 
-    async function sendChatAnswer() {
-      const text = chatInput.value.trim();
-      if (!text) return;
-      chatInput.value = '';
-      chatSend.disabled = true;
-      addBubble(text, 'user');
+    async function advanceAfterAnswer(q, displayText) {
+      addBubble(displayText, 'user');
 
-      const q = visibleQs[chatQueueIndex];
-      if (!q) return;
-
-      answerCtx.answers[q.question_code.toLowerCase()] = text;
-      await submitAnswer(q.question_code, text);
-
-      // AI 深掘りは /liff/chat エンドポイントに委譲（既存処理を利用）
+      // AI 深掘り
       if (q.ai_probe_enabled) {
         try {
           const res = await fetch('/liff/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              session_id: SESSION_ID,
-              assignment_id: ASSIGNMENT_ID,
-              message: text,
-            }),
+            body: JSON.stringify({ session_id: SESSION_ID, assignment_id: ASSIGNMENT_ID, message: displayText }),
           });
           const data = await res.json();
           if (data.probe_question) {
             addBubble(data.probe_question, 'ai');
-            return; // 深掘り中は次の質問へ進まない
+            // 深掘り中はテキスト入力エリアに戻す
+            chatTextRow.style.display = 'flex';
+            chatNextRow.style.display = 'none';
+            chatAnswerArea.style.display = 'none';
+            chatInput.disabled = false;
+            chatInput.value = '';
+            chatSend.disabled = true;
+            return;
           }
         } catch(e) { console.error(e); }
       }
@@ -1204,6 +1815,53 @@
       }
       askCurrentQuestion();
     }
+
+    async function sendChatAnswer() {
+      const text = chatInput.value.trim();
+      if (!text) return;
+      chatInput.value = '';
+      chatSend.disabled = true;
+      chatInput.disabled = true;
+
+      const q = visibleQs[chatQueueIndex];
+      if (!q) return;
+
+      answerCtx.answers[q.question_code.toLowerCase()] = text;
+      await submitAnswer(q.question_code, text);
+      await advanceAfterAnswer(q, text);
+    }
+
+    // ---- 次へボタン（選択肢・スケール系） ----
+    chatNext.addEventListener('click', async () => {
+      const q = visibleQs[chatQueueIndex];
+      if (!q || !isChatAnswered(q)) return;
+      chatNext.disabled = true;
+
+      const val = answerCtx.answers[q.question_code.toLowerCase()];
+      await submitAnswer(q.question_code, val);
+      freezeLatestQuestionBlock();
+
+      // 表示用テキストを生成（配列なら結合、オブジェクトなら JSON）
+      let displayText;
+      if (Array.isArray(val)) {
+        const cfg = q.question_config || {};
+        const opts = cfg.options || [];
+        const labels = val.map(v => {
+          const o = opts.find(o => o.value === v);
+          return o ? o.label : v;
+        });
+        displayText = labels.join('、');
+      } else if (val !== null && typeof val === 'object') {
+        displayText = JSON.stringify(val);
+      } else {
+        const cfg = q.question_config || {};
+        const opts = cfg.options || [];
+        const o = opts.find(o => String(o.value) === String(val));
+        displayText = o ? o.label : String(val ?? '');
+      }
+
+      await advanceAfterAnswer(q, displayText);
+    });
 
     chatSend.addEventListener('click', sendChatAnswer);
     chatInput.addEventListener('keydown', e => {

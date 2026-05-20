@@ -237,13 +237,9 @@ function canReuseQuestionText(
 function requiresStructuredRendering(question: Question): boolean {
   const structuredTypes = [
     "single_choice",
-    "single_select",
     "text_with_image",
     "multi_choice",
-    "multi_select",
-    "yes_no",
     "numeric",
-    "scale",
     "sd"
   ];
   if (structuredTypes.includes(question.question_type)) {
@@ -723,9 +719,8 @@ async function buildStructuredAnswer(input: {
   const TEXT_ANALYZABLE_TYPES = new Set<string>(["text", "free_text_short", "free_text_long"]);
   // 深掘りONの場合に回答依存プローブを生成できる選択肢系・数値系タイプ
   const CHOICE_PROBE_TYPES = new Set<string>([
-    "single_choice", "multi_choice", "yes_no",
-    "single_select", "multi_select",
-    "scale", "numeric", "sd", "text_with_image"
+    "single_choice", "multi_choice",
+    "numeric", "sd", "text_with_image"
   ]);
 
   const isTextAnalyzable = TEXT_ANALYZABLE_TYPES.has(input.question.question_type);
@@ -1536,9 +1531,8 @@ async function maybeAskProbe(input: {
   const TEXT_PROBE_TYPES = new Set<string>(["text", "free_text_short", "free_text_long"]);
   // 選択肢系・数値系は ai_probe_enabled === true の場合のみプローブ対応
   const CHOICE_PROBE_TYPES = new Set<string>([
-    "single_choice", "multi_choice", "yes_no",
-    "single_select", "multi_select",
-    "scale", "numeric", "sd", "text_with_image"
+    "single_choice", "multi_choice",
+    "numeric", "sd", "text_with_image"
   ]);
   const isProbeCapable =
     TEXT_PROBE_TYPES.has(input.question.question_type) ||
@@ -1559,6 +1553,22 @@ async function maybeAskProbe(input: {
         : null;
     const missingSlots = extractCompletionMissingSlots(input.answerPayload);
     const probeType = payloadProbeType ?? "clarify";
+
+    logger.info("PROBE_CHECK", {
+      questionId: input.question.id,
+      questionType: input.question.question_type,
+      ai_probe_enabled: input.question.ai_probe_enabled,
+      answerText: input.answerText,
+      analysisAction,
+      probeType,
+      suggestedProbeQuestion: extractSuggestedProbeQuestion(input.answerPayload),
+      currentPhase: input.session.current_phase,
+      currentProbeCountForAnswer,
+      currentProbeCountForSession,
+      maxProbesPerAnswer,
+      maxProbesPerSession,
+      canProbe: probeBudget.canProbe
+    });
 
     if (analysisAction !== "probe") {
       recordActionPath(input.diagnostics, `probe_gate:analysis_${analysisAction ?? "none"}`);
