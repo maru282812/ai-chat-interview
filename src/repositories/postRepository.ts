@@ -68,6 +68,13 @@ interface CreatePostInput {
   quality_label?: UserPost["quality_label"];
   metadata?: Record<string, unknown> | null;
   posted_on?: string | null;
+  // 感情・構造化入力（migration 026）
+  emotion_tags?: string[];
+  mood_score?: number | null;
+  good_thing?: string | null;
+  bad_thing?: string | null;
+  selected_prompt_id?: string | null;
+  selected_one_line_id?: string | null;
 }
 
 function isMissingColumnError(error: { message?: string } | null | undefined, column: string): boolean {
@@ -92,7 +99,23 @@ function normalizeUserPost(row: UserPost | null): UserPost | null {
   return {
     ...row,
     quality_score: typeof row.quality_score === "number" ? row.quality_score : 0,
-    quality_label: row.quality_label ?? "low"
+    quality_label: row.quality_label ?? "low",
+    emotion_tags: Array.isArray(row.emotion_tags) ? row.emotion_tags : [],
+    mood_score: typeof row.mood_score === "number" ? row.mood_score : null,
+    good_thing: row.good_thing ?? null,
+    bad_thing: row.bad_thing ?? null,
+    selected_prompt_id: row.selected_prompt_id ?? null,
+    selected_one_line_id: row.selected_one_line_id ?? null,
+    ai_summary: row.ai_summary ?? null,
+    ai_feedback: row.ai_feedback ?? null,
+    ai_sentiment_score: row.ai_sentiment_score ?? null,
+    ai_stress_score: row.ai_stress_score ?? null,
+    ai_detected_topics: Array.isArray(row.ai_detected_topics) ? row.ai_detected_topics : [],
+    ai_enabled: row.ai_enabled ?? false,
+    ai_visible_to_user: row.ai_visible_to_user ?? false,
+    ai_reply_text: row.ai_reply_text ?? null,
+    ai_reply_generated_at: row.ai_reply_generated_at ?? null,
+    ai_reply_status: row.ai_reply_status ?? null
   };
 }
 
@@ -140,6 +163,21 @@ export const postRepository = {
     }
     throwIfError(error);
     return normalizeUserPost(data as UserPost | null) as UserPost;
+  },
+
+  async saveRantReply(postId: string, replyText: string): Promise<void> {
+    const { error } = await supabase
+      .from("user_posts")
+      .update({
+        ai_reply_text: replyText,
+        ai_reply_generated_at: new Date().toISOString(),
+        ai_reply_status: "done"
+      })
+      .eq("id", postId)
+      .is("ai_reply_text", null);
+    if (error) {
+      logger.warn("postRepository.saveRantReply.error", { postId, error: error.message });
+    }
   },
 
   async update(

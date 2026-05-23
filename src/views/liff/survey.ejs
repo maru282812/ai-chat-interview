@@ -236,7 +236,53 @@
   <!-- エラー画面 -->
   <div style="max-width:480px;margin:40px auto;padding:24px;text-align:center;font-family:sans-serif;">
     <div style="font-size:40px;margin-bottom:16px;">⚠️</div>
-    <p style="font-size:16px;color:#666;"><%= errorMessage %></p>
+    <p style="font-size:16px;color:#444;margin-bottom:8px;"><%= errorMessage %></p>
+    <p style="font-size:13px;color:#999;">解決しない場合は、運営までお問い合わせください。</p>
+  </div>
+<% return; %>
+<% } %>
+
+<% if (locals.alreadyCompleted) { %>
+  <!-- 回答済み画面 -->
+  <div style="max-width:480px;margin:60px auto;padding:24px;text-align:center;font-family:sans-serif;">
+    <div style="font-size:48px;margin-bottom:16px;">✅</div>
+    <p style="font-size:18px;font-weight:700;margin-bottom:8px;color:#333;">回答が完了しています</p>
+    <p style="font-size:14px;color:#666;line-height:1.6;">このアンケートはすでに回答済みです。<br>ご協力ありがとうございました。</p>
+  </div>
+<% return; %>
+<% } %>
+
+<% if (locals.profileIncomplete) { %>
+  <!-- プロフィール未設定画面 -->
+  <div style="max-width:480px;margin:40px auto;padding:24px;text-align:center;font-family:sans-serif;">
+    <div style="font-size:48px;margin-bottom:16px;">📝</div>
+    <p style="font-size:18px;font-weight:700;margin-bottom:8px;color:#333;">プロフィール設定が必要です</p>
+    <p style="font-size:14px;color:#666;line-height:1.6;margin-bottom:24px;">
+      案件に参加するには、まず基本情報を登録してください。<br>約1分で完了します。
+    </p>
+    <% if (locals.mypageLiffId) { %>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script>
+      (async () => {
+        try {
+          await liff.init({ liffId: "<%= mypageLiffId %>" });
+          document.getElementById("btn-setup").addEventListener("click", () => {
+            liff.openWindow({ url: "https://liff.line.me/<%= mypageLiffId %>?mode=initial_setup", external: false });
+          });
+        } catch {
+          document.getElementById("btn-setup").href = "/liff/mypage?mode=initial_setup";
+          document.getElementById("btn-setup").tagName === "BUTTON" && (document.getElementById("btn-setup").outerHTML = `<a href="/liff/mypage?mode=initial_setup" id="btn-setup" style="display:block;padding:14px;background:#2ca87a;color:#fff;border-radius:12px;font-size:15px;font-weight:600;text-decoration:none;">プロフィールを設定する</a>`);
+        }
+      })();
+    </script>
+    <button id="btn-setup" style="width:100%;padding:14px;background:#2ca87a;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;">
+      プロフィールを設定する
+    </button>
+    <% } else { %>
+    <a href="/liff/mypage?mode=initial_setup" style="display:block;padding:14px;background:#2ca87a;color:#fff;border-radius:12px;font-size:15px;font-weight:600;text-decoration:none;">
+      プロフィールを設定する
+    </a>
+    <% } %>
   </div>
 <% return; %>
 <% } %>
@@ -327,15 +373,24 @@
   const LIFF_ID         = <%- JSON.stringify(locals.liffId || null) %>;
   const AUTH_REQUIRED   = <%- JSON.stringify(locals.authRequired === true) %>;
   const LIFF_AUTH_AVAIL = <%- JSON.stringify(locals.liffAuthAvailable === true) %>;
+  // ALLOW_LIFF_AUTH_SKIP=false のとき本人確認失敗・スキップを禁止する
+  const SKIP_ALLOWED    = <%- JSON.stringify(locals.skipAllowed !== false) %>;
 
   // ================================================================
   // LIFF 初期化 + 本人確認
   // ================================================================
   async function initLiffAndVerify() {
-    // LIFF 未設定時は本人確認をスキップして回答を続行
+    console.info('[survey] LIFF init start', { liffId: LIFF_ID, authRequired: AUTH_REQUIRED, skipAllowed: SKIP_ALLOWED });
+
+    // LIFF 未設定 or auth 不要の場合
     if (!LIFF_ID || !AUTH_REQUIRED || !LIFF_AUTH_AVAIL) {
       if (!LIFF_AUTH_AVAIL && ASSIGNMENT_ID) {
-        console.warn('[survey] LIFF auth not configured. Identity check skipped.');
+        console.warn('[survey] LIFF auth not configured. assignmentId=' + ASSIGNMENT_ID);
+      }
+      if (!SKIP_ALLOWED) {
+        // スキップ禁止 + LIFF 未設定 → 設定不足エラー
+        showAuthError('config_missing');
+        return;
       }
       startSurvey();
       return;
@@ -343,31 +398,49 @@
 
     try {
       await liff.init({ liffId: LIFF_ID });
+      console.info('[survey] liff.init success');
     } catch (e) {
       console.error('[survey] liff.init failed', e);
-      // LIFF 初期化失敗時も回答は続行（本人確認なし）
+      if (!SKIP_ALLOWED) {
+        showAuthError('liff_init_failed');
+        return;
+      }
       startSurvey();
       return;
     }
 
-    // LIFF 内で開いていない場合（管理者やテスト用ブラウザ）はスキップ
-    if (!liff.isInClient()) {
-      console.warn('[survey] Not in LIFF client. Identity check skipped.');
-      startSurvey();
+    // ログイン状態を確認: 未ログインならLINE Loginへリダイレクト
+    // isInClient()=false はPCブラウザ・外部ブラウザでも起こりうるため、
+    // ログイン状態で判定し、未ログインのみLINE Loginへ誘導する。
+    if (!liff.isLoggedIn()) {
+      console.warn('[survey] Not logged in – redirecting to LINE Login', {
+        isInClient: liff.isInClient(),
+        url: location.href,
+        ua: navigator.userAgent.slice(0, 150),
+      });
+      liff.login();
       return;
+    }
+
+    // 外部ブラウザだがLINEログイン済みの場合はそのまま続行
+    if (!liff.isInClient()) {
+      console.info('[survey] External browser with LINE Login, continuing auth.');
     }
 
     let idToken;
     try {
-      idToken = await liff.getIDToken();
+      idToken = liff.getIDToken();
+      if (!idToken) throw new Error('getIDToken returned null');
+      console.info('[survey] ID token acquired');
     } catch (e) {
       console.error('[survey] liff.getIDToken failed', e);
-      showAuthError('認証情報を取得できませんでした。LINEアプリから開き直してください。');
+      showAuthError('token_failed');
       return;
     }
 
     // サーバー側で ID token を検証し、本人確認
     try {
+      console.info('[survey] verify-identity start', { assignmentId: ASSIGNMENT_ID });
       const res = await fetch('/liff/survey/verify-identity', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -376,30 +449,51 @@
       const data = await res.json();
       if (!data.ok) {
         if (res.status === 403) {
-          showAuthError('このアンケートはあなたのアカウントに割り当てられていません。');
+          console.warn('[survey] verify-identity: IDENTITY_MISMATCH', { assignmentId: ASSIGNMENT_ID });
+          showAuthError('identity_mismatch');
         } else if (res.status === 503) {
-          // LIFF 設定不足（管理者向け情報）
-          console.warn('[survey] LIFF auth server error:', data.message);
-          // 設定が揃っていないだけなのでユーザーには回答させる
-          startSurvey();
+          console.warn('[survey] verify-identity: LIFF_NOT_CONFIGURED', { skipAllowed: data.skipAllowed });
+          // サーバーが skipAllowed=false を返した場合は強制ブロック
+          if (!data.skipAllowed || !SKIP_ALLOWED) {
+            showAuthError('config_missing');
+          } else {
+            startSurvey();
+          }
         } else {
-          showAuthError('認証に失敗しました。もう一度LINEから開き直してください。');
+          console.warn('[survey] verify-identity: unknown error', res.status);
+          showAuthError('token_failed');
         }
         return;
       }
+      console.info('[survey] verify-identity success');
     } catch (e) {
-      console.error('[survey] verify-identity failed', e);
-      // ネットワークエラー時も回答は続行
+      console.error('[survey] verify-identity network error', e);
+      if (!SKIP_ALLOWED) {
+        showAuthError('token_failed');
+        return;
+      }
+      // ネットワークエラー時は開発環境のみスキップ
     }
 
     startSurvey();
   }
 
-  function showAuthError(message) {
+  function showAuthError(code) {
+    const BASE_MSG = '本人確認に失敗しました。<br>LINEアプリ内から開き直してください。';
+    const messages = {
+      config_missing:    BASE_MSG,
+      not_in_liff:       BASE_MSG,
+      identity_mismatch: 'このアンケートはご本人専用です。<br>配信されたLINEアカウントから開いてください。',
+      token_failed:      BASE_MSG,
+      liff_init_failed:  BASE_MSG,
+    };
+    const msg = messages[code] || BASE_MSG;
+    console.error('[survey] showAuthError', code);
     document.body.innerHTML = `
       <div style="max-width:480px;margin:60px auto;padding:24px;text-align:center;font-family:sans-serif;">
         <div style="font-size:40px;margin-bottom:16px;">🔒</div>
-        <p style="font-size:15px;color:#666;">${message}</p>
+        <p style="font-size:15px;color:#444;line-height:1.8;">${msg}</p>
+        <p style="font-size:13px;color:#999;margin-top:12px;">解決しない場合は、運営までお問い合わせください。</p>
       </div>`;
   }
 

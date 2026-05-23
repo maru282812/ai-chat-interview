@@ -74,5 +74,43 @@
       </tbody>
     </table>
   </div>
+
+  <div class="card">
+    <h2>AI分析 <span class="muted" style="font-size:13px">Phase 2-C</span></h2>
+    <p class="muted" style="font-size:13px">このユーザーの投稿履歴からAIタグとペルソナ要約を自動生成します。</p>
+    <button id="gen-tags-btn" class="btn" onclick="generateAiTags()">AIタグ生成</button>
+    <div id="gen-tags-result" style="margin-top:12px"></div>
+  </div>
 </section>
+
+<script>
+  async function generateAiTags() {
+    const btn = document.getElementById("gen-tags-btn");
+    const result = document.getElementById("gen-tags-result");
+    btn.disabled = true;
+    btn.textContent = "生成中...";
+    result.innerHTML = "";
+    try {
+      const resp = await fetch("/admin/api/ai/generate-user-tags/<%= respondent.id %>", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+      const data = await resp.json();
+      if (data.ok && data.result) {
+        const tags = (data.result.tags || []).map(t => `<span style="background:#e0ede9;border-radius:12px;padding:2px 10px;font-size:13px;margin:2px;display:inline-block">${t}</span>`).join("");
+        result.innerHTML = `
+          <p style="font-size:13px;color:#2ca87a;font-weight:600">生成完了</p>
+          <p style="font-size:13px">${data.result.persona_summary || ""}</p>
+          <div style="margin-top:6px">${tags}</div>
+        `;
+      } else {
+        result.innerHTML = `<p style="color:#e53e3e;font-size:13px">生成に失敗しました（投稿データが不足している可能性があります）</p>`;
+      }
+    } catch (e) {
+      result.innerHTML = `<p style="color:#e53e3e;font-size:13px">エラー: ${e.message}</p>`;
+    }
+    btn.disabled = false;
+    btn.textContent = "AIタグ生成";
+  }
+</script>
 <%- include("../../partials/footer") %>

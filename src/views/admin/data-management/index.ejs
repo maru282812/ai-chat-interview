@@ -1,0 +1,118 @@
+<%- include("../../partials/header", { title }) %>
+<h2>データ管理</h2>
+
+<div style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap">
+
+  <!-- ============ NGワード管理 ============ -->
+  <section style="flex:1;min-width:360px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3>NGワード管理</h3>
+      <span class="muted" style="font-size:13px">計 <%= ngWords.length %> 件</span>
+    </div>
+
+    <form method="post" action="/admin/data-management/ng-words" style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
+      <input type="text" name="word" placeholder="NGワードを入力" required style="flex:1;min-width:160px" />
+      <select name="category" style="width:130px">
+        <option value="general">一般</option>
+        <option value="violence">暴力</option>
+        <option value="sexual">性的</option>
+        <option value="illegal">違法</option>
+        <option value="other">その他</option>
+      </select>
+      <button type="submit" class="btn">追加</button>
+    </form>
+
+    <table>
+      <thead>
+        <tr>
+          <th>ワード</th>
+          <th>カテゴリ</th>
+          <th>有効</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% const catLabel = { general:'一般', violence:'暴力', sexual:'性的', illegal:'違法', other:'その他' } %>
+        <% for (const w of ngWords) { %>
+          <tr>
+            <td><code><%= w.word %></code></td>
+            <td><span class="tag"><%= catLabel[w.category] ?? w.category %></span></td>
+            <td>
+              <form method="post" action="/admin/data-management/ng-words/<%= w.id %>/toggle" style="display:inline">
+                <button type="submit" class="btn-secondary" style="padding:3px 10px;font-size:12px">
+                  <%= w.is_active ? '有効' : '無効' %>
+                </button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="/admin/data-management/ng-words/<%= w.id %>/delete"
+                    style="display:inline" onsubmit="return confirm('削除しますか？')">
+                <button type="submit" class="btn-danger" style="padding:3px 10px;font-size:12px">削除</button>
+              </form>
+            </td>
+          </tr>
+        <% } %>
+        <% if (ngWords.length === 0) { %>
+          <tr><td colspan="4" class="muted" style="text-align:center">NGワードがありません</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ============ 投稿カテゴリ管理 ============ -->
+  <section style="flex:1;min-width:360px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3>投稿カテゴリ管理</h3>
+      <span class="muted" style="font-size:13px">計 <%= categories.length %> 件</span>
+    </div>
+
+    <form method="post" action="/admin/data-management/categories" style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
+      <select name="category_type" required style="width:110px">
+        <option value="rant">愚痴</option>
+        <option value="diary">日記</option>
+      </select>
+      <input type="text" name="name" placeholder="カテゴリ名" required style="flex:1;min-width:120px" />
+      <input type="number" name="sort_order" placeholder="順序" value="0" style="width:70px" />
+      <button type="submit" class="btn">追加</button>
+    </form>
+
+    <table>
+      <thead>
+        <tr>
+          <th>種別</th>
+          <th>カテゴリ名</th>
+          <th>順序</th>
+          <th>有効</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const cat of categories) { %>
+          <tr>
+            <td><span class="tag"><%= cat.category_type === 'rant' ? '愚痴' : '日記' %></span></td>
+            <td><%= cat.name %></td>
+            <td><%= cat.sort_order %></td>
+            <td>
+              <form method="post" action="/admin/data-management/categories/<%= cat.id %>/toggle" style="display:inline">
+                <button type="submit" class="btn-secondary" style="padding:3px 10px;font-size:12px">
+                  <%= cat.is_active ? '有効' : '無効' %>
+                </button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="/admin/data-management/categories/<%= cat.id %>/delete"
+                    style="display:inline" onsubmit="return confirm('削除しますか？')">
+                <button type="submit" class="btn-danger" style="padding:3px 10px;font-size:12px">削除</button>
+              </form>
+            </td>
+          </tr>
+        <% } %>
+        <% if (categories.length === 0) { %>
+          <tr><td colspan="5" class="muted" style="text-align:center">カテゴリがありません</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </section>
+
+</div>
+<%- include("../../partials/footer") %>

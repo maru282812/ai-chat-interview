@@ -1,4 +1,5 @@
 import { env } from "../config/env";
+import { logger } from "../lib/logger";
 import { liffEntrypointRepository } from "../repositories/liffEntrypointRepository";
 import type { LineMenuAction, LiffEntrypoint } from "../types/domain";
 
@@ -118,7 +119,19 @@ function getLiffId(entry: LiffEntrypoint | null): string | null {
     return configured.trim();
   }
 
-  return env.LINE_LIFF_ID ?? null;
+  if (env.LINE_LIFF_ID) {
+    logger.warn("liff.getLiffId.fallback_to_generic", {
+      entryKey,
+      warning: "entryKey に対応する専用 LIFF ID が未設定のため LINE_LIFF_ID にフォールバックしています。LINE Developers で専用 LIFF App を作成してください。"
+    });
+    return env.LINE_LIFF_ID;
+  }
+
+  logger.warn("liff.getLiffId.no_liff_id", {
+    entryKey,
+    warning: "LIFF ID が見つかりません。LIFF URL ではなく絶対 URL にフォールバックします。"
+  });
+  return null;
 }
 
 /**
@@ -161,11 +174,16 @@ export function buildProjectStartUrl(assignmentId: string): {
  *   - LINE_LIFF_CHANNEL_ID: LIFF チャネル ID
  *   - LINE_LIFF_ID_SURVEY: survey 専用 LIFF App ID
  * どちらかが未設定の場合、liffAuthAvailable = false になる。
+ *
+ * authRequired: LIFF_AUTH_REQUIRED=true のとき、設定不足ならエラー画面を表示する
+ * skipAllowed:  ALLOW_LIFF_AUTH_SKIP=false のとき、クライアント側スキップを禁止する
  */
 export function getSurveyLiffConfig(): {
   liffId: string | null;
   liffAuthAvailable: boolean;
   missingEnvVars: string[];
+  authRequired: boolean;
+  skipAllowed: boolean;
 } {
   const missing: string[] = [];
   if (!env.LINE_LIFF_CHANNEL_ID) missing.push("LINE_LIFF_CHANNEL_ID");
@@ -174,6 +192,8 @@ export function getSurveyLiffConfig(): {
     liffId: getSurveyLiffId(),
     liffAuthAvailable: missing.length === 0,
     missingEnvVars: missing,
+    authRequired: env.LIFF_AUTH_REQUIRED === true,
+    skipAllowed: env.ALLOW_LIFF_AUTH_SKIP !== false,
   };
 }
 
@@ -222,16 +242,21 @@ function buildManagedLaunch(
   params?: Record<string, string | null | undefined>
 ): ResolvedLiffLaunch {
   const liffId = getLiffId(entry);
+  const url = buildLaunchUrl({ path: entry.path, liffId, requiresLiffAuth: true, params });
+
+  logger.info("liff.buildManagedLaunch", {
+    entryKey: entry.entry_key,
+    entryPath: entry.path,
+    selectedLiffId: liffId,
+    params,
+    generatedUrl: url
+  });
+
   return {
     entryKey: entry.entry_key,
     title: canonicalTitles[entry.entry_key as ManagedLiffEntryKey] ?? entry.title,
     path: entry.path,
-    url: buildLaunchUrl({
-      path: entry.path,
-      liffId,
-      requiresLiffAuth: true,
-      params
-    }),
+    url,
     liffId,
     requiresLiffAuth: true,
     settings: entry.settings_json ?? null

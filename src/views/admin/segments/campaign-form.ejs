@@ -1,0 +1,78 @@
+<%- include("../../partials/header", { title }) %>
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:1.5rem">
+  <a href="/admin/segments" style="text-decoration:none;color:#666">← 戻る</a>
+  <h2 style="margin:0"><%= campaign ? 'キャンペーン編集' : 'キャンペーン作成' %></h2>
+</div>
+
+<% const action = campaign ? `/admin/segments/campaigns/${campaign.id}` : '/admin/segments/campaigns' %>
+<form method="post" action="<%= action %>">
+  <section>
+    <table>
+      <tbody>
+        <tr>
+          <th style="width:160px">キャンペーン名 <span style="color:#e05555">*</span></th>
+          <td><input type="text" name="name" value="<%= campaign?.name ?? '' %>" required style="width:360px" /></td>
+        </tr>
+        <tr>
+          <th>対象プロジェクト <span style="color:#e05555">*</span></th>
+          <td>
+            <select name="project_id" required style="width:360px">
+              <option value="">選択してください</option>
+              <% for (const p of projects) { %>
+                <option value="<%= p.id %>" <%= (campaign?.project_id === p.id) ? 'selected' : '' %>><%= p.name %></option>
+              <% } %>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <th>セグメント</th>
+          <td>
+            <select name="segment_id" style="width:360px">
+              <option value="">（なし）全回答者</option>
+              <% for (const s of segments) { %>
+                <option value="<%= s.id %>" <%= (campaign?.segment_id === s.id) ? 'selected' : '' %>>
+                  <%= s.name %><% if (s.estimated_count !== null) { %> （約 <%= s.estimated_count %>人）<% } %>
+                </option>
+              <% } %>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <th>配信チャネル</th>
+          <td>
+            <select name="delivery_channel" style="width:200px">
+              <option value="liff" <%= (!campaign || campaign.delivery_channel === 'liff') ? 'selected' : '' %>>LIFF</option>
+              <option value="line" <%= (campaign?.delivery_channel === 'line') ? 'selected' : '' %>>LINE メッセージ</option>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <th>配信予定日時</th>
+          <td>
+            <input type="datetime-local" name="scheduled_at"
+              value="<%= campaign?.scheduled_at ? new Date(campaign.scheduled_at).toISOString().slice(0,16) : '' %>"
+              style="width:260px" />
+            <p class="muted" style="margin-top:4px;font-size:12px">空白の場合は下書き保存。設定時刻に自動実行されます。</p>
+          </td>
+        </tr>
+        <tr>
+          <th>回答期限</th>
+          <td>
+            <input type="datetime-local" name="deadline"
+              value="<%= campaign?.deadline ? new Date(campaign.deadline).toISOString().slice(0,16) : '' %>"
+              style="width:260px" />
+            <p class="muted" style="margin-top:4px;font-size:12px">アサインの期限（空白可）</p>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div style="margin-top:1.5rem;display:flex;gap:10px">
+    <button type="submit" class="btn">
+      <%= campaign ? '保存する' : 'キャンペーンを作成' %>
+    </button>
+    <a href="/admin/segments" class="btn-secondary">キャンセル</a>
+  </div>
+</form>
+<%- include("../../partials/footer") %>

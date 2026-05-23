@@ -8,11 +8,9 @@ import {
 import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
-import { buildMypageFlex } from "../templates/flex";
 import { assignmentService } from "./assignmentService";
 import { liffService } from "./liffService";
 import { personalityService } from "./personalityService";
-import { rankService } from "./rankService";
 import { respondentService } from "./respondentService";
 import type {
   LineMenuAction,
@@ -936,28 +934,39 @@ async function resolveResumeAction(input: { lineUserId: string }): Promise<MenuA
   };
 }
 
-async function resolveMyPageAction(lineUserId: string): Promise<MenuActionResolution> {
+async function resolveMyPageAction(
+  lineUserId: string,
+  action: LineMenuAction
+): Promise<MenuActionResolution> {
   clearPendingSelection(lineUserId);
-  const primaryRespondent = await respondentService.getPrimaryRespondent(lineUserId);
-  const totalPoints = primaryRespondent?.total_points ?? 0;
-  const [currentRank, nextRank] = await Promise.all([
-    rankService.resolveRank(totalPoints),
-    rankService.getNextRank(totalPoints)
-  ]);
+
+  const launch = await liffService.resolveMenuActionLaunch(action, {
+    defaultEntryKey: "mypage"
+  });
+
+  const canUseLiff = canUseResolvedLiffLaunch(launch);
+
+  logger.info("mypage.liff_launch.resolved", {
+    source: "show_mypage",
+    actionType: action.action_type,
+    menuActionKey: action.menu_key,
+    selectedLiffId: launch?.liffId ?? null,
+    generatedUrl: launch?.url ?? null,
+    canUseLiff
+  });
+
+  if (launch) {
+    return {
+      handled: true,
+      behavior: "reply",
+      messages: [buildTextMessage(`マイページを開く: ${launch.url}`)]
+    };
+  }
 
   return {
     handled: true,
     behavior: "reply",
-    messages: [
-      buildMypageFlex({
-        rankName: currentRank?.rank_name ?? "Bronze",
-        badgeLabel: currentRank?.badge_label ?? "",
-        totalPoints,
-        nextRank,
-        pointsToNext: nextRank ? nextRank.min_points - totalPoints : null,
-        hasActiveSession: false
-      })
-    ]
+    messages: [buildTextMessage("マイページが開けませんでした。しばらくしてから再試行してください。")]
   };
 }
 
@@ -1003,6 +1012,16 @@ async function resolveDynamicAction(
         }
       });
 
+      logger.info("menu_action.liff_launch.resolved", {
+        actionType: action.action_type,
+        menuActionKey: action.menu_key,
+        postType: action.action_payload?.postType,
+        liffPath: action.liff_path ?? null,
+        selectedLiffId: launch?.liffId ?? null,
+        generatedUrl: launch?.url ?? null,
+        canUseLiff: canUseResolvedLiffLaunch(launch)
+      });
+
       if (canUseResolvedLiffLaunch(launch)) {
         return {
           handled: true,
@@ -1039,6 +1058,16 @@ async function resolveDynamicAction(
       }
     });
 
+    logger.info("menu_action.liff_launch.resolved", {
+      actionType: action.action_type,
+      menuActionKey: action.menu_key,
+      liffPath: action.liff_path ?? null,
+      entryKey: action.action_payload?.entryKey ?? null,
+      selectedLiffId: launch?.liffId ?? null,
+      generatedUrl: launch?.url ?? null,
+      canUseLiff: canUseResolvedLiffLaunch(launch)
+    });
+
     if (canUseResolvedLiffLaunch(launch)) {
       return {
         handled: true,
@@ -1060,7 +1089,7 @@ async function resolveDynamicAction(
     case "resume_project":
       return resolveResumeAction(input);
     case "show_mypage":
-      return resolveMyPageAction(input.lineUserId);
+      return resolveMyPageAction(input.lineUserId, action);
     case "show_personality":
       return {
         handled: true,

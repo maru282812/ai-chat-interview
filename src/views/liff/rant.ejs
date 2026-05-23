@@ -6,102 +6,252 @@
     <title><%= title %></title>
     <link rel="stylesheet" href="/public/styles.css" />
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <%- include('../partials/liff-auth') %>
+    <style>
+      .rant-app { max-width: 480px; margin: 0 auto; padding: 12px 14px 60px; }
+
+      .fsec {
+        background: #fff;
+        border-radius: 14px;
+        padding: 14px 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 2px 8px rgba(18,59,58,.06);
+      }
+      .fsec-label { font-size: 13px; font-weight: 600; color: #123b3a; margin: 0 0 10px; display: block; }
+      .opt { font-size: 10px; color: #6a7b78; font-weight: normal; margin-left: 4px; }
+
+      /* Rant topic tag chips */
+      .rant-tags { display: flex; flex-wrap: wrap; gap: 7px; }
+      .r-chip {
+        display: inline-flex; align-items: center; gap: 3px;
+        padding: 6px 11px; border-radius: 999px;
+        border: 1.5px solid #c8d8d5; background: #f4f7f6;
+        font-size: 13px; cursor: pointer; transition: all .15s; user-select: none;
+      }
+      .r-chip.selected { background: #eef7f5; border-color: #0b7a75; color: #0b7a75; font-weight: 600; }
+      .r-chip-count { font-size: 10px; color: #6a7b78; margin-left: 2px; }
+      .r-chip.selected .r-chip-count { color: #0b7a75; }
+
+      /* Actions */
+      .form-actions { display: flex; gap: 10px; margin-top: 4px; }
+      .btn-post {
+        flex: 1; padding: 13px; background: #0b7a75; color: #fff;
+        border: none; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer;
+      }
+      .btn-post:disabled { background: #b0c8c6; }
+      .btn-close {
+        padding: 13px 20px; background: #d8ece8; color: #123b3a;
+        border: none; border-radius: 12px; font-size: 15px; cursor: pointer;
+      }
+
+      #status { text-align: center; padding: 8px; font-size: 14px; min-height: 24px; }
+
+      /* 投稿完了カード */
+      .result-card { display: none; }
+      .result-card.show { display: block; }
+      .result-post-box {
+        background: #f4f7f6; border-radius: 12px; padding: 12px 14px;
+        font-size: 14px; color: #123b3a; margin-bottom: 10px; white-space: pre-wrap; word-break: break-word;
+      }
+      .result-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+      .result-tag {
+        display: inline-flex; align-items: center; gap: 3px;
+        padding: 5px 10px; border-radius: 999px;
+        background: #eef7f5; border: 1.5px solid #0b7a75; color: #0b7a75; font-size: 13px; font-weight: 600;
+      }
+      .ai-reply-box {
+        background: #fff; border-left: 4px solid #0b7a75;
+        border-radius: 0 12px 12px 0; padding: 14px 16px; margin-bottom: 16px;
+      }
+      .ai-reply-label { font-size: 11px; color: #6a7b78; font-weight: 600; margin-bottom: 6px; }
+      .ai-reply-text { font-size: 15px; color: #123b3a; line-height: 1.6; }
+      .result-actions { display: flex; gap: 10px; }
+      .btn-again {
+        flex: 1; padding: 12px; background: #0b7a75; color: #fff;
+        border: none; border-radius: 12px; font-size: 15px; font-weight: 600; cursor: pointer;
+      }
+    </style>
   </head>
   <body class="liff-body">
-    <main class="liff-main">
-      <section class="card liff-card">
-        <h1><%= title %></h1>
-        <p class="muted">その場で感じたことや不満を自由に投稿できます。</p>
-        <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
-        <form id="post-form" class="stack">
-          <input type="hidden" name="type" value="rant" />
-          <input type="hidden" name="menu_action_key" value="<%= initialData.menuActionKey %>" />
-          <label>
-            本文
-            <textarea
-              name="content"
-              required
-              rows="8"
-              placeholder="今感じていることをそのまま入力してください。"
-            ></textarea>
-          </label>
-          <div class="actions-row">
-            <button type="submit">投稿する</button>
-            <button type="button" id="close-button" class="button-link secondary">閉じる</button>
+    <div class="rant-app">
+      <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+
+      <!-- 投稿フォーム -->
+      <form id="post-form">
+        <input type="hidden" name="type" value="rant" />
+        <input type="hidden" name="menu_action_key" value="<%= initialData.menuActionKey %>" />
+        <input type="hidden" name="rant_tag_codes" id="tags-input" value="[]" />
+
+        <!-- 悩みタグ -->
+        <% if (initialData.rantTags && initialData.rantTags.length > 0) { %>
+        <div class="fsec">
+          <span class="fsec-label">どんな悩みに近いですか？<span class="opt">複数選べます</span></span>
+          <div class="rant-tags">
+            <% initialData.rantTags.forEach(function(tag) { %>
+            <button type="button" class="r-chip" data-code="<%= tag.code %>" data-label="<%= tag.label %>" data-emoji="<%= tag.emoji %>">
+              <%= tag.emoji %>&nbsp;<%= tag.label %><span class="r-chip-count"><%= tag.post_count %>人</span>
+            </button>
+            <% }); %>
           </div>
-        </form>
-        <p id="status" class="muted">LIFF を初期化しています...</p>
-      </section>
-    </main>
+        </div>
+        <% } %>
+
+        <!-- 本文 -->
+        <div class="fsec">
+          <span class="fsec-label">本音・悩み</span>
+          <textarea
+            name="content"
+            id="content-input"
+            rows="7"
+            placeholder="今感じていることをそのまま書いてください。"
+            style="width:100%;box-sizing:border-box;border:1px solid #c8d8d5;border-radius:10px;padding:10px 12px;font:inherit;resize:vertical"
+          ></textarea>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn-post" id="submit-btn">投稿する</button>
+          <button type="button" class="btn-close" id="close-btn">閉じる</button>
+        </div>
+      </form>
+
+      <!-- 投稿完了カード -->
+      <div class="result-card fsec" id="result-card">
+        <div class="result-post-box" id="result-content"></div>
+        <div class="result-tags" id="result-tags"></div>
+        <div class="ai-reply-box" id="ai-reply-box" style="display:none">
+          <div class="ai-reply-label">AIからの一言</div>
+          <div class="ai-reply-text" id="ai-reply-text"></div>
+        </div>
+        <div class="result-actions">
+          <button type="button" class="btn-again" id="again-btn">もう一度書く</button>
+          <button type="button" class="btn-close" id="close-btn2">閉じる</button>
+        </div>
+      </div>
+
+      <p id="status" class="muted"></p>
+    </div>
+
     <script>
-      (() => {
-        const initialDataEl = document.getElementById("initial-data");
-        const initialData = JSON.parse(initialDataEl.dataset.json || "{}");
-        const liffId = initialData.liffId || "";
-        const form = document.getElementById("post-form");
-        const statusEl = document.getElementById("status");
-        const closeButton = document.getElementById("close-button");
-        const submitButton = form.querySelector("button[type='submit']");
+    (() => {
+      const el = document.getElementById('initial-data');
+      const d  = JSON.parse(el.dataset.json || '{}');
+      const liffId    = d.liffId || '';
+      const rantTags  = d.rantTags || [];
+      const form      = document.getElementById('post-form');
+      const statusEl  = document.getElementById('status');
+      const submitBtn = document.getElementById('submit-btn');
+      const resultCard = document.getElementById('result-card');
 
-        function setStatus(text, isError) {
-          statusEl.textContent = text;
-          statusEl.className = isError ? "danger-text" : "muted";
-        }
+      function setStatus(t, err) {
+        statusEl.textContent = t;
+        statusEl.className = err ? 'danger-text' : 'muted';
+      }
 
-        async function getIdToken() {
-          if (!window.liff) {
-            throw new Error("LIFF SDK を読み込めませんでした。");
+      /* ---- Rant topic tags ---- */
+      const tagsInput = document.getElementById('tags-input');
+      var selectedCodes = new Set();
+      var selectedTagData = [];
+      document.querySelectorAll('.r-chip').forEach(function(chip) {
+        chip.addEventListener('click', function() {
+          var code = chip.dataset.code;
+          if (selectedCodes.has(code)) {
+            selectedCodes.delete(code);
+            chip.classList.remove('selected');
+          } else {
+            selectedCodes.add(code);
+            chip.classList.add('selected');
           }
-          if (!liffId) {
-            throw new Error("LIFF ID が設定されていません。");
-          }
-          await liff.init({ liffId });
-          const idToken = liff.getIDToken();
-          if (!idToken) {
-            throw new Error("LINE認証に失敗しました。もう一度お試しください。");
-          }
-          return idToken;
-        }
+          tagsInput.value = JSON.stringify(Array.from(selectedCodes));
+          selectedTagData = rantTags.filter(function(t) { return selectedCodes.has(t.code); });
+        });
+      });
 
-        form.addEventListener("submit", async (event) => {
-          event.preventDefault();
-          try {
-            setStatus("投稿中...", false);
-            const idToken = await getIdToken();
-            const payload = Object.fromEntries(new FormData(form).entries());
-            const response = await fetch(initialData.submitUrl, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${idToken}`
-              },
-              body: JSON.stringify(payload)
-            });
-            if (!response.ok) {
-              throw new Error("投稿に失敗しました。時間をおいて再度お試しください。");
-            }
-            form.reset();
-            setStatus("投稿しました。必要に応じてこの画面を閉じてください。", false);
-          } catch (error) {
-            setStatus(error.message || "投稿に失敗しました。", true);
-          }
+      /* ---- LIFF init ---- */
+      async function ensureLiff() {
+        return LiffAuth.initLiffOrWebAuth(liffId);
+      }
+
+      /* ---- Init ---- */
+      if (!liffId) {
+        submitBtn.disabled = true;
+        setStatus('LIFF IDが設定されていません。管理者にお問い合わせください。', true);
+      } else {
+        setStatus('本音・悩みを入力して投稿してください。', false);
+      }
+
+      /* ---- Show result ---- */
+      function showResult(contentText, tags, aiReply) {
+        form.style.display = 'none';
+        resultCard.classList.add('show');
+        document.getElementById('result-content').textContent = contentText;
+
+        var tagsContainer = document.getElementById('result-tags');
+        tagsContainer.innerHTML = '';
+        tags.forEach(function(t) {
+          var span = document.createElement('span');
+          span.className = 'result-tag';
+          span.textContent = t.emoji + ' ' + t.label;
+          tagsContainer.appendChild(span);
         });
 
-        closeButton.addEventListener("click", async () => {
-          if (window.liff && liff.isInClient()) {
-            await liff.closeWindow();
-            return;
-          }
-          window.history.back();
-        });
-
-        if (!liffId) {
-          submitButton.disabled = true;
-          setStatus("LIFF を利用できません。LINEトークからもう一度開いてください。", true);
+        var aiBox = document.getElementById('ai-reply-box');
+        if (aiReply) {
+          document.getElementById('ai-reply-text').textContent = aiReply;
+          aiBox.style.display = 'block';
         } else {
-          setStatus("本文を入力して投稿してください。", false);
+          aiBox.style.display = 'none';
         }
-      })();
+        setStatus('', false);
+      }
+
+      /* ---- Submit ---- */
+      form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        submitBtn.disabled = true;
+        setStatus('投稿中...', false);
+        try {
+          var token = await ensureLiff();
+          if (!token) return;
+
+          var contentText = document.getElementById('content-input').value.trim();
+          var fd    = new FormData(form);
+          var payload = Object.fromEntries(fd.entries());
+          try { payload.rant_tag_codes = JSON.parse(payload.rant_tag_codes || '[]'); } catch(_){ payload.rant_tag_codes = []; }
+
+          var res = await fetch(d.submitUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) {
+            var err = await res.json().catch(function(){ return {}; });
+            throw new Error(err.error || '投稿に失敗しました。時間をおいて再度お試しください。');
+          }
+
+          var result = await res.json();
+          showResult(contentText, selectedTagData, result.aiReply || null);
+        } catch(err) {
+          setStatus(err.message || '投稿に失敗しました。', true);
+          submitBtn.disabled = false;
+        }
+      });
+
+      /* ---- Again ---- */
+      document.getElementById('again-btn').addEventListener('click', function() {
+        resultCard.classList.remove('show');
+        form.style.display = '';
+        form.reset();
+        document.querySelectorAll('.r-chip').forEach(function(b){ b.classList.remove('selected'); });
+        selectedCodes.clear(); selectedTagData = [];
+        tagsInput.value = '[]';
+        submitBtn.disabled = false;
+        setStatus('本音・悩みを入力して投稿してください。', false);
+      });
+
+      /* ---- Close ---- */
+      document.getElementById('close-btn').addEventListener('click', function() { LiffAuth.closeOrBack(); });
+      document.getElementById('close-btn2').addEventListener('click', function() { LiffAuth.closeOrBack(); });
+    })();
     </script>
   </body>
 </html>

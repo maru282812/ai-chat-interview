@@ -1,0 +1,184 @@
+<%- include("../../partials/header", { title }) %>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>セグメント配信</h2>
+  <div style="display:flex;gap:8px">
+    <a href="/admin/segments/campaigns/new" class="btn">＋ キャンペーン作成</a>
+    <a href="/admin/segments/new" class="btn-secondary">＋ セグメント作成</a>
+  </div>
+</div>
+
+<section>
+  <h3>セグメント一覧</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>セグメント名</th>
+        <th>説明</th>
+        <th>推定対象数</th>
+        <th>最終評価</th>
+        <th>作成日</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% for (const seg of segments) { %>
+        <tr>
+          <td><strong><%= seg.name %></strong></td>
+          <td><span class="muted"><%= seg.description || '-' %></span></td>
+          <td id="count-<%= seg.id %>">
+            <% if (seg.estimated_count !== null) { %>
+              <strong><%= seg.estimated_count %></strong> 人
+            <% } else { %>
+              <span class="muted">未評価</span>
+            <% } %>
+          </td>
+          <td>
+            <% if (seg.last_evaluated_at) { %>
+              <span class="muted"><%= new Date(seg.last_evaluated_at).toLocaleString('ja-JP') %></span>
+            <% } else { %>
+              <span class="muted">-</span>
+            <% } %>
+          </td>
+          <td><span class="muted"><%= new Date(seg.created_at).toLocaleDateString('ja-JP') %></span></td>
+          <td style="white-space:nowrap">
+            <button class="btn-secondary" onclick="evaluateSegment('<%= seg.id %>')">評価</button>
+            <a href="/admin/segments/<%= seg.id %>/edit">編集</a>
+            <form method="post" action="/admin/segments/<%= seg.id %>/delete"
+                  style="display:inline" onsubmit="return confirm('削除しますか？')">
+              <button type="submit" class="btn-danger">削除</button>
+            </form>
+          </td>
+        </tr>
+      <% } %>
+      <% if (segments.length === 0) { %>
+        <tr><td colspan="6" class="muted" style="text-align:center">セグメントがありません</td></tr>
+      <% } %>
+    </tbody>
+  </table>
+</section>
+
+<section style="margin-top:2rem">
+  <h3>配信キャンペーン一覧</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>キャンペーン名</th>
+        <th>プロジェクト</th>
+        <th>セグメント</th>
+        <th>ステータス</th>
+        <th>配信予定日時</th>
+        <th>送信数</th>
+        <th style="text-align:center">開封</th>
+        <th style="text-align:center">開始</th>
+        <th style="text-align:center">完了</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% for (const c of campaigns) { %>
+        <tr>
+          <td><strong><%= c.name %></strong></td>
+          <td><%= c.project?.name ?? '-' %></td>
+          <td><%= c.segment?.name ?? '全回答者' %></td>
+          <td>
+            <% const statusLabel = { draft: '下書き', scheduled: '配信予定', sent: '送信済', cancelled: 'キャンセル' } %>
+            <% const statusClass = { draft: '', scheduled: 'tag-blue', sent: 'tag-green', cancelled: 'tag-grey' } %>
+            <span class="tag <%= statusClass[c.status] ?? '' %>"><%= statusLabel[c.status] ?? c.status %></span>
+          </td>
+          <td>
+            <% if (c.scheduled_at) { %>
+              <span class="muted"><%= new Date(c.scheduled_at).toLocaleString('ja-JP') %></span>
+            <% } else { %>
+              <span class="muted">-</span>
+            <% } %>
+          </td>
+          <td><%= c.sent_count %></td>
+          <td style="text-align:center">
+            <%= c.opened_count %>
+            <% if (c.sent_count > 0) { %>
+              <span class="muted" style="font-size:11px">(<%= Math.round(c.opened_count/c.sent_count*100) %>%)</span>
+            <% } %>
+          </td>
+          <td style="text-align:center">
+            <%= c.started_count %>
+            <% if (c.sent_count > 0) { %>
+              <span class="muted" style="font-size:11px">(<%= Math.round(c.started_count/c.sent_count*100) %>%)</span>
+            <% } %>
+          </td>
+          <td style="text-align:center">
+            <%= c.completed_count %>
+            <% if (c.sent_count > 0) { %>
+              <span class="muted" style="font-size:11px">(<%= Math.round(c.completed_count/c.sent_count*100) %>%)</span>
+            <% } %>
+          </td>
+          <td style="white-space:nowrap">
+            <% if (c.status === 'draft' || c.status === 'scheduled') { %>
+              <button class="btn-secondary" onclick="executeCampaign('<%= c.id %>', '<%= c.name %>')">今すぐ実行</button>
+              <a href="/admin/segments/campaigns/<%= c.id %>/edit">編集</a>
+              <form method="post" action="/admin/segments/campaigns/<%= c.id %>/cancel"
+                    style="display:inline" onsubmit="return confirm('キャンセルしますか？')">
+                <button type="submit" class="btn-danger">取消</button>
+              </form>
+            <% } else { %>
+              <span class="muted">-</span>
+            <% } %>
+          </td>
+        </tr>
+      <% } %>
+      <% if (campaigns.length === 0) { %>
+        <tr><td colspan="10" class="muted" style="text-align:center">キャンペーンがありません</td></tr>
+      <% } %>
+    </tbody>
+  </table>
+</section>
+
+<script>
+async function evaluateSegment(segmentId) {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '評価中...';
+  try {
+    const res = await fetch(`/admin/api/segments/${segmentId}/evaluate`, { method: 'POST' });
+    const json = await res.json();
+    if (json.ok) {
+      const el = document.getElementById(`count-${segmentId}`);
+      if (el) el.innerHTML = `<strong>${json.estimated_count}</strong> 人`;
+    }
+  } catch (e) {
+    alert('評価に失敗しました');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '評価';
+  }
+}
+
+async function executeCampaign(campaignId, name) {
+  if (!confirm(`「${name}」を今すぐ実行しますか？\n対象者にプロジェクトがアサインされます。`)) return;
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '実行中...';
+  try {
+    const res = await fetch(`/admin/api/campaigns/${campaignId}/execute`, { method: 'POST' });
+    const json = await res.json();
+    if (json.ok) {
+      alert(`配信完了: ${json.sent_count}件 アサインしました。`);
+      location.reload();
+    } else {
+      alert('エラー: ' + (json.error ?? '不明なエラー'));
+      btn.disabled = false;
+      btn.textContent = '今すぐ実行';
+    }
+  } catch (e) {
+    alert('実行に失敗しました');
+    btn.disabled = false;
+    btn.textContent = '今すぐ実行';
+  }
+}
+</script>
+
+<style>
+.tag-blue   { background: #e8f0fe; color: #1a56a4; }
+.tag-green  { background: #e6f4ea; color: #1a7a3a; }
+.tag-grey   { background: #f0f0f0; color: #888; }
+</style>
+<%- include("../../partials/footer") %>

@@ -98,3 +98,42 @@ adminRoutes.get("/api/projects/:projectId/option-sets",                   asyncH
 
 // 画像アップロード
 adminRoutes.post("/api/upload/image", asyncHandler(adminController.uploadImage));
+
+// Phase 2-B: 属性管理
+adminRoutes.get("/attributes", asyncHandler(adminController.attributesPage));
+adminRoutes.post("/attributes/definitions", asyncHandler(adminController.createAttributeDefinition));
+adminRoutes.post("/attributes/definitions/:defId/delete", asyncHandler(adminController.deleteAttributeDefinition));
+
+// Phase 2-B: セグメント管理
+adminRoutes.get("/segments", asyncHandler(adminController.segmentsPage));
+adminRoutes.get("/segments/new", asyncHandler(adminController.newSegmentPage));
+adminRoutes.post("/segments", asyncHandler(adminController.createSegment));
+adminRoutes.get("/segments/:segmentId/edit", asyncHandler(adminController.editSegmentPage));
+adminRoutes.post("/segments/:segmentId", asyncHandler(adminController.updateSegment));
+adminRoutes.post("/segments/:segmentId/delete", asyncHandler(adminController.deleteSegment));
+adminRoutes.post("/api/segments/:segmentId/evaluate", asyncHandler(adminController.evaluateSegment));
+
+// Phase 2-B: AI分析ダッシュボード
+adminRoutes.get("/ai-analysis", asyncHandler(adminController.aiAnalysisPage));
+
+// Phase 2-C: AI拡張分析
+adminRoutes.get("/ai-analysis/report", asyncHandler(adminController.aiReportPage));
+adminRoutes.post("/api/ai/analyze-post/:postId", asyncHandler(adminController.runExtendedPostAnalysis));
+adminRoutes.post("/api/ai/generate-user-tags/:respondentId", asyncHandler(adminController.runUserTagGeneration));
+
+// Phase 2-D: キャンペーン管理
+adminRoutes.get("/segments/campaigns/new", asyncHandler(adminController.newCampaignPage));
+adminRoutes.post("/segments/campaigns", asyncHandler(adminController.createCampaign));
+adminRoutes.get("/segments/campaigns/:campaignId/edit", asyncHandler(adminController.editCampaignPage));
+adminRoutes.post("/segments/campaigns/:campaignId", asyncHandler(adminController.updateCampaign));
+adminRoutes.post("/segments/campaigns/:campaignId/cancel", asyncHandler(adminController.cancelCampaign));
+adminRoutes.post("/api/campaigns/:campaignId/execute", asyncHandler(adminController.executeCampaign));
+
+// Phase 2-D: データ管理（NGワード・カテゴリ）
+adminRoutes.get("/data-management", asyncHandler(adminController.dataManagementPage));
+adminRoutes.post("/data-management/ng-words", asyncHandler(adminController.createNgWord));
+adminRoutes.post("/data-management/ng-words/:id/toggle", asyncHandler(adminController.toggleNgWord));
+adminRoutes.post("/data-management/ng-words/:id/delete", asyncHandler(adminController.deleteNgWord));
+adminRoutes.post("/data-management/categories", asyncHandler(adminController.createCategory));
+adminRoutes.post("/data-management/categories/:id/toggle", asyncHandler(adminController.toggleCategory));
+adminRoutes.post("/data-management/categories/:id/delete", asyncHandler(adminController.deleteCategory));

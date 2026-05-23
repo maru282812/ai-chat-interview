@@ -948,3 +948,86 @@ export function buildInterviewTurnPrompt(input: {
     .filter((line): line is string => line !== null)
     .join("\n");
 }
+
+// ============================================================
+// Phase 2-C: 愚痴・日記拡張分析 / AIタグ生成
+// ============================================================
+
+export function buildRantExtendedPrompt(content: string): string {
+  return [
+    "あなたはユーザーの愚痴投稿を分析するAIです。",
+    "以下の愚痴テキストを分析し、JSON形式のみで返してください。",
+    "必須キー:",
+    "  rant_category: '仕事' | '人間関係' | '健康' | '消費' | 'その他'",
+    "  severity: 1（軽微）| 2（中程度）| 3（深刻）— 整数",
+    "  danger_flag: true | false — 自傷・犯罪・暴力等の危険ワードを含む場合 true",
+    "  top_phrases: 最大3件の特徴フレーズ文字列配列（空なら []）",
+    "JSON以外を一切出力しないこと。",
+    `テキスト: ${content}`
+  ].join("\n");
+}
+
+export function buildDiaryExtendedPrompt(content: string): string {
+  return [
+    "あなたはユーザーの日記を分析するAIです。",
+    "以下の日記テキストを分析し、JSON形式のみで返してください。",
+    "必須キー:",
+    "  mood_score: -5（非常にネガティブ）〜+5（非常にポジティブ）の整数",
+    "  topic_categories: 最大3件の配列 — 選択肢: 健康, 消費, 仕事, 趣味, 人間関係, その他",
+    "  behavior_signals: 最大3件の行動シグナル文字列配列（例: 節約志向, 運動増加, 睡眠悪化）",
+    "JSON以外を一切出力しないこと。",
+    `テキスト: ${content}`
+  ].join("\n");
+}
+
+export function buildRantCounselorReplyPrompt(postText: string, selectedTags: string[]): string {
+  const tagsLine = selectedTags.length > 0 ? selectedTags.join("、") : "（タグなし）";
+  return [
+    "あなたは匿名の本音・悩み投稿に対して、やさしく一言だけ返すカウンセラー風AIです。",
+    "目的は、投稿者を評価したり、解決策を押しつけたりすることではありません。",
+    "投稿者が「少し受け止めてもらえた」と感じられる短い返信をしてください。",
+    "",
+    "ルール:",
+    "- 日本語で返信する",
+    "- 1〜2文以内",
+    "- 80文字以内",
+    "- 医師・専門家として診断しない",
+    "- 「あなたは〇〇です」と断定しない",
+    "- 説教しない",
+    "- 無理に前向きにしない",
+    "- 具体的な危険行為の助言をしない",
+    "- 投稿者の感情を否定しない",
+    "- タメ口にしすぎない",
+    "- カウンセラーのように、やさしく受け止める",
+    "- 必要に応じて「今日は少し休んでもいいと思います」程度の軽い言葉にする",
+    "",
+    `投稿内容:\n${postText}`,
+    "",
+    `選択タグ:\n${tagsLine}`,
+    "",
+    "返信:"
+  ].join("\n");
+}
+
+export function buildPersonaTagsPrompt(
+  analyses: { summary: string | null; tags: unknown[]; sentiment: string }[]
+): string {
+  const lines = analyses
+    .slice(0, 20)
+    .map(
+      (a, i) =>
+        `投稿${i + 1}: ${a.summary ?? ""} [感情: ${a.sentiment}] [タグ: ${(a.tags ?? []).join(", ")}]`
+    )
+    .join("\n");
+
+  return [
+    "あなたはリサーチプラットフォームのユーザー属性推定AIです。",
+    "以下のユーザー投稿分析データを基に、このユーザーを表す属性タグとペルソナ要約を生成してください。",
+    "JSON形式のみで返してください。",
+    "必須キー:",
+    "  tags: 3〜5件の短いタグ文字列配列（例: ファッション好き, 節約志向, ストレス多め）",
+    "  persona_summary: このユーザーの人物像を50〜100文字で記述",
+    "JSON以外を一切出力しないこと。",
+    `投稿分析データ:\n${lines}`
+  ].join("\n");
+}

@@ -1,0 +1,91 @@
+<%- include("../../partials/header", { title }) %>
+<h2>属性管理</h2>
+
+<section>
+  <h3>属性定義一覧</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>attr_key</th>
+        <th>ラベル</th>
+        <th>カテゴリ</th>
+        <th>データ型</th>
+        <th>ユーザー編集</th>
+        <th>企業公開</th>
+        <th>登録数</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% for (const def of definitions) { %>
+        <tr>
+          <td><code><%= def.attr_key %></code></td>
+          <td><%= def.label %></td>
+          <td><span class="tag"><%= def.category %></span></td>
+          <td><span class="tag"><%= def.data_type %></span></td>
+          <td><%= def.is_user_editable ? '✓' : '-' %></td>
+          <td><%= def.is_company_visible ? '✓' : '-' %></td>
+          <td><%= countMap[def.attr_key] ?? 0 %></td>
+          <td>
+            <% if (def.category === 'ai_inferred') { %>
+              <span class="muted">AI管理</span>
+            <% } else { %>
+              <form method="post" action="/admin/attributes/definitions/<%= def.id %>/delete"
+                    style="display:inline"
+                    onsubmit="return confirm('削除しますか？')">
+                <button type="submit" class="btn-danger">削除</button>
+              </form>
+            <% } %>
+          </td>
+        </tr>
+      <% } %>
+      <% if (definitions.length === 0) { %>
+        <tr><td colspan="8" class="muted" style="text-align:center">属性定義がありません</td></tr>
+      <% } %>
+    </tbody>
+  </table>
+</section>
+
+<section style="margin-top:2rem">
+  <h3>属性定義を追加</h3>
+  <form method="post" action="/admin/attributes/definitions" style="max-width:600px">
+    <div class="form-row">
+      <label>attr_key <span class="required">*</span></label>
+      <input type="text" name="attr_key" placeholder="例: music_genre" required />
+    </div>
+    <div class="form-row">
+      <label>ラベル <span class="required">*</span></label>
+      <input type="text" name="label" placeholder="例: 好きな音楽ジャンル" required />
+    </div>
+    <div class="form-row">
+      <label>カテゴリ <span class="required">*</span></label>
+      <select name="category" required>
+        <option value="basic">basic</option>
+        <option value="lifestyle" selected>lifestyle</option>
+        <option value="interest">interest</option>
+        <option value="ai_inferred">ai_inferred</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>データ型</label>
+      <select name="data_type">
+        <option value="text" selected>text</option>
+        <option value="tags">tags</option>
+        <option value="boolean">boolean</option>
+        <option value="number">number</option>
+        <option value="json">json</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>並び順</label>
+      <input type="number" name="sort_order" value="0" />
+    </div>
+    <div class="form-row" style="display:flex;gap:16px">
+      <label><input type="checkbox" name="is_user_editable" value="true" checked /> ユーザー編集可</label>
+      <label><input type="checkbox" name="is_company_visible" value="true" /> 企業公開</label>
+      <label><input type="checkbox" name="is_admin_only" value="true" /> 管理者のみ</label>
+    </div>
+    <button type="submit">追加</button>
+  </form>
+</section>
+<%- include("../../partials/footer") %>

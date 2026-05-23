@@ -1,5 +1,6 @@
 import { env } from "../config/env";
 import { HttpError } from "../lib/http";
+import { logger } from "../lib/logger";
 
 export interface VerifiedLiffUser {
   userId: string;
@@ -10,6 +11,7 @@ export interface VerifiedLiffUser {
 export const liffAuthService = {
   async verifyIdToken(idToken: string): Promise<VerifiedLiffUser> {
     if (!env.LINE_LIFF_CHANNEL_ID) {
+      logger.error("liffAuth.verifyIdToken.noChannelId", {});
       throw new HttpError(503, "LINE_LIFF_CHANNEL_ID is not configured");
     }
 
@@ -32,11 +34,13 @@ export const liffAuthService = {
         },
         body: payload.toString()
       });
-    } catch (_error) {
+    } catch (err) {
+      logger.error("liffAuth.verifyIdToken.fetchFailed", { error: String(err) });
       throw new HttpError(503, "LINE token verification is unavailable");
     }
 
     if (!response.ok) {
+      logger.warn("liffAuth.verifyIdToken.lineApiRejected", { status: response.status });
       throw new HttpError(401, "Failed to verify LIFF ID token");
     }
 
@@ -47,8 +51,11 @@ export const liffAuthService = {
     };
 
     if (!data.sub) {
+      logger.warn("liffAuth.verifyIdToken.noSub", {});
       throw new HttpError(401, "LIFF user could not be identified");
     }
+
+    logger.info("liffAuth.verifyIdToken.success", { userId: data.sub });
 
     return {
       userId: data.sub,

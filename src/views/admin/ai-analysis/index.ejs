@@ -1,0 +1,190 @@
+<%- include("../../partials/header", { title }) %>
+<h2>AI分析ダッシュボード</h2>
+
+<div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:2rem">
+  <div class="stat-card">
+    <div class="stat-value"><%= totalAnalyses %></div>
+    <div class="stat-label">投稿分析件数</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value"><%= totalBehaviors %></div>
+    <div class="stat-label">行動ログ件数</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value"><%= totalRantPosts %></div>
+    <div class="stat-label">愚痴投稿数</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value"><%= totalDiaryPosts %></div>
+    <div class="stat-label">日記投稿数</div>
+  </div>
+  <div class="stat-card" style="<%= dangerFlagCount > 0 ? 'border-color:#e53e3e' : '' %>">
+    <div class="stat-value" style="<%= dangerFlagCount > 0 ? 'color:#e53e3e' : '' %>"><%= dangerFlagCount %></div>
+    <div class="stat-label">危険ワード検出</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value"><%= sentimentCounts['positive'] ?? 0 %></div>
+    <div class="stat-label">ポジティブ</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value"><%= sentimentCounts['negative'] ?? 0 %></div>
+    <div class="stat-label">ネガティブ</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value"><%= avgMoodScore !== null ? avgMoodScore : '-' %></div>
+    <div class="stat-label">日記 平均感情スコア</div>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+
+  <section>
+    <h3>感情分布</h3>
+    <table>
+      <thead><tr><th>感情</th><th>件数</th><th>割合</th></tr></thead>
+      <tbody>
+        <% const sentimentLabels = { positive: 'ポジティブ', negative: 'ネガティブ', neutral: 'ニュートラル', mixed: '混在' } %>
+        <% for (const [key, label] of Object.entries(sentimentLabels)) { %>
+          <% const cnt = sentimentCounts[key] ?? 0 %>
+          <% const pct = totalAnalyses > 0 ? Math.round(cnt / totalAnalyses * 100) : 0 %>
+          <tr>
+            <td><%= label %></td>
+            <td><%= cnt %></td>
+            <td>
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="background:#e0ede9;border-radius:4px;height:8px;width:100px;overflow:hidden">
+                  <div style="background:#2ca87a;height:100%;width:<%= pct %>%"></div>
+                </div>
+                <span class="muted"><%= pct %>%</span>
+              </div>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h3>インサイトタイプ分布</h3>
+    <table>
+      <thead><tr><th>タイプ</th><th>件数</th></tr></thead>
+      <tbody>
+        <% const insightLabels = { issue: '課題', request: '要望', complaint: '不満', praise: '称賛', other: 'その他' } %>
+        <% for (const [key, label] of Object.entries(insightLabels)) { %>
+          <tr>
+            <td><%= label %></td>
+            <td><%= insightCounts[key] ?? 0 %></td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h3>愚痴拡張分析 <span class="muted" style="font-size:12px">(<%= rantExtAnalyzedCount %>件分析済)</span></h3>
+    <% if (rantExtAnalyzedCount === 0) { %>
+      <p class="muted">まだ愚痴拡張分析データがありません。各投稿の「拡張分析」ボタンから実行できます。</p>
+    <% } else { %>
+      <table>
+        <thead><tr><th>カテゴリ</th><th>件数</th></tr></thead>
+        <tbody>
+          <% const rantCategoryOrder = ['仕事', '人間関係', '健康', '消費', 'その他'] %>
+          <% for (const cat of rantCategoryOrder) { %>
+            <tr>
+              <td><%= cat %></td>
+              <td><%= rantExtCounts[cat] ?? 0 %></td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+      <table style="margin-top:12px">
+        <thead><tr><th>深刻度</th><th>件数</th></tr></thead>
+        <tbody>
+          <tr><td>1（軽微）</td><td><%= severityCounts[1] ?? 0 %></td></tr>
+          <tr><td>2（中程度）</td><td><%= severityCounts[2] ?? 0 %></td></tr>
+          <tr><td style="color:<%= (severityCounts[3] ?? 0) > 0 ? '#e53e3e' : 'inherit' %>">3（深刻）</td>
+              <td style="color:<%= (severityCounts[3] ?? 0) > 0 ? '#e53e3e' : 'inherit' %>"><%= severityCounts[3] ?? 0 %></td></tr>
+        </tbody>
+      </table>
+    <% } %>
+  </section>
+
+  <section>
+    <h3>日記拡張分析 <span class="muted" style="font-size:12px">(<%= diaryExtAnalyzedCount %>件分析済)</span></h3>
+    <% if (diaryExtAnalyzedCount === 0) { %>
+      <p class="muted">まだ日記拡張分析データがありません。</p>
+    <% } else { %>
+      <p>平均感情スコア: <strong><%= avgMoodScore %></strong> / 5</p>
+      <% const topTopics = Object.entries(topicCategoryCounts).sort((a,b)=>b[1]-a[1]).slice(0,5) %>
+      <% if (topTopics.length > 0) { %>
+        <table>
+          <thead><tr><th>トピック</th><th>件数</th></tr></thead>
+          <tbody>
+            <% for (const [topic, cnt] of topTopics) { %>
+              <tr><td><%= topic %></td><td><%= cnt %></td></tr>
+            <% } %>
+          </tbody>
+        </table>
+      <% } %>
+      <% const topSignals = Object.entries(behaviorSignalCounts).sort((a,b)=>b[1]-a[1]).slice(0,5) %>
+      <% if (topSignals.length > 0) { %>
+        <p style="margin-top:12px;font-size:13px;color:#60726f">よく見られる行動シグナル:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          <% for (const [signal, cnt] of topSignals) { %>
+            <span style="background:#e0ede9;border-radius:12px;padding:2px 10px;font-size:12px"><%= signal %> (<%= cnt %>)</span>
+          <% } %>
+        </div>
+      <% } %>
+    <% } %>
+  </section>
+
+  <section>
+    <h3>行動ログ集計</h3>
+    <table>
+      <thead><tr><th>イベント</th><th>件数</th></tr></thead>
+      <tbody>
+        <% const eventLabels = {
+          liff_open: 'LIFF起動',
+          mypage_view: 'マイページ閲覧',
+          profile_setup_complete: 'プロフィール設定完了',
+          survey_start: 'アンケート開始',
+          survey_complete: 'アンケート完了',
+          rant_post: '愚痴投稿',
+          diary_post: '日記投稿',
+          personality_view: '性格診断閲覧'
+        } %>
+        <% for (const [key, label] of Object.entries(eventLabels)) { %>
+          <tr>
+            <td><%= label %></td>
+            <td><%= eventCounts[key] ?? 0 %></td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h3>リンク</h3>
+    <ul style="list-style:none;padding:0;line-height:2.2">
+      <li><a href="/admin/ai-analysis/report">→ 企業向けレポート（匿名統計）</a></li>
+      <li><a href="/admin/post-analysis">→ 投稿分析詳細</a></li>
+      <li><a href="/admin/attributes">→ 属性管理</a></li>
+      <li><a href="/admin/segments">→ セグメント配信</a></li>
+      <li><a href="/admin/respondents">→ 回答者管理</a></li>
+    </ul>
+  </section>
+
+</div>
+
+<style>
+.stat-card {
+  background: #fff;
+  border: 1px solid #e0ede9;
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+}
+.stat-card .stat-value { font-size: 28px; font-weight: 700; color: #1a2f2a; }
+.stat-card .stat-label { font-size: 12px; color: #60726f; margin-top: 4px; }
+</style>
+<%- include("../../partials/footer") %>

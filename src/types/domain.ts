@@ -495,11 +495,14 @@ export interface ProjectAssignment {
   updated_at: string;
 }
 
+export type Gender = "male" | "female" | "other" | "prefer_not_to_say";
+
 export interface UserProfile {
   id: UUID;
   line_user_id: string;
   nickname: string | null;
   birth_date: string | null;
+  gender: Gender | null;
   prefecture: string | null;
   address_detail: string | null;
   address_registered_at: string | null;
@@ -511,6 +514,19 @@ export interface UserProfile {
   has_children: boolean | null;
   children_ages: number[];
   household_composition: string[];
+  // Phase2-A 追加カラム
+  profile_completed: boolean;
+  profile_completed_at: string | null;
+  notification_ok: boolean;
+  is_blocked: boolean;
+  is_notification_stopped: boolean;
+  fraud_flag: boolean;
+  quality_score: number | null;
+  ai_eval_score: number | null;
+  ai_tags: string[];
+  ai_persona_summary: string | null;
+  last_login_at: string | null;
+  visibility_settings: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -694,8 +710,38 @@ export interface UserPost {
   quality_label: PostQualityLabel;
   metadata: Record<string, unknown> | null;
   posted_on: string | null;
+  // 感情・構造化入力（migration 026 以降）
+  emotion_tags: string[];
+  mood_score: number | null;
+  good_thing: string | null;
+  bad_thing: string | null;
+  selected_prompt_id: UUID | null;
+  selected_one_line_id: UUID | null;
+  // AI予備フィールド（初期は非表示、feature_flags で段階解禁）
+  ai_summary: string | null;
+  ai_feedback: string | null;
+  ai_sentiment_score: number | null;
+  ai_stress_score: number | null;
+  ai_detected_topics: unknown[];
+  ai_enabled: boolean;
+  ai_visible_to_user: boolean;
+  // 本音投稿AI一言返信（migration 027）
+  ai_reply_text: string | null;
+  ai_reply_generated_at: string | null;
+  ai_reply_status: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface RantTag {
+  id: UUID;
+  code: string;
+  label: string;
+  emoji: string;
+  category: string | null;
+  sort_order: number;
+  is_active: boolean;
+  post_count: number;
 }
 
 export interface PostAnalysis {

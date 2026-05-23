@@ -1,0 +1,163 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem">
+  <div>
+    <h2><%= title %></h2>
+    <p class="muted">生成日時: <%= generatedAt %> &nbsp;|&nbsp; 個人特定情報は一切含まれていません</p>
+  </div>
+  <div style="display:flex;gap:8px">
+    <button onclick="window.print()" class="btn">印刷 / PDF</button>
+    <a href="/admin/ai-analysis" class="btn btn-outline">← ダッシュボードへ</a>
+  </div>
+</div>
+
+<div class="report-notice" style="background:#fffbeb;border:1px solid #f6e05e;border-radius:8px;padding:12px 16px;margin-bottom:1.5rem;font-size:13px">
+  このレポートは匿名集計データのみを含みます。個人の回答内容・氏名・LINE IDは一切含まれません。
+  ユーザー数 N &lt; 3 のカテゴリは非表示にしています。
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:2rem">
+  <div class="stat-card">
+    <div class="stat-value"><%= totalRespondents %></div>
+    <div class="stat-label">総回答者数</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value"><%= totalAnalyses %></div>
+    <div class="stat-label">分析済み投稿数</div>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+
+  <section>
+    <h3>感情分布</h3>
+    <% const sentimentLabels = { positive: 'ポジティブ', negative: 'ネガティブ', neutral: 'ニュートラル', mixed: '混在' } %>
+    <% const sentimentTotal = Object.values(sentimentDist).reduce((s, v) => s + v, 0) %>
+    <table>
+      <thead><tr><th>感情</th><th>件数</th><th>割合</th></tr></thead>
+      <tbody>
+        <% for (const [key, label] of Object.entries(sentimentLabels)) { %>
+          <% const cnt = sentimentDist[key] ?? 0 %>
+          <% const pct = sentimentTotal > 0 ? Math.round(cnt / sentimentTotal * 100) : 0 %>
+          <tr>
+            <td><%= label %></td>
+            <td><%= cnt %></td>
+            <td>
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="background:#e0ede9;border-radius:4px;height:8px;width:100px;overflow:hidden">
+                  <div style="background:#2ca87a;height:100%;width:<%= pct %>%"></div>
+                </div>
+                <span class="muted"><%= pct %>%</span>
+              </div>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h3>インサイトタイプ分布</h3>
+    <% const insightLabels = { issue: '課題・問題', request: '改善要望', complaint: '不満', praise: '称賛', other: 'その他' } %>
+    <% const insightTotal = Object.values(insightDist).reduce((s, v) => s + v, 0) %>
+    <table>
+      <thead><tr><th>タイプ</th><th>件数</th><th>割合</th></tr></thead>
+      <tbody>
+        <% for (const [key, label] of Object.entries(insightLabels)) { %>
+          <% const cnt = insightDist[key] ?? 0 %>
+          <% const pct = insightTotal > 0 ? Math.round(cnt / insightTotal * 100) : 0 %>
+          <tr>
+            <td><%= label %></td>
+            <td><%= cnt %></td>
+            <td><%= pct %>%</td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h3>性格タイプ分布（N≥3のみ表示）</h3>
+    <% const ptEntries = Object.entries(safePersonalityTypes).sort((a,b)=>b[1]-a[1]) %>
+    <% const ptTotal = ptEntries.reduce((s, [,v]) => s + v, 0) %>
+    <% if (ptEntries.length === 0) { %>
+      <p class="muted">性格分析データが不足しています。</p>
+    <% } else { %>
+      <table>
+        <thead><tr><th>タイプ</th><th>人数</th><th>割合</th></tr></thead>
+        <tbody>
+          <% for (const [type, cnt] of ptEntries) { %>
+            <% const pct = ptTotal > 0 ? Math.round(cnt / ptTotal * 100) : 0 %>
+            <tr>
+              <td><%= type %></td>
+              <td><%= cnt %></td>
+              <td>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="background:#e0ede9;border-radius:4px;height:8px;width:80px;overflow:hidden">
+                    <div style="background:#667eea;height:100%;width:<%= pct %>%"></div>
+                  </div>
+                  <span class="muted"><%= pct %>%</span>
+                </div>
+              </td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    <% } %>
+  </section>
+
+  <section>
+    <h3>不満・愚痴カテゴリ分布</h3>
+    <% const rantTotal = Object.values(rantCatDist).reduce((s, v) => s + v, 0) %>
+    <% if (rantTotal === 0) { %>
+      <p class="muted">愚痴拡張分析データがまだありません。</p>
+    <% } else { %>
+      <table>
+        <thead><tr><th>カテゴリ</th><th>件数</th><th>割合</th></tr></thead>
+        <tbody>
+          <% const rantEntries = Object.entries(rantCatDist).sort((a,b)=>b[1]-a[1]) %>
+          <% for (const [cat, cnt] of rantEntries) { %>
+            <% const pct = rantTotal > 0 ? Math.round(cnt / rantTotal * 100) : 0 %>
+            <tr>
+              <td><%= cat %></td>
+              <td><%= cnt %></td>
+              <td><%= pct %>%</td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    <% } %>
+  </section>
+
+  <section style="grid-column: 1 / -1">
+    <h3>頻出キーワード（上位10件）</h3>
+    <% if (topKeywords.length === 0) { %>
+      <p class="muted">キーワードデータがありません。</p>
+    <% } else { %>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+        <% for (const kw of topKeywords) { %>
+          <span style="background:#e0ede9;border-radius:16px;padding:4px 14px;font-size:13px">
+            <%= kw.word %> <span class="muted">(<%= kw.count %>)</span>
+          </span>
+        <% } %>
+      </div>
+    <% } %>
+  </section>
+
+</div>
+
+<style>
+.stat-card {
+  background: #fff;
+  border: 1px solid #e0ede9;
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+}
+.stat-card .stat-value { font-size: 28px; font-weight: 700; color: #1a2f2a; }
+.stat-card .stat-label { font-size: 12px; color: #60726f; margin-top: 4px; }
+@media print {
+  .btn, .btn-outline { display: none; }
+}
+</style>
+<%- include("../../partials/footer") %>

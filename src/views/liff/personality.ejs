@@ -6,13 +6,53 @@
     <title><%= title %></title>
     <link rel="stylesheet" href="/public/styles.css" />
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <%- include('../partials/liff-auth') %>
+    <style>
+      .type-badge {
+        display: inline-block;
+        background: linear-gradient(135deg, #2ca87a, #38b2ac);
+        color: #fff;
+        border-radius: 24px;
+        padding: 6px 20px;
+        font-size: 20px;
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+      .bar-wrap {
+        background: #e0ede9;
+        border-radius: 4px;
+        height: 8px;
+        overflow: hidden;
+        flex: 1;
+      }
+      .bar-fill { height: 100%; border-radius: 4px; }
+      .bar-positive { background: #2ca87a; }
+      .bar-negative { background: #e53e3e; }
+      .bar-neutral  { background: #a0aec0; }
+      .bar-mixed    { background: #ed8936; }
+      .tag-chip {
+        display: inline-block;
+        background: #e0ede9;
+        border-radius: 12px;
+        padding: 3px 12px;
+        font-size: 13px;
+        margin: 3px;
+      }
+      .confidence-bar {
+        height: 6px;
+        background: #e0ede9;
+        border-radius: 3px;
+        overflow: hidden;
+        margin-top: 4px;
+      }
+    </style>
   </head>
   <body class="liff-body">
     <main class="liff-main">
       <section class="card liff-card stack">
         <div>
           <h1><%= title %></h1>
-          <p class="muted">投稿内容から性格分析のプロフィールを表示します。データが不足している場合はその旨を案内します。</p>
+          <p class="muted">投稿内容から性格傾向を分析しています。</p>
         </div>
         <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
         <div id="personality-root" class="stack"></div>
@@ -32,8 +72,8 @@
           statusEl.className = isError ? "danger-text" : "muted";
         }
 
-        function escapeHtml(value) {
-          return String(value ?? "")
+        function esc(v) {
+          return String(v ?? "")
             .replaceAll("&", "&amp;")
             .replaceAll("<", "&lt;")
             .replaceAll(">", "&gt;")
@@ -41,85 +81,132 @@
             .replaceAll("'", "&#39;");
         }
 
+        function pct(part, total) {
+          return total > 0 ? Math.round(part / total * 100) : 0;
+        }
+
+        function renderBar(value, max, colorClass) {
+          const w = max > 0 ? Math.round(value / max * 100) : 0;
+          return `<div class="bar-wrap"><div class="bar-fill ${colorClass}" style="width:${w}%"></div></div>`;
+        }
+
         function renderReady(result) {
           const profile = result.profile || {};
           const raw = profile.raw_json || {};
           const personalityType = result.personalityType || raw.personality_type || "-";
           const summary = profile.summary || result.message || "-";
-          const confidence = profile.confidence || "-";
-          const traits = Array.isArray(result.features)
-            ? result.features
-            : Array.isArray(profile.traits)
-              ? profile.traits
-              : [];
+          const confidence = typeof profile.confidence === "number"
+            ? Math.round(profile.confidence * 100)
+            : null;
+          const traits = Array.isArray(result.features) ? result.features
+            : Array.isArray(profile.traits) ? profile.traits : [];
           const behaviorTendencies = Array.isArray(result.behaviorTendencies)
             ? result.behaviorTendencies
-            : Array.isArray(raw.behavior_tendencies)
-              ? raw.behavior_tendencies
-              : [];
-          const evidencePosts = Array.isArray(result.evidencePosts) ? result.evidencePosts : [];
+            : Array.isArray(raw.behavior_tendencies) ? raw.behavior_tendencies : [];
+          const keywords = Array.isArray(result.recurringKeywords) ? result.recurringKeywords
+            : Array.isArray(raw.recurring_keywords) ? raw.recurring_keywords : [];
+          const tags = Array.isArray(result.recurringTags) ? result.recurringTags
+            : Array.isArray(raw.recurring_tags) ? raw.recurring_tags : [];
+          const sentDist = raw.sentiment_distribution || {};
+          const sentTotal = (sentDist.positive||0) + (sentDist.neutral||0) + (sentDist.negative||0) + (sentDist.mixed||0);
+          const postCount = result.postCount || raw.post_count || 0;
+
+          const typeIconMap = { "論理型": "🧩", "感情型": "💬", "課題発見型": "🔍", "ポジティブ表現型": "✨" };
+          const typeIcon = typeIconMap[personalityType] || "👤";
 
           root.innerHTML = `
-            <div class="card subtle-card">
-              <h2>性格タイプ</h2>
-              <p><strong>${escapeHtml(personalityType)}</strong></p>
-              <p>${escapeHtml(summary)}</p>
-              <p class="muted">Confidence: ${escapeHtml(confidence)}</p>
+            <div class="card subtle-card" style="text-align:center">
+              <div class="type-badge">${typeIcon} ${esc(personalityType)}</div>
+              <p style="margin-top:8px">${esc(summary)}</p>
+              ${confidence !== null ? `
+                <p class="muted" style="font-size:12px;margin-top:4px">分析信頼度</p>
+                <div class="confidence-bar">
+                  <div style="height:100%;width:${confidence}%;background:#2ca87a;border-radius:3px"></div>
+                </div>
+                <p class="muted" style="font-size:11px">${confidence}%</p>
+              ` : ""}
+              <p class="muted" style="font-size:12px;margin-top:8px">参照投稿数: ${esc(postCount)}件</p>
             </div>
+
+            ${traits.length > 0 ? `
             <div class="card subtle-card">
-              <h2>特徴</h2>
-              <ul>${traits.map((trait) => `<li>${escapeHtml(trait)}</li>`).join("") || "<li>-</li>"}</ul>
+              <h2>あなたの特徴</h2>
+              <ul style="padding-left:1.2rem;line-height:1.8">
+                ${traits.map(t => `<li>${esc(t)}</li>`).join("")}
+              </ul>
             </div>
+            ` : ""}
+
+            ${behaviorTendencies.length > 0 ? `
             <div class="card subtle-card">
               <h2>行動傾向</h2>
-              <ul>${behaviorTendencies.map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>-</li>"}</ul>
+              <ul style="padding-left:1.2rem;line-height:1.8">
+                ${behaviorTendencies.map(b => `<li>${esc(b)}</li>`).join("")}
+              </ul>
             </div>
+            ` : ""}
+
+            ${sentTotal > 0 ? `
             <div class="card subtle-card">
-              <h2>根拠となった投稿</h2>
-              <ul>${evidencePosts
-                .map((post) => `<li>${escapeHtml(post.type)}: ${escapeHtml(String(post.content || "").slice(0, 80))}</li>`)
-                .join("") || "<li>-</li>"}</ul>
+              <h2>感情バランス</h2>
+              <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+                ${[
+                  ["ポジティブ", sentDist.positive || 0, "bar-positive"],
+                  ["ネガティブ", sentDist.negative || 0, "bar-negative"],
+                  ["ニュートラル", sentDist.neutral || 0, "bar-neutral"],
+                  ["混在", sentDist.mixed || 0, "bar-mixed"]
+                ].map(([label, val, cls]) => `
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="width:80px;font-size:13px">${esc(label)}</span>
+                    ${renderBar(val, 100, cls)}
+                    <span class="muted" style="width:32px;font-size:12px;text-align:right">${val}%</span>
+                  </div>
+                `).join("")}
+              </div>
             </div>
+            ` : ""}
+
+            ${(keywords.length > 0 || tags.length > 0) ? `
+            <div class="card subtle-card">
+              <h2>よく出るテーマ</h2>
+              <div style="margin-top:8px">
+                ${tags.map(t => `<span class="tag-chip">${esc(t)}</span>`).join("")}
+                ${keywords.map(k => `<span class="tag-chip" style="background:#f0f4f8">${esc(k)}</span>`).join("")}
+              </div>
+            </div>
+            ` : ""}
           `;
         }
 
         function renderInsufficient(result) {
           root.innerHTML = `
-            <div class="card subtle-card">
-              <h2>データ不足</h2>
-              <p>${escapeHtml(result.message || "性格分析に必要なデータがまだ十分ではありません。")}</p>
-              <p class="muted">対象投稿数: ${escapeHtml(result.postCount || 0)}</p>
+            <div class="card subtle-card" style="text-align:center">
+              <p style="font-size:32px;margin-bottom:8px">📊</p>
+              <h2>データ収集中</h2>
+              <p>${esc(result.message || "性格分析に必要なデータがまだ十分ではありません。")}</p>
+              <p class="muted">現在の投稿数: ${esc(result.postCount || 0)}件</p>
+              <p class="muted" style="font-size:12px;margin-top:12px">愚痴・日記・アンケートへの参加でデータが蓄積されます。</p>
             </div>
           `;
         }
 
         async function load() {
           if (!liffId) {
-            setStatus("LIFF を利用できません。LINEトークのメニューから開き直してください。", true);
+            setStatus("LIFF IDが設定されていません。管理者にお問い合わせください。", true);
             return;
           }
-
           try {
-            if (!window.liff) {
-              throw new Error("LIFF SDK を読み込めませんでした。");
-            }
+            const idToken = await LiffAuth.initLiffOrWebAuth(liffId);
+            if (!idToken) return; // LINE Login リダイレクト中
 
-            await liff.init({ liffId });
-            const idToken = liff.getIDToken();
-            if (!idToken) {
-              throw new Error("LINE認証に失敗しました。もう一度お試しください。");
-            }
+            console.log("profile_guard.check", { path: window.location.pathname, requiresProfile: false, redirecting: false });
 
             const response = await fetch(initialData.personalityDataUrl, {
-              headers: {
-                Authorization: `Bearer ${idToken}`
-              }
+              headers: { Authorization: `Bearer ${idToken}` }
             });
-            if (!response.ok) {
-              throw new Error("性格分析の取得に失敗しました。時間をおいて再度お試しください。");
-            }
-            const result = await response.json();
+            if (!response.ok) throw new Error("性格分析の取得に失敗しました。時間をおいて再度お試しください。");
 
+            const result = await response.json();
             if (result.status === "ready") {
               renderReady(result);
             } else {

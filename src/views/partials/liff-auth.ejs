@@ -1,0 +1,106 @@
+<%# LIFF共通認証ユーティリティ - 全LIFF画面で LIFF SDK読み込み直後にincludeして使う
+    window.LiffAuth を提供し、各画面は個別にliff.init()を書かない。
+
+    使い方:
+      const token = await LiffAuth.initLiffOrWebAuth(liffId);
+      if (!token) return; // LINE Loginリダイレクト中
+      // token を Authorization: Bearer として使う
+%>
+<script>
+(function () {
+  'use strict';
+
+  var _token = null;
+  var _ready = false;
+
+  function _log(msg, data) {
+    try { console.log('[LiffAuth] ' + msg, data || {}); } catch (_e) {}
+  }
+
+  /**
+   * LIFF初期化 + 未ログイン時はLINE Loginへリダイレクト。
+   * スマホLINE内: LIFF認証 → IDトークン取得
+   * PCブラウザ等: LINE Login OAuth → リダイレクト後に再実行 → IDトークン取得
+   * @param {string} liffId
+   * @returns {Promise<string|null>} IDトークン（リダイレクトが起きた場合はnull）
+   */
+  async function initLiffOrWebAuth(liffId) {
+    if (_ready && _token) return _token;
+
+    _log('init start', {
+      liffId: liffId,
+      sdkLoaded: typeof liff !== 'undefined',
+      url: location.href,
+      ua: navigator.userAgent.slice(0, 150),
+    });
+
+    if (typeof liff === 'undefined') {
+      throw new Error('LIFF SDKを読み込めませんでした。ページを再読み込みしてください。');
+    }
+    if (!liffId) {
+      throw new Error('LIFF IDが設定されていません。管理者にお問い合わせください。');
+    }
+
+    await liff.init({ liffId: liffId });
+
+    _log('init done', {
+      isInClient: liff.isInClient(),
+      isLoggedIn: liff.isLoggedIn(),
+    });
+
+    if (!liff.isLoggedIn()) {
+      // PCブラウザ・外部ブラウザで未ログインの場合: LINE Loginへリダイレクト
+      // リダイレクト後にこのページへ戻り、再度initが走ってログイン済み状態になる
+      _log('not logged in – redirecting to LINE Login');
+      liff.login();
+      return null;
+    }
+
+    var token = liff.getIDToken();
+    if (!token) {
+      throw new Error('認証トークンを取得できませんでした。もう一度お試しください。');
+    }
+
+    _ready = true;
+    _token = token;
+    _log('auth ok', { isInClient: liff.isInClient() });
+    return token;
+  }
+
+  /** キャッシュ済みトークンを返す（initLiffOrWebAuth呼び出し後のみ有効） */
+  function getCurrentAuthToken() {
+    return _token;
+  }
+
+  /**
+   * 未認証ならLINE Loginへリダイレクト（画面ロード時の先行呼び出し用）。
+   * initLiffOrWebAuth と同じ動作。
+   */
+  async function requireLoginIfNeeded(liffId) {
+    return initLiffOrWebAuth(liffId);
+  }
+
+  /**
+   * LIFFクライアント内なら closeWindow()、外なら history.back()。
+   * 閉じるボタンの共通処理。
+   */
+  function closeOrBack() {
+    try {
+      if (typeof liff !== 'undefined' &&
+          typeof liff.isInClient === 'function' &&
+          liff.isInClient()) {
+        liff.closeWindow();
+        return;
+      }
+    } catch (_e) {}
+    window.history.back();
+  }
+
+  window.LiffAuth = {
+    initLiffOrWebAuth:    initLiffOrWebAuth,
+    getCurrentAuthToken:  getCurrentAuthToken,
+    requireLoginIfNeeded: requireLoginIfNeeded,
+    closeOrBack:          closeOrBack,
+  };
+}());
+</script>

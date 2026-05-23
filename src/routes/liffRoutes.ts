@@ -11,8 +11,14 @@ liffRoutes.get("/mypage", asyncHandler(liffController.mypagePage));
 
 liffRoutes.post("/posts", asyncHandler(liffController.createPost));
 liffRoutes.get("/personality-data", asyncHandler(liffController.personalityData));
+liffRoutes.get("/profile-status", asyncHandler(liffController.getProfileStatus));
 liffRoutes.get("/mypage-data", asyncHandler(liffController.getMypageData));
 liffRoutes.post("/mypage-data", asyncHandler(liffController.updateMypageData));
+liffRoutes.get("/history-data", asyncHandler(liffController.getHistoryData));
+liffRoutes.get("/points-data", asyncHandler(liffController.getPointsData));
+liffRoutes.get("/consent-data", asyncHandler(liffController.getConsentData));
+liffRoutes.post("/consent-data", asyncHandler(liffController.updateConsentData));
+liffRoutes.get("/diary-calendar", asyncHandler(liffController.getDiaryCalendar));
 
 // Survey / Interview (新スキーマ対応)
 // NOTE: /survey/answer, /survey/complete, /survey/verify-identity は
@@ -28,3 +34,6 @@ liffRoutes.post("/survey/verify-identity", asyncHandler(liffController.verifyIde
 liffRoutes.post("/survey/:assignmentId/complete", asyncHandler(liffController.completeSurveyByAssignment));
 liffRoutes.get("/survey/:assignmentId", asyncHandler(liffController.surveyPage));
 liffRoutes.get("/survey", asyncHandler(liffController.surveyPage));
+
+liffRoutes.get("/contact", asyncHandler(liffController.contactPage));
+liffRoutes.post("/contact", asyncHandler(liffController.submitContact));

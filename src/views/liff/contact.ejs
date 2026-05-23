@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/styles.css" />
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <%- include('../partials/liff-auth') %>
+    <style>
+      .contact-success {
+        text-align: center;
+        padding: 2rem 1rem;
+      }
+      .contact-success .success-icon {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+      }
+      .contact-success h2 {
+        margin-bottom: 0.5rem;
+      }
+      .contact-success p {
+        color: var(--color-muted, #888);
+        margin-bottom: 1.5rem;
+      }
+      .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+      .form-group label {
+        font-weight: 600;
+        font-size: 0.9rem;
+      }
+      .form-group select,
+      .form-group input,
+      .form-group textarea {
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .submit-btn {
+        width: 100%;
+        margin-top: 0.5rem;
+      }
+      .submit-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+    </style>
+  </head>
+  <body class="liff-body">
+    <main class="liff-main">
+      <section class="card liff-card">
+        <h1><%= title %></h1>
+
+        <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+
+        <div id="success-view" class="contact-success" style="display:none;">
+          <div class="success-icon">✅</div>
+          <h2>お問い合わせありがとうございました</h2>
+          <p>内容を確認次第、担当者よりご連絡いたします。</p>
+          <button type="button" id="close-after-success" class="button-link secondary">閉じる</button>
+        </div>
+
+        <form id="contact-form" class="stack" style="display:none;">
+          <div class="form-group">
+            <label for="name">名前</label>
+            <input type="text" id="name" name="name" required placeholder="山田 太郎" autocomplete="name" />
+          </div>
+
+          <div class="form-group">
+            <label for="email">メールアドレス</label>
+            <input type="email" id="email" name="email" required placeholder="example@email.com" autocomplete="email" />
+          </div>
+
+          <div class="form-group">
+            <label for="category">問い合わせ種別</label>
+            <select id="category" name="category" required>
+              <option value="" disabled selected>選択してください</option>
+              <option value="service">サービスについて</option>
+              <option value="project">案件について</option>
+              <option value="bug">不具合報告</option>
+              <option value="points">ポイントについて</option>
+              <option value="other">その他</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="message">問い合わせ内容</label>
+            <textarea id="message" name="message" required rows="6" placeholder="内容を詳しくご記入ください。"></textarea>
+          </div>
+
+          <p id="status" class="muted">LIFFを初期化しています...</p>
+
+          <button type="submit" id="submit-btn" class="submit-btn" disabled>送信する</button>
+          <button type="button" id="close-button" class="button-link secondary">閉じる</button>
+        </form>
+
+        <p id="error-view" style="display:none;" class="danger-text"></p>
+      </section>
+    </main>
+
+    <script>
+      (() => {
+        const initialDataEl = document.getElementById("initial-data");
+        const initialData = JSON.parse(initialDataEl.dataset.json || "{}");
+        const liffId = initialData.liffId || "";
+
+        const form = document.getElementById("contact-form");
+        const statusEl = document.getElementById("status");
+        const submitBtn = document.getElementById("submit-btn");
+        const closeButton = document.getElementById("close-button");
+        const successView = document.getElementById("success-view");
+        const errorView = document.getElementById("error-view");
+        const closeAfterSuccess = document.getElementById("close-after-success");
+
+        let idToken = null;
+
+        function setStatus(text, isError) {
+          statusEl.textContent = text;
+          statusEl.className = isError ? "danger-text" : "muted";
+        }
+
+        closeButton.addEventListener("click", function() { LiffAuth.closeOrBack(); });
+        closeAfterSuccess.addEventListener("click", function() { LiffAuth.closeOrBack(); });
+
+        async function init() {
+          if (!liffId) {
+            form.style.display = "block";
+            submitBtn.disabled = true;
+            setStatus("LIFF を利用できません。LINEトークからもう一度開いてください。", true);
+            return;
+          }
+
+          try {
+            const token = await LiffAuth.initLiffOrWebAuth(liffId);
+            if (!token) return; // LINE Login リダイレクト中
+            idToken = token;
+            form.style.display = "block";
+            submitBtn.disabled = false;
+            setStatus("内容を入力して送信してください。", false);
+
+            // LINE プロフィールから名前を初期表示（LINEクライアント内のみ）
+            try {
+              if (typeof liff !== 'undefined' && liff.isInClient()) {
+                const profile = await liff.getProfile();
+                if (profile && profile.displayName) {
+                  const nameInput = document.getElementById("name");
+                  if (!nameInput.value) {
+                    nameInput.value = profile.displayName;
+                  }
+                }
+              }
+            } catch (_e) {}
+          } catch (err) {
+            form.style.display = "block";
+            submitBtn.disabled = true;
+            setStatus(err.message || "初期化に失敗しました。", true);
+          }
+        }
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+
+          if (!idToken) {
+            setStatus("認証情報がありません。LINEから開き直してください。", true);
+            return;
+          }
+
+          submitBtn.disabled = true;
+          setStatus("送信中...", false);
+
+          try {
+            const payload = {
+              name: document.getElementById("name").value.trim(),
+              email: document.getElementById("email").value.trim(),
+              category: document.getElementById("category").value,
+              message: document.getElementById("message").value.trim(),
+            };
+
+            const response = await fetch(initialData.submitUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${idToken}`,
+              },
+              body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+              const data = await response.json().catch(() => ({}));
+              throw new Error(data.error || "送信に失敗しました。時間をおいて再度お試しください。");
+            }
+
+            form.style.display = "none";
+            successView.style.display = "block";
+          } catch (err) {
+            submitBtn.disabled = false;
+            setStatus(err.message || "送信に失敗しました。", true);
+          }
+        });
+
+        init();
+      })();
+    </script>
+  </body>
+</html>

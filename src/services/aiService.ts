@@ -28,7 +28,11 @@ import {
   buildQuestionRenderingPrompt,
   buildProjectAnalysisPrompt,
   buildSessionSummaryPrompt,
-  buildSlotFillingPrompt
+  buildSlotFillingPrompt,
+  buildRantExtendedPrompt,
+  buildDiaryExtendedPrompt,
+  buildPersonaTagsPrompt,
+  buildRantCounselorReplyPrompt
 } from "../prompts/researchPrompts";
 import { aiLogRepository } from "../repositories/aiLogRepository";
 import type {
@@ -1070,5 +1074,90 @@ export const aiService = {
       specificity?: number;
       novelty?: number;
     };
+  },
+
+  // ============================================================
+  // Phase 2-C: 愚痴・日記拡張分析 / AIタグ生成
+  // ============================================================
+
+  async analyzeRantExtended(content: string): Promise<{
+    rant_category: string;
+    severity: number;
+    danger_flag: boolean;
+    top_phrases: string[];
+  } | null> {
+    try {
+      const prompt = buildRantExtendedPrompt(content);
+      const response = await openai.responses.create({
+        model: env.OPENAI_MODEL,
+        input: [buildJapaneseSystemInstruction("rant_extended_analysis"), prompt].join("\n\n")
+      });
+      return parseJsonResponse<{
+        rant_category: string;
+        severity: number;
+        danger_flag: boolean;
+        top_phrases: string[];
+      }>(response.output_text.trim());
+    } catch {
+      return null;
+    }
+  },
+
+  async analyzeDiaryExtended(content: string): Promise<{
+    mood_score: number;
+    topic_categories: string[];
+    behavior_signals: string[];
+  } | null> {
+    try {
+      const prompt = buildDiaryExtendedPrompt(content);
+      const response = await openai.responses.create({
+        model: env.OPENAI_MODEL,
+        input: [buildJapaneseSystemInstruction("diary_extended_analysis"), prompt].join("\n\n")
+      });
+      return parseJsonResponse<{
+        mood_score: number;
+        topic_categories: string[];
+        behavior_signals: string[];
+      }>(response.output_text.trim());
+    } catch {
+      return null;
+    }
+  },
+
+  async generateRantCounselorReply(postText: string, tagLabels: string[]): Promise<string | null> {
+    if (!postText.trim()) {
+      return null;
+    }
+    try {
+      const prompt = buildRantCounselorReplyPrompt(postText, tagLabels);
+      const response = await openai.responses.create({
+        model: env.OPENAI_MODEL,
+        input: [buildJapaneseSystemInstruction("rant_counselor_reply"), prompt].join("\n\n")
+      });
+      const text = response.output_text.trim();
+      return text || null;
+    } catch {
+      return null;
+    }
+  },
+
+  async generateUserPersonaTags(
+    analyses: { summary: string | null; tags: unknown[]; sentiment: string }[]
+  ): Promise<{ tags: string[]; persona_summary: string } | null> {
+    if (analyses.length === 0) {
+      return null;
+    }
+    try {
+      const prompt = buildPersonaTagsPrompt(analyses);
+      const response = await openai.responses.create({
+        model: env.OPENAI_MODEL,
+        input: [buildJapaneseSystemInstruction("persona_tag_generation"), prompt].join("\n\n")
+      });
+      return parseJsonResponse<{ tags: string[]; persona_summary: string }>(
+        response.output_text.trim()
+      );
+    } catch {
+      return null;
+    }
   }
 };

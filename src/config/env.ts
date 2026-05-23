@@ -20,12 +20,26 @@ const envSchema = z.object({
   // LINE Developers で survey 用 / mypage 用 LIFF App を作成後に設定する
   LINE_LIFF_ID_SURVEY: z.string().min(1).optional(),
   LINE_LIFF_ID_MYPAGE: z.string().min(1).optional(),
+  LINE_LIFF_ID_CONTACT: z.string().min(1).optional(),
+  RESEND_API_KEY: z.string().min(1).optional(),
+  ADMIN_NOTIFICATION_EMAIL: z.string().email().optional(),
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_MODEL: z.string().default("gpt-5-mini"),
   DEFAULT_PROJECT_ID: z.string().uuid(),
   SESSION_SUMMARY_INTERVAL: z.coerce.number().int().positive().default(5),
   MAX_AI_PROBES_PER_ANSWER: z.coerce.number().int().nonnegative().default(1),
   MAX_AI_PROBES_PER_SESSION: z.coerce.number().int().nonnegative().default(2),
+  // Survey LIFF 本人確認設定
+  // LIFF_AUTH_REQUIRED=true のとき、サーバー側で auth 必須を強制する（本番では true に）
+  LIFF_AUTH_REQUIRED: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => value === "true"),
+  // ALLOW_LIFF_AUTH_SKIP=false のとき、クライアント側での本人確認スキップを禁止する（本番では false に）
+  ALLOW_LIFF_AUTH_SKIP: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => value !== "false"),
   MENU_ACTION_DEBUG_FORCE_PROJECT_LIST: z
     .enum(["true", "false"])
     .optional()

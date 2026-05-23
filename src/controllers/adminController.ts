@@ -42,6 +42,9 @@ import type {
 import { parseDisplayTags, generateTagsFromParsed } from "../lib/tagParser";
 import { validateDisplayTags } from "../lib/tagValidator";
 import { questionPageGroupRepository } from "../repositories/questionPageGroupRepository";
+import { segmentRepository } from "../repositories/segmentRepository";
+import { userAttributeRepository } from "../repositories/userAttributeRepository";
+import { deliveryCampaignRepository } from "../repositories/deliveryCampaignRepository";
 import type { DisplayTagsParsed, VisibilityCondition } from "../types/questionSchema";
 
 function routeParam(req: Request, key: string): string {
@@ -3026,5 +3029,694 @@ ${JSON.stringify(questionsForAI, null, 2)}
 
     const { data: urlData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(storagePath);
     res.json({ ok: true, url: urlData.publicUrl });
+  },
+
+  // ============================================================
+  // Phase 2-B: 属性管理
+  // ============================================================
+
+  async attributesPage(req: Request, res: Response): Promise<void> {
+    const [definitions, attrCounts] = await Promise.all([
+      userAttributeRepository.listDefinitions(),
+      userAttributeRepository.countByAttrKey(),
+    ]);
+    const countMap = Object.fromEntries(attrCounts.map(r => [r.attr_key, r.count]));
+    res.render("admin/attributes/index", {
+      title: "属性管理",
+      definitions,
+      countMap,
+    });
+  },
+
+  async createAttributeDefinition(req: Request, res: Response): Promise<void> {
+    const attrKey = bodyString(req.body.attr_key).trim();
+    const label = bodyString(req.body.label).trim();
+    const category = bodyString(req.body.category).trim() as "basic" | "lifestyle" | "interest" | "ai_inferred";
+    const dataType = bodyString(req.body.data_type).trim() as "text" | "boolean" | "number" | "json" | "tags";
+    if (!attrKey || !label || !category) {
+      throw new HttpError(400, "attr_key, label, category は必須です");
+    }
+    await userAttributeRepository.createDefinition({
+      attr_key: attrKey,
+      label,
+      category,
+      data_type: dataType || "text",
+      is_user_editable: req.body.is_user_editable === "true",
+      is_admin_only: req.body.is_admin_only === "true",
+      is_company_visible: req.body.is_company_visible === "true",
+      sort_order: Number(bodyString(req.body.sort_order)) || 0,
+    });
+    res.redirect("/admin/attributes");
+  },
+
+  async deleteAttributeDefinition(req: Request, res: Response): Promise<void> {
+    const defId = routeParam(req, "defId");
+    await userAttributeRepository.deleteDefinition(defId);
+    res.redirect("/admin/attributes");
+  },
+
+  // ============================================================
+  // Phase 2-B: セグメント管理
+  // ============================================================
+
+  async segmentsPage(_req: Request, res: Response): Promise<void> {
+    const [segments, campaigns] = await Promise.all([
+      segmentRepository.list(),
+      deliveryCampaignRepository.list(),
+    ]);
+    res.render("admin/segments/index", {
+      title: "セグメント配信",
+      segments,
+      campaigns,
+    });
+  },
+
+  async newSegmentPage(_req: Request, res: Response): Promise<void> {
+    const projects = await projectRepository.list();
+    res.render("admin/segments/form", {
+      title: "セグメント作成",
+      segment: null,
+      projects,
+    });
+  },
+
+  async createSegment(req: Request, res: Response): Promise<void> {
+    const name = bodyString(req.body.name).trim();
+    const description = bodyString(req.body.description).trim() || null;
+    const conditionsRaw = bodyString(req.body.conditions).trim();
+    if (!name) throw new HttpError(400, "セグメント名は必須です");
+
+    let conditions: { operator: "AND" | "OR"; conditions: import("../repositories/segmentRepository").SegmentCondition[] } = { operator: "AND", conditions: [] };
+    if (conditionsRaw) {
+      try {
+        conditions = JSON.parse(conditionsRaw);
+      } catch {
+        throw new HttpError(400, "conditions の JSON 形式が不正です");
+      }
+    }
+    await segmentRepository.create({ name, description, conditions });
+    res.redirect("/admin/segments");
+  },
+
+  async editSegmentPage(req: Request, res: Response): Promise<void> {
+    const segmentId = routeParam(req, "segmentId");
+    const [segment, projects] = await Promise.all([
+      segmentRepository.getById(segmentId),
+      projectRepository.list(),
+    ]);
+    res.render("admin/segments/form", {
+      title: "セグメント編集",
+      segment,
+      projects,
+    });
+  },
+
+  async updateSegment(req: Request, res: Response): Promise<void> {
+    const segmentId = routeParam(req, "segmentId");
+    const name = bodyString(req.body.name).trim();
+    const description = bodyString(req.body.description).trim() || null;
+    const conditionsRaw = bodyString(req.body.conditions).trim();
+    if (!name) throw new HttpError(400, "セグメント名は必須です");
+
+    let conditions: import("../repositories/segmentRepository").Segment["conditions"] | undefined;
+    if (conditionsRaw) {
+      try {
+        conditions = JSON.parse(conditionsRaw) as import("../repositories/segmentRepository").Segment["conditions"];
+      } catch {
+        throw new HttpError(400, "conditions の JSON 形式が不正です");
+      }
+    }
+    await segmentRepository.update(segmentId, { name, description, ...(conditions ? { conditions } : {}) });
+    res.redirect("/admin/segments");
+  },
+
+  async deleteSegment(req: Request, res: Response): Promise<void> {
+    const segmentId = routeParam(req, "segmentId");
+    await segmentRepository.delete(segmentId);
+    res.redirect("/admin/segments");
+  },
+
+  async evaluateSegment(req: Request, res: Response): Promise<void> {
+    const segmentId = routeParam(req, "segmentId");
+    const segment = await segmentRepository.getById(segmentId);
+    const { supabase: db } = await import("../config/supabase");
+
+    // conditions に基づいて user_profiles を動的フィルタリング
+    const conds = segment.conditions.conditions as Array<{
+      field: string; op: string; value: unknown; attr_value?: unknown;
+    }>;
+
+    let query = db.from("user_profiles").select("line_user_id", { count: "exact", head: false });
+
+    for (const c of conds) {
+      switch (c.field) {
+        case "gender":
+          if (c.op === "in" && Array.isArray(c.value)) query = query.in("gender", c.value as string[]);
+          break;
+        case "prefecture":
+          if (c.op === "in" && Array.isArray(c.value)) query = query.in("prefecture", c.value as string[]);
+          break;
+        case "is_blocked":
+          query = query.eq("is_blocked", c.value as boolean);
+          break;
+        case "profile_completed":
+          query = query.eq("profile_completed", c.value as boolean);
+          break;
+      }
+    }
+
+    const { data, count, error } = await query;
+    if (error) throw new HttpError(500, error.message);
+
+    const estimatedCount = count ?? (data?.length ?? 0);
+    await segmentRepository.updateEstimatedCount(segmentId, estimatedCount);
+
+    res.json({ ok: true, estimated_count: estimatedCount });
+  },
+
+  // ============================================================
+  // Phase 2-B: AI分析ダッシュボード
+  // ============================================================
+
+  async aiAnalysisPage(_req: Request, res: Response): Promise<void> {
+    const { supabase: db } = await import("../config/supabase");
+
+    const [postAnalysisResult, behaviorResult, rantPostResult, diaryPostResult] = await Promise.all([
+      db.from("post_analysis")
+        .select("sentiment, actionability, insight_type, raw_json, created_at")
+        .order("created_at", { ascending: false })
+        .limit(500),
+      db.from("behavior_logs")
+        .select("event_type, created_at")
+        .order("created_at", { ascending: false })
+        .limit(500),
+      db.from("user_posts")
+        .select("id, type, created_at")
+        .eq("type", "rant")
+        .order("created_at", { ascending: false })
+        .limit(500),
+      db.from("user_posts")
+        .select("id, type, created_at")
+        .eq("type", "diary")
+        .order("created_at", { ascending: false })
+        .limit(500),
+    ]);
+
+    const analyses = (postAnalysisResult.data ?? []) as {
+      sentiment: string;
+      actionability: string;
+      insight_type: string;
+      raw_json: Record<string, unknown> | null;
+      created_at: string;
+    }[];
+    const behaviors = (behaviorResult.data ?? []) as { event_type: string; created_at: string }[];
+    const rantPosts = (rantPostResult.data ?? []) as { id: string; type: string; created_at: string }[];
+    const diaryPosts = (diaryPostResult.data ?? []) as { id: string; type: string; created_at: string }[];
+
+    const sentimentCounts: Record<string, number> = {};
+    for (const a of analyses) {
+      if (a.sentiment) sentimentCounts[a.sentiment] = (sentimentCounts[a.sentiment] ?? 0) + 1;
+    }
+
+    const eventCounts: Record<string, number> = {};
+    for (const b of behaviors) {
+      eventCounts[b.event_type] = (eventCounts[b.event_type] ?? 0) + 1;
+    }
+
+    const insightCounts: Record<string, number> = {};
+    for (const a of analyses) {
+      if (a.insight_type) insightCounts[a.insight_type] = (insightCounts[a.insight_type] ?? 0) + 1;
+    }
+
+    // 愚痴拡張分析集計（raw_json.rant_extended が存在するもの）
+    const rantExtCounts: Record<string, number> = {};
+    let dangerFlagCount = 0;
+    let rantExtAnalyzedCount = 0;
+    const severityCounts: Record<number, number> = { 1: 0, 2: 0, 3: 0 };
+
+    for (const a of analyses) {
+      const ext = (a.raw_json as Record<string, unknown> | null)?.rant_extended as
+        | { rant_category?: string; danger_flag?: boolean; severity?: number }
+        | undefined;
+      if (ext) {
+        rantExtAnalyzedCount++;
+        if (ext.rant_category) {
+          rantExtCounts[ext.rant_category] = (rantExtCounts[ext.rant_category] ?? 0) + 1;
+        }
+        if (ext.danger_flag) dangerFlagCount++;
+        if (ext.severity && [1, 2, 3].includes(ext.severity)) {
+          const sev = ext.severity as 1 | 2 | 3;
+          severityCounts[sev] = (severityCounts[sev] ?? 0) + 1;
+        }
+      }
+    }
+
+    // 日記拡張分析集計
+    let moodScoreSum = 0;
+    let diaryExtAnalyzedCount = 0;
+    const behaviorSignalCounts: Record<string, number> = {};
+    const topicCategoryCounts: Record<string, number> = {};
+
+    for (const a of analyses) {
+      const ext = (a.raw_json as Record<string, unknown> | null)?.diary_extended as
+        | { mood_score?: number; topic_categories?: string[]; behavior_signals?: string[] }
+        | undefined;
+      if (ext) {
+        diaryExtAnalyzedCount++;
+        if (typeof ext.mood_score === "number") moodScoreSum += ext.mood_score;
+        for (const tc of ext.topic_categories ?? []) {
+          topicCategoryCounts[tc] = (topicCategoryCounts[tc] ?? 0) + 1;
+        }
+        for (const bs of ext.behavior_signals ?? []) {
+          behaviorSignalCounts[bs] = (behaviorSignalCounts[bs] ?? 0) + 1;
+        }
+      }
+    }
+
+    const avgMoodScore =
+      diaryExtAnalyzedCount > 0
+        ? Math.round((moodScoreSum / diaryExtAnalyzedCount) * 10) / 10
+        : null;
+
+    res.render("admin/ai-analysis/index", {
+      title: "AI分析ダッシュボード",
+      sentimentCounts,
+      eventCounts,
+      insightCounts,
+      totalAnalyses: analyses.length,
+      totalBehaviors: behaviors.length,
+      totalRantPosts: rantPosts.length,
+      totalDiaryPosts: diaryPosts.length,
+      rantExtCounts,
+      dangerFlagCount,
+      rantExtAnalyzedCount,
+      severityCounts,
+      diaryExtAnalyzedCount,
+      avgMoodScore,
+      behaviorSignalCounts,
+      topicCategoryCounts,
+    });
+  },
+
+  // ============================================================
+  // Phase 2-C: AI拡張分析 API
+  // ============================================================
+
+  async runExtendedPostAnalysis(req: Request, res: Response): Promise<void> {
+    const { aiTagService } = await import("../services/aiTagService");
+    const { supabase: db } = await import("../config/supabase");
+
+    const postId = String(req.params.postId ?? "");
+    if (!postId) {
+      res.status(400).json({ error: "postId required" });
+      return;
+    }
+
+    const { data: post } = await db
+      .from("user_posts")
+      .select("id, type, content")
+      .eq("id", postId)
+      .maybeSingle();
+
+    if (!post) {
+      res.status(404).json({ error: "post not found" });
+      return;
+    }
+
+    const postData = post as { id: string; type: string; content: string };
+    let result: Record<string, unknown> | null = null;
+
+    if (postData.type === "rant") {
+      result = await aiTagService.analyzeRantPost(postData.id, postData.content);
+    } else if (postData.type === "diary") {
+      result = await aiTagService.analyzeDiaryPost(postData.id, postData.content);
+    } else {
+      res.status(400).json({ error: "post type must be rant or diary" });
+      return;
+    }
+
+    res.json({ ok: true, result });
+  },
+
+  async runUserTagGeneration(req: Request, res: Response): Promise<void> {
+    const { aiTagService } = await import("../services/aiTagService");
+    const { supabase: db } = await import("../config/supabase");
+
+    const respondentId = String(req.params.respondentId ?? "");
+    if (!respondentId) {
+      res.status(400).json({ error: "respondentId required" });
+      return;
+    }
+
+    const { data: respondent } = await db
+      .from("respondents")
+      .select("id, line_user_id")
+      .eq("id", respondentId)
+      .maybeSingle();
+
+    if (!respondent) {
+      res.status(404).json({ error: "respondent not found" });
+      return;
+    }
+
+    const resp = respondent as { id: string; line_user_id: string };
+    const result = await aiTagService.generateTagsForUser(resp.line_user_id);
+
+    res.json({ ok: true, result });
+  },
+
+  async aiReportPage(_req: Request, res: Response): Promise<void> {
+    const { supabase: db } = await import("../config/supabase");
+
+    const [paResult, ppResult, respondentsResult] = await Promise.all([
+      db.from("post_analysis")
+        .select("sentiment, insight_type, raw_json, tags, keywords")
+        .limit(1000),
+      db.from("user_personality_profiles")
+        .select("raw_json, summary, segments, confidence")
+        .limit(500),
+      db.from("respondents")
+        .select("id, total_points, current_rank_id")
+        .limit(500),
+    ]);
+
+    const analyses = (paResult.data ?? []) as {
+      sentiment: string;
+      insight_type: string;
+      raw_json: Record<string, unknown> | null;
+      tags: unknown[];
+      keywords: unknown[];
+    }[];
+
+    const profiles = (ppResult.data ?? []) as {
+      raw_json: Record<string, unknown> | null;
+      summary: string | null;
+      segments: string[] | null;
+      confidence: number | null;
+    }[];
+
+    // 感情分布（匿名）
+    const sentimentDist: Record<string, number> = {};
+    for (const a of analyses) {
+      sentimentDist[a.sentiment] = (sentimentDist[a.sentiment] ?? 0) + 1;
+    }
+
+    // インサイトタイプ分布（匿名）
+    const insightDist: Record<string, number> = {};
+    for (const a of analyses) {
+      if (a.insight_type) insightDist[a.insight_type] = (insightDist[a.insight_type] ?? 0) + 1;
+    }
+
+    // 性格タイプ分布（匿名・10件以上のみ）
+    const personalityTypeCounts: Record<string, number> = {};
+    for (const p of profiles) {
+      const pt = (p.raw_json as Record<string, unknown> | null)?.personality_type as
+        | string
+        | undefined;
+      if (pt) personalityTypeCounts[pt] = (personalityTypeCounts[pt] ?? 0) + 1;
+    }
+    const safePersonalityTypes: Record<string, number> = {};
+    for (const [k, v] of Object.entries(personalityTypeCounts)) {
+      if (v >= 3) safePersonalityTypes[k] = v;
+    }
+
+    // 愚痴カテゴリ分布（匿名）
+    const rantCatDist: Record<string, number> = {};
+    let totalDangerFlags = 0;
+    for (const a of analyses) {
+      const ext = (a.raw_json as Record<string, unknown> | null)?.rant_extended as
+        | { rant_category?: string; danger_flag?: boolean }
+        | undefined;
+      if (ext?.rant_category) {
+        rantCatDist[ext.rant_category] = (rantCatDist[ext.rant_category] ?? 0) + 1;
+      }
+      if (ext?.danger_flag) totalDangerFlags++;
+    }
+
+    // よく出るキーワード（上位10件）
+    const keywordCounts: Record<string, number> = {};
+    for (const a of analyses) {
+      for (const kw of a.keywords ?? []) {
+        const s = String(kw).trim();
+        if (s) keywordCounts[s] = (keywordCounts[s] ?? 0) + 1;
+      }
+    }
+    const topKeywords = Object.entries(keywordCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([word, count]) => ({ word, count }));
+
+    const totalRespondents = (respondentsResult.data ?? []).length;
+
+    res.render("admin/ai-analysis/report", {
+      title: "企業向けレポート（匿名統計）",
+      totalRespondents,
+      totalAnalyses: analyses.length,
+      sentimentDist,
+      insightDist,
+      safePersonalityTypes,
+      rantCatDist,
+      totalDangerFlags,
+      topKeywords,
+      generatedAt: new Date().toISOString().slice(0, 16).replace("T", " "),
+    });
+  },
+
+  // ============================================================
+  // Phase 2-D: キャンペーン管理
+  // ============================================================
+
+  async newCampaignPage(_req: Request, res: Response): Promise<void> {
+    const [projects, segments] = await Promise.all([
+      projectRepository.list(),
+      segmentRepository.list(),
+    ]);
+    res.render("admin/segments/campaign-form", {
+      title: "キャンペーン作成",
+      campaign: null,
+      projects,
+      segments,
+    });
+  },
+
+  async createCampaign(req: Request, res: Response): Promise<void> {
+    const name = bodyString(req.body.name).trim();
+    if (!name) throw new HttpError(400, "キャンペーン名は必須です");
+    const projectId = bodyString(req.body.project_id).trim();
+    if (!projectId) throw new HttpError(400, "プロジェクトを選択してください");
+    const segmentId = bodyString(req.body.segment_id).trim() || null;
+    const deliveryChannel = bodyString(req.body.delivery_channel) === "line" ? "line" : "liff";
+    const scheduledAt = parseNullableDateTime(req.body.scheduled_at);
+    const deadline = parseNullableDateTime(req.body.deadline);
+
+    const campaign = await deliveryCampaignRepository.create({
+      name,
+      project_id: projectId,
+      segment_id: segmentId,
+      delivery_channel: deliveryChannel,
+      scheduled_at: scheduledAt,
+    });
+
+    // deadline は campaign テーブルには無いので別途 metadata に入れる必要がある場合は拡張。
+    // 今は scheduled_at のみ保存して完了。
+    void deadline; // 将来利用
+    void campaign;
+
+    res.redirect("/admin/segments");
+  },
+
+  async editCampaignPage(req: Request, res: Response): Promise<void> {
+    const campaignId = routeParam(req, "campaignId");
+    const [campaign, projects, segments] = await Promise.all([
+      deliveryCampaignRepository.getById(campaignId),
+      projectRepository.list(),
+      segmentRepository.list(),
+    ]);
+    res.render("admin/segments/campaign-form", {
+      title: "キャンペーン編集",
+      campaign,
+      projects,
+      segments,
+    });
+  },
+
+  async updateCampaign(req: Request, res: Response): Promise<void> {
+    const campaignId = routeParam(req, "campaignId");
+    const name = bodyString(req.body.name).trim();
+    if (!name) throw new HttpError(400, "キャンペーン名は必須です");
+    const projectId = bodyString(req.body.project_id).trim();
+    if (!projectId) throw new HttpError(400, "プロジェクトを選択してください");
+    const segmentId = bodyString(req.body.segment_id).trim() || null;
+    const deliveryChannel = bodyString(req.body.delivery_channel) === "line" ? "line" : "liff";
+    const scheduledAt = parseNullableDateTime(req.body.scheduled_at);
+
+    await deliveryCampaignRepository.update(campaignId, {
+      name,
+      project_id: projectId,
+      segment_id: segmentId,
+      delivery_channel: deliveryChannel,
+      scheduled_at: scheduledAt,
+      status: scheduledAt ? "scheduled" : "draft",
+    });
+    res.redirect("/admin/segments");
+  },
+
+  async cancelCampaign(req: Request, res: Response): Promise<void> {
+    const campaignId = routeParam(req, "campaignId");
+    await deliveryCampaignRepository.update(campaignId, { status: "cancelled" });
+    res.redirect("/admin/segments");
+  },
+
+  async executeCampaign(req: Request, res: Response): Promise<void> {
+    const campaignId = routeParam(req, "campaignId");
+    const { supabase: db } = await import("../config/supabase");
+
+    const campaign = await deliveryCampaignRepository.getById(campaignId);
+    if (campaign.status === "sent" || campaign.status === "cancelled") {
+      res.status(400).json({ error: "このキャンペーンは実行できません" });
+      return;
+    }
+
+    // セグメント条件からターゲットユーザーを取得
+    let targetLineUserIds: string[] = [];
+
+    if (campaign.segment_id) {
+      const segment = await segmentRepository.getById(campaign.segment_id);
+      const conds = segment.conditions.conditions as Array<{
+        field: string; op: string; value: unknown;
+      }>;
+
+      let q = db.from("user_profiles").select("line_user_id").eq("profile_completed", true);
+      for (const c of conds) {
+        if (c.field === "gender" && c.op === "in" && Array.isArray(c.value))
+          q = q.in("gender", c.value as string[]);
+        else if (c.field === "prefecture" && c.op === "in" && Array.isArray(c.value))
+          q = q.in("prefecture", c.value as string[]);
+        else if (c.field === "is_blocked")
+          q = q.eq("is_blocked", c.value as boolean);
+      }
+      const { data } = await q;
+      targetLineUserIds = (data ?? []).map((r: { line_user_id: string }) => r.line_user_id);
+    } else {
+      // セグメント未指定 → profile_completed 全員
+      const { data } = await db
+        .from("user_profiles")
+        .select("line_user_id")
+        .eq("profile_completed", true)
+        .eq("is_blocked", false);
+      targetLineUserIds = (data ?? []).map((r: { line_user_id: string }) => r.line_user_id);
+    }
+
+    if (targetLineUserIds.length === 0) {
+      res.json({ ok: true, sent_count: 0 });
+      return;
+    }
+
+    // respondent ID を取得
+    const { data: respondents } = await db
+      .from("respondents")
+      .select("id, line_user_id")
+      .in("line_user_id", targetLineUserIds);
+
+    const respondentIds = (respondents ?? []).map((r: { id: string }) => r.id);
+
+    // assignmentService でバッチアサイン
+    const createdAssignments = await assignmentService.assignManual({
+      projectId: campaign.project_id,
+      sourceRespondentIds: respondentIds,
+      deadline: null,
+      deliveryChannel: campaign.delivery_channel,
+    });
+
+    const sentCount = Array.isArray(createdAssignments) ? createdAssignments.length : respondentIds.length;
+
+    // campaign_assignment_map に記録
+    if (Array.isArray(createdAssignments) && createdAssignments.length > 0) {
+      const maps = (createdAssignments as { id: string }[]).map((a) => ({
+        campaign_id: campaignId,
+        assignment_id: a.id,
+      }));
+      await db.from("campaign_assignment_map").insert(maps);
+    }
+
+    // delivery_campaigns を sent に更新
+    await deliveryCampaignRepository.update(campaignId, {
+      status: "sent",
+      sent_at: new Date().toISOString(),
+      sent_count: sentCount,
+    });
+
+    res.json({ ok: true, sent_count: sentCount });
+  },
+
+  // ============================================================
+  // Phase 2-D: データ管理（NGワード・カテゴリ）
+  // ============================================================
+
+  async dataManagementPage(_req: Request, res: Response): Promise<void> {
+    const { supabase: db } = await import("../config/supabase");
+    const [ngResult, catResult] = await Promise.all([
+      db.from("ng_words").select("*").order("created_at", { ascending: false }),
+      db.from("post_categories").select("*").order("category_type").order("sort_order"),
+    ]);
+    res.render("admin/data-management/index", {
+      title: "データ管理",
+      ngWords: ngResult.data ?? [],
+      categories: catResult.data ?? [],
+    });
+  },
+
+  async createNgWord(req: Request, res: Response): Promise<void> {
+    const word = bodyString(req.body.word).trim();
+    if (!word) throw new HttpError(400, "ワードを入力してください");
+    const category = bodyString(req.body.category).trim() || "general";
+    const { supabase: db } = await import("../config/supabase");
+    await db.from("ng_words").insert({ word, category });
+    res.redirect("/admin/data-management");
+  },
+
+  async toggleNgWord(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    const { supabase: db } = await import("../config/supabase");
+    const { data } = await db.from("ng_words").select("is_active").eq("id", id).single();
+    if (data) {
+      await db.from("ng_words").update({ is_active: !(data as { is_active: boolean }).is_active }).eq("id", id);
+    }
+    res.redirect("/admin/data-management");
+  },
+
+  async deleteNgWord(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    const { supabase: db } = await import("../config/supabase");
+    await db.from("ng_words").delete().eq("id", id);
+    res.redirect("/admin/data-management");
+  },
+
+  async createCategory(req: Request, res: Response): Promise<void> {
+    const categoryType = bodyString(req.body.category_type).trim();
+    if (categoryType !== "rant" && categoryType !== "diary") throw new HttpError(400, "種別が不正です");
+    const name = bodyString(req.body.name).trim();
+    if (!name) throw new HttpError(400, "カテゴリ名を入力してください");
+    const sortOrder = Number(bodyString(req.body.sort_order)) || 0;
+    const { supabase: db } = await import("../config/supabase");
+    await db.from("post_categories").insert({ category_type: categoryType, name, sort_order: sortOrder });
+    res.redirect("/admin/data-management");
+  },
+
+  async toggleCategory(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    const { supabase: db } = await import("../config/supabase");
+    const { data } = await db.from("post_categories").select("is_active").eq("id", id).single();
+    if (data) {
+      await db.from("post_categories").update({ is_active: !(data as { is_active: boolean }).is_active }).eq("id", id);
+    }
+    res.redirect("/admin/data-management");
+  },
+
+  async deleteCategory(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    const { supabase: db } = await import("../config/supabase");
+    await db.from("post_categories").delete().eq("id", id);
+    res.redirect("/admin/data-management");
   },
 };

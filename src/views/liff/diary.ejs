@@ -6,107 +6,447 @@
     <title><%= title %></title>
     <link rel="stylesheet" href="/public/styles.css" />
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <%- include('../partials/liff-auth') %>
+    <style>
+      .diary-app { max-width: 480px; margin: 0 auto; padding: 12px 14px 60px; }
+
+      .topic-card {
+        background: linear-gradient(135deg, #e8f7f5, #d0ede8);
+        border: 1px solid #a8ddd5;
+        border-radius: 14px;
+        padding: 14px 16px;
+        margin-bottom: 14px;
+      }
+      .topic-label { font-size: 11px; color: #6a7b78; margin: 0 0 6px; }
+      .topic-text  { font-size: 15px; font-weight: 600; color: #123b3a; margin: 0 0 10px; }
+      .topic-use-btn {
+        font-size: 12px; background: #0b7a75; color: #fff;
+        border: none; border-radius: 8px; padding: 5px 14px; cursor: pointer;
+      }
+
+      .fsec {
+        background: #fff;
+        border-radius: 14px;
+        padding: 14px 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 2px 8px rgba(18,59,58,.06);
+      }
+      .fsec-label {
+        font-size: 13px; font-weight: 600; color: #123b3a; margin: 0 0 10px; display: block;
+      }
+      .opt { font-size: 10px; color: #6a7b78; font-weight: normal; margin-left: 4px; }
+
+      /* Mood */
+      .mood-scale { display: flex; gap: 6px; justify-content: space-around; }
+      .mood-btn {
+        flex: 1; height: 52px; font-size: 26px;
+        background: #f4f7f6; border: 2px solid transparent;
+        border-radius: 12px; cursor: pointer; transition: all .15s;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .mood-btn.selected { background: #eef7f5; border-color: #0b7a75; transform: scale(1.1); }
+
+      /* Emotion chips */
+      .emotion-tags { display: flex; flex-wrap: wrap; gap: 7px; }
+      .e-chip {
+        display: inline-flex; align-items: center; gap: 3px;
+        padding: 6px 11px; border-radius: 999px;
+        border: 1.5px solid #c8d8d5; background: #f4f7f6;
+        font-size: 13px; cursor: pointer; transition: all .15s; user-select: none;
+      }
+      .e-chip.selected { background: #eef7f5; border-color: #0b7a75; color: #0b7a75; font-weight: 600; }
+
+      /* One-line */
+      .one-line-list { display: flex; flex-direction: column; gap: 6px; }
+      .ol-btn {
+        padding: 10px 14px; border-radius: 10px;
+        border: 1.5px solid #c8d8d5; background: #f4f7f6;
+        font-size: 14px; cursor: pointer; text-align: left; transition: all .15s;
+      }
+      .ol-btn.selected { background: #eef7f5; border-color: #0b7a75; color: #0b7a75; font-weight: 600; }
+
+      /* Short inputs */
+      .two-inputs { display: grid; gap: 10px; }
+      .si-label { font-size: 13px; color: #1a1f1e; margin-bottom: 4px; display: block; }
+      .si-label span { font-size: 11px; color: #6a7b78; }
+      .si { width: 100%; padding: 8px 12px; border: 1px solid #c8d8d5; border-radius: 8px; font: inherit; font-size: 14px; box-sizing: border-box; }
+
+      /* Form actions */
+      .form-actions { display: flex; gap: 10px; margin-top: 4px; }
+      .btn-save {
+        flex: 1; padding: 13px; background: #0b7a75; color: #fff;
+        border: none; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer;
+      }
+      .btn-save:disabled { background: #b0c8c6; }
+      .btn-close {
+        padding: 13px 20px; background: #d8ece8; color: #123b3a;
+        border: none; border-radius: 12px; font-size: 15px; cursor: pointer;
+      }
+
+      /* Status */
+      #status { text-align: center; padding: 8px; font-size: 14px; min-height: 24px; }
+
+      /* Diary data sections */
+      .dsec { background: #fff; border-radius: 14px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(18,59,58,.06); }
+      .dsec h3 { font-size: 14px; font-weight: 600; color: #123b3a; margin: 0 0 12px; }
+
+      /* Calendar */
+      .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+      .cal-hdr  { text-align: center; font-size: 10px; color: #6a7b78; padding-bottom: 3px; }
+      .cal-day  {
+        aspect-ratio: 1; border-radius: 5px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 10px; color: #9eb5b1; background: #f4f7f6;
+      }
+      .cal-day.has-entry { color: #fff; }
+      .cal-day.today     { outline: 2px solid #0b7a75; outline-offset: 1px; color: #123b3a; }
+      .cal-day.today.has-entry { color: #fff; }
+      .cal-day.mood-1 { background: #f08080; }
+      .cal-day.mood-2 { background: #ffb347; }
+      .cal-day.mood-3 { background: #ffe066; color: #555 !important; }
+      .cal-day.mood-4 { background: #7ec8a0; }
+      .cal-day.mood-5 { background: #2a9d5c; }
+      .cal-day.mood-any { background: #0b7a75; }
+
+      /* Stats */
+      .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+      .stat-box  { text-align: center; padding: 10px 4px; background: #f4f7f6; border-radius: 10px; }
+      .stat-val  { font-size: 22px; font-weight: 700; color: #0b7a75; line-height: 1; }
+      .stat-lbl  { font-size: 10px; color: #6a7b78; margin-top: 3px; }
+
+      /* Mood graph */
+      .mood-graph { display: flex; gap: 6px; align-items: flex-end; height: 70px; }
+      .bar-wrap   { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+      .bar        { width: 100%; border-radius: 4px 4px 0 0; background: #0b7a75; min-height: 3px; transition: height .3s; }
+      .bar.empty  { background: #e3ecea; }
+      .bar-score  { font-size: 10px; color: #6a7b78; line-height: 1; }
+      .bar-day    { font-size: 10px; color: #6a7b78; }
+    </style>
   </head>
   <body class="liff-body">
-    <main class="liff-main">
-      <section class="card liff-card">
-        <h1><%= title %></h1>
-        <p class="muted">日付と本文を入力して日記を保存します。</p>
-        <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
-        <form id="post-form" class="stack">
-          <input type="hidden" name="type" value="diary" />
-          <input type="hidden" name="menu_action_key" value="<%= initialData.menuActionKey %>" />
-          <label>
-            日付
-            <input type="date" name="posted_on" value="<%= initialData.postedOn || "" %>" required />
-          </label>
-          <label>
-            本文
-            <textarea
-              name="content"
-              required
-              rows="8"
-              placeholder="今日あったことや感じたことを入力してください。"
-            ></textarea>
-          </label>
-          <div class="actions-row">
-            <button type="submit">保存する</button>
-            <button type="button" id="close-button" class="button-link secondary">閉じる</button>
+    <div class="diary-app">
+      <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+
+      <!-- 話題提供 -->
+      <% if (initialData.diaryTopic) { %>
+      <div class="topic-card">
+        <p class="topic-label">💭 今日の話題</p>
+        <p class="topic-text" id="topic-text"><%= initialData.diaryTopic.text %></p>
+        <button type="button" class="topic-use-btn" id="topic-use-btn">これを書く</button>
+      </div>
+      <% } %>
+
+      <!-- メインフォーム -->
+      <form id="post-form">
+        <input type="hidden" name="type" value="diary" />
+        <input type="hidden" name="menu_action_key" value="<%= initialData.menuActionKey %>" />
+        <input type="hidden" name="mood_score" id="mood-input" value="" />
+        <input type="hidden" name="emotion_tags" id="tags-input" value="[]" />
+        <input type="hidden" name="selected_one_line_id" id="ol-input" value="" />
+        <input type="hidden" name="selected_prompt_id" value="<%= initialData.diaryTopic ? initialData.diaryTopic.id : '' %>" />
+
+        <!-- 気分 -->
+        <div class="fsec">
+          <span class="fsec-label">今日の気分</span>
+          <div class="mood-scale">
+            <button type="button" class="mood-btn" data-mood="1" title="とても辛い">😩</button>
+            <button type="button" class="mood-btn" data-mood="2" title="少し辛い">😕</button>
+            <button type="button" class="mood-btn" data-mood="3" title="普通">😐</button>
+            <button type="button" class="mood-btn" data-mood="4" title="良い">😊</button>
+            <button type="button" class="mood-btn" data-mood="5" title="とても良い">😄</button>
           </div>
-        </form>
-        <p id="status" class="muted">LIFF を初期化しています...</p>
-      </section>
-    </main>
+        </div>
+
+        <!-- 感情タグ -->
+        <% if (initialData.emotionTags && initialData.emotionTags.length > 0) { %>
+        <div class="fsec">
+          <span class="fsec-label">気持ちのタグ<span class="opt">複数OK</span></span>
+          <div class="emotion-tags">
+            <% initialData.emotionTags.forEach(function(tag) { %>
+            <button type="button" class="e-chip" data-code="<%= tag.code %>">
+              <%= tag.emoji %>&nbsp;<%= tag.label %>
+            </button>
+            <% }); %>
+          </div>
+        </div>
+        <% } %>
+
+        <!-- 一言選択 -->
+        <% if (initialData.oneLinePrompts && initialData.oneLinePrompts.length > 0) { %>
+        <div class="fsec">
+          <span class="fsec-label">今日を一言で<span class="opt">任意</span></span>
+          <div class="one-line-list">
+            <% initialData.oneLinePrompts.slice(0, 6).forEach(function(p) { %>
+            <button type="button" class="ol-btn" data-id="<%= p.id %>"><%= p.text %></button>
+            <% }); %>
+          </div>
+        </div>
+        <% } %>
+
+        <!-- よかったこと・つらかったこと -->
+        <div class="fsec">
+          <div class="two-inputs">
+            <div>
+              <label class="si-label">よかったこと<span>　任意</span></label>
+              <input class="si" type="text" name="good_thing" maxlength="100" placeholder="ひとつだけ" />
+            </div>
+            <div>
+              <label class="si-label">つらかったこと<span>　任意</span></label>
+              <input class="si" type="text" name="bad_thing" maxlength="100" placeholder="ひとつだけ" />
+            </div>
+          </div>
+        </div>
+
+        <!-- 日記本文 -->
+        <div class="fsec">
+          <span class="fsec-label">日記<span class="opt">任意</span></span>
+          <textarea
+            name="content"
+            rows="5"
+            placeholder="今日あったこと、感じたことを自由に書いてください。"
+            style="width:100%;box-sizing:border-box;border:1px solid #c8d8d5;border-radius:10px;padding:10px 12px;font:inherit;resize:vertical"
+          ></textarea>
+        </div>
+
+        <!-- 日付 -->
+        <div class="fsec">
+          <label class="si-label">日付</label>
+          <input class="si" type="date" name="posted_on" value="<%= initialData.postedOn || '' %>" required />
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn-save" id="submit-btn">保存する</button>
+          <button type="button" class="btn-close" id="close-btn">閉じる</button>
+        </div>
+      </form>
+
+      <p id="status" class="muted"></p>
+
+      <!-- カレンダー（LIFF 認証後にロード） -->
+      <div id="cal-section" class="dsec" style="display:none">
+        <h3>記録カレンダー</h3>
+        <div id="cal-container"></div>
+        <div class="stats-row" id="stats-row"></div>
+      </div>
+
+      <!-- 気分グラフ（LIFF 認証後にロード） -->
+      <div id="graph-section" class="dsec" style="display:none">
+        <h3>気分グラフ（7日間）</h3>
+        <div class="mood-graph" id="mood-graph"></div>
+      </div>
+    </div>
+
     <script>
-      (() => {
-        const initialDataEl = document.getElementById("initial-data");
-        const initialData = JSON.parse(initialDataEl.dataset.json || "{}");
-        const liffId = initialData.liffId || "";
-        const form = document.getElementById("post-form");
-        const statusEl = document.getElementById("status");
-        const closeButton = document.getElementById("close-button");
-        const submitButton = form.querySelector("button[type='submit']");
+    (() => {
+      const el = document.getElementById('initial-data');
+      const d = JSON.parse(el.dataset.json || '{}');
+      const liffId   = d.liffId || '';
+      const form     = document.getElementById('post-form');
+      const statusEl = document.getElementById('status');
+      const submitBtn = document.getElementById('submit-btn');
+      const closeBtn  = document.getElementById('close-btn');
 
-        function setStatus(text, isError) {
-          statusEl.textContent = text;
-          statusEl.className = isError ? "danger-text" : "muted";
-        }
+      function setStatus(t, err) {
+        statusEl.textContent = t;
+        statusEl.className = err ? 'danger-text' : 'muted';
+      }
 
-        async function getIdToken() {
-          if (!window.liff) {
-            throw new Error("LIFF SDK を読み込めませんでした。");
-          }
-          if (!liffId) {
-            throw new Error("LIFF ID が設定されていません。");
-          }
-          await liff.init({ liffId });
-          const idToken = liff.getIDToken();
-          if (!idToken) {
-            throw new Error("LINE認証に失敗しました。もう一度お試しください。");
-          }
-          return idToken;
-        }
+      /* ---- Mood ---- */
+      const moodInput = document.getElementById('mood-input');
+      document.querySelectorAll('.mood-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          document.querySelectorAll('.mood-btn').forEach(function(b){ b.classList.remove('selected'); });
+          btn.classList.add('selected');
+          moodInput.value = btn.dataset.mood;
+        });
+      });
 
-        form.addEventListener("submit", async (event) => {
-          event.preventDefault();
-          try {
-            setStatus("保存中...", false);
-            const idToken = await getIdToken();
-            const payload = Object.fromEntries(new FormData(form).entries());
-            const response = await fetch(initialData.submitUrl, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${idToken}`
-              },
-              body: JSON.stringify(payload)
-            });
-            if (!response.ok) {
-              throw new Error("保存に失敗しました。時間をおいて再度お試しください。");
-            }
-            setStatus("保存しました。必要に応じてこの画面を閉じてください。", false);
-            form.reset();
-            form.elements.posted_on.value = initialData.postedOn || "";
-          } catch (error) {
-            setStatus(error.message || "保存に失敗しました。", true);
+      /* ---- Emotion tags ---- */
+      const tagsInput = document.getElementById('tags-input');
+      var selectedTags = new Set();
+      document.querySelectorAll('.e-chip').forEach(function(chip) {
+        chip.addEventListener('click', function() {
+          var code = chip.dataset.code;
+          if (selectedTags.has(code)) { selectedTags.delete(code); chip.classList.remove('selected'); }
+          else                        { selectedTags.add(code);    chip.classList.add('selected'); }
+          tagsInput.value = JSON.stringify(Array.from(selectedTags));
+        });
+      });
+
+      /* ---- One-line ---- */
+      const olInput = document.getElementById('ol-input');
+      var activeOlBtn = null;
+      document.querySelectorAll('.ol-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          if (activeOlBtn === btn) {
+            btn.classList.remove('selected'); activeOlBtn = null; olInput.value = '';
+          } else {
+            if (activeOlBtn) activeOlBtn.classList.remove('selected');
+            btn.classList.add('selected'); activeOlBtn = btn; olInput.value = btn.dataset.id;
           }
         });
+      });
 
-        closeButton.addEventListener("click", async () => {
-          if (window.liff && liff.isInClient()) {
-            await liff.closeWindow();
-            return;
+      /* ---- Topic ---- */
+      var topicBtn = document.getElementById('topic-use-btn');
+      if (topicBtn) {
+        topicBtn.addEventListener('click', function() {
+          var txt = (document.getElementById('topic-text') || {}).textContent || '';
+          var ta  = form.querySelector('textarea[name="content"]');
+          if (ta && !ta.value.trim()) {
+            ta.value = txt.trim() + '\n\n';
+            ta.focus();
+            ta.setSelectionRange(ta.value.length, ta.value.length);
           }
-          window.history.back();
         });
+      }
 
-        if (!liffId) {
-          submitButton.disabled = true;
-          setStatus("LIFF を利用できません。LINEトークからもう一度開いてください。", true);
-        } else {
-          setStatus("日付と本文を入力して保存してください。", false);
+      /* ---- LIFF init ---- */
+      async function ensureLiff() {
+        return LiffAuth.initLiffOrWebAuth(liffId);
+      }
+
+      /* ---- Calendar render ---- */
+      const DOW = ['月','火','水','木','金','土','日'];
+      function renderCalendar(entries) {
+        var map = {};
+        entries.forEach(function(e){ map[e.date] = e; });
+
+        var today = new Date();
+        var todayStr = today.toISOString().slice(0, 10);
+
+        // Find Monday of current week, then go back 4 more weeks (= 5 weeks total)
+        var dow = today.getDay();
+        var daysToMon = (dow === 0) ? -6 : 1 - dow;
+        var start = new Date(today);
+        start.setDate(today.getDate() + daysToMon - 28);
+
+        var html = '<div class="cal-grid">';
+        DOW.forEach(function(l){ html += '<div class="cal-hdr">' + l + '</div>'; });
+
+        var cur = new Date(start);
+        for (var i = 0; i < 35; i++) {
+          var ds  = cur.toISOString().slice(0, 10);
+          var ent = map[ds];
+          var cls = 'cal-day';
+          if (ent) {
+            cls += ' has-entry';
+            cls += ent.mood_score ? ' mood-' + ent.mood_score : ' mood-any';
+          }
+          if (ds === todayStr) cls += ' today';
+          html += '<div class="' + cls + '">' + cur.getDate() + '</div>';
+          cur.setDate(cur.getDate() + 1);
         }
-      })();
+        html += '</div>';
+        document.getElementById('cal-container').innerHTML = html;
+      }
+
+      /* ---- Stats render ---- */
+      function renderStats(s) {
+        var last = s.last_entry_date ? s.last_entry_date.slice(5).replace('-', '/') : '-';
+        document.getElementById('stats-row').innerHTML =
+          '<div class="stat-box"><div class="stat-val">' + s.streak + '</div><div class="stat-lbl">連続記録日数</div></div>' +
+          '<div class="stat-box"><div class="stat-val">' + s.total_entries + '</div><div class="stat-lbl">累計記録数</div></div>' +
+          '<div class="stat-box"><div class="stat-val">' + last + '</div><div class="stat-lbl">最終記録日</div></div>';
+      }
+
+      /* ---- Graph render ---- */
+      var DOW_JA = ['日','月','火','水','木','金','土'];
+      function renderGraph(trend) {
+        var html = '';
+        trend.forEach(function(item) {
+          var d   = new Date(item.date + 'T12:00:00Z');
+          var lbl = DOW_JA[d.getDay()];
+          var s   = item.mood_score;
+          var h   = s ? Math.round(s / 5 * 52) : 4;
+          var cls = s ? 'bar' : 'bar empty';
+          html +=
+            '<div class="bar-wrap">' +
+              (s ? '<div class="bar-score">' + s + '</div>' : '<div class="bar-score">&nbsp;</div>') +
+              '<div class="' + cls + '" style="height:' + h + 'px"></div>' +
+              '<div class="bar-day">' + lbl + '</div>' +
+            '</div>';
+        });
+        document.getElementById('mood-graph').innerHTML = html;
+      }
+
+      /* ---- Load diary data ---- */
+      async function loadDiaryData(token) {
+        try {
+          var res = await fetch(d.calendarUrl, { headers: { Authorization: 'Bearer ' + token } });
+          if (!res.ok) return;
+          var data = await res.json();
+          if (!data.ok) return;
+          renderCalendar(data.entries);
+          renderStats(data.stats);
+          renderGraph(data.mood_trend);
+          document.getElementById('cal-section').style.display   = '';
+          document.getElementById('graph-section').style.display = '';
+        } catch(e) {
+          console.warn('diary data load failed:', e);
+        }
+      }
+
+      /* ---- Eager LIFF init ---- */
+      if (liffId) {
+        ensureLiff().then(function(token) {
+          if (token) {
+            loadDiaryData(token);
+            setStatus('日付と内容を入力して保存してください。', false);
+          }
+          // token=null はLINE Loginリダイレクト中のためページが遷移する
+        }).catch(function() {
+          setStatus('日付と内容を入力して保存してください。', false);
+        });
+      } else {
+        submitBtn.disabled = true;
+        setStatus('LIFF IDが設定されていません。管理者にお問い合わせください。', true);
+      }
+
+      /* ---- Submit ---- */
+      form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        submitBtn.disabled = true;
+        setStatus('保存中...', false);
+        try {
+          var token = await ensureLiff();
+          if (!token) return; // LINE Login リダイレクト中
+          var fd    = new FormData(form);
+          var payload = Object.fromEntries(fd.entries());
+          try { payload.emotion_tags = JSON.parse(payload.emotion_tags || '[]'); } catch(_){ payload.emotion_tags = []; }
+
+          var res = await fetch(d.submitUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) {
+            var err = await res.json().catch(function(){ return {}; });
+            throw new Error(err.error || '保存に失敗しました。時間をおいて再度お試しください。');
+          }
+
+          setStatus('保存しました。', false);
+
+          /* reset form */
+          var savedDate = fd.get('posted_on');
+          form.reset();
+          form.querySelector('[name="posted_on"]').value = savedDate || '';
+          document.querySelectorAll('.mood-btn,.e-chip,.ol-btn').forEach(function(b){ b.classList.remove('selected'); });
+          selectedTags.clear(); activeOlBtn = null;
+          tagsInput.value = '[]'; olInput.value = ''; moodInput.value = '';
+
+          /* reload calendar */
+          await loadDiaryData(token);
+        } catch(err) {
+          setStatus(err.message || '保存に失敗しました。', true);
+        } finally {
+          submitBtn.disabled = false;
+        }
+      });
+
+      /* ---- Close ---- */
+      closeBtn.addEventListener('click', function() { LiffAuth.closeOrBack(); });
+    })();
     </script>
   </body>
 </html>

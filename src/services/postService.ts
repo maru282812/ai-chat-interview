@@ -139,6 +139,12 @@ export const postService = {
     title?: string | null;
     metadata?: Record<string, unknown> | null;
     postedOn?: string | null;
+    emotionTags?: string[];
+    moodScore?: number | null;
+    goodThing?: string | null;
+    badThing?: string | null;
+    selectedPromptId?: string | null;
+    selectedOneLineId?: string | null;
   }): Promise<UserPost> {
     const quality = analysisService.scorePostQuality({ content: input.content });
     return postRepository.create({
@@ -162,7 +168,13 @@ export const postService = {
         quality_flags: quality.flags,
         ...(input.metadata ?? {})
       },
-      posted_on: input.postedOn ?? null
+      posted_on: input.postedOn ?? null,
+      emotion_tags: input.emotionTags ?? [],
+      mood_score: input.moodScore ?? null,
+      good_thing: input.goodThing ?? null,
+      bad_thing: input.badThing ?? null,
+      selected_prompt_id: input.selectedPromptId ?? null,
+      selected_one_line_id: input.selectedOneLineId ?? null
     });
   }
 };
