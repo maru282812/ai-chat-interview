@@ -239,20 +239,14 @@
     <p style="font-size:16px;color:#444;margin-bottom:8px;"><%= errorMessage %></p>
     <p style="font-size:13px;color:#999;">解決しない場合は、運営までお問い合わせください。</p>
   </div>
-<% return; %>
-<% } %>
-
-<% if (locals.alreadyCompleted) { %>
+<% } else if (locals.alreadyCompleted) { %>
   <!-- 回答済み画面 -->
   <div style="max-width:480px;margin:60px auto;padding:24px;text-align:center;font-family:sans-serif;">
     <div style="font-size:48px;margin-bottom:16px;">✅</div>
     <p style="font-size:18px;font-weight:700;margin-bottom:8px;color:#333;">回答が完了しています</p>
     <p style="font-size:14px;color:#666;line-height:1.6;">このアンケートはすでに回答済みです。<br>ご協力ありがとうございました。</p>
   </div>
-<% return; %>
-<% } %>
-
-<% if (locals.profileIncomplete) { %>
+<% } else if (locals.profileIncomplete) { %>
   <!-- プロフィール未設定画面 -->
   <div style="max-width:480px;margin:40px auto;padding:24px;text-align:center;font-family:sans-serif;">
     <div style="font-size:48px;margin-bottom:16px;">📝</div>
@@ -284,8 +278,7 @@
     </a>
     <% } %>
   </div>
-<% return; %>
-<% } %>
+<% } else { %>
 
 <% if (displayMode === 'interview_chat') { %>
   <!-- ============================================================ -->
@@ -376,6 +369,12 @@
   // ALLOW_LIFF_AUTH_SKIP=false のとき本人確認失敗・スキップを禁止する
   const SKIP_ALLOWED    = <%- JSON.stringify(locals.skipAllowed !== false) %>;
 
+  console.log("[survey] script loaded");
+  console.log("[survey] liffId=", LIFF_ID);
+  console.log("[survey] assignmentId=", ASSIGNMENT_ID);
+  console.log("[survey] authRequired=", AUTH_REQUIRED, "| liffAuthAvail=", LIFF_AUTH_AVAIL, "| skipAllowed=", SKIP_ALLOWED);
+  console.log("[survey] displayMode=", DISPLAY_MODE, "| questions=", QUESTIONS.length);
+
   // ================================================================
   // LIFF 初期化 + 本人確認
   // ================================================================
@@ -384,6 +383,7 @@
 
     // LIFF 未設定 or auth 不要の場合
     if (!LIFF_ID || !AUTH_REQUIRED || !LIFF_AUTH_AVAIL) {
+      console.log('[survey] skipping LIFF auth: LIFF_ID=', LIFF_ID, 'AUTH_REQUIRED=', AUTH_REQUIRED, 'LIFF_AUTH_AVAIL=', LIFF_AUTH_AVAIL);
       if (!LIFF_AUTH_AVAIL && ASSIGNMENT_ID) {
         console.warn('[survey] LIFF auth not configured. assignmentId=' + ASSIGNMENT_ID);
       }
@@ -392,13 +392,17 @@
         showAuthError('config_missing');
         return;
       }
+      console.log('[survey] before startSurvey (no-auth path)');
       startSurvey();
+      console.log('[survey] after startSurvey (no-auth path)');
       return;
     }
 
     try {
+      console.log('[survey] before liff.init');
       await liff.init({ liffId: LIFF_ID });
       console.info('[survey] liff.init success');
+      console.log('[survey] isInClient=', liff.isInClient(), '| isLoggedIn=', liff.isLoggedIn());
     } catch (e) {
       console.error('[survey] liff.init failed', e);
       if (!SKIP_ALLOWED) {
@@ -1487,7 +1491,14 @@
       }
     }
 
-    renderCurrentState();
+    try {
+      console.log('[survey] renderCurrentState start, displayMode=', DISPLAY_MODE, 'questions=', QUESTIONS.length);
+      renderCurrentState();
+      console.log('[survey] renderCurrentState done');
+    } catch(e) {
+      console.error('[survey] renderCurrentState error', e);
+      throw e;
+    }
   }
 
   // ================================================================
@@ -1962,15 +1973,30 @@
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatAnswer(); }
     });
 
-    askCurrentQuestion();
+    try {
+      console.log('[survey] askCurrentQuestion start, visibleQs=', visibleQs.length);
+      askCurrentQuestion();
+      console.log('[survey] askCurrentQuestion returned');
+    } catch(e) {
+      console.error('[survey] askCurrentQuestion error', e);
+      throw e;
+    }
   }
 
   } // end startSurvey()
 
   // LIFF 初期化 → 本人確認 → アンケート開始
-  initLiffAndVerify();
+  initLiffAndVerify().catch(function(e) {
+    console.error('[survey] fatal init error', e);
+    document.body.innerHTML =
+      '<pre style="white-space:pre-wrap;padding:16px;font-family:monospace;font-size:14px;color:#c00;">' +
+      'Survey初期化エラー:\n' + String(e && e.message ? e.message : e) +
+      '\n\n' + (e && e.stack ? e.stack : '') +
+      '</pre>';
+  });
 
 })();
 </script>
+<% } %>
 </body>
 </html>

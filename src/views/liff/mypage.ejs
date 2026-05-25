@@ -467,6 +467,9 @@
             } else {
               statusEl.textContent = "保存しました。";
               statusEl.className = "status-msg success";
+              if (next) {
+                setTimeout(() => { window.location.href = next; }, 800);
+              }
             }
           } catch (err) {
             statusEl.textContent = err.message || "保存に失敗しました。";

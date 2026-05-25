@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p c:\\\\work\\\\ai-chat-interview\\\\docs\\\\archive)",
+      "Bash(cp c:/work/ai-chat-interview/docs/archive/mood-rant-feature-memo.md c:/Users/PC_User/mood-rant-feature-memo.md)",
+      "Bash(git reset *)",
+      "Bash(git clean *)"
+    ],
+    "additionalDirectories": [
+      "c:\\work\\ai-chat-interview",
+      "c:\\Users\\PC_User"
+    ]
+  }
+}

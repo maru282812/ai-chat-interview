@@ -537,35 +537,17 @@ export const liffController = {
 
     const project = await projectRepository.getById(assignment.project_id);
 
-    // プロフィール未完了チェック: user_id が判明している場合のみ
+    // プロフィール確認: user_id が判明している場合は毎回マイページへ誘導する
     if (assignment.user_id) {
-      const userProfile = await userProfileRepository.getByLineUserId(assignment.user_id);
-      if (!userProfile?.profile_completed) {
-        const mypageEntry = await liffService.getPage("mypage");
-        res.render("liff/survey", {
-          title: project.name,
-          profileIncomplete: true,
-          mypageLiffId: mypageEntry?.liffId ?? null,
-          errorMessage: null,
-          alreadyCompleted: false,
-          project: null,
-          projectData: null,
-          questions: [],
-          pageGroups: [],
-          sessionId: null,
-          assignmentId: assignment.id,
-          displayMode: project.display_mode ?? "survey_question",
-          liffId: liffConfig.liffId,
-          liffAuthAvailable: liffConfig.liffAuthAvailable,
-          authRequired: false,
-          skipAllowed: true,
-        });
-        return;
-      }
+      logger.info("[surveyPage] branch=mypageRedirect", { assignmentId });
+      const currentUrl = `/liff/survey?assignment_id=${encodeURIComponent(assignmentId)}`;
+      res.redirect(`/liff/mypage?next=${encodeURIComponent(currentUrl)}`);
+      return;
     }
 
     // 二重回答防止: 既に完了済みの場合は完了済み画面を返す
     if (assignment.status === "completed") {
+      logger.info("[surveyPage] branch=alreadyCompleted", { assignmentId });
       res.render("liff/survey", {
         title: project.name,
         alreadyCompleted: true,
@@ -615,7 +597,7 @@ export const liffController = {
       void incrementCampaignCount(assignment.id, "started_count").catch(() => {});
     }
 
-    res.render("liff/survey", {
+    const renderData = {
       title: project.name,
       project,
       projectData: {
@@ -628,11 +610,26 @@ export const liffController = {
       sessionId: session.id,
       assignmentId: assignment.id,
       displayMode: project.display_mode ?? "survey_question",
-      // LIFF 設定情報（survey.ejs で使用）
       liffId: liffConfig.liffId,
       liffAuthAvailable: liffConfig.liffAuthAvailable,
-      authRequired: liffConfig.liffAuthAvailable,
+      authRequired: liffConfig.authRequired,
       skipAllowed: liffConfig.skipAllowed,
+    };
+
+    logger.info("[surveyPage] before render survey.ejs", {
+      assignmentId,
+      questionsCount: renderData.questions.length,
+      displayMode: renderData.displayMode,
+      sessionId: renderData.sessionId,
+    });
+
+    res.render("liff/survey", renderData, (err, html) => {
+      if (err) {
+        logger.error("[surveyPage] render error", { assignmentId, error: String(err) });
+        return res.status(500).send("survey render error: " + err.message);
+      }
+      logger.info("[surveyPage] rendered html length=" + html.length, { assignmentId });
+      return res.send(html);
     });
   },
 
