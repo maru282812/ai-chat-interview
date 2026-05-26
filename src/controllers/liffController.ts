@@ -22,6 +22,7 @@ import { liffService, getSurveyLiffConfig } from "../services/liffService";
 import { personalityService } from "../services/personalityService";
 import { postService } from "../services/postService";
 import { respondentService } from "../services/respondentService";
+import { screeningService } from "../services/screeningService";
 import type { Gender, MaritalStatus, RantTag } from "../types/domain";
 import { runPostCompleteProcess } from "../services/postCompleteService";
 import { rantTagRepository } from "../repositories/rantTagRepository";
@@ -401,6 +402,7 @@ export const liffController = {
 
     const mode = stringValue(req.query.mode).trim() || "auto";
     const next = stringValue(req.query.next).trim() || null;
+    const sessionId = stringValue(req.query.session_id).trim() || null;
 
     res.render("liff/mypage", {
       title: entry.title,
@@ -410,8 +412,10 @@ export const liffController = {
         liffId: entry.liffId,
         mode,
         next,
+        sessionId,
         profileUrl: "/liff/mypage-data",
         updateUrl: "/liff/mypage-data",
+        confirmMypageUrl: "/liff/session/confirm-mypage",
         historyUrl: "/liff/history-data",
         pointsUrl: "/liff/points-data",
         consentUrl: "/liff/consent-data",
@@ -537,11 +541,41 @@ export const liffController = {
 
     const project = await projectRepository.getById(assignment.project_id);
 
-    // プロフィール確認: user_id が判明している場合は毎回マイページへ誘導する
-    if (assignment.user_id) {
+    // アクティブなセッションを先に取得してフロー分岐に利用する
+    let sessionForCheck = await sessionRepository.getActiveByRespondent(assignment.respondent_id, project.id);
+
+    // スクリーニング対象外（fall）: 既に fail 判定済みの場合は対象外画面を返す
+    if (sessionForCheck?.state_json?.screening_result === "fail") {
+      logger.info("[surveyPage] branch=screeningFailed", { assignmentId });
+      const DEFAULT_FAIL_MESSAGE = "今回はご参加いただけませんでした。またの機会にご協力をお願いします。";
+      res.render("liff/survey", {
+        title: project.user_display_title || project.name,
+        screeningFailed: true,
+        screeningFailMessage: project.screening_config?.fail_message?.trim() || DEFAULT_FAIL_MESSAGE,
+        errorMessage: null,
+        project: null,
+        projectData: null,
+        questions: [],
+        pageGroups: [],
+        sessionId: sessionForCheck.id,
+        assignmentId: assignment.id,
+        displayMode: project.display_mode ?? "survey_question",
+        liffId: liffConfig.liffId,
+        liffAuthAvailable: liffConfig.liffAuthAvailable,
+        authRequired: false,
+        skipAllowed: true,
+      });
+      return;
+    }
+
+    // プロフィール確認: user_id が判明しており、かつ今セッションでまだ確認していない場合はマイページへ誘導する
+    if (assignment.user_id && !sessionForCheck?.state_json?.mypage_confirmed_at) {
       logger.info("[surveyPage] branch=mypageRedirect", { assignmentId });
       const currentUrl = `/liff/survey?assignment_id=${encodeURIComponent(assignmentId)}`;
-      res.redirect(`/liff/mypage?next=${encodeURIComponent(currentUrl)}`);
+      const sessionId = sessionForCheck?.id ?? "";
+      res.redirect(
+        `/liff/mypage?next=${encodeURIComponent(currentUrl)}&session_id=${encodeURIComponent(sessionId)}`
+      );
       return;
     }
 
@@ -549,7 +583,7 @@ export const liffController = {
     if (assignment.status === "completed") {
       logger.info("[surveyPage] branch=alreadyCompleted", { assignmentId });
       res.render("liff/survey", {
-        title: project.name,
+        title: project.user_display_title || project.name,
         alreadyCompleted: true,
         errorMessage: null,
         project: null,
@@ -570,8 +604,8 @@ export const liffController = {
     const questions = await questionRepository.listByProject(project.id);
     const pageGroups = await questionPageGroupRepository.listByProject(project.id);
 
-    // アクティブなセッションを探す、なければ作成
-    let session = await sessionRepository.getActiveByRespondent(assignment.respondent_id, project.id);
+    // アクティブなセッションを探す、なければ作成（上で既に取得済みの場合は再利用）
+    let session = sessionForCheck;
     if (!session) {
       const firstQuestion = questions.find(q => !q.is_hidden) ?? null;
       session = await sessionRepository.create({
@@ -581,6 +615,25 @@ export const liffController = {
         current_phase: "question",
         status: "active",
       });
+    }
+
+    // スクリーニング質問の有無でレンダリング対象を切り替える
+    const allVisible = questions.filter(q => !q.is_hidden);
+    const screeningQuestions = allVisible.filter(q => q.question_role === "screening");
+    const screeningConfigEnabled = project.screening_config?.enabled === true;
+    const hasScreeningQuestions = screeningQuestions.length > 0 && screeningConfigEnabled;
+    const screeningJudged = !!session.state_json?.screening_result;
+
+    let renderQuestions: typeof questions;
+    let surveyPhase: "screening" | "main";
+    if (hasScreeningQuestions && !screeningJudged) {
+      // スクリーニング未判定: スクリーニング設問のみ表示
+      renderQuestions = screeningQuestions;
+      surveyPhase = "screening";
+    } else {
+      // スクリーニング不要 or 通過済み: メイン設問（非スクリーニング）のみ表示
+      renderQuestions = allVisible.filter(q => q.question_role !== "screening");
+      surveyPhase = "main";
     }
 
     // アサインメントを started に更新
@@ -597,19 +650,22 @@ export const liffController = {
       void incrementCampaignCount(assignment.id, "started_count").catch(() => {});
     }
 
+    const DEFAULT_FAIL_MSG = "今回はご参加いただけませんでした。またの機会にご協力をお願いします。";
     const renderData = {
-      title: project.name,
+      title: project.user_display_title || project.name,
       project,
       projectData: {
         id: project.id,
-        name: project.name,
+        name: project.user_display_title || project.name,
         display_mode: project.display_mode ?? "survey_question",
       },
-      questions: questions.filter(q => !q.is_hidden),
+      questions: renderQuestions,
       pageGroups,
       sessionId: session.id,
       assignmentId: assignment.id,
       displayMode: project.display_mode ?? "survey_question",
+      surveyPhase,
+      screeningFailMessage: project.screening_config?.fail_message?.trim() || DEFAULT_FAIL_MSG,
       liffId: liffConfig.liffId,
       liffAuthAvailable: liffConfig.liffAuthAvailable,
       authRequired: liffConfig.authRequired,
@@ -1360,6 +1416,109 @@ export const liffController = {
       },
       mood_trend: moodTrend
     });
+  },
+
+  /**
+   * POST /liff/session/confirm-mypage
+   * マイページ確認完了をセッションに記録する。
+   * 呼び出し元: mypage.ejs の「確認完了」ボタン
+   */
+  async confirmMypage(req: Request, res: Response): Promise<void> {
+    const sessionId = stringValue(req.body.session_id).trim();
+    if (!sessionId) {
+      res.status(400).json({ ok: false, error: "session_id は必須です。" });
+      return;
+    }
+    const session = await sessionRepository.getById(sessionId);
+    await sessionRepository.update(session.id, {
+      state_json: {
+        ...session.state_json,
+        mypage_confirmed_at: new Date().toISOString()
+      }
+    });
+    res.json({ ok: true });
+  },
+
+  /**
+   * POST /liff/survey/:assignmentId/judge-screening
+   * スクリーニング回答を収集してプロフィール+回答で合否を判定し、
+   * セッションに結果を保存して返す。
+   */
+  async judgeScreening(req: Request, res: Response): Promise<void> {
+    const assignmentId = stringValue(req.params.assignmentId).trim();
+    const sessionId = stringValue(req.body.session_id).trim();
+
+    if (!assignmentId || !sessionId) {
+      res.status(400).json({ ok: false, error: "assignment_id と session_id は必須です。" });
+      return;
+    }
+
+    const [assignment, session] = await Promise.all([
+      projectAssignmentRepository.getById(assignmentId),
+      sessionRepository.getById(sessionId)
+    ]);
+
+    // べき等性: 既に判定済みの場合はそのまま結果を返す
+    if (session.state_json?.screening_result) {
+      res.json({
+        ok: true,
+        judgement: session.state_json.screening_result,
+        already_judged: true
+      });
+      return;
+    }
+
+    // スクリーニング設問と回答を取得
+    const { supabase } = await import("../config/supabase");
+    const allQuestions = await questionRepository.listByProject(assignment.project_id);
+    const screeningQs = allQuestions.filter(q => q.is_screening_question || q.question_role === "screening");
+    const screeningQIds = screeningQs.map(q => q.id);
+
+    const answerMap: Record<string, string> = {};
+    if (screeningQIds.length > 0) {
+      const { data: answers } = await supabase
+        .from("answers")
+        .select("question_id, answer_text")
+        .eq("session_id", sessionId)
+        .in("question_id", screeningQIds);
+
+      for (const a of (answers ?? []) as { question_id: string; answer_text: string }[]) {
+        const q = screeningQs.find(sq => sq.id === a.question_id);
+        if (q) answerMap[q.question_code] = a.answer_text;
+      }
+    }
+
+    const { judgement, failed_conditions } = await screeningService.judgeScreening({
+      projectId: assignment.project_id,
+      lineUserId: assignment.user_id ?? null,
+      screeningQuestions: screeningQs,
+      screeningAnswers: answerMap
+    });
+
+    const now = new Date().toISOString();
+    await sessionRepository.update(sessionId, {
+      state_json: {
+        ...session.state_json,
+        screening_result: judgement,
+        screening_failed_conditions: failed_conditions,
+        screening_judged_at: now
+      }
+    });
+
+    // 永続的な判定結果を project_assignments にも保存する（管理画面・集計用）
+    await projectAssignmentRepository.update(assignmentId, {
+      screening_result: judgement === "pass" ? "passed" : "failed",
+      screening_result_at: now,
+    });
+
+    logger.info("[judgeScreening] completed", {
+      assignmentId,
+      sessionId,
+      judgement,
+      failedCount: failed_conditions.length
+    });
+
+    res.json({ ok: true, judgement, failed_conditions, already_judged: false });
   },
 
   async submitContact(req: Request, res: Response): Promise<void> {

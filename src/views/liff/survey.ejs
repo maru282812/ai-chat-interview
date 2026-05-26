@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title><%= project?.name || 'アンケート' %></title>
+  <title><%= project?.user_display_title || project?.name || 'アンケート' %></title>
   <% if (locals.liffId) { %>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <% } %>
@@ -222,6 +222,19 @@
     /* ---- ページモード ---- */
     .page-header { padding: 12px 0; margin-bottom: 8px; }
     .page-title  { font-size: 17px; font-weight: 700; margin: 0; }
+
+    /* ---- スクリーニング境界画面 ---- */
+    .screening-boundary {
+      max-width: 480px; margin: 0 auto; padding: 40px 24px; text-align: center;
+    }
+    .screening-boundary-icon  { font-size: 52px; margin-bottom: 18px; }
+    .screening-boundary-title { font-size: 19px; font-weight: 700; margin-bottom: 10px; color: #333; }
+    .screening-boundary-sub   { font-size: 14px; color: #555; line-height: 1.7; margin-bottom: 28px; }
+    .screening-boundary-btn   {
+      display: inline-block; padding: 14px 32px;
+      background: #2ca87a; color: #fff; border: none; border-radius: 12px;
+      font-size: 16px; font-weight: 600; cursor: pointer; text-decoration: none;
+    }
   </style>
 </head>
 <body>
@@ -245,6 +258,15 @@
     <div style="font-size:48px;margin-bottom:16px;">✅</div>
     <p style="font-size:18px;font-weight:700;margin-bottom:8px;color:#333;">回答が完了しています</p>
     <p style="font-size:14px;color:#666;line-height:1.6;">このアンケートはすでに回答済みです。<br>ご協力ありがとうございました。</p>
+  </div>
+<% } else if (locals.screeningFailed) { %>
+  <!-- スクリーニング対象外画面 -->
+  <div style="max-width:480px;margin:60px auto;padding:32px 24px;text-align:center;font-family:sans-serif;">
+    <div style="font-size:48px;margin-bottom:16px;">🙏</div>
+    <p style="font-size:18px;font-weight:700;margin-bottom:12px;color:#333;">本案件の対象外でした</p>
+    <p style="font-size:14px;color:#666;line-height:1.7;margin-bottom:0;">
+      <%= locals.screeningFailMessage || "今回はご参加いただけませんでした。またの機会にご協力をお願いします。" %>
+    </p>
   </div>
 <% } else if (locals.profileIncomplete) { %>
   <!-- プロフィール未設定画面 -->
@@ -368,6 +390,9 @@
   const LIFF_AUTH_AVAIL = <%- JSON.stringify(locals.liffAuthAvailable === true) %>;
   // ALLOW_LIFF_AUTH_SKIP=false のとき本人確認失敗・スキップを禁止する
   const SKIP_ALLOWED    = <%- JSON.stringify(locals.skipAllowed !== false) %>;
+  // 'screening' | 'main'
+  const SURVEY_PHASE           = <%- JSON.stringify(locals.surveyPhase || 'main') %>;
+  const SCREENING_FAIL_MESSAGE = <%- JSON.stringify(locals.screeningFailMessage || '今回はご参加いただけませんでした。またの機会にご協力をお願いします。') %>;
 
   console.log("[survey] script loaded");
   console.log("[survey] liffId=", LIFF_ID);
@@ -1458,6 +1483,51 @@
     });
 
     async function showComplete() {
+      // スクリーニングフェーズ: 判定API → 境界画面を表示
+      if (SURVEY_PHASE === 'screening') {
+        questionArea.style.display = 'none';
+        const navBtns = document.querySelector('.nav-btns');
+        if (navBtns) navBtns.style.display = 'none';
+        progressBar.style.width = '100%';
+
+        // 確認中インジケータ
+        const waitDiv = document.createElement('div');
+        waitDiv.style.cssText = 'text-align:center;padding:40px 24px;';
+        waitDiv.innerHTML = '<p style="font-size:16px;color:#555;">確認中...</p>';
+        document.querySelector('.survey-container').appendChild(waitDiv);
+
+        try {
+          const judgeResp = await fetch('/liff/survey/' + ASSIGNMENT_ID + '/judge-screening', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: SESSION_ID }),
+          });
+          const judgeData = await judgeResp.json();
+          if (judgeData.judgement === 'pass') {
+            // 通過: 境界画面 → 本アンケートへ進むボタン
+            waitDiv.innerHTML = `
+              <div class="screening-boundary">
+                <div class="screening-boundary-icon">&#x2705;</div>
+                <p class="screening-boundary-title">ご協力ありがとうございます。<br>条件確認が完了しました。</p>
+                <p class="screening-boundary-sub">これより本アンケートを開始します。</p>
+                <button class="screening-boundary-btn" onclick="window.location.reload()">本アンケートへ進む</button>
+              </div>`;
+          } else {
+            // 非通過: 終了メッセージ
+            waitDiv.innerHTML = `
+              <div class="screening-boundary">
+                <div class="screening-boundary-icon">&#x1F64F;</div>
+                <p class="screening-boundary-title">ご協力ありがとうございました。</p>
+                <p class="screening-boundary-sub">${SCREENING_FAIL_MESSAGE}</p>
+              </div>`;
+          }
+        } catch(e) {
+          console.error('judge-screening failed', e);
+          waitDiv.innerHTML = '<p style="color:red;text-align:center;padding:24px;">判定に失敗しました。ページを再読み込みしてください。</p>';
+        }
+        return;
+      }
+
       questionArea.style.display = 'none';
       document.querySelector('.nav-btns').style.display = 'none';
       completeScreen.style.display = 'block';
@@ -1809,6 +1879,44 @@
 
     function askCurrentQuestion() {
       if (chatQueueIndex >= visibleQs.length) {
+        // スクリーニングフェーズ終了: judge-screening を呼んで境界メッセージを表示
+        if (SURVEY_PHASE === 'screening') {
+          chatAnswerArea.style.display = 'none';
+          chatAnswerArea.innerHTML = '';
+          chatTextRow.style.display = 'none';
+          chatNextRow.style.display = 'none';
+          (async () => {
+            try {
+              const judgeResp = await fetch('/liff/survey/' + ASSIGNMENT_ID + '/judge-screening', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: SESSION_ID }),
+              });
+              const judgeData = await judgeResp.json();
+              if (judgeData.judgement === 'pass') {
+                addBubble('条件確認が完了しました。ここから本アンケートを開始します。', 'ai');
+                // ボタンを追加して本案件ページへ遷移
+                const btnWrap = document.createElement('div');
+                btnWrap.style.cssText = 'text-align:center;margin-top:16px;';
+                const btn = document.createElement('button');
+                btn.className = 'btn-next';
+                btn.style.minWidth = '200px';
+                btn.textContent = '本アンケートへ進む';
+                btn.addEventListener('click', () => { window.location.reload(); });
+                btnWrap.appendChild(btn);
+                chatMessages.appendChild(btnWrap);
+              } else {
+                addBubble('今回は条件に合致しませんでした。ご協力ありがとうございました。', 'ai');
+              }
+              chatMessages.scrollTop = chatMessages.scrollHeight;
+            } catch(e) {
+              console.error('judge-screening failed', e);
+              addBubble('判定に失敗しました。ページを再読み込みしてください。', 'ai');
+            }
+          })();
+          return;
+        }
+
         addBubble('ご回答ありがとうございました。アンケートが完了しました。', 'ai');
         chatAnswerArea.style.display = 'none';
         chatAnswerArea.innerHTML = '';

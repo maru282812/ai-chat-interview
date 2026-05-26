@@ -20,6 +20,9 @@ liffRoutes.get("/consent-data", asyncHandler(liffController.getConsentData));
 liffRoutes.post("/consent-data", asyncHandler(liffController.updateConsentData));
 liffRoutes.get("/diary-calendar", asyncHandler(liffController.getDiaryCalendar));
 
+// マイページ確認完了記録
+liffRoutes.post("/session/confirm-mypage", asyncHandler(liffController.confirmMypage));
+
 // Survey / Interview (新スキーマ対応)
 // NOTE: /survey/answer, /survey/complete, /survey/verify-identity は
 //       /survey/:assignmentId よりも先に定義しないとルーティングが衝突する
@@ -32,6 +35,8 @@ liffRoutes.post("/survey/upload-image", asyncHandler(liffController.uploadRespon
 liffRoutes.post("/survey/verify-identity", asyncHandler(liffController.verifyIdentity));
 // 回答完了確定API: サーバー側で完了判定・ポイント付与・LINE通知を行う
 liffRoutes.post("/survey/:assignmentId/complete", asyncHandler(liffController.completeSurveyByAssignment));
+// スクリーニング判定API
+liffRoutes.post("/survey/:assignmentId/judge-screening", asyncHandler(liffController.judgeScreening));
 liffRoutes.get("/survey/:assignmentId", asyncHandler(liffController.surveyPage));
 liffRoutes.get("/survey", asyncHandler(liffController.surveyPage));
 

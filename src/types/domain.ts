@@ -18,6 +18,9 @@ export type ProjectAssignmentStatus =
   | "cancelled";
 export type ScreeningResult = "passed" | "failed";
 export type ScreeningPassAction = "survey" | "interview" | "manual_hold";
+export type ScreeningConditionType = "profile" | "question";
+export type ScreeningOperator = "equals" | "not_equals" | "in" | "not_in" | "gte" | "lte" | "between";
+export type ScreeningJudgement = "pass" | "fail";
 export type MaritalStatus = "single" | "married" | "divorced" | "widowed";
 
 /** プロジェクト単位の表示モード (016_question_schema_redesign) */
@@ -173,14 +176,30 @@ export interface ProjectAIState {
 }
 
 export interface ScreeningConfig {
+  enabled?: boolean;
   pass_message?: string | null;
   fail_message?: string | null;
   pass_action?: ScreeningPassAction;
 }
 
+export interface ScreeningCondition {
+  id: UUID;
+  project_id: UUID;
+  condition_type: ScreeningConditionType;
+  /** profile 条件: フィールド名 (age/gender/prefecture 等), question 条件: question_code */
+  target_key: string;
+  operator: ScreeningOperator;
+  /** 比較値。単値 | 配列 | [min, max] */
+  value_json: unknown;
+  priority: number;
+  created_at: string;
+}
+
 export interface Project {
   id: UUID;
   name: string;
+  /** USERに表示するタイトル。未設定時は name にフォールバックする */
+  user_display_title?: string | null;
   client_name: string | null;
   objective: string | null;
   status: ProjectStatus;
@@ -213,6 +232,8 @@ export interface QuestionOption {
   title?: string;
   /** 補足説明（マトリクス行・カード選択肢） */
   description?: string;
+  /** スクリーニング通過対象フラグ（is_screening_question=true の設問のみ有効） */
+  isScreeningPass?: boolean;
 }
 
 export interface ImageUploadConfig {
@@ -416,6 +437,8 @@ export interface Question {
   render_strategy?: "static" | "dynamic" | null;
   /** 回答選択肢固定フラグ。true の場合 AI 候補による自動上書きを行わない (017) */
   answer_options_locked: boolean;
+  /** スクリーニング設問フラグ (030) */
+  is_screening_question: boolean;
   is_system: boolean;
   is_hidden: boolean;
   created_at: string;
@@ -552,6 +575,14 @@ export interface SessionState {
   pendingFreeCommentMissingSlots?: string[] | null;
   finalQuestionCompletedAt?: string | null;
   answersSinceSummary?: number;
+  /** マイページ確認済みタイムスタンプ。survey ページの無限リダイレクト防止に使用 */
+  mypage_confirmed_at?: string | null;
+  /** スクリーニング判定結果 */
+  screening_result?: ScreeningJudgement | null;
+  /** 落ちた条件の説明文リスト */
+  screening_failed_conditions?: string[];
+  /** スクリーニング判定実行日時 */
+  screening_judged_at?: string | null;
   aiProbeCount?: number;
   aiProbeCountCurrentAnswer?: number;
   aiProbeCountPerQuestion?: Record<string, number>;

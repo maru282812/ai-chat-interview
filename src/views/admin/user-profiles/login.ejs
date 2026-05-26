@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title><%= title %></title>
+  <link rel="stylesheet" href="/public/styles.css" />
+  <style>
+    .login-wrap {
+      max-width: 360px;
+      margin: 80px auto;
+      padding: 32px;
+      background: #fff;
+      border: 1px solid #d8e3e0;
+      border-radius: 16px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.08);
+    }
+    .login-wrap h1 { font-size: 18px; margin: 0 0 6px; }
+    .login-wrap p.sub { color: #60726f; font-size: 13px; margin: 0 0 24px; }
+    .login-wrap label { display: block; margin-bottom: 14px; font-size: 14px; font-weight: 500; }
+    .login-wrap input[type=text],
+    .login-wrap input[type=password] {
+      display: block; width: 100%; margin-top: 4px;
+      padding: 8px 12px; font-size: 14px;
+      border: 1px solid #c8d8d4; border-radius: 8px; box-sizing: border-box;
+    }
+    .login-wrap button {
+      width: 100%; padding: 10px; margin-top: 8px;
+      background: #2ca87a; color: #fff; border: none;
+      border-radius: 8px; font-size: 15px; cursor: pointer;
+    }
+    .login-wrap button:hover { background: #27976c; }
+    .error-msg { color: #d9534f; font-size: 13px; margin-bottom: 12px; }
+    .notice { font-size: 12px; color: #60726f; margin-top: 16px; text-align: center; }
+  </style>
+</head>
+<body style="background:#f5f7f6; min-height:100vh;">
+  <div class="login-wrap">
+    <h1>ユーザー情報管理</h1>
+    <p class="sub">顧客情報へのアクセスには認証が必要です。</p>
+
+    <% if (errorMessage) { %>
+      <p class="error-msg"><%= errorMessage %></p>
+    <% } %>
+
+    <form method="POST" action="/admin/user-profiles/login">
+      <label>
+        管理者ID
+        <input type="text" name="admin_id" autocomplete="username" required />
+      </label>
+      <label>
+        パスワード
+        <input type="password" name="admin_pass" autocomplete="current-password" required />
+      </label>
+      <button type="submit">ログイン</button>
+    </form>
+
+    <p class="notice">このページは顧客情報を取り扱います。不要なアクセスはお控えください。</p>
+  </div>
+</body>
+</html>

@@ -190,7 +190,7 @@
     <script>
     (() => {
       const initialData = JSON.parse(document.getElementById("initial-data").dataset.json || "{}");
-      const { liffId, mode, next, profileUrl, updateUrl, historyUrl, pointsUrl, consentUrl } = initialData;
+      const { liffId, mode, next, sessionId, profileUrl, updateUrl, confirmMypageUrl, historyUrl, pointsUrl, consentUrl } = initialData;
       const appView   = document.getElementById("app-view");
       const loadingView = document.getElementById("loading-view");
       let idToken = null;
@@ -456,11 +456,28 @@
             });
             if (!res.ok) throw new Error("保存に失敗しました。");
             const json = await res.json();
+
+            // マイページ確認完了をセッションに記録してからnextへ遷移
+            async function confirmAndNavigate(destination) {
+              if (confirmMypageUrl && sessionId) {
+                try {
+                  await fetch(confirmMypageUrl, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ session_id: sessionId })
+                  });
+                } catch(e) {
+                  console.warn("confirm-mypage failed", e);
+                }
+              }
+              window.location.href = destination;
+            }
+
             if (json.profile_just_completed) {
               statusEl.textContent = "登録完了！";
               statusEl.className = "status-msg success";
               if (next) {
-                setTimeout(() => { window.location.href = next; }, 800);
+                setTimeout(() => confirmAndNavigate(next), 800);
               } else {
                 setTimeout(() => load(), 800);
               }
@@ -468,7 +485,7 @@
               statusEl.textContent = "保存しました。";
               statusEl.className = "status-msg success";
               if (next) {
-                setTimeout(() => { window.location.href = next; }, 800);
+                setTimeout(() => confirmAndNavigate(next), 800);
               }
             }
           } catch (err) {

@@ -4,7 +4,9 @@
       "Bash(mkdir -p c:\\\\work\\\\ai-chat-interview\\\\docs\\\\archive)",
       "Bash(cp c:/work/ai-chat-interview/docs/archive/mood-rant-feature-memo.md c:/Users/PC_User/mood-rant-feature-memo.md)",
       "Bash(git reset *)",
-      "Bash(git clean *)"
+      "Bash(git clean *)",
+      "Bash(xargs grep -l \"screening\\\\|スクリーニング\")",
+      "Bash(node scripts/runFitnessScreeningSimulation.cjs)"
     ],
     "additionalDirectories": [
       "c:\\work\\ai-chat-interview",

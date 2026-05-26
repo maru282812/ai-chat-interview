@@ -137,3 +137,14 @@ adminRoutes.post("/data-management/ng-words/:id/delete", asyncHandler(adminContr
 adminRoutes.post("/data-management/categories", asyncHandler(adminController.createCategory));
 adminRoutes.post("/data-management/categories/:id/toggle", asyncHandler(adminController.toggleCategory));
 adminRoutes.post("/data-management/categories/:id/delete", asyncHandler(adminController.deleteCategory));
+
+// スクリーニング条件管理
+adminRoutes.get("/projects/:projectId/screening", asyncHandler(adminController.screeningPage));
+adminRoutes.post("/projects/:projectId/screening/conditions", asyncHandler(adminController.addScreeningCondition));
+adminRoutes.post("/projects/:projectId/screening/conditions/:condId/delete", asyncHandler(adminController.deleteScreeningCondition));
+
+// USERプロファイル管理（簡易パスワード認証付き）
+adminRoutes.get("/user-profiles/login", asyncHandler(adminController.userProfilesLoginPage));
+adminRoutes.post("/user-profiles/login", asyncHandler(adminController.userProfilesLogin));
+adminRoutes.post("/user-profiles/logout", asyncHandler(adminController.userProfilesLogout));
+adminRoutes.get("/user-profiles", asyncHandler(adminController.userProfilesAdmin));

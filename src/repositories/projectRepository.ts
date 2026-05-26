@@ -16,6 +16,7 @@ import { sessionRepository } from "./sessionRepository";
 
 interface ProjectMutationInput {
   name: string;
+  user_display_title?: string | null;
   client_name?: string | null;
   objective?: string | null;
   status: ProjectStatus;

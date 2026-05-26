@@ -1,0 +1,268 @@
+<%- include("../../partials/header", { title }) %>
+
+<style>
+  .up-toolbar {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px; flex-wrap: wrap; gap: 8px;
+  }
+  .up-filter-form {
+    background: #fff; border: 1px solid #d8e3e0; border-radius: 12px;
+    padding: 16px; margin-bottom: 20px;
+  }
+  .up-filter-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+  }
+  .up-filter-grid label { font-size: 13px; font-weight: 500; }
+  .up-filter-grid input,
+  .up-filter-grid select {
+    width: 100%; padding: 5px 8px; margin-top: 3px;
+    border: 1px solid #c8d8d4; border-radius: 6px; font-size: 13px;
+    box-sizing: border-box;
+  }
+  .filter-actions { margin-top: 12px; display: flex; gap: 8px; }
+  .btn-sm {
+    padding: 6px 14px; border-radius: 6px; font-size: 13px;
+    border: none; cursor: pointer;
+  }
+  .btn-primary { background: #2ca87a; color: #fff; }
+  .btn-outline { background: #fff; color: #60726f; border: 1px solid #c8d8d4; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #f0f5f3; padding: 8px 10px; text-align: left; border-bottom: 2px solid #d8e3e0; white-space: nowrap; }
+  td { padding: 7px 10px; border-bottom: 1px solid #eef2f1; vertical-align: top; }
+  tr:hover td { background: #f8fbfa; }
+  .badge {
+    display: inline-block; padding: 2px 7px; border-radius: 10px;
+    font-size: 11px; font-weight: 600;
+  }
+  .badge-green { background: #d4f0e4; color: #1a7a50; }
+  .badge-gray  { background: #eef2f1; color: #60726f; }
+  .pager { display: flex; gap: 6px; margin-top: 16px; flex-wrap: wrap; }
+  .pager a, .pager span {
+    padding: 5px 12px; border-radius: 6px; font-size: 13px;
+    border: 1px solid #d8e3e0; text-decoration: none; color: #1a2e2a;
+  }
+  .pager .current { background: #2ca87a; color: #fff; border-color: #2ca87a; }
+  .logout-btn {
+    padding: 6px 14px; background: #fff; border: 1px solid #d8e3e0;
+    border-radius: 6px; font-size: 13px; cursor: pointer; color: #60726f;
+  }
+  .logout-btn:hover { border-color: #c8d8d4; color: #333; }
+  .detail-toggle { color: #2ca87a; cursor: pointer; font-size: 12px; text-decoration: underline; }
+  .detail-row td { background: #f8fbfa; font-size: 12px; color: #4a6060; }
+</style>
+
+<%
+  function calcAge(birthDate) {
+    if (!birthDate) return '-';
+    const today = new Date();
+    const bd = new Date(birthDate);
+    let age = today.getFullYear() - bd.getFullYear();
+    const m = today.getMonth() - bd.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < bd.getDate())) age--;
+    return age;
+  }
+  function fmt(v) { return v ?? '-'; }
+  function fmtDate(v) {
+    if (!v) return '-';
+    return new Date(v).toLocaleDateString('ja-JP', { year:'numeric', month:'2-digit', day:'2-digit' });
+  }
+  function buildQuery(extra) {
+    const base = { ...filters };
+    Object.assign(base, extra);
+    return '?' + Object.entries(base).filter(([,v]) => v !== '' && v !== undefined).map(([k,v]) => k + '=' + encodeURIComponent(v)).join('&');
+  }
+%>
+
+<div class="up-toolbar">
+  <div>
+    <strong>ユーザー情報管理</strong>
+    <span style="color:#60726f; font-size:13px; margin-left:10px;">全 <%= total %> 件（<%= page %>/<%= totalPages %> ページ）</span>
+  </div>
+  <form method="POST" action="/admin/user-profiles/logout" style="margin:0;">
+    <button type="submit" class="logout-btn">ログアウト</button>
+  </form>
+</div>
+
+<div class="up-filter-form">
+  <form method="GET" action="/admin/user-profiles">
+    <div class="up-filter-grid">
+      <label>
+        呼び名
+        <input type="text" name="nickname" value="<%= filters.nickname || '' %>" />
+      </label>
+      <label>
+        性別
+        <select name="gender">
+          <option value="">すべて</option>
+          <option value="male"   <%= filters.gender === 'male'   ? 'selected' : '' %>>男性</option>
+          <option value="female" <%= filters.gender === 'female' ? 'selected' : '' %>>女性</option>
+          <option value="other"  <%= filters.gender === 'other'  ? 'selected' : '' %>>その他</option>
+          <option value="prefer_not_to_say" <%= filters.gender === 'prefer_not_to_say' ? 'selected' : '' %>>回答しない</option>
+        </select>
+      </label>
+      <label>
+        年齢（以上）
+        <input type="number" name="age_from" min="1" max="120" value="<%= filters.age_from || '' %>" />
+      </label>
+      <label>
+        年齢（以下）
+        <input type="number" name="age_to" min="1" max="120" value="<%= filters.age_to || '' %>" />
+      </label>
+      <label>
+        都道府県
+        <input type="text" name="prefecture" value="<%= filters.prefecture || '' %>" placeholder="例: 東京都" />
+      </label>
+      <label>
+        職業
+        <input type="text" name="occupation" value="<%= filters.occupation || '' %>" />
+      </label>
+      <label>
+        業種
+        <input type="text" name="industry" value="<%= filters.industry || '' %>" />
+      </label>
+      <label>
+        婚姻状況
+        <select name="marital_status">
+          <option value="">すべて</option>
+          <option value="single"   <%= filters.marital_status === 'single'   ? 'selected' : '' %>>未婚</option>
+          <option value="married"  <%= filters.marital_status === 'married'  ? 'selected' : '' %>>既婚</option>
+          <option value="divorced" <%= filters.marital_status === 'divorced' ? 'selected' : '' %>>離婚</option>
+          <option value="widowed"  <%= filters.marital_status === 'widowed'  ? 'selected' : '' %>>死別</option>
+        </select>
+      </label>
+      <label>
+        子どもの有無
+        <select name="has_children">
+          <option value="">すべて</option>
+          <option value="true"  <%= filters.has_children === 'true'  ? 'selected' : '' %>>あり</option>
+          <option value="false" <%= filters.has_children === 'false' ? 'selected' : '' %>>なし</option>
+        </select>
+      </label>
+      <label>
+        プロフィール完了
+        <select name="profile_completed">
+          <option value="">すべて</option>
+          <option value="true"  <%= filters.profile_completed === 'true'  ? 'selected' : '' %>>完了</option>
+          <option value="false" <%= filters.profile_completed === 'false' ? 'selected' : '' %>>未完了</option>
+        </select>
+      </label>
+      <label>
+        更新日（以降）
+        <input type="date" name="updated_from" value="<%= filters.updated_from || '' %>" />
+      </label>
+      <label>
+        更新日（以前）
+        <input type="date" name="updated_to" value="<%= filters.updated_to || '' %>" />
+      </label>
+    </div>
+    <div class="filter-actions">
+      <button type="submit" class="btn-sm btn-primary">絞り込む</button>
+      <a href="/admin/user-profiles" class="btn-sm btn-outline">リセット</a>
+    </div>
+  </form>
+</div>
+
+<% if (profiles.length === 0) { %>
+  <p style="color:#60726f;">該当するユーザーが見つかりません。</p>
+<% } else { %>
+<div style="overflow-x:auto;">
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>呼び名</th>
+        <th>性別</th>
+        <th>年齢</th>
+        <th>都道府県</th>
+        <th>職業 / 業種</th>
+        <th>婚姻</th>
+        <th>子ども</th>
+        <th>プロフィール</th>
+        <th>更新日</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <% profiles.forEach(function(p, i) { %>
+      <tr>
+        <td style="color:#60726f;"><%= (page - 1) * perPage + i + 1 %></td>
+        <td><strong><%= fmt(p.nickname) %></strong></td>
+        <td>
+          <% if (p.gender === 'male') { %>男性
+          <% } else if (p.gender === 'female') { %>女性
+          <% } else if (p.gender === 'other') { %>その他
+          <% } else if (p.gender === 'prefer_not_to_say') { %>非公開
+          <% } else { %>-<% } %>
+        </td>
+        <td><%= calcAge(p.birth_date) %></td>
+        <td><%= fmt(p.prefecture) %></td>
+        <td><%= fmt(p.occupation) %><% if (p.industry) { %><br/><span style="color:#60726f;"><%= p.industry %></span><% } %></td>
+        <td>
+          <% if (p.marital_status === 'single') { %>未婚
+          <% } else if (p.marital_status === 'married') { %>既婚
+          <% } else if (p.marital_status === 'divorced') { %>離婚
+          <% } else if (p.marital_status === 'widowed') { %>死別
+          <% } else { %>-<% } %>
+        </td>
+        <td><%= p.has_children === true ? 'あり' : p.has_children === false ? 'なし' : '-' %></td>
+        <td>
+          <% if (p.profile_completed) { %>
+            <span class="badge badge-green">完了</span>
+          <% } else { %>
+            <span class="badge badge-gray">未完了</span>
+          <% } %>
+        </td>
+        <td style="color:#60726f;"><%= fmtDate(p.updated_at) %></td>
+        <td>
+          <span class="detail-toggle" onclick="toggleDetail('<%= p.line_user_id.replace(/'/g,'\\'') %>')">詳細</span>
+        </td>
+      </tr>
+      <tr id="detail-<%= p.line_user_id.replace(/[^a-zA-Z0-9_-]/g,'_') %>" class="detail-row" style="display:none;">
+        <td colspan="11">
+          <strong>LINE USER ID:</strong> <%= p.line_user_id %>&emsp;
+          <strong>生年月日:</strong> <%= fmt(p.birth_date) %>&emsp;
+          <strong>子どもの年齢:</strong> <%= (p.children_ages && p.children_ages.length > 0) ? p.children_ages.join(', ') + '歳' : '-' %>&emsp;
+          <strong>同居家族:</strong> <%= (p.household_composition && p.household_composition.length > 0) ? p.household_composition.join('、') : '-' %>&emsp;
+          <strong>通知:</strong> <%= p.notification_ok ? 'OK' : 'NG' %>&emsp;
+          <strong>最終ログイン:</strong> <%= fmtDate(p.last_login_at) %>&emsp;
+          <strong>登録日:</strong> <%= fmtDate(p.created_at) %>
+          <% if (p.ai_persona_summary) { %>
+          <br/><strong>AIサマリー:</strong> <%= p.ai_persona_summary %>
+          <% } %>
+        </td>
+      </tr>
+      <% }) %>
+    </tbody>
+  </table>
+</div>
+
+<% if (totalPages > 1) { %>
+<div class="pager">
+  <% if (page > 1) { %>
+    <a href="<%= buildQuery({ page: page - 1 }) %>">前へ</a>
+  <% } %>
+  <% for (let pg = Math.max(1, page - 3); pg <= Math.min(totalPages, page + 3); pg++) { %>
+    <% if (pg === page) { %>
+      <span class="current"><%= pg %></span>
+    <% } else { %>
+      <a href="<%= buildQuery({ page: pg }) %>"><%= pg %></a>
+    <% } %>
+  <% } %>
+  <% if (page < totalPages) { %>
+    <a href="<%= buildQuery({ page: page + 1 }) %>">次へ</a>
+  <% } %>
+</div>
+<% } %>
+<% } %>
+
+<script>
+function toggleDetail(lineUserId) {
+  const safe = lineUserId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const row = document.getElementById('detail-' + safe);
+  if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+}
+</script>
+
+<%- include("../../partials/footer") %>

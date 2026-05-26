@@ -33,6 +33,7 @@ interface CreateQuestionInput {
   visibility_conditions?: Question["visibility_conditions"];
   page_group_id?: string | null;
   answer_options_locked?: boolean;
+  is_screening_question?: boolean;
 }
 
 function buildFreeCommentQuestionConfig(): Question["question_config"] {
@@ -181,6 +182,7 @@ export const questionRepository = {
         | "visibility_conditions"
         | "page_group_id"
         | "answer_options_locked"
+        | "is_screening_question"
       >
     >
   ): Promise<Question> {

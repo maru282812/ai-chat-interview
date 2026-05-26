@@ -57,6 +57,57 @@
     padding: 10px;
     background: #fff;
   }
+  .sc-cond-block {
+    border: 1px solid #e0e8e4;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    background: #fff;
+  }
+  .sc-cond-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+    cursor: pointer;
+    margin: 0;
+  }
+  .sc-cond-fields {
+    margin-top: 8px;
+    padding-left: 24px;
+  }
+  .sc-cond-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+  }
+  .sc-cond-checks label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0;
+    font-weight: normal;
+  }
+  .sc-pref-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+    gap: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #d8e3e0;
+    border-radius: 6px;
+    padding: 8px;
+    background: #f8fbfa;
+  }
+  .sc-pref-grid label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    font-weight: normal;
+    margin: 0;
+  }
 </style>
 
 <form class="card stack" method="post" action="<%= action %>">
@@ -79,8 +130,14 @@
 
     <div class="form-grid">
       <label>
-        プロジェクト名
+        管理用プロジェクト名
+        <small class="helper-text">管理画面で使用する内部管理用の名前です。USERには表示されません。</small>
         <input type="text" name="name" value="<%= form.name || '' %>" required />
+      </label>
+      <label>
+        USER表示タイトル
+        <small class="helper-text">LINE送付時や回答画面でUSERに表示されるタイトルです。空白の場合は管理用プロジェクト名が使われます。</small>
+        <input type="text" name="user_display_title" value="<%= form.user_display_title || '' %>" placeholder="例: 飲食店の利用体験に関するアンケート" />
       </label>
       <label>
         調査モード
@@ -203,36 +260,258 @@
     </div>
   </section>
 
-  <section class="editor-section stack">
-    <h2>スクリーニング設定</h2>
-    <p class="muted">スクリーニング設問の通過・非通過後の動作を設定します。非通過者には必ず終了案内が送られます。</p>
-    <%
-      const sc = project?.screening_config || {};
-    %>
-    <label>
-      スクリーニング終了質問番号（sort_order）
-      <input type="number" name="screening_last_question_order" min="1" value="<%= project?.screening_last_question_order ?? '' %>" placeholder="例: 3（未設定の場合はスクリーニングなし）" />
-      <span class="muted">先頭からこの番号の質問まで（sort_order が一致するもの）をスクリーニング区間として扱います。未入力の場合はスクリーニング判定をスキップします。</span>
+  <%
+    const sc = project?.screening_config || {};
+    const screeningEnabled = sc.enabled === true;
+    const pcState = locals.profileConditionsState || {
+      age: { enabled: false, min: null, max: null },
+      gender: { enabled: false, allowed: [] },
+      occupation: { enabled: false, allowed: [] },
+      industry: { enabled: false, allowed: [] },
+      marital_status: { enabled: false, allowed: [] },
+      has_children: { enabled: false, allowed: [] },
+      prefecture: { enabled: false, allowed: [] }
+    };
+    const sqList = typeof screeningQuestions !== 'undefined' ? screeningQuestions : [];
+    const GENDER_OPTIONS = [
+      { value: 'male', label: '男性' },
+      { value: 'female', label: '女性' },
+      { value: 'other', label: 'その他・回答しない' }
+    ];
+    const OCCUPATION_OPTIONS = [
+      '会社員', '公務員', '自営業・経営者', 'フリーランス', '学生',
+      '主婦・主夫', 'パート・アルバイト', '無職', 'その他'
+    ];
+    const INDUSTRY_OPTIONS = [
+      'IT・テクノロジー', '医療・福祉', '教育', '金融・保険', '製造業',
+      '流通・小売', 'サービス業', '建設・不動産', '農業・漁業', 'その他'
+    ];
+    const MARITAL_OPTIONS = [
+      { value: 'single', label: '未婚' },
+      { value: 'married', label: '既婚' },
+      { value: 'divorced', label: '離婚・死別' }
+    ];
+    const PREFECTURES = [
+      '北海道','青森県','岩手県','宮城県','秋田県','山形県','福島県',
+      '茨城県','栃木県','群馬県','埼玉県','千葉県','東京都','神奈川県',
+      '新潟県','富山県','石川県','福井県','山梨県','長野県','岐阜県',
+      '静岡県','愛知県','三重県','滋賀県','京都府','大阪府','兵庫県',
+      '奈良県','和歌山県','鳥取県','島根県','岡山県','広島県','山口県',
+      '徳島県','香川県','愛媛県','高知県','福岡県','佐賀県','長崎県',
+      '熊本県','大分県','宮崎県','鹿児島県','沖縄県'
+    ];
+  %>
+  <section class="editor-section stack" id="screening-section">
+    <h2>4. スクリーニング設定</h2>
+    <p class="helper-text">スクリーニングを使用すると、本編の前に条件判定を行います。マイページ条件とスクリーニング設問の回答結果をもとに、対象者のみ本編へ進めます。</p>
+
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer">
+      <input type="checkbox" name="screening_enabled" value="1"
+        id="screening-enabled-toggle"
+        <%= screeningEnabled ? "checked" : "" %>
+        onchange="toggleScreeningDetails(this.checked)" />
+      このプロジェクトでスクリーニングを使用する
     </label>
-    <label>
-      通過後の動作
-      <select name="screening_pass_action">
-        <option value="survey" <%= sc.pass_action === "survey" || !sc.pass_action ? "selected" : "" %>>アンケートへ進む（自動）</option>
-        <option value="interview" <%= sc.pass_action === "interview" ? "selected" : "" %>>インタビューへ進む（自動）</option>
-        <option value="manual_hold" <%= sc.pass_action === "manual_hold" ? "selected" : "" %>>手動送付待ち</option>
-      </select>
-    </label>
-    <label>
-      通過時メッセージ
-      <textarea name="screening_pass_message" placeholder="省略時はデフォルトメッセージが送信されます"><%= sc.pass_message || "" %></textarea>
-    </label>
-    <label>
-      非通過時メッセージ
-      <textarea name="screening_fail_message" placeholder="省略時はデフォルトメッセージが送信されます"><%= sc.fail_message || "" %></textarea>
-    </label>
+
+    <div id="screening-details" style="<%= screeningEnabled ? '' : 'display:none' %>">
+
+      <h3 style="margin:16px 0 8px">■ マイページ条件</h3>
+      <p style="font-size:12px;color:#60726f;margin:0 0 10px">チェックした項目のみ判定に使用されます。条件が1つもない場合は全員通過です。</p>
+
+      <!-- 年齢 -->
+      <div class="sc-cond-block">
+        <label class="sc-cond-label">
+          <input type="checkbox" name="profile_cond_age_enabled" value="1"
+            <%= pcState.age.enabled ? "checked" : "" %>
+            onchange="toggleCondFields('age-fields', this.checked)" />
+          年齢を条件にする
+        </label>
+        <div id="age-fields" class="sc-cond-fields" style="<%= pcState.age.enabled ? '' : 'display:none' %>">
+          <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+            <label style="margin:0;display:flex;align-items:center;gap:6px">
+              最小（歳以上）
+              <input type="number" name="profile_cond_age_min" min="0" max="120"
+                value="<%= pcState.age.min !== null ? pcState.age.min : '' %>"
+                placeholder="未設定" style="width:72px" />
+            </label>
+            <label style="margin:0;display:flex;align-items:center;gap:6px">
+              最大（歳以下）
+              <input type="number" name="profile_cond_age_max" min="0" max="120"
+                value="<%= pcState.age.max !== null ? pcState.age.max : '' %>"
+                placeholder="未設定" style="width:72px" />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- 性別 -->
+      <div class="sc-cond-block">
+        <label class="sc-cond-label">
+          <input type="checkbox" name="profile_cond_gender_enabled" value="1"
+            <%= pcState.gender.enabled ? "checked" : "" %>
+            onchange="toggleCondFields('gender-fields', this.checked)" />
+          性別を条件にする
+        </label>
+        <div id="gender-fields" class="sc-cond-fields" style="<%= pcState.gender.enabled ? '' : 'display:none' %>">
+          <div class="sc-cond-checks">
+            <% for (const opt of GENDER_OPTIONS) { %>
+              <label>
+                <input type="checkbox" name="profile_cond_gender_values" value="<%= opt.value %>"
+                  <%= pcState.gender.allowed.includes(opt.value) ? "checked" : "" %> />
+                <%= opt.label %>
+              </label>
+            <% } %>
+          </div>
+        </div>
+      </div>
+
+      <!-- 職業 -->
+      <div class="sc-cond-block">
+        <label class="sc-cond-label">
+          <input type="checkbox" name="profile_cond_occupation_enabled" value="1"
+            <%= pcState.occupation.enabled ? "checked" : "" %>
+            onchange="toggleCondFields('occupation-fields', this.checked)" />
+          職業を条件にする
+        </label>
+        <div id="occupation-fields" class="sc-cond-fields" style="<%= pcState.occupation.enabled ? '' : 'display:none' %>">
+          <div class="sc-cond-checks">
+            <% for (const opt of OCCUPATION_OPTIONS) { %>
+              <label>
+                <input type="checkbox" name="profile_cond_occupation_values" value="<%= opt %>"
+                  <%= pcState.occupation.allowed.includes(opt) ? "checked" : "" %> />
+                <%= opt %>
+              </label>
+            <% } %>
+          </div>
+        </div>
+      </div>
+
+      <!-- 業種 -->
+      <div class="sc-cond-block">
+        <label class="sc-cond-label">
+          <input type="checkbox" name="profile_cond_industry_enabled" value="1"
+            <%= pcState.industry.enabled ? "checked" : "" %>
+            onchange="toggleCondFields('industry-fields', this.checked)" />
+          業種を条件にする
+        </label>
+        <div id="industry-fields" class="sc-cond-fields" style="<%= pcState.industry.enabled ? '' : 'display:none' %>">
+          <div class="sc-cond-checks">
+            <% for (const opt of INDUSTRY_OPTIONS) { %>
+              <label>
+                <input type="checkbox" name="profile_cond_industry_values" value="<%= opt %>"
+                  <%= pcState.industry.allowed.includes(opt) ? "checked" : "" %> />
+                <%= opt %>
+              </label>
+            <% } %>
+          </div>
+        </div>
+      </div>
+
+      <!-- 婚姻状況 -->
+      <div class="sc-cond-block">
+        <label class="sc-cond-label">
+          <input type="checkbox" name="profile_cond_marital_status_enabled" value="1"
+            <%= pcState.marital_status.enabled ? "checked" : "" %>
+            onchange="toggleCondFields('marital-fields', this.checked)" />
+          婚姻状況を条件にする
+        </label>
+        <div id="marital-fields" class="sc-cond-fields" style="<%= pcState.marital_status.enabled ? '' : 'display:none' %>">
+          <div class="sc-cond-checks">
+            <% for (const opt of MARITAL_OPTIONS) { %>
+              <label>
+                <input type="checkbox" name="profile_cond_marital_status_values" value="<%= opt.value %>"
+                  <%= pcState.marital_status.allowed.includes(opt.value) ? "checked" : "" %> />
+                <%= opt.label %>
+              </label>
+            <% } %>
+          </div>
+        </div>
+      </div>
+
+      <!-- 子どもの有無 -->
+      <div class="sc-cond-block">
+        <label class="sc-cond-label">
+          <input type="checkbox" name="profile_cond_has_children_enabled" value="1"
+            <%= pcState.has_children.enabled ? "checked" : "" %>
+            onchange="toggleCondFields('children-fields', this.checked)" />
+          子どもの有無を条件にする
+        </label>
+        <div id="children-fields" class="sc-cond-fields" style="<%= pcState.has_children.enabled ? '' : 'display:none' %>">
+          <div class="sc-cond-checks">
+            <label>
+              <input type="checkbox" name="profile_cond_has_children_values" value="true"
+                <%= pcState.has_children.allowed.includes('true') ? "checked" : "" %> />
+              あり
+            </label>
+            <label>
+              <input type="checkbox" name="profile_cond_has_children_values" value="false"
+                <%= pcState.has_children.allowed.includes('false') ? "checked" : "" %> />
+              なし
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- 都道府県 -->
+      <div class="sc-cond-block">
+        <label class="sc-cond-label">
+          <input type="checkbox" name="profile_cond_prefecture_enabled" value="1"
+            <%= pcState.prefecture.enabled ? "checked" : "" %>
+            onchange="toggleCondFields('prefecture-fields', this.checked)" />
+          都道府県を条件にする
+        </label>
+        <div id="prefecture-fields" class="sc-cond-fields" style="<%= pcState.prefecture.enabled ? '' : 'display:none' %>">
+          <div class="sc-pref-grid">
+            <% for (const pref of PREFECTURES) { %>
+              <label>
+                <input type="checkbox" name="profile_cond_prefecture_values" value="<%= pref %>"
+                  <%= pcState.prefecture.allowed.includes(pref) ? "checked" : "" %> />
+                <%= pref %>
+              </label>
+            <% } %>
+          </div>
+        </div>
+      </div>
+
+      <h3 style="margin:16px 0 8px">■ 設問によるスクリーニング</h3>
+      <div style="background:#f0faf5;border:1px solid #b2dcc8;border-radius:8px;padding:12px;font-size:13px;color:#444;line-height:1.7">
+        各設問の「スクリーニング設問にする」チェックをONにすることで、その設問がスクリーニング設問として扱われます。<br>
+        スクリーニング設問への回答後、上記マイページ条件と合わせて pass / fail を判定します。
+        <% if (project?.id) { %>
+          <br>&rarr; <a href="/admin/projects/<%= project.id %>/questions">設問管理画面で設定する</a>
+        <% } %>
+        <% if (sqList.length > 0) { %>
+          <br><strong>現在のスクリーニング設問: <%= sqList.length %>件</strong>（<%= sqList.map(q => q.question_code).join('、') %>）
+        <% } else { %>
+          <br><span class="muted">現在スクリーニング設問はありません。</span>
+        <% } %>
+      </div>
+
+      <h3 style="margin:16px 0 8px">■ メッセージ</h3>
+      <label>
+        通過時メッセージ
+        <textarea name="screening_pass_message" placeholder="省略時：スクリーニングを通過しました。次のステップへお進みください。"><%= sc.pass_message || "" %></textarea>
+      </label>
+      <label>
+        非通過時メッセージ
+        <textarea name="screening_fail_message" placeholder="省略時：今回はご参加いただけませんでした。またの機会にご協力をお願いします。"><%= sc.fail_message || "" %></textarea>
+      </label>
+
+    </div>
   </section>
 
   <button type="submit"><%= project ? "更新する" : "作成する" %></button>
 </form>
+
+<script>
+function toggleScreeningDetails(enabled) {
+  var el = document.getElementById('screening-details');
+  if (el) el.style.display = enabled ? '' : 'none';
+}
+function toggleCondFields(id, enabled) {
+  var el = document.getElementById(id);
+  if (el) el.style.display = enabled ? '' : 'none';
+}
+</script>
 
 <%- include("../../partials/footer") %>

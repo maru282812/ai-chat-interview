@@ -41,6 +41,10 @@
   const CHOICE_TYPES  = ["single_choice","multi_choice",
                          "hidden_single","hidden_multi","text_with_image","sd"];
   const SCALE_TYPES   = [];
+  // スクリーニング通過対象チェックを表示できる設問タイプ
+  const SCREENING_CHOICE_TYPES = ["single_choice","multi_choice"];
+  const optionScreeningPass = Array.isArray(safeForm.option_screening_pass)
+    ? safeForm.option_screening_pass : [];
   const DISPLAY_MODES = [
     { value: "survey_question", label: "1問ずつ表示 (survey_question)" },
     { value: "survey_page",     label: "ページ単位表示 (survey_page)" },
@@ -232,11 +236,22 @@
         </label>
         <label>
           質問ロール
-          <select name="question_role">
+          <select name="question_role" id="questionRole">
             <% for (const role of ["screening","main","probe_trigger","attribute","comparison_core","free_comment"]) { %>
               <option value="<%= role %>" <%= safeForm.question_role === role ? 'selected' : '' %>><%= role %></option>
             <% } %>
           </select>
+          <%# is_screening_question: hidden+checkbox ペアで確実に値を送る %>
+          <input type="hidden" name="is_screening_question" value="0" />
+          <label style="margin-top:4px;display:flex;align-items:center;gap:6px;font-weight:normal;cursor:pointer" id="screeningCheckLabel">
+            <input type="checkbox" id="screeningCheck" name="is_screening_question" value="1"
+              <%= safeForm.is_screening_question ? 'checked' : '' %>
+              onchange="onScreeningCheckChange(this)" />
+            この設問をスクリーニングに使用する
+          </label>
+          <p id="screeningUnsupportedNote" class="helper-text" style="color:#e08c00;display:none;">
+            このタイプの設問はスクリーニング通過判定に対応していません（条件なし＝全員通過）
+          </p>
         </label>
         <label>
           表示順
@@ -312,11 +327,21 @@
             <% const imgUrl = optionImageUrls[i] || ''; %>
             <% const extraImgs = optionExtraImageUrls[i] || ''; %>
             <% const optDesc = optionDescriptions[i] || ''; %>
+            <% const isScreeningPass = optionScreeningPass[i] === true; %>
             <div class="row-card option-row">
               <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
                 <label style="flex:1;min-width:160px;">
                   選択肢テキスト
                   <input type="text" name="option_labels" value="<%= label %>" placeholder="例: 毎日" />
+                  <%# is_screening_question=true かつ SCREENING_CHOICE_TYPES のとき表示 %>
+                  <%# hiddenが実際の値を保持。checkboxはUIのみで送信しない %>
+                  <input type="hidden" name="option_screening_pass" value="<%= isScreeningPass ? '1' : '0' %>" class="screening-pass-hidden" />
+                  <label class="screening-pass-label" style="margin-top:4px;display:flex;align-items:center;gap:5px;font-size:12px;font-weight:normal;">
+                    <input type="checkbox" class="screening-pass-check"
+                      <%= isScreeningPass ? 'checked' : '' %>
+                      onchange="this.closest('.option-row').querySelector('.screening-pass-hidden').value = this.checked ? '1' : '0'" />
+                    スクリーニング通過対象
+                  </label>
                 </label>
                 <div style="flex:2;min-width:200px;">
                   <label>メイン画像URL（省略可）</label>
@@ -357,6 +382,12 @@
         <div class="inline-actions">
           <button type="button" class="button-link secondary" id="addOptionRow">選択肢を追加</button>
         </div>
+        <p id="screeningPassOffNote" class="helper-text" style="color:#60726f;display:none;">
+          この設問をスクリーニングに使用する場合のみ「スクリーニング通過対象」を設定できます。
+        </p>
+        <p id="screeningPassOnNote" class="helper-text" style="color:#1a7a57;display:none;">
+          通過対象にしたい回答へチェックを入れてください。この回答を選んだ回答者のみ、本案件へ進みます。
+        </p>
       </div>
 
       <!-- 選択肢表示形式 -->
@@ -1057,8 +1088,56 @@
   });
 
   // ----------------------------------------------------------------
+  // スクリーニング設問チェックと通過対象UI の同期
+  // ----------------------------------------------------------------
+  const SCREENING_CHOICE_TYPES_JS = ['single_choice', 'multi_choice'];
+
+  function syncScreeningPassUI() {
+    const isScreening = document.getElementById('screeningCheck')?.checked ?? false;
+    const qType = document.getElementById('questionType')?.value ?? '';
+    const isChoiceType = SCREENING_CHOICE_TYPES_JS.includes(qType);
+    const note = document.getElementById('screeningUnsupportedNote');
+    const canPass = isScreening && isChoiceType;
+
+    // 通過対象チェックボックスの enabled/disabled 切り替え（常時表示）
+    document.querySelectorAll('.screening-pass-label').forEach(el => {
+      const cb = el.querySelector('.screening-pass-check');
+      if (cb) cb.disabled = !canPass;
+      el.style.color = canPass ? '#1a7a57' : '#60726f';
+      el.style.cursor = canPass ? 'pointer' : 'default';
+    });
+
+    // スクリーニング非対応タイプの警告
+    if (note) note.style.display = (isScreening && !isChoiceType) ? '' : 'none';
+
+    // 通過対象ノートの表示切り替え
+    const passOffNote = document.getElementById('screeningPassOffNote');
+    const passOnNote = document.getElementById('screeningPassOnNote');
+    if (passOffNote) passOffNote.style.display = (!canPass && isChoiceType) ? '' : 'none';
+    if (passOnNote) passOnNote.style.display = canPass ? '' : 'none';
+
+    // question_role を自動同期
+    const roleSelect = document.getElementById('questionRole');
+    if (roleSelect) {
+      if (isScreening && roleSelect.value !== 'screening') roleSelect.value = 'screening';
+      if (!isScreening && roleSelect.value === 'screening') roleSelect.value = 'main';
+    }
+  }
+
+  function onScreeningCheckChange(cb) {
+    syncScreeningPassUI();
+  }
+
+  // 質問タイプ変更時にもスクリーニングUIを同期
+  document.getElementById('questionType')?.addEventListener('change', syncScreeningPassUI);
+
+  // 初期表示
+  syncScreeningPassUI();
+
+  // ----------------------------------------------------------------
   // AI 深掘りオプションの表示
   // ----------------------------------------------------------------
+
   function syncProbeOptions() {
     const enabled = document.getElementById('aiProbeEnabled').checked;
     document.getElementById('aiProbeOptions').style.display = enabled ? '' : 'none';
@@ -1107,6 +1186,12 @@
       <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
         <label style="flex:1;min-width:160px;">選択肢テキスト
           <input type="text" name="option_labels" value="${escHtml(value)}" placeholder="例: 毎日" />
+          <input type="hidden" name="option_screening_pass" value="0" class="screening-pass-hidden" />
+          <label class="screening-pass-label" style="margin-top:4px;display:flex;align-items:center;gap:5px;font-size:12px;font-weight:normal;">
+            <input type="checkbox" class="screening-pass-check"
+              onchange="this.closest('.option-row').querySelector('.screening-pass-hidden').value = this.checked ? '1' : '0'" />
+            スクリーニング通過対象
+          </label>
         </label>
         <div style="flex:2;min-width:200px;">
           <label>メイン画像URL（省略可）</label>
@@ -1137,6 +1222,8 @@
       </div>
       <div class="inline-actions"><button type="button" class="button-link danger remove-row">削除</button></div>`;
     attachImageHandlers(d);
+    // 新規行追加時、現在のスクリーニング状態に合わせてラベル表示を同期
+    syncScreeningPassUI();
     return d;
   }
 
@@ -1531,6 +1618,17 @@
         console.warn('tag auto-generate on submit failed', err);
       }
     }
+    // スクリーニング通過対象バリデーション
+    const isScreeningOn = document.getElementById('screeningCheck')?.checked ?? false;
+    const currentQType = document.getElementById('questionType')?.value ?? '';
+    if (isScreeningOn && SCREENING_CHOICE_TYPES_JS.includes(currentQType)) {
+      const passCount = [...document.querySelectorAll('.screening-pass-check')].filter(cb => cb.checked).length;
+      if (passCount === 0) {
+        alert('スクリーニング設問には、最低1つ以上の通過対象回答を設定してください。');
+        return;
+      }
+    }
+
     form.submit();
   });
 

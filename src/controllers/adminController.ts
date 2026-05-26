@@ -1,5 +1,6 @@
 ﻿import type { Request, Response } from "express";
 import { HttpError } from "../lib/http";
+import { logger } from "../lib/logger";
 import { env as appEnv } from "../config/env";
 import { STORAGE_BUCKET } from "../config/storage";
 import {
@@ -46,6 +47,24 @@ import { segmentRepository } from "../repositories/segmentRepository";
 import { userAttributeRepository } from "../repositories/userAttributeRepository";
 import { deliveryCampaignRepository } from "../repositories/deliveryCampaignRepository";
 import type { DisplayTagsParsed, VisibilityCondition } from "../types/questionSchema";
+
+// USERプロファイル管理の簡易認証設定
+const UP_ADMIN_ID = "admin";
+const UP_ADMIN_PASS = "password123";
+const UP_ADMIN_COOKIE = "upadmin_auth";
+const UP_ADMIN_TOKEN = "upadmin_ok_v1";
+
+function upAdminIsAuthenticated(req: Request): boolean {
+  const cookieHeader = req.headers.cookie ?? "";
+  for (const part of cookieHeader.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() === UP_ADMIN_COOKIE && part.slice(eq + 1).trim() === UP_ADMIN_TOKEN) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function routeParam(req: Request, key: string): string {
   const value = req.params[key];
@@ -239,18 +258,109 @@ function buildPostAnalysisFilters(req: Request) {
   };
 }
 
-function parseScreeningPassAction(value: unknown): import("../types/domain").ScreeningPassAction {
-  const s = bodyString(value).trim();
-  if (s === "interview" || s === "manual_hold") return s;
-  return "survey";
-}
-
 function buildScreeningConfig(req: Request): import("../types/domain").ScreeningConfig {
   return {
-    pass_action: parseScreeningPassAction(req.body.screening_pass_action),
+    enabled: req.body.screening_enabled === "1",
     pass_message: bodyString(req.body.screening_pass_message).trim() || null,
     fail_message: bodyString(req.body.screening_fail_message).trim() || null
   };
+}
+
+interface ProfileConditionsState {
+  age: { enabled: boolean; min: number | null; max: number | null };
+  gender: { enabled: boolean; allowed: string[] };
+  occupation: { enabled: boolean; allowed: string[] };
+  industry: { enabled: boolean; allowed: string[] };
+  marital_status: { enabled: boolean; allowed: string[] };
+  has_children: { enabled: boolean; allowed: string[] };
+  prefecture: { enabled: boolean; allowed: string[] };
+}
+
+type ProfileConditionRow = {
+  condition_type: "profile";
+  target_key: string;
+  operator: import("../types/domain").ScreeningOperator;
+  value_json: unknown;
+  priority: number;
+};
+
+function buildProfileConditionsFromRequest(req: Request): ProfileConditionRow[] {
+  const rows: ProfileConditionRow[] = [];
+
+  if (req.body.profile_cond_age_enabled === "1") {
+    const min = parseOptionalInteger(req.body.profile_cond_age_min);
+    const max = parseOptionalInteger(req.body.profile_cond_age_max);
+    if (min !== null && max !== null) {
+      rows.push({ condition_type: "profile", target_key: "age", operator: "between", value_json: [min, max], priority: 0 });
+    } else if (min !== null) {
+      rows.push({ condition_type: "profile", target_key: "age", operator: "gte", value_json: min, priority: 0 });
+    } else if (max !== null) {
+      rows.push({ condition_type: "profile", target_key: "age", operator: "lte", value_json: max, priority: 0 });
+    }
+  }
+
+  for (const key of ["gender", "occupation", "industry", "marital_status", "prefecture"] as const) {
+    if (req.body[`profile_cond_${key}_enabled`] === "1") {
+      const vals = bodyStringArray(req.body[`profile_cond_${key}_values`]).filter(Boolean);
+      // 値未選択でも enabled 状態を保持するため空配列で保存する。
+      // value_json=[] の "in" 条件は screeningService 側で全員通過とみなす。
+      rows.push({ condition_type: "profile", target_key: key, operator: "in", value_json: vals, priority: 0 });
+    }
+  }
+
+  if (req.body.profile_cond_has_children_enabled === "1") {
+    const rawVals = [...new Set(bodyStringArray(req.body.profile_cond_has_children_values).filter(Boolean))];
+    const boolVals = rawVals.map(v => v === "true");
+    if (boolVals.length === 1) {
+      rows.push({ condition_type: "profile", target_key: "has_children", operator: "equals", value_json: boolVals[0], priority: 0 });
+    } else if (boolVals.length > 1) {
+      rows.push({ condition_type: "profile", target_key: "has_children", operator: "in", value_json: boolVals, priority: 0 });
+    } else {
+      // 値未選択でも enabled 状態を保持するため空配列で保存する
+      rows.push({ condition_type: "profile", target_key: "has_children", operator: "in", value_json: [], priority: 0 });
+    }
+  }
+
+  return rows;
+}
+
+function parseProfileConditionsForRender(
+  conditions: import("../types/domain").ScreeningCondition[]
+): ProfileConditionsState {
+  const s: ProfileConditionsState = {
+    age: { enabled: false, min: null, max: null },
+    gender: { enabled: false, allowed: [] },
+    occupation: { enabled: false, allowed: [] },
+    industry: { enabled: false, allowed: [] },
+    marital_status: { enabled: false, allowed: [] },
+    has_children: { enabled: false, allowed: [] },
+    prefecture: { enabled: false, allowed: [] }
+  };
+  for (const c of conditions.filter(c => c.condition_type === "profile")) {
+    if (c.target_key === "age") {
+      s.age.enabled = true;
+      const toAgeNum = (v: unknown): number | null => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      };
+      if (c.operator === "gte") s.age.min = toAgeNum(c.value_json);
+      else if (c.operator === "lte") s.age.max = toAgeNum(c.value_json);
+      else if (c.operator === "between" && Array.isArray(c.value_json)) {
+        s.age.min = toAgeNum(c.value_json[0]);
+        s.age.max = toAgeNum(c.value_json[1]);
+      }
+    } else if (c.target_key === "has_children") {
+      s.has_children.enabled = true;
+      const vals = Array.isArray(c.value_json) ? c.value_json : [c.value_json];
+      s.has_children.allowed = vals.map(String);
+    } else if (c.target_key in s) {
+      const key = c.target_key as keyof Omit<ProfileConditionsState, "age" | "has_children">;
+      s[key].enabled = true;
+      const vals = Array.isArray(c.value_json) ? c.value_json : [c.value_json];
+      s[key].allowed = vals.map(String);
+    }
+  }
+  return s;
 }
 
 function parseStringListField(value: unknown): string[] | null {
@@ -325,6 +435,7 @@ type ProjectDisplayStyle = "survey" | "interview";
 
 type ProjectFormOverrides = Partial<{
   name: string;
+  user_display_title: string;
   client_name: string;
   objective: string;
   status: string;
@@ -410,6 +521,7 @@ function buildProjectForm(project: Project | null, overrides: ProjectFormOverrid
 
   return {
     name,
+    user_display_title: overrides.user_display_title ?? project?.user_display_title ?? "",
     client_name: overrides.client_name ?? project?.client_name ?? "",
     objective,
     status: overrides.status ?? project?.status ?? "draft",
@@ -436,6 +548,7 @@ function buildProjectForm(project: Project | null, overrides: ProjectFormOverrid
 function buildProjectFormOverridesFromRequest(req: Request): ProjectFormOverrides {
   return {
     name: bodyString(req.body.name),
+    user_display_title: bodyString(req.body.user_display_title),
     client_name: bodyString(req.body.client_name),
     objective: bodyString(req.body.objective),
     status: bodyString(req.body.status) || "draft",
@@ -459,6 +572,8 @@ function renderProjectResearchForm(
     errorMessage?: string | null;
     successMessage?: string | null;
     statusCode?: number;
+    screeningConditions?: import("../types/domain").ScreeningCondition[];
+    screeningQuestions?: import("../types/domain").Question[];
   }
 ): void {
   const projectForm = buildProjectForm(input.project, input.projectFormOverrides ?? {});
@@ -466,6 +581,7 @@ function renderProjectResearchForm(
     res.status(input.statusCode);
   }
 
+  const allConditions = input.screeningConditions ?? [];
   res.render("admin/projects/researchForm", {
     title: input.title,
     project: input.project,
@@ -474,7 +590,10 @@ function renderProjectResearchForm(
     successMessage: input.successMessage ?? null,
     projectAiStateTemplates: getProjectAiStateTemplates(),
     projectForm,
-    aiStateDisplay: projectForm.ai_state_summary
+    aiStateDisplay: projectForm.ai_state_summary,
+    screeningConditions: allConditions,
+    screeningQuestions: input.screeningQuestions ?? [],
+    profileConditionsState: parseProfileConditionsForRender(allConditions)
   });
 }
 
@@ -613,6 +732,9 @@ interface QuestionFormValues {
   question_text_caption: string;
   question_display_mode: string;
   page_group_id: string;
+  // --- スクリーニング ---
+  is_screening_question: boolean;
+  option_screening_pass: boolean[];
   // タグフォームフィールド (tab4)
   tag_size: string;
   tag_min: string;
@@ -875,6 +997,12 @@ function buildQuestionFormValues(
     question_text_image_url: overrides.question_text_image_url ?? (question?.question_config?.question_text_image?.mainUrl ?? ""),
     question_text_extra_image_urls: overrides.question_text_extra_image_urls ?? (question?.question_config?.question_text_image?.additionalUrls ?? []).join("\n"),
     question_text_caption: overrides.question_text_caption ?? (question?.question_config?.question_text_image?.caption ?? ""),
+    is_screening_question: overrides.is_screening_question ?? (question?.is_screening_question ?? false),
+    option_screening_pass: overrides.option_screening_pass ?? (() => {
+      const opts = question?.question_config?.options;
+      if (Array.isArray(opts)) return opts.map(o => o.isScreeningPass === true);
+      return [];
+    })(),
   };
 }
 
@@ -989,6 +1117,13 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     tag_af:             bodyString(req.body.tag_af),
     question_display_mode: bodyString(req.body.question_display_mode),
     page_group_id:      bodyString(req.body.page_group_id),
+    is_screening_question: req.body.is_screening_question === "1",
+    option_screening_pass: (() => {
+      const raw = req.body.option_screening_pass;
+      if (Array.isArray(raw)) return raw.map(v => v === "1");
+      if (typeof raw === "string") return [raw === "1"];
+      return [];
+    })(),
   };
 }
 
@@ -1091,6 +1226,7 @@ const CHOICE_QUESTION_TYPES: QuestionType[] = [
 ];
 const MATRIX_QUESTION_TYPES: QuestionType[] = ["matrix_single", "matrix_multi", "matrix_mixed"];
 const MULTI_CHOICE_TYPES: QuestionType[] = ["multi_choice"];
+const SCREENING_CHOICE_QUESTION_TYPES: QuestionType[] = ["single_choice", "multi_choice"];
 
 function buildQuestionConfigFromRequest(
   req: Request,
@@ -1115,6 +1251,13 @@ function buildQuestionConfigFromRequest(
       s.trim().split("\n").map((u) => u.trim()).filter(Boolean)
     );
     const optionDescriptions = bodyStringArray(req.body.option_descriptions).map((d) => d.trim());
+    const isScreeningQ = req.body.is_screening_question === "1";
+    const screeningPassRaw = req.body.option_screening_pass;
+    const screeningPassFlags: boolean[] = (() => {
+      if (Array.isArray(screeningPassRaw)) return screeningPassRaw.map(v => v === "1");
+      if (typeof screeningPassRaw === "string") return [screeningPassRaw === "1"];
+      return [];
+    })();
     questionConfig.options = optionLabels.map((label, i) => {
       const opt: import("../types/domain").QuestionOption = { label, value: label };
       const imageUrl = optionImageUrls[i] ?? "";
@@ -1124,6 +1267,11 @@ function buildQuestionConfigFromRequest(
       const allImages = [imageUrl, ...extraImages].filter(Boolean);
       if (allImages.length > 0) opt.imageUrls = allImages;
       if (description) opt.description = description;
+      if (isScreeningQ) {
+        opt.isScreeningPass = screeningPassFlags[i] === true;
+      } else {
+        delete opt.isScreeningPass;
+      }
       return opt;
     });
     if (MULTI_CHOICE_TYPES.includes(questionType)) {
@@ -1456,6 +1604,7 @@ export const adminController = {
 
       const created = await projectRepository.create({
         name,
+        user_display_title: bodyString(req.body.user_display_title) || null,
         client_name: bodyString(req.body.client_name) || null,
         objective,
         status: bodyString(req.body.status || "draft") as "draft" | "active" | "paused" | "archived",
@@ -1484,8 +1633,17 @@ export const adminController = {
         }),
         ai_state_generated_at: new Date().toISOString(),
         screening_config: buildScreeningConfig(req),
-        screening_last_question_order: parseOptionalInteger(req.body.screening_last_question_order)
+        screening_last_question_order: null
       });
+      try {
+        const { screeningConditionRepository: scRepo } = await import("../repositories/screeningConditionRepository");
+        await scRepo.replaceProfileConditions(created.id, buildProfileConditionsFromRequest(req));
+      } catch (screeningError) {
+        logger.error("createProject: screening_conditions save failed", {
+          projectId: created.id,
+          error: screeningError instanceof Error ? screeningError.message : String(screeningError)
+        });
+      }
       res.redirect(`/admin/projects/${created.id}/questions`);
     } catch (error) {
       renderProjectResearchForm(res, {
@@ -1501,11 +1659,19 @@ export const adminController = {
 
   async editProject(req: Request, res: Response): Promise<void> {
     const project = await projectRepository.getById(routeParam(req, "projectId"));
+    const { screeningConditionRepository } = await import("../repositories/screeningConditionRepository");
+    const [conditions, allQuestions] = await Promise.all([
+      screeningConditionRepository.listByProject(project.id),
+      questionRepository.listByProject(project.id, { includeHidden: false })
+    ]);
+    const screeningQuestions = allQuestions.filter(q => q.question_role === "screening");
     renderProjectResearchForm(res, {
       title: "プロジェクト編集",
       project,
       action: `/admin/projects/${project.id}`,
-      successMessage: resolveNoticeMessage(req.query.notice)
+      successMessage: resolveNoticeMessage(req.query.notice),
+      screeningConditions: conditions,
+      screeningQuestions
     });
   },
 
@@ -1536,6 +1702,7 @@ export const adminController = {
 
       await projectRepository.update(projectId, {
         name,
+        user_display_title: bodyString(req.body.user_display_title) || null,
         client_name: bodyString(req.body.client_name) || null,
         objective,
         status: bodyString(req.body.status || "draft") as "draft" | "active" | "paused" | "archived",
@@ -1555,17 +1722,41 @@ export const adminController = {
         ai_state_json: aiStateJson,
         ai_state_generated_at: new Date().toISOString(),
         screening_config: buildScreeningConfig(req),
-        screening_last_question_order: parseOptionalInteger(req.body.screening_last_question_order)
+        screening_last_question_order: existing.screening_last_question_order ?? null
       });
+      try {
+        const { screeningConditionRepository: scRepo } = await import("../repositories/screeningConditionRepository");
+        await scRepo.replaceProfileConditions(projectId, buildProfileConditionsFromRequest(req));
+      } catch (screeningError) {
+        logger.error("updateProject: screening_conditions save failed", {
+          projectId,
+          error: screeningError instanceof Error ? screeningError.message : String(screeningError)
+        });
+      }
       res.redirect(buildProjectEditRedirectPath(projectId, "project_updated"));
     } catch (error) {
+      let updateErrorConditions: import("../types/domain").ScreeningCondition[] = [];
+      let updateErrorScreeningQuestions: import("../types/domain").Question[] = [];
+      try {
+        const { screeningConditionRepository } = await import("../repositories/screeningConditionRepository");
+        const [conds, allQs] = await Promise.all([
+          screeningConditionRepository.listByProject(projectId),
+          questionRepository.listByProject(projectId, { includeHidden: false })
+        ]);
+        updateErrorConditions = conds;
+        updateErrorScreeningQuestions = allQs.filter(q => q.question_role === "screening");
+      } catch {
+        // DB 未準備の場合は空配列のまま
+      }
       renderProjectResearchForm(res, {
         title: "プロジェクト編集",
         project: existing,
         action: `/admin/projects/${projectId}`,
         projectFormOverrides: buildProjectFormOverridesFromRequest(req),
         errorMessage: getProjectRenderErrorMessage(error, "プロジェクトの更新に失敗しました。"),
-        statusCode: getProjectRenderStatusCode(error)
+        statusCode: getProjectRenderStatusCode(error),
+        screeningConditions: updateErrorConditions,
+        screeningQuestions: updateErrorScreeningQuestions
       });
     }
   },
@@ -1623,13 +1814,21 @@ export const adminController = {
         branchRule
       });
 
+      const createIsScreeningQuestion = req.body.is_screening_question === "1";
+      const createQuestionRole = createIsScreeningQuestion
+        ? "screening" as const
+        : parseQuestionRole(bodyString(req.body.question_role));
+      if (createIsScreeningQuestion && SCREENING_CHOICE_QUESTION_TYPES.includes(questionType)) {
+        const passCount = (questionConfig.options ?? []).filter(o => o.isScreeningPass).length;
+        if (passCount === 0) throw new HttpError(400, "スクリーニング設問には最低1つ以上の通過対象回答を設定してください。");
+      }
       const createMaxProbeCount = parseOptionalInteger(bodyString(req.body.max_probe_count));
       const createTagFields = buildTagFieldsFromRequest(req);
       await questionRepository.create({
         project_id: projectId,
         question_code: questionCode,
         question_text: bodyString(req.body.question_text),
-        question_role: parseQuestionRole(bodyString(req.body.question_role)),
+        question_role: createQuestionRole,
         question_type: questionType,
         is_required: req.body.is_required === "on",
         sort_order: sortOrder,
@@ -1639,6 +1838,7 @@ export const adminController = {
         probe_guideline: bodyString(req.body.probe_guideline) || null,
         max_probe_count: createMaxProbeCount,
         render_strategy: bodyString(req.body.render_strategy) === "dynamic" ? "dynamic" : "static",
+        is_screening_question: createIsScreeningQuestion,
         ...createTagFields,
       });
 
@@ -1726,18 +1926,27 @@ export const adminController = {
         branchRule
       });
 
+      const updateIsScreeningQuestion = req.body.is_screening_question === "1";
+      const updateQuestionRole = updateIsScreeningQuestion
+        ? "screening" as const
+        : parseQuestionRole(bodyString(req.body.question_role));
+      if (updateIsScreeningQuestion && SCREENING_CHOICE_QUESTION_TYPES.includes(questionType)) {
+        const passCount = (questionConfig.options ?? []).filter(o => o.isScreeningPass).length;
+        if (passCount === 0) throw new HttpError(400, "スクリーニング設問には最低1つ以上の通過対象回答を設定してください。");
+      }
       const updateMaxProbeCount = parseOptionalInteger(bodyString(req.body.max_probe_count));
       const updateTagFields = buildTagFieldsFromRequest(req);
       await questionRepository.update(questionId, {
         question_code: questionCode,
         question_text: bodyString(req.body.question_text),
-        question_role: parseQuestionRole(bodyString(req.body.question_role)),
+        question_role: updateQuestionRole,
         question_type: questionType,
         is_required: req.body.is_required === "on",
         sort_order: sortOrder,
         branch_rule: branchRule,
         question_config: questionConfig,
         ai_probe_enabled: req.body.ai_probe_enabled === "on",
+        is_screening_question: updateIsScreeningQuestion,
         probe_guideline: bodyString(req.body.probe_guideline) || null,
         max_probe_count: updateMaxProbeCount,
         render_strategy: bodyString(req.body.render_strategy) === "dynamic" ? "dynamic" : "static",
@@ -3718,5 +3927,147 @@ ${JSON.stringify(questionsForAI, null, 2)}
     const { supabase: db } = await import("../config/supabase");
     await db.from("post_categories").delete().eq("id", id);
     res.redirect("/admin/data-management");
+  },
+
+  // ============================================================
+  // スクリーニング条件管理
+  // ============================================================
+
+  async screeningPage(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    res.redirect(`/admin/projects/${projectId}/edit#screening-section`);
+  },
+
+  async addScreeningCondition(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const conditionType = bodyString(req.body.condition_type).trim();
+    const targetKey = bodyString(req.body.target_key).trim();
+    const operator = bodyString(req.body.operator).trim();
+    const valueRaw = bodyString(req.body.value_json).trim();
+    const priority = Number(bodyString(req.body.priority)) || 0;
+
+    if (!conditionType || !targetKey || !operator || !valueRaw) {
+      res.redirect(`/admin/projects/${projectId}/edit#screening-section`);
+      return;
+    }
+
+    let valueJson: unknown;
+    try {
+      valueJson = JSON.parse(valueRaw);
+    } catch {
+      valueJson = valueRaw;
+    }
+
+    const { screeningConditionRepository } = await import("../repositories/screeningConditionRepository");
+    await screeningConditionRepository.create({
+      project_id: projectId,
+      condition_type: conditionType as import("../types/domain").ScreeningConditionType,
+      target_key: targetKey,
+      operator: operator as import("../types/domain").ScreeningOperator,
+      value_json: valueJson,
+      priority
+    });
+
+    res.redirect(`/admin/projects/${projectId}/edit?notice=project_updated#screening-section`);
+  },
+
+  async deleteScreeningCondition(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const condId = routeParam(req, "condId");
+    const { screeningConditionRepository } = await import("../repositories/screeningConditionRepository");
+    await screeningConditionRepository.delete(condId);
+    res.redirect(`/admin/projects/${projectId}/edit?notice=project_updated#screening-section`);
+  },
+
+  // ============================================================
+  // USERプロファイル管理 (簡易パスワード認証付き)
+  // ============================================================
+
+  async userProfilesLoginPage(req: Request, res: Response): Promise<void> {
+    if (upAdminIsAuthenticated(req)) {
+      res.redirect("/admin/user-profiles");
+      return;
+    }
+    const errorMessage = req.query.error === "1" ? "IDまたはパスワードが違います" : null;
+    res.render("admin/user-profiles/login", { title: "ユーザー情報管理 ログイン", errorMessage });
+  },
+
+  async userProfilesLogin(req: Request, res: Response): Promise<void> {
+    const id = bodyString(req.body.admin_id).trim();
+    const pass = bodyString(req.body.admin_pass).trim();
+    if (id === UP_ADMIN_ID && pass === UP_ADMIN_PASS) {
+      res.setHeader(
+        "Set-Cookie",
+        `${UP_ADMIN_COOKIE}=${UP_ADMIN_TOKEN}; HttpOnly; Path=/admin/user-profiles; SameSite=Strict; Max-Age=86400`
+      );
+      res.redirect("/admin/user-profiles");
+    } else {
+      res.redirect("/admin/user-profiles/login?error=1");
+    }
+  },
+
+  async userProfilesLogout(_req: Request, res: Response): Promise<void> {
+    res.setHeader(
+      "Set-Cookie",
+      `${UP_ADMIN_COOKIE}=; HttpOnly; Path=/admin/user-profiles; SameSite=Strict; Max-Age=0`
+    );
+    res.redirect("/admin/user-profiles/login");
+  },
+
+  async userProfilesAdmin(req: Request, res: Response): Promise<void> {
+    if (!upAdminIsAuthenticated(req)) {
+      res.redirect("/admin/user-profiles/login");
+      return;
+    }
+
+    const { supabase: db } = await import("../config/supabase");
+    const q = req.query as Record<string, string>;
+
+    let query = db.from("user_profiles").select("*", { count: "exact" });
+
+    if (q.nickname) query = query.ilike("nickname", `%${q.nickname}%`);
+    if (q.gender) query = query.eq("gender", q.gender);
+    if (q.prefecture) query = query.eq("prefecture", q.prefecture);
+    if (q.occupation) query = query.ilike("occupation", `%${q.occupation}%`);
+    if (q.industry) query = query.ilike("industry", `%${q.industry}%`);
+    if (q.marital_status) query = query.eq("marital_status", q.marital_status);
+    if (q.has_children === "true") query = query.eq("has_children", true);
+    if (q.has_children === "false") query = query.eq("has_children", false);
+    if (q.profile_completed === "true") query = query.eq("profile_completed", true);
+    if (q.profile_completed === "false") query = query.eq("profile_completed", false);
+    if (q.age_from) {
+      const yearTo = new Date().getFullYear() - Number(q.age_from);
+      query = query.lte("birth_date", `${yearTo}-12-31`);
+    }
+    if (q.age_to) {
+      const yearFrom = new Date().getFullYear() - Number(q.age_to) - 1;
+      query = query.gte("birth_date", `${yearFrom + 1}-01-01`);
+    }
+    if (q.updated_from) query = query.gte("updated_at", q.updated_from);
+    if (q.updated_to) query = query.lte("updated_at", `${q.updated_to}T23:59:59Z`);
+
+    const page = Math.max(1, Number(q.page ?? "1"));
+    const perPage = 50;
+    const offset = (page - 1) * perPage;
+
+    const { data, error, count } = await query
+      .order("updated_at", { ascending: false })
+      .range(offset, offset + perPage - 1);
+
+    if (error) throw new HttpError(500, error.message);
+
+    const profiles = (data ?? []) as import("../types/domain").UserProfile[];
+    const total = count ?? 0;
+    const totalPages = Math.ceil(total / perPage);
+
+    res.render("admin/user-profiles/index", {
+      title: "ユーザー情報管理",
+      profiles,
+      total,
+      page,
+      totalPages,
+      perPage,
+      filters: q,
+    });
   },
 };
