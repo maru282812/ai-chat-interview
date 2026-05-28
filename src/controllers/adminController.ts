@@ -1274,6 +1274,12 @@ function buildQuestionConfigFromRequest(
       }
       return opt;
     });
+    if (process.env.DEBUG_QUESTION_SAVE) {
+      console.log("[question save debug] question_type:", questionType);
+      console.log("[question save debug] raw options payload:", req.body.option_labels);
+      console.log("[question save debug] normalized options:", JSON.stringify(questionConfig.options));
+      console.log("[question save debug] valid options count:", (questionConfig.options ?? []).length);
+    }
     if (MULTI_CHOICE_TYPES.includes(questionType)) {
       const minSelect = parseOptionalInteger(req.body.min_select);
       const maxSelect = parseOptionalInteger(req.body.max_select);

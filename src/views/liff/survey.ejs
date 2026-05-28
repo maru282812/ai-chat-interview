@@ -531,6 +531,14 @@
   // ================================================================
   function startSurvey() {
 
+  // ---- 自由記述系タイプ（統一定義） ----
+  const FREE_TEXT_TYPES = new Set([
+    'free_text_short', 'free_text_long',
+    'short_text', 'long_text', 'text',
+  ]);
+  // 短文扱いになるタイプ（input[type=text] で描画）
+  const FREE_TEXT_SHORT_TYPES = new Set(['free_text_short', 'short_text']);
+
   // ---- 定型文（未入力扱い） ----
   const BOILERPLATE_EXACT = new Set([
     'なし','ない','特になし','特にない','とくになし','不明','わからない','わかりません',
@@ -704,7 +712,7 @@
     return `${answerHtml}
       <p class="chat-selection-error" data-sel-err="${esc(q.question_code)}"></p>
       <div class="chat-next-row">
-        <button type="button" class="chat-next-btn" disabled>回答する</button>
+        <button type="button" class="chat-next-btn" disabled>次へ →</button>
       </div>`;
   }
 
@@ -868,11 +876,17 @@
             cols.map((_c, ci) => `<td><input type="${qType==='matrix_multi'?'checkbox':'radio'}" name="mq_${esc(q.question_code)}_${ri}" value="${ci}" /></td>`).join('') +
             `</tr>`;
         }).join('') + `</table></div>`;
-    } else if (['free_text_long', 'free_text_short'].includes(qType)) {
-      const rows = qType === 'free_text_short' ? 2 : (parsed.rows || 4);
+    } else if (FREE_TEXT_TYPES.has(qType)) {
       const ph = cfg.placeholder || '回答を入力してください';
       const maxLen = cfg.max_length || cfg.maxLength || '';
-      inputHtml = `<textarea class="free-text-input" data-code="${esc(q.question_code)}" rows="${rows}" placeholder="${esc(ph)}"${maxLen ? ` maxlength="${maxLen}"` : ''}></textarea>`;
+      if (FREE_TEXT_SHORT_TYPES.has(qType)) {
+        // 短文自由記述 → input[type=text]
+        inputHtml = `<input type="text" class="free-text-input" data-code="${esc(q.question_code)}" placeholder="${esc(ph)}"${maxLen ? ` maxlength="${maxLen}"` : ''} />`;
+      } else {
+        // 長文自由記述 → textarea
+        const rows = parsed.rows || 4;
+        inputHtml = `<textarea class="free-text-input" data-code="${esc(q.question_code)}" rows="${rows}" placeholder="${esc(ph)}"${maxLen ? ` maxlength="${maxLen}"` : ''}></textarea>`;
+      }
     } else if (qType === 'image_upload') {
       const uploadCfg = cfg.image_upload_config || {};
       const maxCount = uploadCfg.max_count || 1;
@@ -912,8 +926,8 @@
       inputHtml = `<textarea class="free-text-input" data-code="${esc(q.question_code)}" rows="3" placeholder="${esc(ph)}"></textarea>`;
     }
 
-    // hidden系・テキスト系はボタン不要（テキスト系はchatTextRow/chatSendで送信）
-    const NO_BUTTON_TYPES = ['free_text_short', 'free_text_long', 'hidden_single', 'hidden_multi'];
+    // hidden系のみボタン不要（自由記述系はインライン「次へ」ボタンで送信）
+    const NO_BUTTON_TYPES = ['hidden_single', 'hidden_multi'];
     return buildAnswerLayout(q, inputHtml, showSubmitButton && !NO_BUTTON_TYPES.includes(qType));
   }
 
@@ -1143,7 +1157,7 @@
       const q = visibleQs[cursor];
       questionArea.innerHTML = renderQuestion(q, cursor, visibleQs.length);
       bindInputEvents(q);
-      btnBack.style.display = cursor > 0 ? '' : 'none';
+      btnBack.style.display = 'none';
       btnNext.disabled = true;
       progressBar.style.width = (cursor / visibleQs.length * 100) + '%';
       checkNextEnabled(); // 非必須・hidden 設問では即時活性化
@@ -1168,7 +1182,7 @@
         .map((q, i) => renderQuestion(q, i, page.questions.length))
         .join('');
       page.questions.forEach(q => bindInputEvents(q));
-      btnBack.style.display = pageCursor > 0 ? '' : 'none';
+      btnBack.style.display = 'none';
       btnNext.disabled = true;
       progressBar.style.width = (pageCursor / visiblePagesNow.length * 100) + '%';
       checkNextEnabled(); // 非必須・hidden 設問では即時活性化
@@ -1441,6 +1455,8 @@
         return;
       }
 
+      btnNext.disabled = true;
+
       if (DISPLAY_MODE === 'survey_page') {
         const allPages = groupByPage(QUESTIONS);
         const page = allPages.filter(p => p.questions.filter(isVisible).length > 0)[pageCursor];
@@ -1585,13 +1601,6 @@
 
     let chatQueueIndex = 0;
     const visibleQs = QUESTIONS.filter(isVisible);
-
-    // テキスト入力で答えるタイプ（textarea を使う）
-    const CHAT_TEXT_TYPES = new Set(['free_text_short', 'free_text_long']);
-
-    function isChatTextType(q) {
-      return CHAT_TEXT_TYPES.has(q.question_type);
-    }
 
     function scrollToBottom() {
       chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -1786,7 +1795,7 @@
         }
       }
 
-      // textarea (free_text rendered inside chatAnswerArea for matrix_mixed free rows, etc.)
+      // input/textarea（自由記述インライン入力）
       answerRoot.querySelectorAll(`[data-code="${q.question_code}"]`).forEach(el => {
         if ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.type !== 'hidden') {
           el.addEventListener('input', () => {
@@ -1794,10 +1803,20 @@
             el.classList.remove('free-text-required');
             checkChatNextEnabled();
           });
+          // input[type=text] は Enter キーで送信
+          if (el.tagName === 'INPUT' && el.type !== 'hidden') {
+            el.addEventListener('keydown', e => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                const btn = answerRoot.querySelector('.chat-next-btn');
+                if (btn && !btn.disabled) btn.click();
+              }
+            });
+          }
         }
       });
 
-      // ---- インライン送信ボタン（選択式・スケール・マトリクス・画像アップロード） ----
+      // ---- インライン送信ボタン（全タイプ共通） ----
       const inlineSubmitBtn = answerRoot.querySelector('.chat-next-btn');
       if (inlineSubmitBtn) {
         inlineSubmitBtn.addEventListener('click', async () => {
@@ -1962,29 +1981,14 @@
       }
 
       const q = visibleQs[chatQueueIndex];
-      const parsed = q.display_tags_parsed || {};
-      const qText  = applyAns(q.question_text, parsed);
-      if (isChatTextType(q)) {
-        addBubble(qText, 'ai');
-        // テキスト入力モード
-        chatAnswerArea.style.display = 'none';
-        chatAnswerArea.innerHTML = '';
-        chatTextRow.style.display = 'flex';
-        chatNextRow.style.display = 'none';
-        chatInput.disabled = false;
-        chatInput.value = '';
-        chatSend.disabled = true;
-        chatInput.focus();
-      } else {
-        // 選択肢・スケール・マトリクス・画像アップロードモード（送信ボタンはインライン）
-        chatAnswerArea.style.display = 'none';
-        chatAnswerArea.innerHTML = '';
-        chatTextRow.style.display = 'none';
-        chatNextRow.style.display = 'none';
-        chatNext.disabled = true;
-        addQuestionBlock(q);
-        checkChatNextEnabled();
-      }
+      // 全タイプをインラインブロックで描画（自由記述もinput/textareaをインライン表示）
+      chatAnswerArea.style.display = 'none';
+      chatAnswerArea.innerHTML = '';
+      chatTextRow.style.display = 'none';
+      chatNextRow.style.display = 'none';
+      chatNext.disabled = true;
+      addQuestionBlock(q);
+      checkChatNextEnabled();
     }
 
     // ---- テキスト入力 → 送信 ----

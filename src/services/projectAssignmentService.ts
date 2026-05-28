@@ -1,5 +1,6 @@
 ﻿import { HttpError } from "../lib/http";
 import { logger } from "../lib/logger";
+import { getProjectDisplayTitle } from "../lib/projectUtils";
 import {
   projectAssignmentRepository,
   type ProjectAssignmentRecord
@@ -105,7 +106,7 @@ function maxIsoDate(...values: (string | null | undefined)[]): string | null {
 }
 
 function buildAssignmentPushText(project: Project, dueAt: string | null): string {
-  const lines = [`新しいインタビュー案件「${project.name}」を配信しました。`];
+  const lines = [`新しいインタビュー案件「${getProjectDisplayTitle(project)}」を配信しました。`];
   if (dueAt) {
     const due = new Date(dueAt).toLocaleString("ja-JP", {
       timeZone: "Asia/Tokyo",

@@ -8,6 +8,8 @@ liffRoutes.get("/rant", asyncHandler(liffController.rantPage));
 liffRoutes.get("/diary", asyncHandler(liffController.diaryPage));
 liffRoutes.get("/personality", asyncHandler(liffController.personalityPage));
 liffRoutes.get("/mypage", asyncHandler(liffController.mypagePage));
+liffRoutes.get("/profile/check", asyncHandler(liffController.profileCheckPage));
+liffRoutes.get("/profile-check-data", asyncHandler(liffController.getProfileCheckData));
 
 liffRoutes.post("/posts", asyncHandler(liffController.createPost));
 liffRoutes.get("/personality-data", asyncHandler(liffController.personalityData));

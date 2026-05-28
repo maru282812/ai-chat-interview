@@ -1,5 +1,6 @@
 import { HttpError } from "../lib/http";
 import { logger } from "../lib/logger";
+import { getProjectDisplayTitle } from "../lib/projectUtils";
 import {
   projectAssignmentRepository,
   type ProjectAssignmentRecord
@@ -156,7 +157,7 @@ function formatDeadline(deadline: string | null): string | null {
 }
 
 function buildAssignmentPushText(project: Project, deadline: string | null): string {
-  const lines = [`新しいインタビュー案件「${project.name}」を配信しました。`];
+  const lines = [`新しいインタビュー案件「${getProjectDisplayTitle(project)}」を配信しました。`];
   if (deadline) {
     lines.push(`回答期限: ${formatDeadline(deadline)}`);
   }
@@ -166,7 +167,7 @@ function buildAssignmentPushText(project: Project, deadline: string | null): str
 
 function buildAssignmentLinePushText(project: Project, deadline: string | null): string {
   const lines = [
-    `新しいインタビュー案件「${project.name}」を配信しました。`,
+    `新しいインタビュー案件「${getProjectDisplayTitle(project)}」を配信しました。`,
     "このままLINEトークで回答できます。"
   ];
   if (deadline) {
@@ -697,7 +698,7 @@ export const assignmentService = {
         } else {
           const { url } = buildProjectStartUrl(assignment.id);
           await lineMessagingService.push(targetRespondent.line_user_id, [
-            buildProjectStartFlex({ projectName: project.name, url })
+            buildProjectStartFlex({ projectName: getProjectDisplayTitle(project), url })
           ]);
         }
 

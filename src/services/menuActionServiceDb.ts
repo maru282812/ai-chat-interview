@@ -1,5 +1,6 @@
 import { env } from "../config/env";
 import { logger } from "../lib/logger";
+import { getProjectDisplayTitle } from "../lib/projectUtils";
 import {
   evaluateAudienceRule,
   lineMenuActionRepository,
@@ -733,7 +734,7 @@ async function resolveProjectListAction(lineUserId: string): Promise<MenuActionR
     const lines = ["参加可能な案件", ""];
     for (const [index, context] of availableContexts.entries()) {
       lines.push(
-        `${index + 1}. ${context.project.name}（${context.project.reward_points}pt / 期限: ${formatAssignmentDeadline(
+        `${index + 1}. ${getProjectDisplayTitle(context.project)}（${context.project.reward_points}pt / 期限: ${formatAssignmentDeadline(
           context.assignment.deadline ?? context.assignment.due_at
         )} / ${formatAssignmentProgress(context)}）`
       );
@@ -808,7 +809,7 @@ async function resolveProjectListActionWithDiagnostics(
     const lines = ["参加可能な案件", ""];
     for (const [index, context] of availableContexts.entries()) {
       lines.push(
-        `${index + 1}. ${context.project.name}（${context.project.reward_points}pt / 期限: ${formatAssignmentDeadline(
+        `${index + 1}. ${getProjectDisplayTitle(context.project)}（${context.project.reward_points}pt / 期限: ${formatAssignmentDeadline(
           context.assignment.deadline ?? context.assignment.due_at
         )} / ${formatAssignmentProgress(context)}）`
       );

@@ -423,6 +423,100 @@ export const liffController = {
     });
   },
 
+  /**
+   * GET /liff/profile/check
+   * 回答開始前のプロフィール確認専用ページ。
+   * マイページ機能（ポイント・履歴・ランク）は表示せず、
+   * プロフィール確認 → 保存 → 案件へ直接遷移する導線に特化する。
+   */
+  async profileCheckPage(req: Request, res: Response): Promise<void> {
+    const entry = await liffService.getPage("mypage");
+    if (!entry) {
+      throw new HttpError(404, "LIFF entrypoint not found");
+    }
+
+    const rawNext = stringValue(req.query.next);
+    const decodedNext = rawNext.trim() || null;
+    const sessionId = stringValue(req.query.session_id).trim() || null;
+
+    let assignmentId: string | null = null;
+    if (decodedNext) {
+      try {
+        const parsed = new URL(decodedNext, "http://localhost");
+        assignmentId = parsed.searchParams.get("assignment_id");
+      } catch {
+        // ignore
+      }
+    }
+
+    logger.info("profile.check.start", { rawNext, decodedNext, assignmentId, sessionId });
+
+    res.render("liff/profile-check", {
+      title: "プロフィール確認",
+      initialData: {
+        liffId: entry.liffId,
+        next: decodedNext,
+        sessionId,
+        profileUrl: "/liff/profile-check-data",
+        updateUrl: "/liff/mypage-data",
+        confirmMypageUrl: "/liff/session/confirm-mypage",
+      }
+    });
+  },
+
+  /**
+   * GET /liff/profile-check-data
+   * プロフィール確認画面専用の軽量プロフィール取得エンドポイント。
+   * マイページデータ（ランク・取引履歴等）は返さず、profile のみ返す。
+   */
+  async getProfileCheckData(req: Request, res: Response): Promise<void> {
+    // Step 1: LIFF 認証
+    let lineUserId: string;
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        logger.warn("profile.check.auth.noToken", { path: req.path });
+        res.status(401).json({
+          ok: false,
+          code: "NO_TOKEN",
+          message: "認証情報がありません。LINEアプリ内から開き直してください。",
+        });
+        return;
+      }
+      const token = authHeader.slice("Bearer ".length).trim();
+      const verifiedUser = await liffAuthService.verifyIdToken(token);
+      lineUserId = verifiedUser.userId;
+    } catch (err) {
+      const status = err instanceof HttpError ? err.statusCode : 401;
+      logger.error("profile.check.auth.failed", { error: String(err), status });
+      res.status(status).json({
+        ok: false,
+        code: "AUTH_FAILED",
+        message: "LINE認証に失敗しました。LINEアプリ内から開き直してください。",
+      });
+      return;
+    }
+
+    logger.info("profile.check.auth", { lineUserId, hasSession: true });
+
+    // Step 2: プロフィール取得
+    try {
+      const profile = await userProfileRepository.getByLineUserId(lineUserId);
+      logger.info("profile.check.profile", {
+        exists: !!profile,
+        profileCompleted: profile?.profile_completed ?? false,
+      });
+      res.json({ ok: true, user_id: lineUserId, profile: profile ?? null });
+    } catch (err) {
+      logger.error("profile.check.failed", { error: String(err), lineUserId });
+      res.status(500).json({
+        ok: false,
+        code: "DB_ERROR",
+        message: "プロフィール情報の取得に失敗しました。しばらくしてから再度お試しください。",
+      });
+    }
+  },
+
   async getMypageData(req: Request, res: Response): Promise<void> {
     const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
     const lineUserId = verifiedUser.userId;
@@ -568,13 +662,24 @@ export const liffController = {
       return;
     }
 
-    // プロフィール確認: user_id が判明しており、かつ今セッションでまだ確認していない場合はマイページへ誘導する
+    // プロフィール確認: user_id が判明しており、かつ今セッションでまだ確認していない場合はプロフィール確認画面へ誘導する
     if (assignment.user_id && !sessionForCheck?.state_json?.mypage_confirmed_at) {
-      logger.info("[surveyPage] branch=mypageRedirect", { assignmentId });
+      logger.info("[surveyPage] branch=profileCheckRedirect", { assignmentId });
+      // session_id が空のまま渡すと confirm-mypage が 400 になり無限リダイレクトになるため、
+      // セッションが未作成の場合はここで先行作成する
+      if (!sessionForCheck) {
+        const firstQuestion = (await questionRepository.listByProject(project.id)).find(q => !q.is_hidden) ?? null;
+        sessionForCheck = await sessionRepository.create({
+          respondent_id: assignment.respondent_id,
+          project_id: project.id,
+          current_question_id: firstQuestion?.id ?? null,
+          current_phase: "question",
+          status: "active",
+        });
+      }
       const currentUrl = `/liff/survey?assignment_id=${encodeURIComponent(assignmentId)}`;
-      const sessionId = sessionForCheck?.id ?? "";
       res.redirect(
-        `/liff/mypage?next=${encodeURIComponent(currentUrl)}&session_id=${encodeURIComponent(sessionId)}`
+        `/liff/profile/check?next=${encodeURIComponent(currentUrl)}&session_id=${encodeURIComponent(sessionForCheck.id)}`
       );
       return;
     }
@@ -1171,26 +1276,29 @@ export const liffController = {
 
     const projectIds = [...new Set(((assignments ?? []) as { project_id: string }[]).map(a => a.project_id))];
     const { data: projects } = projectIds.length > 0
-      ? await supabase.from("projects").select("id, name, reward_points").in("id", projectIds)
+      ? await supabase.from("projects").select("id, name, user_display_title, reward_points").in("id", projectIds)
       : { data: [] };
 
     const projectMap = Object.fromEntries(
-      ((projects ?? []) as { id: string; name: string; reward_points: number | null }[])
+      ((projects ?? []) as { id: string; name: string; user_display_title: string | null; reward_points: number | null }[])
         .map(p => [p.id, p])
     );
 
     const history = ((assignments ?? []) as {
       id: string; project_id: string; status: string;
       completed_at: string | null; started_at: string | null; assigned_at: string | null;
-    }[]).map(a => ({
-      assignment_id: a.id,
-      project_id: a.project_id,
-      project_name: projectMap[a.project_id]?.name ?? "不明",
-      reward_points: projectMap[a.project_id]?.reward_points ?? null,
-      status: a.status,
-      completed_at: a.completed_at,
-      assigned_at: a.assigned_at,
-    }));
+    }[]).map(a => {
+      const proj = projectMap[a.project_id];
+      return {
+        assignment_id: a.id,
+        project_id: a.project_id,
+        project_name: proj ? (proj.user_display_title?.trim() || proj.name) : "不明",
+        reward_points: proj?.reward_points ?? null,
+        status: a.status,
+        completed_at: a.completed_at,
+        assigned_at: a.assigned_at,
+      };
+    });
 
     res.json({ ok: true, history });
   },

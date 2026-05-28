@@ -633,19 +633,11 @@ export function resolveMatchedBranchCode(
 
 export function validateQuestionConfig(questionType: QuestionType, config: Question["question_config"] | null): string[] {
   const errors: string[] = [];
-  const normalized = normalizeQuestionConfig(questionType, config);
-
-  if (questionType === "text") {
-    const maxLength = normalizeNumber(normalized?.max_length);
-    if (maxLength !== null && maxLength <= 0) {
-      errors.push("text question max_length must be at least 1.");
-    }
-  }
 
   if (questionType === "single_choice" || questionType === "multi_choice") {
-    const options = normalized?.options ?? [];
+    const options = config?.options ?? [];
     if (options.length === 0) {
-      errors.push(`${questionType} requires at least one option.`);
+      errors.push(`${questionType} には選択肢を1つ以上入力してください。`);
     }
 
     const values = options.map((option) => option.value);
@@ -654,8 +646,8 @@ export function validateQuestionConfig(questionType: QuestionType, config: Quest
     }
 
     if (questionType === "multi_choice") {
-      const minSelect = normalizeNumber(normalized?.min_select);
-      const maxSelect = normalizeNumber(normalized?.max_select);
+      const minSelect = normalizeNumber(config?.min_select);
+      const maxSelect = normalizeNumber(config?.max_select);
       if (minSelect !== null && minSelect < 0) {
         errors.push("multi_choice min_select must be 0 or greater.");
       }

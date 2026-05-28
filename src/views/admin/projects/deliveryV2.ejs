@@ -2,6 +2,9 @@
 <div class="stack">
   <div class="card">
     <h2><%= project.name %></h2>
+    <% if (project.user_display_title && project.user_display_title.trim() && project.user_display_title.trim() !== project.name) { %>
+    <p class="muted" style="margin-top:4px;font-size:0.85em;">USER表示タイトル: <strong><%= project.user_display_title %></strong></p>
+    <% } %>
     <p class="muted">Assignment-based delivery management</p>
     <p>
       <a href="/admin/projects/<%= project.id %>/respondents">Respondents</a> |
