@@ -1,3 +1,51 @@
+<%
+function formatAnswerAdmin(answer, question) {
+  if (!answer || !answer.answer_text) return '-';
+  const text = answer.answer_text;
+  if (!question) return text;
+  const qType = question.question_type;
+  const cfg = question.question_config || {};
+
+  if (['matrix_single', 'matrix_multi', 'matrix_mixed'].includes(qType)) {
+    try {
+      const val = JSON.parse(text);
+      if (typeof val !== 'object' || val === null || Array.isArray(val)) return text;
+      const rows = cfg.matrix_rows || cfg.options || [];
+      const cols = (cfg.matrix_cols || []).map(c => typeof c === 'string' ? { label: c } : c);
+      return Object.keys(val).sort((a, b) => parseInt(a) - parseInt(b)).map(ri => {
+        const row = rows[parseInt(ri)];
+        const rowLabel = row ? (row.label || ('行' + (parseInt(ri)+1))) : ('行' + (parseInt(ri)+1));
+        const colVal = val[ri];
+        if (Array.isArray(colVal)) {
+          const colLabels = colVal.map(ci => { const col = cols[parseInt(ci)]; return col ? (col.label || String(parseInt(ci)+1)) : String(parseInt(ci)+1); });
+          return rowLabel + '：' + colLabels.join('・');
+        }
+        const ci = parseInt(colVal);
+        const col = cols[ci];
+        return rowLabel + '：' + (col ? (col.label || String(ci+1)) : String(ci+1));
+      }).join(' / ');
+    } catch(e) { return text; }
+  }
+
+  if (['single_choice', 'text_with_image'].includes(qType)) {
+    const opts = cfg.options || [];
+    const o = opts.find(o => String(o.value) === String(text));
+    return o ? o.label : text;
+  }
+
+  if (qType === 'multi_choice') {
+    const opts = cfg.options || [];
+    return text.split(',').map(v => { const o = opts.find(o => String(o.value) === v.trim()); return o ? o.label : v.trim(); }).join('、');
+  }
+
+  if (['sd', 'numeric'].includes(qType) && (cfg.options || []).length) {
+    const o = (cfg.options || []).find(o => String(o.value) === String(text));
+    return o ? o.label : text;
+  }
+
+  return text;
+}
+%>
 <%- include("../../partials/header", { title }) %>
 <section class="grid">
   <div class="card">
@@ -41,7 +89,10 @@
             <td><span class="tag"><%= group.question.question_role %></span></td>
             <td><strong><%= group.question.question_text %></strong></td>
             <td>
-              <%= group.primaryAnswer?.answer_text || "-" %>
+              <%= formatAnswerAdmin(group.primaryAnswer, group.question) %>
+              <% if (group.primaryAnswer?.answer_text && group.primaryAnswer.answer_text !== formatAnswerAdmin(group.primaryAnswer, group.question)) { %>
+                <div class="muted" style="margin-top:4px;font-size:11px;">raw: <%= group.primaryAnswer.answer_text %></div>
+              <% } %>
               <% if (group.primaryAnswer?.free_text_answer) { %>
                 <div class="muted" style="margin-top: 6px; font-size: 12px;">自由記述:</div>
                 <div class="prelike" style="white-space: pre-wrap;"><%= group.primaryAnswer.free_text_answer %></div>

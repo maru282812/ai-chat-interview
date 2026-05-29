@@ -235,6 +235,15 @@
       background: #2ca87a; color: #fff; border: none; border-radius: 12px;
       font-size: 16px; font-weight: 600; cursor: pointer; text-decoration: none;
     }
+
+    /* ---- タイピングインジケーター ---- */
+    .typing-indicator { display: flex; gap: 5px; align-items: center; padding: 12px 16px; }
+    .typing-dot { width: 8px; height: 8px; border-radius: 50%; background: #b0ccc4; animation: typing-bounce 1.2s infinite ease-in-out; }
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes typing-bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
+    /* ユーザー回答バブルは複数行対応 */
+    .chat-bubble.user { white-space: pre-wrap; word-break: break-word; }
   </style>
 </head>
 <body>
@@ -447,7 +456,8 @@
         url: location.href,
         ua: navigator.userAgent.slice(0, 150),
       });
-      liff.login();
+      // redirectUri を渡して assignment_id / session_id をログイン後も保持する
+      liff.login({ redirectUri: location.href });
       return;
     }
 
@@ -955,6 +965,54 @@
     return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  // ---- 回答値 → ユーザー表示テキスト変換 ----
+  function formatAnswerForDisplay(val, q) {
+    if (val === null || val === undefined) return '';
+    const cfg = q ? (q.question_config || {}) : {};
+    const qType = q ? q.question_type : '';
+
+    // 配列（multi_choice）
+    if (Array.isArray(val)) {
+      const opts = cfg.options || [];
+      return val.map(v => {
+        const o = opts.find(o => String(o.value) === String(v));
+        return o ? o.label : String(v);
+      }).join('、');
+    }
+
+    // オブジェクト（matrix系）
+    if (typeof val === 'object') {
+      if (['matrix_single', 'matrix_multi', 'matrix_mixed'].includes(qType)) {
+        const rows = cfg.matrix_rows || cfg.options || [];
+        const colObjects = (cfg.matrix_cols || []).map(c => typeof c === 'string' ? { label: c } : c);
+        const parts = [];
+        Object.keys(val).sort((a, b) => parseInt(a) - parseInt(b)).forEach(ri => {
+          const row = rows[parseInt(ri)];
+          const rowLabel = row ? (row.label || ('行' + (parseInt(ri)+1))) : ('行' + (parseInt(ri)+1));
+          const colVal = val[ri];
+          if (Array.isArray(colVal)) {
+            const colLabels = colVal.map(ci => {
+              const col = colObjects[parseInt(ci)];
+              return col ? (col.label || String(parseInt(ci)+1)) : String(parseInt(ci)+1);
+            });
+            parts.push(rowLabel + '：' + colLabels.join('・'));
+          } else {
+            const ci = parseInt(colVal);
+            const col = colObjects[ci];
+            parts.push(rowLabel + '：' + (col ? (col.label || String(ci+1)) : String(ci+1)));
+          }
+        });
+        return parts.join('\n');
+      }
+      return JSON.stringify(val);
+    }
+
+    // スカラー（single_choice / sd / numeric など）
+    const opts = cfg.options || [];
+    const o = opts.find(o => String(o.value) === String(val));
+    return o ? o.label : String(val ?? '');
+  }
+
   // ---- image_upload 補足テキストの必須チェック ----
   function isImageTextRequired(q) {
     return q.question_config?.image_upload_config?.text_input_mode === 'required';
@@ -1152,6 +1210,7 @@
     }
 
     function renderQuestionMode() {
+      btnNext.textContent = '次へ →';
       visibleQs = QUESTIONS.filter(isVisible); // 再評価
       if (cursor >= visibleQs.length) { showComplete(); return; }
       const q = visibleQs[cursor];
@@ -1164,6 +1223,7 @@
     }
 
     function renderPageMode() {
+      btnNext.textContent = '次へ →';
       const allPages = groupByPage(QUESTIONS);
       const visiblePagesNow = allPages.map(p => ({
         ...p,
@@ -1428,6 +1488,7 @@
           probeSubmitBtn.disabled = true;
           probeArea.style.display = '';
           btnNext.disabled = true;
+          btnNext.textContent = '次へ →';
           btnBack.style.display = 'none';
           return true;
         }
@@ -1456,6 +1517,7 @@
       }
 
       btnNext.disabled = true;
+      btnNext.textContent = '確認しています...';
 
       if (DISPLAY_MODE === 'survey_page') {
         const allPages = groupByPage(QUESTIONS);
@@ -1604,6 +1666,19 @@
 
     function scrollToBottom() {
       chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function showTypingIndicator() {
+      const wrap = document.createElement('div');
+      wrap.className = 'chat-bubble-wrap ai';
+      wrap.innerHTML = '<div class="chat-bubble ai typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>';
+      chatMessages.appendChild(wrap);
+      scrollToBottom();
+      return wrap;
+    }
+
+    function hideTypingIndicator(wrap) {
+      if (wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
     }
 
     function addBubble(text, role) {
@@ -1830,19 +1905,7 @@
           await submitAnswer(q.question_code, val);
           freezeLatestQuestionBlock();
 
-          // 表示テキスト生成
-          const cfg = q.question_config || {};
-          const opts = cfg.options || [];
-          let displayText;
-          if (Array.isArray(val)) {
-            displayText = val.map(v => { const o = opts.find(o => o.value === v); return o ? o.label : v; }).join('、');
-          } else if (val !== null && typeof val === 'object') {
-            displayText = JSON.stringify(val);
-          } else {
-            const o = opts.find(o => String(o.value) === String(val));
-            displayText = o ? o.label : String(val ?? '');
-          }
-
+          const displayText = formatAnswerForDisplay(val, q);
           await advanceAfterAnswer(q, displayText);
         });
       }
@@ -1998,8 +2061,8 @@
 
     async function advanceAfterAnswer(q, displayText) {
       addBubble(displayText, 'user');
+      const typingWrap = showTypingIndicator();
 
-      // AI 深掘り
       if (q.ai_probe_enabled) {
         try {
           const res = await fetch('/liff/chat', {
@@ -2009,8 +2072,8 @@
           });
           const data = await res.json();
           if (data.probe_question) {
+            hideTypingIndicator(typingWrap);
             addBubble(data.probe_question, 'ai');
-            // 深掘り中はテキスト入力エリアに戻す
             chatTextRow.style.display = 'flex';
             chatNextRow.style.display = 'none';
             chatAnswerArea.style.display = 'none';
@@ -2020,8 +2083,12 @@
             return;
           }
         } catch(e) { console.error(e); }
+      } else {
+        // 次の質問表示前に自然な待ち時間（タイピング感）
+        await new Promise(r => setTimeout(r, 600));
       }
 
+      hideTypingIndicator(typingWrap);
       // 次の質問へ
       const nextCode = resolveNext(q);
       if (nextCode) {
@@ -2058,25 +2125,7 @@
       await submitAnswer(q.question_code, val);
       freezeLatestQuestionBlock();
 
-      // 表示用テキストを生成（配列なら結合、オブジェクトなら JSON）
-      let displayText;
-      if (Array.isArray(val)) {
-        const cfg = q.question_config || {};
-        const opts = cfg.options || [];
-        const labels = val.map(v => {
-          const o = opts.find(o => o.value === v);
-          return o ? o.label : v;
-        });
-        displayText = labels.join('、');
-      } else if (val !== null && typeof val === 'object') {
-        displayText = JSON.stringify(val);
-      } else {
-        const cfg = q.question_config || {};
-        const opts = cfg.options || [];
-        const o = opts.find(o => String(o.value) === String(val));
-        displayText = o ? o.label : String(val ?? '');
-      }
-
+      const displayText = formatAnswerForDisplay(val, q);
       await advanceAfterAnswer(q, displayText);
     });
 

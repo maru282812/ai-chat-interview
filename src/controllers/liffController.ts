@@ -430,10 +430,10 @@ export const liffController = {
    * プロフィール確認 → 保存 → 案件へ直接遷移する導線に特化する。
    */
   async profileCheckPage(req: Request, res: Response): Promise<void> {
-    const entry = await liffService.getPage("mypage");
-    if (!entry) {
-      throw new HttpError(404, "LIFF entrypoint not found");
-    }
+    // profile-check は常に survey フローからサーバーリダイレクトで到達する。
+    // survey LIFF コンテキスト内で別の LIFF ID（mypage）を liff.init() すると
+    // LINE SDK が "Invalid LIFF ID" を返すため、survey LIFF ID を使う。
+    const liffConfig = getSurveyLiffConfig();
 
     const rawNext = stringValue(req.query.next);
     const decodedNext = rawNext.trim() || null;
@@ -449,17 +449,29 @@ export const liffController = {
       }
     }
 
-    logger.info("profile.check.start", { rawNext, decodedNext, assignmentId, sessionId });
+    logger.info("profile.check.start", {
+      rawNext,
+      decodedNext,
+      assignmentId,
+      sessionId,
+      liffIdEnv: "LINE_LIFF_ID_SURVEY",
+      liffIdSet: Boolean(liffConfig.liffId),
+    });
 
     res.render("liff/profile-check", {
       title: "プロフィール確認",
       initialData: {
-        liffId: entry.liffId,
+        liffId: liffConfig.liffId,
+        liffIdEnv: "LINE_LIFF_ID_SURVEY",
         next: decodedNext,
         sessionId,
         profileUrl: "/liff/profile-check-data",
         updateUrl: "/liff/mypage-data",
         confirmMypageUrl: "/liff/session/confirm-mypage",
+        isDev: env.NODE_ENV !== "production",
+        allowAuthSkip: liffConfig.skipAllowed,
+        appBaseUrl: env.APP_BASE_URL,
+        liffChannelIdLast4: env.LINE_LIFF_CHANNEL_ID?.slice(-4) ?? null,
       }
     });
   },
@@ -484,16 +496,25 @@ export const liffController = {
         return;
       }
       const token = authHeader.slice("Bearer ".length).trim();
-      const verifiedUser = await liffAuthService.verifyIdToken(token);
+      const verifiedUser = await liffAuthService.verifyIdToken(token, {
+        path: req.path,
+        userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : undefined,
+        referer: typeof req.headers.referer === "string" ? req.headers.referer : undefined,
+      });
       lineUserId = verifiedUser.userId;
     } catch (err) {
+      const errCode = err instanceof HttpError ? err.message : "LIFF_AUTH_FAILED";
       const status = err instanceof HttpError ? err.statusCode : 401;
-      logger.error("profile.check.auth.failed", { error: String(err), status });
-      res.status(status).json({
-        ok: false,
-        code: "AUTH_FAILED",
-        message: "LINE認証に失敗しました。LINEアプリ内から開き直してください。",
-      });
+      logger.error("profile.check.auth.failed", { errorCode: errCode, status });
+
+      const codeMap: Record<string, { code: string; message: string }> = {
+        TOKEN_EXPIRED:      { code: "TOKEN_EXPIRED",      message: "認証情報の有効期限が切れました。LINEから開き直してください。" },
+        INVALID_LIFF_CONFIG:{ code: "INVALID_LIFF_CONFIG", message: "LIFF設定に問題があります。運営にお問い合わせください。" },
+        NO_ID_TOKEN:        { code: "NO_ID_TOKEN",         message: "認証情報がありません。LINEアプリ内から開き直してください。" },
+      };
+      const mapped = codeMap[errCode] ?? { code: "AUTH_FAILED", message: "LINE認証に失敗しました。LINEアプリ内から開き直してください。" };
+
+      res.status(status).json({ ok: false, ...mapped });
       return;
     }
 

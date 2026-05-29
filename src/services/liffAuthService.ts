@@ -8,16 +8,24 @@ export interface VerifiedLiffUser {
   pictureUrl: string | null;
 }
 
+export interface VerifyIdTokenCtx {
+  path?: string;
+  userAgent?: string;
+  referer?: string;
+}
+
 export const liffAuthService = {
-  async verifyIdToken(idToken: string): Promise<VerifiedLiffUser> {
+  async verifyIdToken(idToken: string, ctx?: VerifyIdTokenCtx): Promise<VerifiedLiffUser> {
     if (!env.LINE_LIFF_CHANNEL_ID) {
-      logger.error("liffAuth.verifyIdToken.noChannelId", {});
+      logger.error("liffAuth.verifyIdToken.noChannelId", {
+        hint: "LINE_LIFF_CHANNEL_ID must be the LINE Login channel ID (not the Messaging API channel ID)",
+      });
       throw new HttpError(503, "LINE_LIFF_CHANNEL_ID is not configured");
     }
 
     const normalizedToken = idToken.trim();
     if (!normalizedToken) {
-      throw new HttpError(401, "LIFF ID token is missing");
+      throw new HttpError(401, "NO_ID_TOKEN");
     }
 
     const payload = new URLSearchParams({
@@ -40,8 +48,31 @@ export const liffAuthService = {
     }
 
     if (!response.ok) {
-      logger.warn("liffAuth.verifyIdToken.lineApiRejected", { status: response.status });
-      throw new HttpError(401, "Failed to verify LIFF ID token");
+      let bodyText = "";
+      try { bodyText = await response.text(); } catch { /* ignore */ }
+      const isTokenExpired = bodyText.includes("IdToken expired");
+      const isWrongChannel = !isTokenExpired && (
+        bodyText.includes("wrong channel") ||
+        bodyText.includes("invalid_client") ||
+        bodyText.includes("Invalid LIFF ID")
+      );
+      logger.warn("liffAuth.verifyIdToken.lineApiRejected", {
+        status: response.status,
+        errorType: isTokenExpired ? "TOKEN_EXPIRED" : isWrongChannel ? "INVALID_LIFF_CONFIG" : "LIFF_AUTH_FAILED",
+        hasIdToken: Boolean(normalizedToken),
+        hasChannelId: Boolean(env.LINE_LIFF_CHANNEL_ID),
+        channelIdEnv: "LINE_LIFF_CHANNEL_ID",
+        path: ctx?.path,
+        userAgent: ctx?.userAgent?.slice(0, 200),
+        referer: ctx?.referer,
+      });
+      if (isTokenExpired) {
+        throw new HttpError(401, "TOKEN_EXPIRED");
+      }
+      if (isWrongChannel) {
+        throw new HttpError(401, "INVALID_LIFF_CONFIG");
+      }
+      throw new HttpError(401, "LIFF_AUTH_FAILED");
     }
 
     const data = (await response.json()) as {

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>プロフィール確認</title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
     <%- include('../partials/liff-auth') %>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -134,12 +135,11 @@
 
     <script>
     (() => {
-      const { liffId, next, sessionId, profileUrl, updateUrl, confirmMypageUrl } =
+      const { liffId, liffIdEnv, next, sessionId, profileUrl, updateUrl, confirmMypageUrl, isDev, allowAuthSkip, appBaseUrl, liffChannelIdLast4 } =
         JSON.parse(document.getElementById("initial-data").dataset.json || "{}");
 
       const appView     = document.getElementById("app-view");
       const loadingView = document.getElementById("loading-view");
-      let idToken = null;
 
       function esc(v) {
         return String(v ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
@@ -158,6 +158,135 @@
           <div style="font-size:40px;margin-bottom:12px;">⚠️</div>
           <p style="color:#c0392b;font-size:14px;">${esc(msg)}</p>
         </div>`);
+      }
+
+      function showExternalBrowserGuide() {
+        // next パラメータから assignment_id を抽出して LIFF URL を構成する
+        let assignmentId = null;
+        if (next) {
+          try {
+            const qs = next.includes('?') ? next.split('?')[1] : next;
+            assignmentId = new URLSearchParams(qs).get('assignment_id');
+          } catch (_e) {}
+        }
+        // スマホの LINE アプリで開く URL（liff.line.me 経由が確実）
+        const qrUrl = liffId
+          ? 'https://liff.line.me/' + liffId + (assignmentId ? '?assignment_id=' + encodeURIComponent(assignmentId) : '')
+          : location.href;
+
+        const devNote = isDev
+          ? `<div style="margin-top:16px;padding:12px 14px;background:#f5f5f5;border-radius:8px;text-align:left;">
+               <p style="font-size:11px;color:#666;margin:0 0 4px;font-weight:600;">[Dev] デバッグ情報</p>
+               <p style="font-size:11px;color:#888;margin:0 0 2px;">liffIdEnv: ${esc(liffIdEnv || 'LINE_LIFF_ID_SURVEY')}</p>
+               <p style="font-size:11px;color:#888;margin:0 0 2px;">liffIdSet: ${liffId ? 'true' : 'false'}</p>
+               <p style="font-size:11px;color:#888;margin:0 0 2px;">isInClient: false</p>
+               <p style="font-size:11px;color:#888;margin:0 0 2px;">path: ${esc(location.pathname)}</p>
+               <p style="font-size:11px;color:#888;margin:0 0 2px;">next: ${esc(next || '(none)')}</p>
+               <p style="font-size:11px;color:#888;margin:0 0 2px;">sessionId: ${esc(sessionId || '(none)')}</p>
+               <p style="font-size:11px;color:#888;margin:8px 0 4px;font-weight:600;">QR URL:</p>
+               <p style="font-size:11px;color:#333;word-break:break-all;margin:0;font-family:monospace;background:#fff;padding:6px;border-radius:4px;">${esc(qrUrl)}</p>
+             </div>`
+          : "";
+
+        show(`
+          <div class="card" style="text-align:center;padding:32px 20px;">
+            <div style="font-size:48px;margin-bottom:16px;">📱</div>
+            <h2 style="font-size:17px;font-weight:700;margin-bottom:12px;color:#1a2f2a;">
+              スマホのLINEアプリで開いてください
+            </h2>
+            <p style="font-size:14px;color:#60726f;line-height:1.8;margin-bottom:20px;">
+              この画面はLINEアプリ内から開く必要があります。<br>
+              スマホでQRコードを読み取ってください。
+            </p>
+            <div style="display:flex;justify-content:center;margin-bottom:16px;">
+              <div id="pc-qrcode" style="border:4px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.1);border-radius:8px;overflow:hidden;"></div>
+            </div>
+            <p style="font-size:12px;color:#60726f;margin-bottom:16px;">LINEアプリのQRコードリーダーで読み取ってください</p>
+            <button id="btn-copy-url" style="display:inline-block;padding:10px 20px;background:#f0f4f3;color:#2ca87a;border:1.5px solid #2ca87a;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;">
+              URLをコピー
+            </button>
+            ${devNote}
+          </div>
+        `);
+
+        // QRコード生成
+        const qrEl = document.getElementById('pc-qrcode');
+        if (qrEl) {
+          if (typeof QRCode !== 'undefined') {
+            try {
+              new QRCode(qrEl, {
+                text: qrUrl,
+                width: 200,
+                height: 200,
+                colorDark: '#000000',
+                colorLight: '#ffffff',
+                correctLevel: QRCode.CorrectLevel.M,
+              });
+            } catch (e) {
+              console.warn('[ProfileCheck] QRCode generation failed', e);
+              qrEl.innerHTML = `<p style="font-size:12px;color:#999;padding:20px;">QRコードを生成できませんでした</p>`;
+            }
+          } else {
+            // ライブラリ未ロード時はURLをそのまま表示
+            qrEl.innerHTML = `<p style="font-size:11px;color:#888;word-break:break-all;padding:10px;max-width:200px;font-family:monospace;">${esc(qrUrl)}</p>`;
+          }
+        }
+
+        // コピーボタン
+        document.getElementById('btn-copy-url')?.addEventListener('click', async () => {
+          const btn = document.getElementById('btn-copy-url');
+          try {
+            await navigator.clipboard.writeText(qrUrl);
+            if (btn) { btn.textContent = 'コピーしました ✓'; }
+            setTimeout(() => { if (btn) btn.textContent = 'URLをコピー'; }, 2000);
+          } catch (_e) {
+            if (btn) { btn.textContent = 'コピー失敗'; }
+            setTimeout(() => { if (btn) btn.textContent = 'URLをコピー'; }, 2000);
+          }
+        });
+      }
+
+      // アプリ側のURLだけを使った安全な redirectUri を生成する（LINEエラーURLを引き継がない）
+      function buildSafeRedirectUri() {
+        const url = new URL(window.location.origin + window.location.pathname);
+        const currentParams = new URLSearchParams(window.location.search);
+        for (const key of ['next', 'session_id', 'assignment_id']) {
+          const v = currentParams.get(key);
+          if (v) url.searchParams.set(key, v);
+        }
+        return url.toString();
+      }
+
+      // LINE Login 設定エラー画面（QRコード案内ではなく原因表示）
+      function showLineLoginError(errorCode, errorDesc) {
+        sessionStorage.removeItem('liff_pc_login_retry');
+        const retryUri = buildSafeRedirectUri();
+        const devNote = isDev
+          ? `<div style="margin-top:16px;padding:12px 14px;background:#f5f5f5;border-radius:8px;text-align:left;">
+               <p style="font-size:11px;color:#666;margin:0 0 4px;font-weight:600;">[Dev] デバッグ情報</p>
+               <p style="font-size:11px;color:#888;margin:0 0 2px;">liffIdEnv: ${esc(liffIdEnv || 'LINE_LIFF_ID_SURVEY')}</p>
+               <p style="font-size:11px;color:#888;margin:0 0 2px;">liffIdLast4: ${esc(liffId ? liffId.slice(-4) : '(none)')}</p>
+               <p style="font-size:11px;color:#888;margin:0 0 2px;">channelIdLast4: ${esc(liffChannelIdLast4 || '(none)')}</p>
+               <p style="font-size:11px;color:#888;margin:0 0 2px;">appBaseUrl: ${esc(appBaseUrl || '(none)')}</p>
+               <p style="font-size:11px;color:#888;margin:0 0 2px;">origin: ${esc(location.origin)}</p>
+               <p style="font-size:11px;color:#888;margin:8px 0 4px;font-weight:600;">redirectUri:</p>
+               <p style="font-size:11px;color:#333;word-break:break-all;margin:0;font-family:monospace;background:#fff;padding:6px;border-radius:4px;">${esc(retryUri)}</p>
+             </div>`
+          : "";
+        show(`
+          <div class="card" style="text-align:center;padding:40px 20px;">
+            <div style="font-size:40px;margin-bottom:12px;">⚠️</div>
+            <h2 style="font-size:16px;font-weight:700;margin-bottom:12px;color:#c0392b;">LINE Login でエラーが発生しました</h2>
+            <p style="font-size:13px;color:#444;line-height:1.7;margin-bottom:16px;">
+              LIFF ID・Endpoint URL の設定が正しくない可能性があります。<br>
+              スマホの LINE アプリから開き直すか、管理者にお問い合わせください。
+            </p>
+            ${errorCode ? `<p style="font-size:12px;color:#888;margin-bottom:4px;">エラー: ${esc(errorCode)}</p>` : ''}
+            ${errorDesc ? `<p style="font-size:12px;color:#888;margin-bottom:16px;">${esc(errorDesc)}</p>` : ''}
+            <a href="${esc(retryUri)}" style="display:inline-block;padding:12px 24px;background:#2ca87a;color:#fff;border-radius:10px;text-decoration:none;font-size:14px;font-weight:600;">再試行する</a>
+            ${devNote}
+          </div>
+        `);
       }
 
       // セッション確認 → next へ遷移
@@ -369,18 +498,31 @@
           };
 
           try {
+            const freshToken = liff.getIDToken();
+            if (!freshToken) {
+              statusEl.textContent = "認証情報を取得できませんでした。ページを開き直してください。";
+              statusEl.className = "status-msg error";
+              return;
+            }
             const res = await fetch(updateUrl, {
               method: "POST",
-              headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${freshToken}` },
               body: JSON.stringify(payload)
             });
             if (!res.ok) {
               let msg = "保存に失敗しました。";
               try {
                 const errData = await res.json();
-                if (errData.error) msg = errData.error;
-                else if (errData.message) msg = errData.message;
-              } catch (_) { /* ignore */ }
+                if (res.status === 401) {
+                  msg = "認証情報の有効期限が切れました。LINEから開き直してください。";
+                } else if (errData.error) {
+                  msg = errData.error;
+                } else if (errData.message) {
+                  msg = errData.message;
+                }
+              } catch (_) {
+                if (res.status === 401) msg = "認証情報の有効期限が切れました。LINEから開き直してください。";
+              }
               throw new Error(msg);
             }
 
@@ -396,37 +538,142 @@
       }
 
       async function load() {
+        // LINEエラーパラメータが URL に含まれる場合はログインせずエラー表示
+        // （例: LINE Login が 400 を返して ?error=Bad+Request&error_description=... が付いた場合）
+        const _urlParams = new URLSearchParams(location.search);
+        const _lineErr = _urlParams.get('error');
+        const _lineErrDesc = _urlParams.get('error_description');
+        if (_lineErr || _lineErrDesc) {
+          console.error('[ProfileCheck] LINE error params in current URL', {
+            error: _lineErr,
+            error_description: _lineErrDesc,
+          });
+          showLineLoginError(_lineErr, _lineErrDesc);
+          return;
+        }
+
+        const _safeRedirectUri = buildSafeRedirectUri();
+
+        console.log("[ProfileCheck] startup", {
+          liffIdEnv: liffIdEnv || 'LINE_LIFF_ID_SURVEY',
+          liffIdLast4: liffId ? liffId.slice(-4) : '(none)',
+          liffIdSet: !!liffId,
+          channelIdLast4: liffChannelIdLast4 || '(none)',
+          appBaseUrl: appBaseUrl || '(none)',
+          origin: location.origin,
+          redirectUri: _safeRedirectUri,
+          isDev: !!isDev,
+          allowAuthSkip: !!allowAuthSkip,
+          next: next || '(none)',
+          sessionId: sessionId || '(none)',
+        });
+
         if (!liffId) {
+          console.error("[ProfileCheck] LIFF ID not set", { liffIdEnv: liffIdEnv || 'LINE_LIFF_ID_SURVEY' });
           showError("LIFF IDが設定されていません。管理者にお問い合わせください。");
           return;
         }
-        console.log("[ProfileCheck] load start", { liffId, next, sessionId });
-        try {
-          const token = await LiffAuth.initLiffOrWebAuth(liffId);
-          if (!token) return; // LINE Login リダイレクト中
-          idToken = token;
-          console.log("[ProfileCheck] LIFF auth ok, fetching profile from", profileUrl);
 
-          const res = await fetch(profileUrl, { headers: { Authorization: `Bearer ${idToken}` } });
+        try {
+          // Step 1: LIFF SDK 初期化
+          await liff.init({ liffId });
+          const isInClient = liff.isInClient();
+          const isLoggedIn = liff.isLoggedIn();
+          const hasIdToken = Boolean(liff.getIDToken());
+
+          console.log("[ProfileCheck] liff state", {
+            isInClient,
+            isLoggedIn,
+            hasIdToken,
+            isDev: !!isDev,
+            allowAuthSkip: !!allowAuthSkip,
+            currentPath: location.pathname,
+            next: next || '(none)',
+            sessionId: sessionId || '(none)',
+          });
+
+          // Step 2: 認証分岐
+          if (isInClient) {
+            // スマホLINEアプリ内: 通常 LIFF 認証
+            console.log("[ProfileCheck] branch=mobile_liff_auth");
+            if (!isLoggedIn) {
+              console.warn("[ProfileCheck] not logged in in LINE client, redirecting to LINE Login");
+              liff.login({ redirectUri: _safeRedirectUri });
+              return;
+            }
+          } else {
+            // PCブラウザ / 外部ブラウザ
+            // 1. 開発環境スキップ（最優先）
+            if (isDev && allowAuthSkip) {
+              console.log("[ProfileCheck] branch=pc_dev_auth_skip → skipping profile check");
+              await confirmAndGoToSurvey();
+              return;
+            }
+            // 2. LINE Web Login 済みでトークンあり → そのまま続行
+            if (isLoggedIn && hasIdToken) {
+              console.log("[ProfileCheck] branch=pc_token_auth");
+            } else {
+              // 3. 未ログイン → LINE Web Login を試みる（1回限り）
+              const PC_LOGIN_KEY = "liff_pc_login_retry";
+              if (!sessionStorage.getItem(PC_LOGIN_KEY)) {
+                sessionStorage.setItem(PC_LOGIN_KEY, "1");
+                console.log("[ProfileCheck] branch=pc_login_attempt → redirecting to LINE Login", { redirectUri: _safeRedirectUri });
+                liff.login({ redirectUri: _safeRedirectUri });
+                return;
+              }
+              // LINE Login 試行済みだが依然トークンなし → 設定エラー表示
+              sessionStorage.removeItem(PC_LOGIN_KEY);
+              console.log("[ProfileCheck] branch=pc_login_failed (no token after login attempt)");
+              showLineLoginError(null, null);
+              return;
+            }
+          }
+
+          // Step 3: API 呼び出し直前にトークンを再取得（古いトークンを使い回さない）
+          const token = liff.getIDToken();
+          if (!token) {
+            throw new Error("認証トークンを取得できませんでした。LINEから開き直してください。");
+          }
+          console.log("[ProfileCheck] auth ok, fetching profile", { isInClient, isLoggedIn, currentPath: location.pathname });
+
+          // Step 4: サーバーからプロフィール取得
+          const res = await fetch(profileUrl, { headers: { Authorization: `Bearer ${token}` } });
           if (!res.ok) {
             let msg = "情報の取得に失敗しました。ページを開き直してください。";
+            let code = "";
             try {
               const errData = await res.json();
-              const code = errData.code || "";
-              if (code === "NO_TOKEN" || code === "AUTH_FAILED") {
-                msg = "LINE認証に失敗しました。LINEアプリ内から開き直してください。";
-              } else if (code === "DB_ERROR") {
-                msg = "サーバーエラーが発生しました。しばらくしてから再度お試しください。";
-              } else if (errData.message) {
-                msg = errData.message;
-              }
-              console.error("[ProfileCheck] profile fetch error", { status: res.status, code, message: errData.message });
+              code = errData.code || "";
+              if (errData.message) msg = errData.message;
+              console.error("[ProfileCheck] profile fetch error", { status: res.status, code });
             } catch (_) {
               console.error("[ProfileCheck] profile fetch error (non-json)", { status: res.status });
+            }
+            if (code === "TOKEN_EXPIRED") {
+              const RETRY_KEY = "liff_profile_check_token_retry";
+              if (!sessionStorage.getItem(RETRY_KEY)) {
+                sessionStorage.setItem(RETRY_KEY, "1");
+                try { liff.logout(); } catch (_e) {}
+                liff.login({ redirectUri: _safeRedirectUri });
+                return;
+              }
+              showError("認証情報の有効期限が切れました。LINEから開き直してください。");
+              return;
+            }
+            if (code === "INVALID_LIFF_CONFIG") {
+              showError("LIFF設定に問題があります。LINEアプリを更新するか、運営にお問い合わせください。");
+              return;
+            }
+            if (code === "NO_TOKEN" || code === "NO_ID_TOKEN" || code === "AUTH_FAILED") {
+              msg = "LINE認証に失敗しました。LINEアプリ内から開き直してください。";
+            } else if (code === "DB_ERROR") {
+              msg = "サーバーエラーが発生しました。しばらくしてから再度お試しください。";
             }
             throw new Error(msg);
           }
 
+          sessionStorage.removeItem("liff_profile_check_token_retry");
+          sessionStorage.removeItem("liff_pc_login_retry");
           const data = await res.json();
           console.log("[ProfileCheck] profile loaded", {
             exists: !!data.profile,

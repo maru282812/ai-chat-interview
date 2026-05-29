@@ -10,8 +10,7 @@
 (function () {
   'use strict';
 
-  var _token = null;
-  var _ready = false;
+  var _initialized = false;
 
   function _log(msg, data) {
     try { console.log('[LiffAuth] ' + msg, data || {}); } catch (_e) {}
@@ -25,8 +24,6 @@
    * @returns {Promise<string|null>} IDトークン（リダイレクトが起きた場合はnull）
    */
   async function initLiffOrWebAuth(liffId) {
-    if (_ready && _token) return _token;
-
     _log('init start', {
       liffId: liffId,
       sdkLoaded: typeof liff !== 'undefined',
@@ -41,18 +38,25 @@
       throw new Error('LIFF IDが設定されていません。管理者にお問い合わせください。');
     }
 
-    await liff.init({ liffId: liffId });
+    if (!_initialized) {
+      await liff.init({ liffId: liffId });
+      _initialized = true;
+    }
 
-    _log('init done', {
-      isInClient: liff.isInClient(),
-      isLoggedIn: liff.isLoggedIn(),
+    var isInClient = liff.isInClient();
+    var isLoggedIn = liff.isLoggedIn();
+    var hasIdToken = Boolean(liff.getIDToken());
+
+    _log('liff state', {
+      hasIdToken: hasIdToken,
+      isLoggedIn: isLoggedIn,
+      isInClient: isInClient,
+      currentPath: location.pathname,
     });
 
-    if (!liff.isLoggedIn()) {
-      // PCブラウザ・外部ブラウザで未ログインの場合: LINE Loginへリダイレクト
-      // リダイレクト後にこのページへ戻り、再度initが走ってログイン済み状態になる
-      _log('not logged in – redirecting to LINE Login');
-      liff.login();
+    if (!isLoggedIn) {
+      _log('not logged in – redirecting to LINE Login', { redirectUri: location.href });
+      liff.login({ redirectUri: location.href });
       return null;
     }
 
@@ -61,15 +65,14 @@
       throw new Error('認証トークンを取得できませんでした。もう一度お試しください。');
     }
 
-    _ready = true;
-    _token = token;
-    _log('auth ok', { isInClient: liff.isInClient() });
+    _log('auth ok', { isInClient: isInClient });
     return token;
   }
 
-  /** キャッシュ済みトークンを返す（initLiffOrWebAuth呼び出し後のみ有効） */
+  /** 最新のIDトークンを返す（initLiffOrWebAuth呼び出し後のみ有効） */
   function getCurrentAuthToken() {
-    return _token;
+    if (typeof liff === 'undefined' || !liff.isLoggedIn()) return null;
+    return liff.getIDToken();
   }
 
   /**
@@ -78,6 +81,22 @@
    */
   async function requireLoginIfNeeded(liffId) {
     return initLiffOrWebAuth(liffId);
+  }
+
+  /**
+   * IdToken expired 時のリカバリー。
+   * sessionStorage で 1 回まで制限（無限ループ防止）。
+   * @returns {boolean} true = リダイレクト中, false = リトライ上限に達したため中断
+   */
+  function handleTokenExpired() {
+    var KEY = 'liff_token_expired_retry';
+    if (sessionStorage.getItem(KEY)) {
+      return false;
+    }
+    sessionStorage.setItem(KEY, '1');
+    try { liff.logout(); } catch (_e) {}
+    liff.login({ redirectUri: location.href });
+    return true;
   }
 
   /**
@@ -100,6 +119,7 @@
     initLiffOrWebAuth:    initLiffOrWebAuth,
     getCurrentAuthToken:  getCurrentAuthToken,
     requireLoginIfNeeded: requireLoginIfNeeded,
+    handleTokenExpired:   handleTokenExpired,
     closeOrBack:          closeOrBack,
   };
 }());
