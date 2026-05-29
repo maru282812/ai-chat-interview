@@ -1,44 +1,168 @@
 <%- include("../../partials/header", { title }) %>
-<div class="card" style="margin-bottom: 16px;">
-  <h2>CSV Exports</h2>
-  <p>
-    <a href="/admin/exports/answers.csv">answers.csv</a> |
-    <a href="/admin/exports/messages.csv">messages.csv</a> |
-    <a href="/admin/exports/analysis.csv">analysis.csv</a> |
-    <a href="/admin/exports/points.csv">points.csv</a> |
-    <a href="/admin/exports/ranks.csv">ranks.csv</a>
-  </p>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>ポイント管理</h2>
+  <div style="display:flex;gap:8px">
+    <a href="/admin/badges" class="btn-secondary">バッジ管理</a>
+    <a href="/admin/ranks" class="btn-secondary">ランク設定</a>
+    <a href="/admin/exports/points.csv">points.csv</a>
+  </div>
 </div>
 
-<section class="grid">
+<!-- サマリーカード -->
+<section class="grid" style="margin-bottom:1.5rem">
   <div class="card">
-    <h2>Rank Thresholds</h2>
-    <% for (const rank of ranks) { %>
-      <p><strong><%= rank.rank_name %></strong>: <%= rank.min_points %> pt</p>
+    <div class="muted" style="font-size:12px">ユーザー総数</div>
+    <h2><%= summaries.length %></h2>
+  </div>
+  <div class="card">
+    <div class="muted" style="font-size:12px">総発行ポイント（合計）</div>
+    <h2><%= summaries.reduce((s, u) => s + u.lifetime_points, 0).toLocaleString() %> pt</h2>
+  </div>
+  <div class="card">
+    <div class="muted" style="font-size:12px">回答経験者</div>
+    <h2><%= summaries.filter(u => u.total_answer_days > 0).length %></h2>
+  </div>
+  <div class="card">
+    <div class="muted" style="font-size:12px">アクティブストリーク（7日+）</div>
+    <h2><%= summaries.filter(u => u.current_streak >= 7).length %></h2>
+  </div>
+</section>
+
+<!-- ランク別分布 -->
+<section class="card" style="margin-bottom:1.5rem">
+  <h3 style="margin-bottom:.75rem">ランク別分布</h3>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <% const rankGroups = {}; %>
+    <% for (const u of summaries) { %>
+      <% const rk = u.rank_name || 'ブロンズ'; %>
+      <% rankGroups[rk] = (rankGroups[rk] || 0) + 1; %>
+    <% } %>
+    <% const RANK_ORDER = ['ブロンズ','シルバー','ゴールド','プラチナ','ダイヤモンド']; %>
+    <% for (const rn of RANK_ORDER) { %>
+      <% const cnt = rankGroups[rn] || 0; %>
+      <div style="text-align:center;padding:12px 20px;background:#f8f9fa;border-radius:8px;min-width:80px">
+        <div style="font-size:20px"><%= summaries.find(u => u.rank_name === rn)?.rank_badge || '🏅' %></div>
+        <div style="font-size:13px;font-weight:600;margin-top:4px"><%= rn %></div>
+        <div style="font-size:20px;font-weight:700;color:#2ca87a"><%= cnt %></div>
+        <div class="muted" style="font-size:11px">人</div>
+      </div>
     <% } %>
   </div>
 </section>
 
-<table style="margin-top: 16px;">
-  <thead>
-    <tr>
-      <th>Name</th>
-      <th>Status</th>
-      <th>Total Points</th>
-      <th>Current Rank</th>
-      <th>Action</th>
-    </tr>
-  </thead>
-  <tbody>
-    <% for (const respondent of respondents) { %>
+<!-- ユーザー一覧テーブル -->
+<section>
+  <h3 style="margin-bottom:.5rem">ユーザー別ポイント一覧</h3>
+
+  <!-- 検索 -->
+  <div style="margin-bottom:.75rem">
+    <input type="text" id="search_input" placeholder="名前・LINE USER IDで検索..."
+           style="width:280px" oninput="filterTable(this.value)">
+  </div>
+
+  <table id="points_table">
+    <thead>
       <tr>
-        <td><%= respondent.display_name || respondent.line_user_id %></td>
-        <td><%= respondent.status %></td>
-        <td><%= respondent.total_points %></td>
-        <td><%= respondent.current_rank?.rank_name || "-" %></td>
-        <td><a href="/admin/respondents/<%= respondent.id %>">詳細</a></td>
+        <th>ユーザー</th>
+        <th style="text-align:right">保有 pt</th>
+        <th style="text-align:right">累計 pt</th>
+        <th>ランク</th>
+        <th style="text-align:center">連続</th>
+        <th style="text-align:center">最長</th>
+        <th style="text-align:center">回答日数</th>
+        <th>最終回答</th>
+        <th>操作</th>
       </tr>
-    <% } %>
-  </tbody>
-</table>
+    </thead>
+    <tbody>
+      <% for (const u of summaries) { %>
+      <tr data-search="<%= (u.display_name || '').toLowerCase() + ' ' + u.line_user_id.toLowerCase() %>">
+        <td>
+          <div style="font-weight:600"><%= u.display_name || u.line_user_id.slice(0,12) + '...' %></div>
+          <div class="muted" style="font-size:11px"><%= u.line_user_id %></div>
+        </td>
+        <td style="text-align:right;font-weight:600"><%= u.total_points.toLocaleString() %></td>
+        <td style="text-align:right"><span class="muted"><%= u.lifetime_points.toLocaleString() %></span></td>
+        <td>
+          <% if (u.rank_badge && u.rank_name) { %>
+            <span><%= u.rank_badge %> <%= u.rank_name %></span>
+          <% } else { %>
+            <span class="muted">-</span>
+          <% } %>
+        </td>
+        <td style="text-align:center">
+          <% if (u.current_streak > 0) { %>
+            <span style="color:<%= u.current_streak >= 7 ? '#f5a623' : '#333' %>;font-weight:<%= u.current_streak >= 7 ? '700' : '400' %>">
+              🔥 <%= u.current_streak %>日
+            </span>
+          <% } else { %>
+            <span class="muted">-</span>
+          <% } %>
+        </td>
+        <td style="text-align:center"><span class="muted"><%= u.longest_streak %>日</span></td>
+        <td style="text-align:center"><span class="muted"><%= u.total_answer_days %>日</span></td>
+        <td>
+          <% if (u.last_answered_date) { %>
+            <span class="muted" style="font-size:12px"><%= new Date(u.last_answered_date).toLocaleDateString('ja-JP') %></span>
+          <% } else { %>
+            <span class="muted">-</span>
+          <% } %>
+        </td>
+        <td style="white-space:nowrap">
+          <button type="button" class="btn-secondary" style="padding:2px 8px;font-size:12px"
+                  onclick="openAdjust('<%= u.line_user_id %>','<%= (u.display_name || u.line_user_id.slice(0,12)).replace(/'/g,\"\\\\'\" ) %>')">
+            pt調整
+          </button>
+        </td>
+      </tr>
+      <% } %>
+      <% if (summaries.length === 0) { %>
+        <tr><td colspan="9" class="muted" style="text-align:center">データがありません</td></tr>
+      <% } %>
+    </tbody>
+  </table>
+</section>
+
+<!-- ポイント調整モーダル -->
+<div id="adjustModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:1000">
+  <div style="background:#fff;max-width:400px;margin:100px auto;padding:24px;border-radius:8px;position:relative">
+    <button onclick="closeAdjust()" style="position:absolute;top:12px;right:12px;background:none;border:none;font-size:20px;cursor:pointer">✕</button>
+    <h4 style="margin-bottom:1rem" id="adjust_title">ポイント調整</h4>
+    <form id="adjustForm" method="post" action="">
+      <div class="form-group">
+        <label>ポイント（＋付与 / −減算）</label>
+        <input type="number" name="points" required style="width:100%"
+               placeholder="例: 100 または -50">
+      </div>
+      <div class="form-group">
+        <label>理由</label>
+        <input type="text" name="reason" required style="width:100%" placeholder="例：キャンペーンボーナス">
+      </div>
+      <div style="display:flex;gap:12px">
+        <button type="submit" class="btn">調整を実行</button>
+        <button type="button" onclick="closeAdjust()" class="btn-secondary">キャンセル</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function filterTable(q) {
+  const lower = q.toLowerCase();
+  document.querySelectorAll('#points_table tbody tr').forEach(tr => {
+    const text = tr.getAttribute('data-search') || '';
+    tr.style.display = text.includes(lower) ? '' : 'none';
+  });
+}
+function openAdjust(lineUserId, name) {
+  document.getElementById('adjust_title').textContent = 'ポイント調整：' + name;
+  document.getElementById('adjustForm').action = '/admin/user-points/' + lineUserId + '/adjust';
+  document.getElementById('adjustModal').style.display = '';
+}
+function closeAdjust() {
+  document.getElementById('adjustModal').style.display = 'none';
+}
+</script>
+
 <%- include("../../partials/footer") %>

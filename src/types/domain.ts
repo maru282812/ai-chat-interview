@@ -942,3 +942,89 @@ export interface LineWebhookEvent {
     [key: string]: unknown;
   };
 }
+
+// ── user_points / user_ranks / badges / streaks ────────────────────
+
+export type UserPointTransactionType =
+  | "daily_survey"
+  | "interview_complete"
+  | "project_completion"
+  | "streak_bonus"
+  | "birthday_bonus"
+  | "campaign_bonus"
+  | "attribute_update"
+  | "first_bonus"
+  | "continuity_bonus"
+  | "project_bonus"
+  | "manual_adjustment"
+  | "redemption";
+
+export interface UserPoints {
+  line_user_id: string;
+  total_points: number;
+  available_points: number;
+  lifetime_points: number;
+  updated_at: string;
+}
+
+export interface PointHistory {
+  id: UUID;
+  line_user_id: string;
+  transaction_type: UserPointTransactionType;
+  points: number;
+  reason: string;
+  reference_type: string | null;
+  reference_id: UUID | null;
+  created_at: string;
+}
+
+export interface UserRank {
+  line_user_id: string;
+  rank_id: UUID;
+  updated_at: string;
+}
+
+export interface UserBadge {
+  id: UUID;
+  badge_code: string;
+  badge_name: string;
+  description: string | null;
+  icon_emoji: string;
+  condition_type: string;
+  condition_value: Record<string, unknown>;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface UserBadgeAward {
+  id: UUID;
+  line_user_id: string;
+  badge_code: string;
+  awarded_at: string;
+}
+
+export interface UserStreak {
+  line_user_id: string;
+  current_streak: number;
+  longest_streak: number;
+  last_answered_date: string | null;
+  total_answer_days: number;
+  streak_updated_at: string;
+}
+
+export interface UserPointSummary {
+  line_user_id: string;
+  display_name: string | null;
+  total_points: number;
+  available_points: number;
+  lifetime_points: number;
+  rank_code: string | null;
+  rank_name: string | null;
+  rank_badge: string | null;
+  current_streak: number;
+  longest_streak: number;
+  total_answer_days: number;
+  last_answered_date: string | null;
+  points_updated_at: string | null;
+}

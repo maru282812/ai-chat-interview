@@ -44,3 +44,8 @@ liffRoutes.get("/survey", asyncHandler(liffController.surveyPage));
 
 liffRoutes.get("/contact", asyncHandler(liffController.contactPage));
 liffRoutes.post("/contact", asyncHandler(liffController.submitContact));
+
+// デイリーアンケート
+liffRoutes.get("/daily-survey", asyncHandler(liffController.dailySurveyPage));
+liffRoutes.get("/daily-survey-data", asyncHandler(liffController.getDailySurveyData));
+liffRoutes.post("/daily-survey/:surveyId/answer", asyncHandler(liffController.submitDailySurveyAnswer));

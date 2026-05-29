@@ -1,0 +1,272 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:1rem">
+  <a href="/admin/daily-surveys" class="btn-secondary">← 一覧に戻る</a>
+  <h2><%= mode === 'create' ? 'デイリーアンケート作成' : 'デイリーアンケート編集' %></h2>
+</div>
+
+<form method="post" action="<%= mode === 'create' ? '/admin/daily-surveys' : '/admin/daily-surveys/' + survey.id %>">
+
+  <div class="card" style="margin-bottom:1rem">
+    <h3>基本設定</h3>
+
+    <div class="form-group">
+      <label>タイトル <span style="color:red">*</span></label>
+      <input type="text" name="title" value="<%= survey?.title || '' %>" required
+             placeholder="例：今日の1問" style="width:100%">
+    </div>
+
+    <div class="form-group">
+      <label>説明（管理用メモ）</label>
+      <textarea name="description" rows="2" style="width:100%"><%= survey?.description || '' %></textarea>
+    </div>
+
+    <div class="form-group">
+      <label>報酬タイプ</label>
+      <select name="reward_type" id="reward_type_select" onchange="toggleRewardFields(this.value)">
+        <option value="fixed" <%= (!survey || survey.reward_type === 'fixed') ? 'selected' : '' %>>固定ポイント</option>
+        <option value="random" <%= (survey?.reward_type === 'random') ? 'selected' : '' %>>ランダム（範囲指定）</option>
+      </select>
+    </div>
+
+    <div id="reward_fixed" class="form-group">
+      <label>付与ポイント</label>
+      <input type="number" name="reward_points" value="<%= survey?.reward_points ?? 5 %>" min="1" max="9999">
+      <span class="muted"> pt</span>
+    </div>
+
+    <div id="reward_random" class="form-group" style="display:none">
+      <label>ポイント範囲</label>
+      <input type="number" name="reward_min_points" value="<%= survey?.reward_min_points ?? 3 %>" min="1" max="9999" style="width:80px">
+      <span> 〜 </span>
+      <input type="number" name="reward_max_points" value="<%= survey?.reward_max_points ?? 20 %>" min="1" max="9999" style="width:80px">
+      <span class="muted"> pt</span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:1rem">
+    <h3>配信設定</h3>
+
+    <div class="form-group">
+      <label>通知テンプレート</label>
+      <select name="notification_template_id">
+        <option value="">-- デフォルト --</option>
+        <% for (const t of templates) { %>
+          <option value="<%= t.id %>"
+            <%= (survey?.notification_template_id === t.id) ? 'selected' : '' %>>
+            <%= t.name %> <% if (t.is_default) { %>(デフォルト)<% } %>
+          </option>
+        <% } %>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>対象セグメント</label>
+      <select name="target_segment_id">
+        <option value="">-- 全ユーザー --</option>
+        <% for (const seg of segments) { %>
+          <option value="<%= seg.id %>"
+            <%= (survey?.target_segment_id === seg.id) ? 'selected' : '' %>>
+            <%= seg.name %>
+            <% if (seg.estimated_count !== null) { %> (<%= seg.estimated_count %>人)<% } %>
+          </option>
+        <% } %>
+      </select>
+    </div>
+
+    <div class="form-group" style="display:flex;gap:24px;flex-wrap:wrap">
+      <div>
+        <label>配信予定日時</label>
+        <input type="datetime-local" name="scheduled_at"
+               value="<%= survey?.scheduled_at ? survey.scheduled_at.slice(0,16) : '' %>">
+      </div>
+      <div>
+        <label>回答期限</label>
+        <input type="datetime-local" name="expires_at"
+               value="<%= survey?.expires_at ? survey.expires_at.slice(0,16) : '' %>">
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:12px">
+    <button type="submit" class="btn">
+      <%= mode === 'create' ? '作成する' : '保存する' %>
+    </button>
+    <a href="/admin/daily-surveys" class="btn-secondary">キャンセル</a>
+  </div>
+</form>
+
+<% if (mode === 'edit' && survey) { %>
+<!-- ─────────────────────────────────────────── 設問管理 ── -->
+<hr style="margin:2rem 0">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h3>設問一覧 (<%= questions.length %> 件)</h3>
+</div>
+
+<% if (questions.length > 0) { %>
+<table style="margin-bottom:1.5rem">
+  <thead>
+    <tr>
+      <th style="width:40px">順序</th>
+      <th>設問文</th>
+      <th>種別</th>
+      <th>選択肢数</th>
+      <th>属性キー</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% const qtLabel = { single_choice:'単一選択', multiple_choice:'複数選択', text:'自由記述', scale:'スケール' }; %>
+    <% for (const q of questions) { %>
+    <tr>
+      <td style="text-align:center"><%= q.sort_order %></td>
+      <td><%= q.question_text %></td>
+      <td><span class="muted"><%= qtLabel[q.question_type] || q.question_type %></span></td>
+      <td style="text-align:center">
+        <% if (['single_choice','multiple_choice'].includes(q.question_type)) { %>
+          <%= q.answer_options.length %>
+        <% } else { %>
+          <span class="muted">-</span>
+        <% } %>
+      </td>
+      <td><span class="muted"><%= q.attribute_key || '-' %></span></td>
+      <td style="white-space:nowrap">
+        <button type="button" class="btn-secondary" style="padding:2px 8px;font-size:12px"
+                onclick="openEditQuestion('<%= q.id %>',
+                  `<%= q.question_text.replace(/`/g,'\\`') %>`,
+                  '<%= q.question_type %>',
+                  '<%= q.attribute_key || '' %>',
+                  '<%= q.sort_order %>',
+                  '<%= JSON.stringify(q.answer_options).replace(/'/g, '&#39;') %>')">
+          編集
+        </button>
+        <form method="post" action="/admin/daily-surveys/<%= survey.id %>/questions/<%= q.id %>/delete"
+              style="display:inline;margin-left:4px"
+              onsubmit="return confirm('この設問を削除しますか？')">
+          <button type="submit" class="btn-danger" style="padding:2px 8px;font-size:12px">削除</button>
+        </form>
+      </td>
+    </tr>
+    <% } %>
+  </tbody>
+</table>
+<% } else { %>
+<p class="muted" style="margin-bottom:1rem">設問がありません。下のフォームから追加してください。</p>
+<% } %>
+
+<!-- 設問追加フォーム -->
+<div class="card" style="margin-bottom:1rem">
+  <h4>設問を追加</h4>
+  <form method="post" action="/admin/daily-surveys/<%= survey.id %>/questions" id="addQuestionForm">
+    <div class="form-group">
+      <label>設問文 <span style="color:red">*</span></label>
+      <input type="text" name="question_text" required placeholder="例：朝食は何を食べますか？" style="width:100%">
+    </div>
+    <div class="form-group" style="display:flex;gap:16px;flex-wrap:wrap">
+      <div>
+        <label>種別</label>
+        <select name="question_type" id="qtype_select" onchange="toggleOptionsField(this.value)">
+          <option value="single_choice">単一選択</option>
+          <option value="multiple_choice">複数選択</option>
+          <option value="text">自由記述</option>
+          <option value="scale">スケール</option>
+        </select>
+      </div>
+      <div>
+        <label>表示順序</label>
+        <input type="number" name="sort_order" value="<%= questions.length * 10 %>" min="0" style="width:80px">
+      </div>
+      <div>
+        <label>属性キー（任意）</label>
+        <input type="text" name="attribute_key" placeholder="例：housing_type" style="width:160px">
+      </div>
+    </div>
+    <div id="options_field" class="form-group">
+      <label>選択肢（1行に1つ、または JSON配列）</label>
+      <textarea name="answer_options" rows="4" style="width:100%"
+                placeholder='["はい", "いいえ"]&#10;または&#10;はい&#10;いいえ'></textarea>
+      <p class="muted" style="font-size:12px">
+        JSON例: [{"label":"はい","value":"yes"},{"label":"いいえ","value":"no"}]<br>
+        テキスト1行入力の場合は自動で value=opt_1, opt_2... が付与されます
+      </p>
+    </div>
+    <button type="submit" class="btn">設問を追加</button>
+  </form>
+</div>
+
+<!-- 設問編集モーダル -->
+<div id="editQuestionModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:1000;overflow:auto">
+  <div style="background:#fff;max-width:600px;margin:60px auto;padding:24px;border-radius:8px;position:relative">
+    <button onclick="closeEditQuestion()" style="position:absolute;top:12px;right:12px;background:none;border:none;font-size:20px;cursor:pointer">✕</button>
+    <h4 style="margin-bottom:1rem">設問を編集</h4>
+    <form id="editQuestionForm" method="post" action="">
+      <div class="form-group">
+        <label>設問文</label>
+        <input type="text" name="question_text" id="edit_question_text" required style="width:100%">
+      </div>
+      <div class="form-group" style="display:flex;gap:16px;flex-wrap:wrap">
+        <div>
+          <label>種別</label>
+          <select name="question_type" id="edit_qtype">
+            <option value="single_choice">単一選択</option>
+            <option value="multiple_choice">複数選択</option>
+            <option value="text">自由記述</option>
+            <option value="scale">スケール</option>
+          </select>
+        </div>
+        <div>
+          <label>表示順序</label>
+          <input type="number" name="sort_order" id="edit_sort_order" min="0" style="width:80px">
+        </div>
+        <div>
+          <label>属性キー</label>
+          <input type="text" name="attribute_key" id="edit_attribute_key" style="width:160px">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>選択肢（JSON）</label>
+        <textarea name="answer_options" id="edit_answer_options" rows="4" style="width:100%"></textarea>
+      </div>
+      <div style="display:flex;gap:12px">
+        <button type="submit" class="btn">保存</button>
+        <button type="button" onclick="closeEditQuestion()" class="btn-secondary">キャンセル</button>
+      </div>
+    </form>
+  </div>
+</div>
+<% } %>
+
+<script>
+function toggleRewardFields(val) {
+  document.getElementById('reward_fixed').style.display  = val === 'fixed'  ? '' : 'none';
+  document.getElementById('reward_random').style.display = val === 'random' ? '' : 'none';
+}
+toggleRewardFields(document.getElementById('reward_type_select').value);
+
+function toggleOptionsField(val) {
+  document.getElementById('options_field').style.display =
+    ['single_choice','multiple_choice'].includes(val) ? '' : 'none';
+}
+toggleOptionsField(document.getElementById('qtype_select')?.value ?? 'single_choice');
+
+function openEditQuestion(id, text, type, attrKey, sortOrder, optionsJson) {
+  document.getElementById('editQuestionForm').action =
+    '/admin/daily-surveys/<%= survey?.id %>/questions/' + id;
+  document.getElementById('edit_question_text').value = text;
+  document.getElementById('edit_qtype').value = type;
+  document.getElementById('edit_attribute_key').value = attrKey;
+  document.getElementById('edit_sort_order').value = sortOrder;
+  try {
+    const opts = JSON.parse(optionsJson);
+    document.getElementById('edit_answer_options').value = JSON.stringify(opts, null, 2);
+  } catch {
+    document.getElementById('edit_answer_options').value = optionsJson;
+  }
+  document.getElementById('editQuestionModal').style.display = '';
+}
+function closeEditQuestion() {
+  document.getElementById('editQuestionModal').style.display = 'none';
+}
+</script>
+
+<%- include("../../partials/footer") %>

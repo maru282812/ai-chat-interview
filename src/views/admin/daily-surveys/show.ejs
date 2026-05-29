@@ -1,0 +1,200 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const statusLabel = { draft:'下書き', scheduled:'配信予約', active:'配信中', paused:'停止中', completed:'完了' };
+const statusClass  = { draft:'', scheduled:'badge-blue', active:'badge-green', paused:'badge-yellow', completed:'badge-gray' };
+const qp = new URLSearchParams(queryParams || '');
+const deliveredCount = qp.get('delivered');
+const failedCount    = qp.get('failed');
+%>
+
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:1rem">
+  <a href="/admin/daily-surveys" class="btn-secondary">← 一覧</a>
+  <h2><%= survey.title %></h2>
+  <span class="badge <%= statusClass[survey.status] || '' %>"><%= statusLabel[survey.status] || survey.status %></span>
+</div>
+
+<% if (typeof deliveredCount !== 'undefined' && deliveredCount !== null) { %>
+<div style="background:#d4edda;border:1px solid #c3e6cb;padding:12px 16px;border-radius:6px;margin-bottom:1rem">
+  ✅ 配信完了：<strong><%= deliveredCount %></strong> 件送信
+  <% if (failedCount && Number(failedCount) > 0) { %>
+    <span style="color:#721c24"> ／ 失敗 <strong><%= failedCount %></strong> 件</span>
+  <% } %>
+</div>
+<% } %>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem">
+
+  <!-- 基本情報 -->
+  <div class="card">
+    <h3>基本設定</h3>
+    <table style="width:100%">
+      <tr>
+        <td class="muted" style="width:100px">報酬</td>
+        <td>
+          <% if (survey.reward_type === 'fixed') { %>
+            <strong><%= survey.reward_points %></strong> pt（固定）
+          <% } else { %>
+            <strong><%= survey.reward_min_points %>〜<%= survey.reward_max_points %></strong> pt（ランダム）
+          <% } %>
+        </td>
+      </tr>
+      <tr>
+        <td class="muted">配信予定</td>
+        <td>
+          <%= survey.scheduled_at
+            ? new Date(survey.scheduled_at).toLocaleString('ja-JP')
+            : '<span class="muted">未設定</span>' %>
+        </td>
+      </tr>
+      <tr>
+        <td class="muted">回答期限</td>
+        <td>
+          <%= survey.expires_at
+            ? new Date(survey.expires_at).toLocaleString('ja-JP')
+            : '<span class="muted">未設定</span>' %>
+        </td>
+      </tr>
+      <tr>
+        <td class="muted">説明</td>
+        <td><%= survey.description || '<span class="muted">-</span>' %></td>
+      </tr>
+      <tr>
+        <td class="muted">作成日</td>
+        <td><span class="muted"><%= new Date(survey.created_at).toLocaleString('ja-JP') %></span></td>
+      </tr>
+    </table>
+    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+      <a href="/admin/daily-surveys/<%= survey.id %>/edit" class="btn-secondary">編集</a>
+      <% if (survey.status === 'draft' || survey.status === 'paused') { %>
+        <form method="post" action="/admin/daily-surveys/<%= survey.id %>/status/activate" style="display:inline">
+          <button type="submit" class="btn">配信開始</button>
+        </form>
+      <% } else if (survey.status === 'active') { %>
+        <form method="post" action="/admin/daily-surveys/<%= survey.id %>/status/pause" style="display:inline">
+          <button type="submit" class="btn-secondary">停止</button>
+        </form>
+        <form method="post" action="/admin/daily-surveys/<%= survey.id %>/status/complete" style="display:inline">
+          <button type="submit" class="btn-secondary" onclick="return confirm('完了にしますか？')">完了にする</button>
+        </form>
+      <% } %>
+    </div>
+  </div>
+
+  <!-- 配信統計 -->
+  <div class="card">
+    <h3>配信統計</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div style="text-align:center;padding:12px;background:#f8f9fa;border-radius:6px">
+        <div class="muted" style="font-size:12px">配信総数</div>
+        <div style="font-size:24px;font-weight:700"><%= deliveryStats.total %></div>
+      </div>
+      <div style="text-align:center;padding:12px;background:#f8f9fa;border-radius:6px">
+        <div class="muted" style="font-size:12px">送信済み</div>
+        <div style="font-size:24px;font-weight:700;color:#2ca87a"><%= deliveryStats.sent %></div>
+      </div>
+      <div style="text-align:center;padding:12px;background:#f8f9fa;border-radius:6px">
+        <div class="muted" style="font-size:12px">回答済み</div>
+        <div style="font-size:24px;font-weight:700;color:#007bff"><%= deliveryStats.answered %></div>
+      </div>
+      <div style="text-align:center;padding:12px;background:#f8f9fa;border-radius:6px">
+        <div class="muted" style="font-size:12px">回答率</div>
+        <div style="font-size:24px;font-weight:700">
+          <% if (deliveryStats.sent > 0) { %>
+            <%= Math.round(deliveryStats.answered / deliveryStats.sent * 100) %>%
+          <% } else { %>
+            -
+          <% } %>
+        </div>
+      </div>
+    </div>
+    <% if (deliveryStats.expired > 0 || deliveryStats.failed > 0) { %>
+    <div style="margin-top:8px;font-size:12px;color:#999">
+      期限切れ: <%= deliveryStats.expired %> ／ 失敗: <%= deliveryStats.failed %>
+    </div>
+    <% } %>
+  </div>
+</div>
+
+<!-- 設問一覧 -->
+<div class="card" style="margin-bottom:1rem">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <h3>設問一覧 (<%= questions.length %> 件)</h3>
+    <a href="/admin/daily-surveys/<%= survey.id %>/edit" class="btn-secondary" style="font-size:13px">設問を管理</a>
+  </div>
+  <% if (questions.length === 0) { %>
+    <p class="muted">設問がありません。<a href="/admin/daily-surveys/<%= survey.id %>/edit">設問を追加する</a></p>
+  <% } else { %>
+  <% const qtLabel = { single_choice:'単一選択', multiple_choice:'複数選択', text:'自由記述', scale:'スケール' }; %>
+  <table>
+    <thead>
+      <tr><th>順序</th><th>設問文</th><th>種別</th><th>選択肢</th><th>属性キー</th></tr>
+    </thead>
+    <tbody>
+      <% for (const q of questions) { %>
+      <tr>
+        <td style="text-align:center"><%= q.sort_order %></td>
+        <td><%= q.question_text %></td>
+        <td><span class="muted"><%= qtLabel[q.question_type] || q.question_type %></span></td>
+        <td>
+          <% if (q.answer_options && q.answer_options.length > 0) { %>
+            <% for (const opt of q.answer_options) { %>
+              <span style="display:inline-block;background:#f0f4f3;padding:2px 8px;border-radius:4px;margin:2px;font-size:12px">
+                <%= opt.label %>
+              </span>
+            <% } %>
+          <% } else { %>
+            <span class="muted">-</span>
+          <% } %>
+        </td>
+        <td><span class="muted"><%= q.attribute_key || '-' %></span></td>
+      </tr>
+      <% } %>
+    </tbody>
+  </table>
+  <% } %>
+</div>
+
+<!-- 配信実行 -->
+<div class="card">
+  <h3>LINE 配信</h3>
+  <form method="post" action="/admin/daily-surveys/<%= survey.id %>/deliver"
+        onsubmit="return confirmDeliver(this)">
+
+    <div class="form-group">
+      <label>
+        <input type="checkbox" name="test_mode" value="1" id="test_mode_check">
+        テスト配信（DBに配信記録を残さない）
+      </label>
+    </div>
+
+    <div class="form-group">
+      <label>配信対象 LINE USER ID（任意・未入力で全対象ユーザー）</label>
+      <textarea name="target_user_ids" rows="4" style="width:100%;font-family:monospace;font-size:12px"
+                placeholder="U1234...&#10;U5678...&#10;（1行に1つ、複数指定可）"></textarea>
+      <p class="muted" style="font-size:12px">空欄の場合、通知OKかつブロックされていない全ユーザーに配信します。</p>
+    </div>
+
+    <button type="submit" class="btn"
+      <% if (survey.status === 'completed') { %>disabled<% } %>>
+      📤 配信実行
+    </button>
+    <% if (survey.status === 'completed') { %>
+      <span class="muted" style="margin-left:8px">（完了済みのため配信不可）</span>
+    <% } %>
+  </form>
+</div>
+
+<script>
+function confirmDeliver(form) {
+  const isTest = form.test_mode.checked;
+  const ids = form.target_user_ids.value.trim();
+  const targetDesc = ids ? `指定ユーザー ${ids.split(/[\n,]+/).filter(Boolean).length} 件` : '全対象ユーザー';
+  const msg = isTest
+    ? `[テスト配信] ${targetDesc} に送信します。よろしいですか？`
+    : `[本番配信] ${targetDesc} に配信します。よろしいですか？`;
+  return confirm(msg);
+}
+</script>
+
+<%- include("../../partials/footer") %>

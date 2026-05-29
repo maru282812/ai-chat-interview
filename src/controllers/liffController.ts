@@ -27,6 +27,10 @@ import type { Gender, MaritalStatus, RantTag } from "../types/domain";
 import { runPostCompleteProcess } from "../services/postCompleteService";
 import { rantTagRepository } from "../repositories/rantTagRepository";
 import { postRepository } from "../repositories/postRepository";
+import { dailySurveyService } from "../services/dailySurveyService";
+import { dailySurveyRepository } from "../repositories/dailySurveyRepository";
+import { userStreakService } from "../services/userStreakService";
+import { userBadgeService } from "../services/userBadgeService";
 
 type SupportedPostEntryKey = "rant" | "diary";
 
@@ -542,15 +546,26 @@ export const liffController = {
     const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
     const lineUserId = verifiedUser.userId;
 
-    const [profile, respondents, ranks] = await Promise.all([
+    const [profile, respondents, ranks, streakRow, earnedAwards, badgeDefs] = await Promise.all([
       userProfileRepository.getByLineUserId(lineUserId),
       respondentRepository.listByLineUserId(lineUserId),
       rankRepository.list(),
+      userStreakService.getStreak(lineUserId).catch(() => null),
+      userBadgeService.listEarned(lineUserId).catch(() => []),
+      userBadgeService.listAllDefinitions().catch(() => []),
     ]);
+    const badgeDefMap = new Map(badgeDefs.map(d => [d.badge_code, d]));
+    const awardedBadges = earnedAwards.map(a => ({
+      badge_code: a.badge_code,
+      awarded_at: a.awarded_at,
+      badge_name: badgeDefMap.get(a.badge_code)?.badge_name ?? a.badge_code,
+      badge_icon: badgeDefMap.get(a.badge_code)?.icon_emoji ?? "🏅",
+    }));
 
-    // ポイント合計が最大の respondent を primary とする
-    const primaryRespondent = respondents.sort((a, b) => b.total_points - a.total_points)[0] ?? null;
-    const completedCount = respondents.filter(r => r.status === "completed").length;
+    type RespondentRow = { id: string; total_points: number; status: string; current_rank: { rank_name?: string; rank_code?: string; badge_label?: string | null; min_points?: number } | null };
+    const typedRespondents = respondents as unknown as RespondentRow[];
+    const primaryRespondent = typedRespondents.sort((a, b) => b.total_points - a.total_points)[0] ?? null;
+    const completedCount = typedRespondents.filter(r => r.status === "completed").length;
 
     const totalPoints = primaryRespondent?.total_points ?? 0;
     const currentRank = primaryRespondent?.current_rank ?? null;
@@ -560,7 +575,6 @@ export const liffController = {
       ? (await pointTransactionRepository.listByRespondent(primaryRespondent.id)).slice(0, 5)
       : [];
 
-    // last_login_at を非同期で更新（レスポンスをブロックしない）
     void userProfileRepository.updateLastLogin(lineUserId).catch(() => {});
 
     res.json({
@@ -576,7 +590,10 @@ export const liffController = {
         completed_count: completedCount,
         next_rank_min_points: nextRank?.min_points ?? null,
         next_rank_name: nextRank?.rank_name ?? null,
+        current_streak: streakRow?.current_streak ?? 0,
+        longest_streak: streakRow?.longest_streak ?? 0,
       },
+      awarded_badges: awardedBadges,
       recent_transactions: recentTransactions,
     });
   },
@@ -1648,6 +1665,108 @@ export const liffController = {
     });
 
     res.json({ ok: true, judgement, failed_conditions, already_judged: false });
+  },
+
+  // ============================================================
+  // デイリーアンケート LIFF
+  // ============================================================
+
+  async dailySurveyPage(req: Request, res: Response): Promise<void> {
+    const liffId = env.LINE_LIFF_ID_SURVEY ?? env.LINE_LIFF_ID ?? "";
+    const surveyId = stringValue(req.query.survey_id).trim();
+    res.render("liff/daily-survey", {
+      title: "デイリーアンケート",
+      initialData: {
+        liffId,
+        surveyId,
+        answerUrl: `/liff/daily-survey/${encodeURIComponent(surveyId)}/answer`,
+      },
+    });
+  },
+
+  async getDailySurveyData(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const surveyId = stringValue(req.query.survey_id).trim();
+    if (!surveyId) throw new HttpError(400, "survey_id は必須です。");
+
+    const [survey, questions] = await Promise.all([
+      dailySurveyService.getById(surveyId),
+      dailySurveyService.listQuestions(surveyId),
+    ]);
+
+    if (survey.status !== "active") {
+      throw new HttpError(404, "このアンケートは現在受け付けていません。");
+    }
+
+    const { supabase } = await import("../config/supabase");
+
+    // 既存の配信レコードを取得（LINEから開いた場合は存在する）
+    const { data: deliveryRow } = await supabase
+      .from("daily_survey_deliveries")
+      .select("*")
+      .eq("survey_id", surveyId)
+      .eq("line_user_id", verifiedUser.userId)
+      .maybeSingle();
+
+    type DeliveryRow = { id: string; status: string } | null;
+    const delivery = deliveryRow as DeliveryRow;
+
+    if (delivery?.status === "answered") {
+      res.json({ ok: true, alreadyAnswered: true });
+      return;
+    }
+
+    // 配信レコードがなければ（直接URL訪問）作成する
+    let finalDelivery = delivery;
+    if (!finalDelivery) {
+      const created = await dailySurveyRepository.upsertDelivery({
+        survey_id: surveyId,
+        line_user_id: verifiedUser.userId,
+        status: "opened",
+      });
+      finalDelivery = created;
+    } else if (finalDelivery.status === "sent" || finalDelivery.status === "pending") {
+      await dailySurveyRepository.markDeliveryStatus(finalDelivery.id, "opened");
+    }
+
+    res.json({
+      ok: true,
+      alreadyAnswered: false,
+      survey,
+      questions,
+      delivery: finalDelivery,
+    });
+  },
+
+  async submitDailySurveyAnswer(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const surveyId = stringValue(req.params.surveyId).trim();
+    const body = req.body as Record<string, unknown>;
+
+    if (!surveyId) throw new HttpError(400, "surveyId は必須です。");
+
+    const deliveryId = stringValue(body.deliveryId).trim();
+    const rawAnswers = Array.isArray(body.answers) ? body.answers : [];
+
+    if (!deliveryId) throw new HttpError(400, "deliveryId は必須です。");
+    if (rawAnswers.length === 0) throw new HttpError(400, "回答が含まれていません。");
+
+    const answers = rawAnswers as Array<{ questionId: string; answerValue: unknown }>;
+
+    const result = await dailySurveyService.recordAnswer({
+      lineUserId: verifiedUser.userId,
+      surveyId,
+      deliveryId,
+      answers,
+    });
+
+    const streakRow = await userStreakService.getStreak(verifiedUser.userId);
+
+    res.json({
+      ok: true,
+      ...result,
+      currentStreak: streakRow.current_streak,
+    });
   },
 
   async submitContact(req: Request, res: Response): Promise<void> {

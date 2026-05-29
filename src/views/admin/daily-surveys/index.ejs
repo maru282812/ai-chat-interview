@@ -1,0 +1,85 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>デイリーアンケート</h2>
+  <a href="/admin/daily-surveys/new" class="btn">＋ 新規作成</a>
+</div>
+
+<% const statusLabel = { draft:'下書き', scheduled:'配信予約', active:'配信中', paused:'停止中', completed:'完了' }; %>
+<% const statusClass = { draft:'', scheduled:'badge-blue', active:'badge-green', paused:'badge-yellow', completed:'badge-gray' }; %>
+
+<% if (surveys.length === 0) { %>
+  <div class="card" style="text-align:center;padding:2rem">
+    <p class="muted">デイリーアンケートがありません</p>
+    <a href="/admin/daily-surveys/new" class="btn" style="margin-top:1rem">＋ 最初のアンケートを作成</a>
+  </div>
+<% } else { %>
+<table>
+  <thead>
+    <tr>
+      <th>タイトル</th>
+      <th>ステータス</th>
+      <th>報酬</th>
+      <th>設問数</th>
+      <th>配信数</th>
+      <th>配信予定日時</th>
+      <th>作成日</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const s of surveys) { %>
+    <tr>
+      <td>
+        <a href="/admin/daily-surveys/<%= s.id %>"><strong><%= s.title %></strong></a>
+        <% if (s.description) { %>
+          <br><span class="muted" style="font-size:12px"><%= s.description %></span>
+        <% } %>
+      </td>
+      <td>
+        <span class="badge <%= statusClass[s.status] || '' %>">
+          <%= statusLabel[s.status] || s.status %>
+        </span>
+      </td>
+      <td>
+        <% if (s.reward_type === 'fixed') { %>
+          <strong><%= s.reward_points %></strong> pt
+        <% } else { %>
+          <strong><%= s.reward_min_points %>〜<%= s.reward_max_points %></strong> pt
+        <% } %>
+      </td>
+      <td style="text-align:center"><%= s.question_count %></td>
+      <td style="text-align:center"><%= s.delivery_count %></td>
+      <td>
+        <% if (s.scheduled_at) { %>
+          <span class="muted"><%= new Date(s.scheduled_at).toLocaleString('ja-JP') %></span>
+        <% } else { %>
+          <span class="muted">-</span>
+        <% } %>
+      </td>
+      <td><span class="muted"><%= new Date(s.created_at).toLocaleDateString('ja-JP') %></span></td>
+      <td style="white-space:nowrap">
+        <a href="/admin/daily-surveys/<%= s.id %>">詳細</a>
+        <a href="/admin/daily-surveys/<%= s.id %>/edit" style="margin-left:8px">編集</a>
+        <% if (s.status === 'draft' || s.status === 'paused') { %>
+          <form method="post" action="/admin/daily-surveys/<%= s.id %>/status/activate" style="display:inline;margin-left:8px">
+            <button type="submit" class="btn" style="padding:2px 10px;font-size:12px">配信開始</button>
+          </form>
+        <% } else if (s.status === 'active') { %>
+          <form method="post" action="/admin/daily-surveys/<%= s.id %>/status/pause" style="display:inline;margin-left:8px">
+            <button type="submit" class="btn-secondary" style="padding:2px 10px;font-size:12px">停止</button>
+          </form>
+        <% } %>
+        <form method="post" action="/admin/daily-surveys/<%= s.id %>/delete"
+              style="display:inline;margin-left:8px"
+              onsubmit="return confirm('「<%= s.title %>」を削除しますか？')">
+          <button type="submit" class="btn-danger" style="padding:2px 10px;font-size:12px">削除</button>
+        </form>
+      </td>
+    </tr>
+    <% } %>
+  </tbody>
+</table>
+<% } %>
+
+<%- include("../../partials/footer") %>

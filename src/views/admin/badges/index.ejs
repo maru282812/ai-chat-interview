@@ -1,0 +1,112 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:1rem">
+  <a href="/admin/points" class="btn-secondary">← ポイント管理</a>
+  <h2>バッジ管理</h2>
+</div>
+
+<!-- バッジ定義一覧 -->
+<section class="card" style="margin-bottom:1.5rem">
+  <h3 style="margin-bottom:.75rem">バッジ定義 (<%= badges.length %> 種類)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:40px">順序</th>
+        <th>バッジ</th>
+        <th>条件種別</th>
+        <th style="text-align:center">獲得者数</th>
+        <th>状態</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% const COND_LABELS = {
+        first_answer:       '初回回答',
+        streak_7:           '7日連続',
+        streak_30:          '30日連続',
+        streak_100:         '100日連続',
+        answers_10:         '10回答',
+        answers_50:         '50回答',
+        answers_100:        '100回答',
+        answers_300:        '300回答',
+        profile_complete:   'プロフィール完成',
+        interview_complete: 'AIインタビュー参加',
+        project_complete:   '案件参加',
+        rank_silver:        'ランク：シルバー以上',
+        rank_gold:          'ランク：ゴールド以上',
+        rank_platinum:      'ランク：プラチナ以上',
+        rank_diamond:       'ランク：ダイヤモンド',
+        manual:             '手動付与'
+      }; %>
+      <% for (const b of badges) { %>
+      <tr style="<%= !b.is_active ? 'opacity:.5' : '' %>">
+        <td style="text-align:center"><%= b.sort_order %></td>
+        <td>
+          <span style="font-size:24px"><%= b.icon_emoji %></span>
+          <strong style="margin-left:8px"><%= b.badge_name %></strong>
+          <% if (b.description) { %>
+            <br><span class="muted" style="font-size:12px"><%= b.description %></span>
+          <% } %>
+          <br><code style="font-size:11px;color:#666"><%= b.badge_code %></code>
+        </td>
+        <td>
+          <span style="background:#f0f4f3;padding:2px 8px;border-radius:4px;font-size:12px">
+            <%= COND_LABELS[b.condition_type] || b.condition_type %>
+          </span>
+        </td>
+        <td style="text-align:center">
+          <strong><%= awardCounts[b.badge_code] ?? 0 %></strong>
+          <span class="muted" style="font-size:12px"> 人</span>
+        </td>
+        <td>
+          <% if (b.is_active) { %>
+            <span style="color:#2ca87a;font-size:12px">●有効</span>
+          <% } else { %>
+            <span style="color:#999;font-size:12px">○無効</span>
+          <% } %>
+        </td>
+      </tr>
+      <% } %>
+    </tbody>
+  </table>
+</section>
+
+<!-- ユーザー別獲得状況 -->
+<section class="card">
+  <h3 style="margin-bottom:.75rem">ユーザー別獲得状況（上位50名）</h3>
+  <% if (userSummaries.length === 0) { %>
+    <p class="muted">まだバッジ獲得者がいません</p>
+  <% } else { %>
+  <table>
+    <thead>
+      <tr>
+        <th>ユーザー</th>
+        <th style="text-align:center">獲得バッジ数</th>
+        <th>最新獲得日</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% for (const u of userSummaries) { %>
+      <tr>
+        <td>
+          <div style="font-weight:600"><%= u.display_name || u.line_user_id.slice(0,16) + '...' %></div>
+          <div class="muted" style="font-size:11px"><%= u.line_user_id %></div>
+        </td>
+        <td style="text-align:center">
+          <strong style="font-size:18px"><%= u.badge_count %></strong>
+          <span class="muted"> / <%= badges.length %></span>
+        </td>
+        <td>
+          <% if (u.latest_badge_at) { %>
+            <span class="muted" style="font-size:12px"><%= new Date(u.latest_badge_at).toLocaleString('ja-JP') %></span>
+          <% } else { %>
+            <span class="muted">-</span>
+          <% } %>
+        </td>
+      </tr>
+      <% } %>
+    </tbody>
+  </table>
+  <% } %>
+</section>
+
+<%- include("../../partials/footer") %>

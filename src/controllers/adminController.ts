@@ -46,6 +46,11 @@ import { questionPageGroupRepository } from "../repositories/questionPageGroupRe
 import { segmentRepository } from "../repositories/segmentRepository";
 import { userAttributeRepository } from "../repositories/userAttributeRepository";
 import { deliveryCampaignRepository } from "../repositories/deliveryCampaignRepository";
+import { dailySurveyService } from "../services/dailySurveyService";
+import { dailySurveyRepository } from "../repositories/dailySurveyRepository";
+import { notificationTemplateRepository } from "../repositories/notificationTemplateRepository";
+import { userPointService } from "../services/userPointService";
+import { userBadgeService } from "../services/userBadgeService";
 import type { DisplayTagsParsed, VisibilityCondition } from "../types/questionSchema";
 
 // USERプロファイル管理の簡易認証設定
@@ -82,6 +87,11 @@ function bodyString(value: unknown): string {
     return String(value[0] ?? "");
   }
   return "";
+}
+
+function extractVariables(text: string): string[] {
+  const matches = text.match(/\{(\w+)\}/g) ?? [];
+  return [...new Set(matches)];
 }
 
 function bodyStringArray(value: unknown): string[] {
@@ -2099,14 +2109,43 @@ export const adminController = {
   },
 
   async points(_req: Request, res: Response): Promise<void> {
-    const [respondentOverviews, ranks] = await Promise.all([
-      adminService.listRespondents(),
-      adminService.listRanks()
-    ]);
+    const summaries = await userPointService.listSummaries(500);
     res.render("admin/points/index", {
-      title: "Points",
-      respondents: respondentOverviews.map((item) => item.respondent),
-      ranks
+      title: "ポイント管理",
+      summaries
+    });
+  },
+
+  async adjustUserPoints(req: Request, res: Response): Promise<void> {
+    const lineUserId = routeParam(req, "lineUserId");
+    const b = req.body as Record<string, string>;
+    const points = Number(b.points);
+    const reason = bodyString(b.reason) || "管理者調整";
+    if (isNaN(points) || points === 0) {
+      res.redirect("/admin/points");
+      return;
+    }
+    await userPointService.awardPoints({
+      lineUserId,
+      transactionType: "manual_adjustment",
+      points,
+      reason,
+      referenceType: "manual"
+    });
+    res.redirect("/admin/points");
+  },
+
+  async badgesPage(_req: Request, res: Response): Promise<void> {
+    const [badges, userSummaries, awardCounts] = await Promise.all([
+      userBadgeService.listAllDefinitions(),
+      userBadgeService.listUserBadgeSummary(),
+      userBadgeService.getAwardCounts()
+    ]);
+    res.render("admin/badges/index", {
+      title: "バッジ管理",
+      badges,
+      userSummaries: userSummaries.slice(0, 50),
+      awardCounts
     });
   },
 
@@ -4075,5 +4114,293 @@ ${JSON.stringify(questionsForAI, null, 2)}
       perPage,
       filters: q,
     });
+  },
+
+  // ============================================================
+  // デイリーアンケート管理
+  // ============================================================
+
+  async dailySurveys(req: Request, res: Response): Promise<void> {
+    const surveys = await dailySurveyService.list();
+    res.render("admin/daily-surveys/index", {
+      title: "デイリーアンケート",
+      surveys
+    });
+  },
+
+  async newDailySurvey(req: Request, res: Response): Promise<void> {
+    const templates = await notificationTemplateRepository.listByCategory("daily_survey");
+    const segments = await segmentRepository.list();
+    res.render("admin/daily-surveys/form", {
+      title: "デイリーアンケート作成",
+      survey: null,
+      questions: [],
+      templates,
+      segments,
+      mode: "create"
+    });
+  },
+
+  async createDailySurvey(req: Request, res: Response): Promise<void> {
+    const b = req.body as Record<string, string>;
+    const survey = await dailySurveyService.create({
+      title: bodyString(b.title),
+      description: b.description || null,
+      reward_type: (b.reward_type as "fixed" | "random") || "fixed",
+      reward_points: Number(b.reward_points ?? 5),
+      reward_min_points: Number(b.reward_min_points ?? 3),
+      reward_max_points: Number(b.reward_max_points ?? 20),
+      target_segment_id: b.target_segment_id || null,
+      scheduled_at: b.scheduled_at || null,
+      expires_at: b.expires_at || null,
+      notification_template_id: b.notification_template_id || null
+    });
+    res.redirect(`/admin/daily-surveys/${survey.id}`);
+  },
+
+  async editDailySurvey(req: Request, res: Response): Promise<void> {
+    const surveyId = routeParam(req, "surveyId");
+    const [survey, questions, templates, segments] = await Promise.all([
+      dailySurveyService.getById(surveyId),
+      dailySurveyService.listQuestions(surveyId),
+      notificationTemplateRepository.listByCategory("daily_survey"),
+      segmentRepository.list()
+    ]);
+    res.render("admin/daily-surveys/form", {
+      title: "デイリーアンケート編集",
+      survey,
+      questions,
+      templates,
+      segments,
+      mode: "edit"
+    });
+  },
+
+  async updateDailySurvey(req: Request, res: Response): Promise<void> {
+    const surveyId = routeParam(req, "surveyId");
+    const b = req.body as Record<string, string>;
+    await dailySurveyService.update(surveyId, {
+      title: bodyString(b.title),
+      description: b.description || null,
+      reward_type: (b.reward_type as "fixed" | "random") || "fixed",
+      reward_points: Number(b.reward_points ?? 5),
+      reward_min_points: Number(b.reward_min_points ?? 3),
+      reward_max_points: Number(b.reward_max_points ?? 20),
+      target_segment_id: b.target_segment_id || null,
+      scheduled_at: b.scheduled_at || null,
+      expires_at: b.expires_at || null,
+      notification_template_id: b.notification_template_id || null
+    });
+    res.redirect(`/admin/daily-surveys/${surveyId}`);
+  },
+
+  async deleteDailySurvey(req: Request, res: Response): Promise<void> {
+    const surveyId = routeParam(req, "surveyId");
+    await dailySurveyService.delete(surveyId);
+    res.redirect("/admin/daily-surveys");
+  },
+
+  async showDailySurvey(req: Request, res: Response): Promise<void> {
+    const surveyId = routeParam(req, "surveyId");
+    const [survey, questions, deliveryStats] = await Promise.all([
+      dailySurveyService.getById(surveyId),
+      dailySurveyService.listQuestions(surveyId),
+      dailySurveyRepository.getDeliveryStats(surveyId)
+    ]);
+    res.render("admin/daily-surveys/show", {
+      title: survey.title,
+      survey,
+      questions,
+      deliveryStats,
+      queryParams: new URLSearchParams(req.query as Record<string, string>).toString()
+    });
+  },
+
+  async updateDailySurveyStatus(req: Request, res: Response): Promise<void> {
+    const surveyId = routeParam(req, "surveyId");
+    const action = routeParam(req, "action") as "activate" | "pause" | "complete";
+    if (action === "activate") await dailySurveyService.activate(surveyId);
+    else if (action === "pause") await dailySurveyService.pause(surveyId);
+    else if (action === "complete") await dailySurveyService.complete(surveyId);
+    res.redirect(`/admin/daily-surveys/${surveyId}`);
+  },
+
+  async deliverDailySurvey(req: Request, res: Response): Promise<void> {
+    const surveyId = routeParam(req, "surveyId");
+    const b = req.body as Record<string, string>;
+    const testMode = b.test_mode === "1";
+    const targetIds = b.target_user_ids
+      ? b.target_user_ids.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean)
+      : [];
+    const result = await dailySurveyService.deliver(surveyId, {
+      testMode,
+      targetLineUserIds: targetIds.length > 0 ? targetIds : undefined,
+      liffBaseUrl: req.body.liff_base_url as string | undefined
+    });
+    res.redirect(
+      `/admin/daily-surveys/${surveyId}?delivered=${result.sent}&failed=${result.failed}&total=${result.total}`
+    );
+  },
+
+  // ── デイリーアンケート 設問管理 ──────────────────────────────
+
+  async createDailySurveyQuestion(req: Request, res: Response): Promise<void> {
+    const surveyId = routeParam(req, "surveyId");
+    const b = req.body as Record<string, string>;
+    let parsedOptions: Array<{ label: string; value: string }> = [];
+    try {
+      parsedOptions = JSON.parse(b.answer_options || "[]");
+    } catch {
+      parsedOptions = (b.answer_options || "")
+        .split("\n")
+        .map((line, i) => ({ label: line.trim(), value: `opt_${i + 1}` }))
+        .filter((o) => o.label);
+    }
+    await dailySurveyService.createQuestion({
+      survey_id: surveyId,
+      question_text: bodyString(b.question_text),
+      question_type: (b.question_type as import("../repositories/dailySurveyRepository").DailySurveyQuestion["question_type"]) || "single_choice",
+      answer_options: parsedOptions,
+      attribute_key: b.attribute_key || null,
+      sort_order: Number(b.sort_order ?? 0)
+    });
+    res.redirect(`/admin/daily-surveys/${surveyId}/edit`);
+  },
+
+  async updateDailySurveyQuestion(req: Request, res: Response): Promise<void> {
+    const surveyId = routeParam(req, "surveyId");
+    const questionId = routeParam(req, "questionId");
+    const b = req.body as Record<string, string>;
+    let parsedOptions: Array<{ label: string; value: string }> = [];
+    try {
+      parsedOptions = JSON.parse(b.answer_options || "[]");
+    } catch {
+      parsedOptions = (b.answer_options || "")
+        .split("\n")
+        .map((line, i) => ({ label: line.trim(), value: `opt_${i + 1}` }))
+        .filter((o) => o.label);
+    }
+    await dailySurveyService.updateQuestion(questionId, {
+      question_text: bodyString(b.question_text),
+      question_type: (b.question_type as import("../repositories/dailySurveyRepository").DailySurveyQuestion["question_type"]) || "single_choice",
+      answer_options: parsedOptions,
+      attribute_key: b.attribute_key || null,
+      sort_order: Number(b.sort_order ?? 0)
+    });
+    res.redirect(`/admin/daily-surveys/${surveyId}/edit`);
+  },
+
+  async deleteDailySurveyQuestion(req: Request, res: Response): Promise<void> {
+    const surveyId = routeParam(req, "surveyId");
+    const questionId = routeParam(req, "questionId");
+    await dailySurveyService.deleteQuestion(questionId);
+    res.redirect(`/admin/daily-surveys/${surveyId}/edit`);
+  },
+
+  // ============================================================
+  // 通知テンプレート管理
+  // ============================================================
+
+  async notificationTemplates(req: Request, res: Response): Promise<void> {
+    const filterCategory = (req.query.category as string) || "";
+    const templates = filterCategory
+      ? await notificationTemplateRepository.listByCategory(
+          filterCategory as import("../repositories/notificationTemplateRepository").NotificationCategory,
+          false
+        )
+      : await notificationTemplateRepository.list();
+    res.render("admin/notification-templates/index", {
+      title: "通知テンプレート",
+      templates,
+      filterCategory
+    });
+  },
+
+  async newNotificationTemplate(req: Request, res: Response): Promise<void> {
+    const prefillCategory = (req.query.category as string) || "";
+    res.render("admin/notification-templates/form", {
+      title: "通知テンプレート作成",
+      template: null,
+      prefillCategory,
+      mode: "create"
+    });
+  },
+
+  async createNotificationTemplate(req: Request, res: Response): Promise<void> {
+    const b = req.body as Record<string, string>;
+    const variables = extractVariables(b.body_text || "");
+    await notificationTemplateRepository.create({
+      category: b.category as import("../repositories/notificationTemplateRepository").NotificationCategory,
+      name: bodyString(b.name),
+      description: b.description || null,
+      message_type: (b.message_type as "text" | "flex") || "text",
+      title_text: b.title_text || null,
+      body_text: bodyString(b.body_text),
+      action_label: b.action_label || null,
+      action_url: b.action_url || null,
+      flex_template: null,
+      variables,
+      is_active: b.is_active === "1",
+      is_default: b.is_default === "1"
+    });
+    res.redirect("/admin/notification-templates");
+  },
+
+  async editNotificationTemplate(req: Request, res: Response): Promise<void> {
+    const templateId = routeParam(req, "templateId");
+    const template = await notificationTemplateRepository.getById(templateId);
+    res.render("admin/notification-templates/form", {
+      title: "通知テンプレート編集",
+      template,
+      prefillCategory: template.category,
+      mode: "edit"
+    });
+  },
+
+  async updateNotificationTemplate(req: Request, res: Response): Promise<void> {
+    const templateId = routeParam(req, "templateId");
+    const b = req.body as Record<string, string>;
+    const variables = extractVariables(b.body_text || "");
+    await notificationTemplateRepository.update(templateId, {
+      category: b.category as import("../repositories/notificationTemplateRepository").NotificationCategory,
+      name: bodyString(b.name),
+      description: b.description || null,
+      message_type: (b.message_type as "text" | "flex") || "text",
+      title_text: b.title_text || null,
+      body_text: bodyString(b.body_text),
+      action_label: b.action_label || null,
+      action_url: b.action_url || null,
+      variables,
+      is_active: b.is_active === "1",
+      is_default: b.is_default === "1"
+    });
+    res.redirect("/admin/notification-templates");
+  },
+
+  async deleteNotificationTemplate(req: Request, res: Response): Promise<void> {
+    const templateId = routeParam(req, "templateId");
+    await notificationTemplateRepository.delete(templateId);
+    res.redirect("/admin/notification-templates");
+  },
+
+  async toggleNotificationTemplateActive(req: Request, res: Response): Promise<void> {
+    const templateId = routeParam(req, "templateId");
+    const current = await notificationTemplateRepository.getById(templateId);
+    await notificationTemplateRepository.update(templateId, { is_active: !current.is_active });
+    res.redirect("/admin/notification-templates");
+  },
+
+  async setNotificationTemplateDefault(req: Request, res: Response): Promise<void> {
+    const templateId = routeParam(req, "templateId");
+    const current = await notificationTemplateRepository.getById(templateId);
+    // 同カテゴリの既存デフォルトを外す
+    const allInCategory = await notificationTemplateRepository.listByCategory(current.category);
+    for (const t of allInCategory) {
+      if (t.is_default && t.id !== templateId) {
+        await notificationTemplateRepository.update(t.id, { is_default: false });
+      }
+    }
+    await notificationTemplateRepository.update(templateId, { is_default: true, is_active: true });
+    res.redirect("/admin/notification-templates");
   },
 };

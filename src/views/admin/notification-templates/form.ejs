@@ -1,0 +1,279 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const CATEGORY_LABELS = {
+  daily_survey:             'デイリーアンケート',
+  answer_complete:          '回答完了',
+  unanswered_reminder:      '未回答リマインド',
+  bonus_achieved:           'ボーナス達成',
+  rank_up:                  'ランクアップ',
+  point_grant:              'ポイント付与',
+  project_intro:            '案件案内',
+  attribute_update_request: '属性更新依頼',
+  birthday:                 '誕生日',
+  dormancy_recovery:        '休眠復帰',
+  system:                   'システム通知'
+};
+
+// 利用可能な全変数と説明
+const VARIABLES = [
+  ['{nickname}',       'ユーザーのニックネーム'],
+  ['{point}',          '今回付与ポイント'],
+  ['{totalPoint}',     '累計保有ポイント'],
+  ['{streakDays}',     '連続回答日数'],
+  ['{rankName}',       '現在のランク名'],
+  ['{bonusPoint}',     'ボーナスポイント'],
+  ['{surveyTitle}',    'アンケートタイトル'],
+  ['{surveyUrl}',      'アンケートURL（LIFFリンク）'],
+  ['{expireDate}',     '回答期限日時'],
+  ['{daysToBonus}',    'ボーナスまでの残り日数'],
+  ['{birthdayMonth}',  '誕生月'],
+  ['{projectTitle}',   '案件タイトル'],
+  ['{projectReward}',  '案件謝礼'],
+  ['{answerCount}',    '累計回答数'],
+];
+%>
+
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:1rem">
+  <a href="/admin/notification-templates" class="btn-secondary">← 一覧に戻る</a>
+  <h2><%= mode === 'create' ? '通知テンプレート作成' : '通知テンプレート編集' %></h2>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 380px;gap:1.5rem;align-items:start">
+
+<!-- ── 左カラム：入力フォーム ── -->
+<div>
+<form method="post"
+      action="<%= mode === 'create' ? '/admin/notification-templates' : '/admin/notification-templates/' + template.id %>">
+
+  <div class="card" style="margin-bottom:1rem">
+    <h3>基本設定</h3>
+
+    <div class="form-group">
+      <label>カテゴリ <span style="color:red">*</span></label>
+      <select name="category" required>
+        <% for (const [val, label] of Object.entries(CATEGORY_LABELS)) { %>
+          <option value="<%= val %>"
+            <%= ((template?.category || prefillCategory) === val) ? 'selected' : '' %>>
+            <%= label %>
+          </option>
+        <% } %>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>テンプレート名 <span style="color:red">*</span></label>
+      <input type="text" name="name" value="<%= template?.name || '' %>" required
+             placeholder="例：デイリーアンケート（連続回答訴求）" style="width:100%">
+    </div>
+
+    <div class="form-group">
+      <label>説明（管理用メモ）</label>
+      <input type="text" name="description" value="<%= template?.description || '' %>"
+             placeholder="このテンプレートの用途・使い所" style="width:100%">
+    </div>
+
+    <div class="form-group" style="display:flex;gap:24px">
+      <label style="cursor:pointer">
+        <input type="checkbox" name="is_active" value="1"
+               <%= (!template || template.is_active) ? 'checked' : '' %>>
+        有効
+      </label>
+      <label style="cursor:pointer">
+        <input type="checkbox" name="is_default" value="1"
+               <%= template?.is_default ? 'checked' : '' %>>
+        このカテゴリのデフォルトにする
+      </label>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:1rem">
+    <h3>メッセージ内容</h3>
+
+    <div class="form-group">
+      <label>メッセージ種別</label>
+      <select name="message_type" id="msg_type_select" onchange="toggleMsgType(this.value)">
+        <option value="text" <%= (!template || template.message_type === 'text') ? 'selected' : '' %>>テキスト</option>
+        <option value="flex" <%= (template?.message_type === 'flex') ? 'selected' : '' %>>Flex Message</option>
+      </select>
+    </div>
+
+    <div id="section_text">
+      <div class="form-group">
+        <label>タイトル（任意・通知バナー等）</label>
+        <input type="text" name="title_text" id="title_text_input"
+               value="<%= template?.title_text || '' %>"
+               placeholder="例：今日の1問が届きました" style="width:100%"
+               oninput="updatePreview()">
+      </div>
+
+      <div class="form-group">
+        <label>本文 <span style="color:red">*</span></label>
+        <!-- 変数挿入ボタン -->
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">
+          <% for (const [v] of VARIABLES) { %>
+            <button type="button"
+                    onclick="insertVar('<%= v %>')"
+                    style="padding:2px 7px;font-size:11px;background:#f0f4f3;border:1px solid #cce0d9;border-radius:4px;cursor:pointer;font-family:monospace">
+              <%= v %>
+            </button>
+          <% } %>
+        </div>
+        <textarea name="body_text" id="body_text_input" rows="8"
+                  style="width:100%;font-family:monospace;font-size:13px"
+                  oninput="updatePreview(); detectVars()"
+                  placeholder="メッセージ本文を入力&#10;&#10;例: 🎁 {point}pt獲得&#10;現在の保有ポイント: {totalPoint}pt"><%= template?.body_text || '' %></textarea>
+        <p class="muted" style="font-size:12px">
+          改行はそのまま反映されます。<code>{変数名}</code> は配信時に実際の値に置換されます。
+        </p>
+      </div>
+
+      <div class="form-group" style="display:flex;gap:16px;flex-wrap:wrap">
+        <div style="flex:1;min-width:160px">
+          <label>ボタンラベル（任意）</label>
+          <input type="text" name="action_label" value="<%= template?.action_label || '' %>"
+                 placeholder="例：今すぐ回答" style="width:100%">
+        </div>
+        <div style="flex:2;min-width:200px">
+          <label>ボタンURL（任意）</label>
+          <input type="text" name="action_url" value="<%= template?.action_url || '' %>"
+                 placeholder="例：{surveyUrl}" style="width:100%">
+        </div>
+      </div>
+    </div>
+
+    <div id="section_flex" style="display:none">
+      <p class="muted" style="font-size:13px">
+        Flex Message の JSON を直接入力します。本文フィールドは altText（通知バナー用テキスト）として使用されます。
+      </p>
+      <div class="form-group">
+        <label>altText（通知バナー用）</label>
+        <input type="text" name="body_text" id="body_text_flex"
+               value="<%= template?.message_type === 'flex' ? (template?.body_text || '') : '' %>"
+               placeholder="例：今日のアンケートが届きました" style="width:100%">
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:12px">
+    <button type="submit" class="btn"><%= mode === 'create' ? '作成する' : '保存する' %></button>
+    <a href="/admin/notification-templates" class="btn-secondary">キャンセル</a>
+  </div>
+</form>
+</div>
+
+<!-- ── 右カラム：変数リスト + プレビュー ── -->
+<div>
+  <!-- 変数一覧 -->
+  <div class="card" style="margin-bottom:1rem">
+    <h4 style="margin-bottom:.5rem">利用可能な変数</h4>
+    <table style="width:100%;font-size:12px">
+      <tbody>
+        <% for (const [v, desc] of VARIABLES) { %>
+        <tr>
+          <td style="padding:3px 0">
+            <code style="background:#f0f4f3;padding:1px 5px;border-radius:3px;cursor:pointer"
+                  onclick="insertVar('<%= v %>')" title="クリックで挿入">
+              <%= v %>
+            </code>
+          </td>
+          <td style="padding:3px 0 3px 8px;color:#666"><%= desc %></td>
+        </tr>
+        <% } %>
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:11px;margin-top:6px">変数名をクリックすると本文に挿入されます</p>
+  </div>
+
+  <!-- プレビュー -->
+  <div class="card">
+    <h4 style="margin-bottom:.5rem">プレビュー（サンプル値）</h4>
+    <div style="background:#f8f9fa;border-radius:6px;padding:12px;font-size:13px;line-height:1.6;min-height:80px;white-space:pre-wrap;word-break:break-all;font-family:sans-serif"
+         id="preview_output"></div>
+
+    <!-- 検出された変数一覧 -->
+    <div id="detected_vars" style="margin-top:8px;font-size:12px;color:#666"></div>
+  </div>
+</div>
+
+</div><!-- /grid -->
+
+<script>
+const SAMPLE_VARS = {
+  nickname:       '田中さん',
+  point:          '10',
+  totalPoint:     '250',
+  streakDays:     '7',
+  rankName:       'シルバー',
+  bonusPoint:     '50',
+  surveyTitle:    '今日の1問',
+  surveyUrl:      'https://liff.line.me/xxxx',
+  expireDate:     '2026/05/29 23:59',
+  daysToBonus:    '3',
+  birthdayMonth:  '5',
+  projectTitle:   '商品開発アンケート',
+  projectReward:  '300pt',
+  answerCount:    '42',
+};
+
+function getCurrentBody() {
+  const ta = document.getElementById('body_text_input');
+  return ta ? ta.value : '';
+}
+
+function renderBody(text) {
+  return text.replace(/\{(\w+)\}/g, (_, k) => SAMPLE_VARS[k] ?? `{${k}}`);
+}
+
+function updatePreview() {
+  const body = getCurrentBody();
+  const title = document.getElementById('title_text_input')?.value || '';
+  let preview = '';
+  if (title) preview += '【' + renderBody(title) + '】\n\n';
+  preview += renderBody(body);
+  document.getElementById('preview_output').textContent = preview;
+}
+
+function detectVars() {
+  const body = getCurrentBody();
+  const matches = [...new Set(body.match(/\{(\w+)\}/g) ?? [])];
+  const el = document.getElementById('detected_vars');
+  if (matches.length === 0) {
+    el.textContent = '変数なし';
+  } else {
+    el.innerHTML = '使用中の変数: ' + matches.map(v =>
+      `<code style="background:#f0f4f3;padding:1px 5px;border-radius:3px;margin:2px">${v}</code>`
+    ).join(' ');
+  }
+}
+
+function insertVar(v) {
+  const ta = document.getElementById('body_text_input');
+  if (!ta) return;
+  const start = ta.selectionStart;
+  const end   = ta.selectionEnd;
+  ta.value = ta.value.slice(0, start) + v + ta.value.slice(end);
+  ta.selectionStart = ta.selectionEnd = start + v.length;
+  ta.focus();
+  updatePreview();
+  detectVars();
+}
+
+function toggleMsgType(val) {
+  const isText = val === 'text';
+  document.getElementById('section_text').style.display = isText ? '' : 'none';
+  document.getElementById('section_flex').style.display = isText ? 'none' : '';
+
+  const ta   = document.getElementById('body_text_input');
+  const inp  = document.getElementById('body_text_flex');
+  if (ta)  { ta.disabled  = !isText; ta.required  = isText; }
+  if (inp) { inp.disabled = isText;  inp.required = !isText; }
+}
+
+// 初期化
+toggleMsgType(document.getElementById('msg_type_select').value);
+updatePreview();
+detectVars();
+</script>
+
+<%- include("../../partials/footer") %>

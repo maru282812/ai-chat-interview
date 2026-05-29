@@ -1,0 +1,144 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const CATEGORY_LABELS = {
+  daily_survey:             'デイリーアンケート',
+  answer_complete:          '回答完了',
+  unanswered_reminder:      '未回答リマインド',
+  bonus_achieved:           'ボーナス達成',
+  rank_up:                  'ランクアップ',
+  point_grant:              'ポイント付与',
+  project_intro:            '案件案内',
+  attribute_update_request: '属性更新依頼',
+  birthday:                 '誕生日',
+  dormancy_recovery:        '休眠復帰',
+  system:                   'システム通知'
+};
+const ALL_CATEGORIES = Object.keys(CATEGORY_LABELS);
+
+// カテゴリごとにグループ化
+const grouped = {};
+for (const c of ALL_CATEGORIES) grouped[c] = [];
+for (const t of templates) {
+  if (grouped[t.category]) grouped[t.category].push(t);
+  else grouped[t.category] = [t];
+}
+%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>通知テンプレート</h2>
+  <a href="/admin/notification-templates/new" class="btn">＋ 新規作成</a>
+</div>
+
+<!-- カテゴリフィルター -->
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:1.5rem">
+  <a href="/admin/notification-templates"
+     class="<%= !filterCategory ? 'btn' : 'btn-secondary' %>"
+     style="padding:4px 12px;font-size:13px">すべて</a>
+  <% for (const cat of ALL_CATEGORIES) { %>
+    <a href="/admin/notification-templates?category=<%= cat %>"
+       class="<%= filterCategory === cat ? 'btn' : 'btn-secondary' %>"
+       style="padding:4px 12px;font-size:13px">
+      <%= CATEGORY_LABELS[cat] %>
+      <% const cnt = grouped[cat]?.length ?? 0; %>
+      <% if (cnt > 0) { %><span style="font-size:11px;opacity:.7"> <%= cnt %></span><% } %>
+    </a>
+  <% } %>
+</div>
+
+<% if (templates.length === 0) { %>
+  <div class="card" style="text-align:center;padding:2rem">
+    <p class="muted">テンプレートがありません</p>
+    <a href="/admin/notification-templates/new" class="btn" style="margin-top:1rem">＋ 作成する</a>
+  </div>
+<% } else { %>
+
+<% const categoriesToShow = filterCategory ? [filterCategory] : ALL_CATEGORIES; %>
+
+<% for (const cat of categoriesToShow) { %>
+  <% const group = grouped[cat] ?? []; %>
+  <% if (group.length === 0 && filterCategory) continue; %>
+  <% if (group.length === 0) continue; %>
+
+  <section style="margin-bottom:2rem">
+    <h3 style="margin-bottom:.5rem">
+      <%= CATEGORY_LABELS[cat] || cat %>
+      <span class="muted" style="font-size:13px;font-weight:400">（<%= group.length %> 件）</span>
+      <a href="/admin/notification-templates/new?category=<%= cat %>"
+         style="font-size:12px;margin-left:12px">＋ 追加</a>
+    </h3>
+
+    <table>
+      <thead>
+        <tr>
+          <th>テンプレート名</th>
+          <th>本文プレビュー</th>
+          <th>変数</th>
+          <th>種別</th>
+          <th>状態</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const t of group) { %>
+        <tr style="<%= !t.is_active ? 'opacity:.5' : '' %>">
+          <td>
+            <strong><%= t.name %></strong>
+            <% if (t.is_default) { %>
+              <span style="display:inline-block;background:#2ca87a;color:#fff;font-size:10px;padding:1px 6px;border-radius:3px;margin-left:4px">DEFAULT</span>
+            <% } %>
+            <% if (t.description) { %>
+              <br><span class="muted" style="font-size:12px"><%= t.description %></span>
+            <% } %>
+          </td>
+          <td style="max-width:280px">
+            <pre style="margin:0;font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:60px;overflow:hidden;color:#444"><%= t.body_text.slice(0, 120) %><%= t.body_text.length > 120 ? '…' : '' %></pre>
+          </td>
+          <td>
+            <% for (const v of (t.variables || [])) { %>
+              <code style="display:inline-block;background:#f0f4f3;padding:1px 5px;border-radius:3px;font-size:11px;margin:1px"><%= v %></code>
+            <% } %>
+          </td>
+          <td>
+            <span class="muted" style="font-size:12px"><%= t.message_type === 'flex' ? 'Flex' : 'テキスト' %></span>
+          </td>
+          <td style="white-space:nowrap">
+            <% if (t.is_active) { %>
+              <span style="color:#2ca87a;font-size:12px">●有効</span>
+            <% } else { %>
+              <span style="color:#999;font-size:12px">○無効</span>
+            <% } %>
+          </td>
+          <td style="white-space:nowrap">
+            <a href="/admin/notification-templates/<%= t.id %>/edit" style="font-size:13px">編集</a>
+
+            <% if (!t.is_default) { %>
+              <form method="post" action="/admin/notification-templates/<%= t.id %>/set-default" style="display:inline;margin-left:8px">
+                <button type="submit" class="btn-secondary" style="padding:2px 8px;font-size:11px"
+                        title="このカテゴリのデフォルトに設定">DEFAULT</button>
+              </form>
+            <% } %>
+
+            <form method="post" action="/admin/notification-templates/<%= t.id %>/toggle-active" style="display:inline;margin-left:4px">
+              <button type="submit" class="btn-secondary" style="padding:2px 8px;font-size:11px">
+                <%= t.is_active ? '無効化' : '有効化' %>
+              </button>
+            </form>
+
+            <% if (!t.is_default) { %>
+              <form method="post" action="/admin/notification-templates/<%= t.id %>/delete"
+                    style="display:inline;margin-left:4px"
+                    onsubmit="return confirm('「<%= t.name %>」を削除しますか？')">
+                <button type="submit" class="btn-danger" style="padding:2px 8px;font-size:11px">削除</button>
+              </form>
+            <% } %>
+          </td>
+        </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </section>
+<% } %>
+<% } %>
+
+<%- include("../../partials/footer") %>

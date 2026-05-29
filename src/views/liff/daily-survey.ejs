@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <%- include('../partials/liff-auth') %>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+        background: #f0f4f3;
+        min-height: 100vh;
+      }
+      .container { max-width: 480px; margin: 0 auto; padding: 16px; }
+
+      .card {
+        background: #fff;
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,.07);
+      }
+
+      /* ---- ヘッダー ---- */
+      .survey-header { text-align: center; padding: 8px 0 4px; }
+      .survey-header .icon { font-size: 40px; margin-bottom: 8px; }
+      .survey-header h2 { font-size: 18px; font-weight: 700; color: #1a2f2a; margin-bottom: 6px; }
+      .survey-header p { font-size: 13px; color: #60726f; line-height: 1.6; }
+      .reward-chip {
+        display: inline-flex; align-items: center; gap: 4px;
+        background: #e8f5ef; color: #1a7a5a;
+        font-size: 13px; font-weight: 600;
+        padding: 5px 14px; border-radius: 20px;
+        margin-top: 10px;
+      }
+
+      /* ---- 設問 ---- */
+      .question-card { border-left: 4px solid #2ca87a; }
+      .question-num {
+        font-size: 11px; font-weight: 600; color: #2ca87a;
+        text-transform: uppercase; letter-spacing: .05em;
+        margin-bottom: 6px;
+      }
+      .question-text {
+        font-size: 15px; font-weight: 600; color: #1a2f2a;
+        line-height: 1.6; margin-bottom: 14px;
+      }
+
+      /* ---- 選択肢 ---- */
+      .options-list { display: flex; flex-direction: column; gap: 8px; }
+      .option-label {
+        display: flex; align-items: center; gap: 10px;
+        padding: 11px 14px;
+        border: 1.5px solid #d8e3e0; border-radius: 10px;
+        font-size: 14px; color: #333;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .option-label:has(input:checked) {
+        border-color: #2ca87a; background: #e8f5ef;
+      }
+      .option-label input { accent-color: #2ca87a; flex-shrink: 0; }
+
+      /* スケール */
+      .scale-row {
+        display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;
+        margin-top: 4px;
+      }
+      .scale-btn {
+        width: 44px; height: 44px;
+        border: 1.5px solid #d8e3e0; border-radius: 10px;
+        background: #fff; font-size: 15px; font-weight: 600; color: #333;
+        cursor: pointer; transition: border-color 0.15s, background 0.15s;
+      }
+      .scale-btn.selected { border-color: #2ca87a; background: #e8f5ef; color: #1a7a5a; }
+      .scale-labels {
+        display: flex; justify-content: space-between;
+        font-size: 11px; color: #999; margin-top: 6px; padding: 0 4px;
+      }
+
+      /* 自由記述 */
+      .text-input {
+        width: 100%; padding: 11px 14px;
+        border: 1.5px solid #d8e3e0; border-radius: 10px;
+        font-size: 15px; color: #222;
+        resize: vertical; min-height: 80px;
+      }
+      .text-input:focus { outline: none; border-color: #2ca87a; box-shadow: 0 0 0 3px rgba(44,168,122,.15); }
+
+      /* ---- 進捗バー ---- */
+      .progress-wrap { margin-bottom: 4px; }
+      .progress-row {
+        display: flex; justify-content: space-between;
+        font-size: 12px; color: #60726f; margin-bottom: 5px;
+      }
+      .progress-bar-bg { background: #e0ede9; border-radius: 6px; height: 6px; }
+      .progress-bar-fg { background: #2ca87a; height: 100%; border-radius: 6px; transition: width 0.3s; }
+
+      /* ---- ボタン ---- */
+      .btn {
+        display: block; width: 100%;
+        padding: 14px; border: none; border-radius: 12px;
+        font-size: 15px; font-weight: 600; cursor: pointer;
+        text-align: center; transition: opacity 0.15s;
+      }
+      .btn:active { opacity: 0.8; }
+      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      .btn-primary { background: #2ca87a; color: #fff; }
+      .btn-secondary { background: #f0f4f3; color: #333; border: 1px solid #d8e3e0; }
+
+      /* ---- ローディング ---- */
+      #loading-view {
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        padding: 60px 20px; color: #60726f; font-size: 14px; gap: 12px;
+      }
+      .spinner {
+        width: 32px; height: 32px;
+        border: 3px solid #e0ede9; border-top-color: #2ca87a;
+        border-radius: 50%; animation: spin 0.7s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* ---- 完了演出 ---- */
+      .completion-card { text-align: center; padding: 32px 20px; }
+      .completion-icon { font-size: 64px; margin-bottom: 16px; animation: pop 0.4s ease; }
+      @keyframes pop { 0% { transform: scale(0.5); opacity: 0; } 80% { transform: scale(1.15); } 100% { transform: scale(1); opacity: 1; } }
+      .completion-title { font-size: 20px; font-weight: 700; color: #1a2f2a; margin-bottom: 8px; }
+      .completion-sub { font-size: 14px; color: #60726f; line-height: 1.7; margin-bottom: 20px; }
+
+      .reward-row { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+      .reward-box {
+        background: #f8faf9; border-radius: 12px;
+        padding: 14px 20px; text-align: center; min-width: 100px;
+      }
+      .reward-val { font-size: 24px; font-weight: 700; color: #1a2f2a; }
+      .reward-unit { font-size: 12px; color: #2ca87a; font-weight: 600; }
+      .reward-label { font-size: 11px; color: #60726f; margin-top: 2px; }
+
+      .badge-list { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 12px 0; }
+      .badge-chip {
+        background: #fdf5e0; color: #9a6800;
+        font-size: 13px; font-weight: 600;
+        padding: 5px 12px; border-radius: 20px;
+        animation: pop 0.4s ease;
+      }
+
+      .rank-up-banner {
+        background: linear-gradient(135deg, #2ca87a, #1a7a5a);
+        color: #fff; border-radius: 12px;
+        padding: 14px 20px; margin-bottom: 16px;
+        font-size: 14px; font-weight: 600; text-align: center;
+      }
+
+      .status-msg { text-align: center; font-size: 13px; color: #60726f; padding: 8px 0; min-height: 20px; }
+      .status-msg.error { color: #c0392b; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div id="loading-view">
+        <div class="spinner"></div>
+        <span>読み込み中...</span>
+      </div>
+      <div id="app-view" style="display:none"></div>
+    </div>
+
+    <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+
+    <script>
+    (() => {
+      const initialData = JSON.parse(document.getElementById("initial-data").dataset.json || "{}");
+      const { liffId, surveyId, answerUrl } = initialData;
+      const appView    = document.getElementById("app-view");
+      const loadingView = document.getElementById("loading-view");
+      let idToken = null;
+      let surveyData = null;   // { survey, questions, delivery }
+      let currentQ = 0;
+      const answers = {};      // questionId → value
+
+      function esc(v) {
+        return String(v ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+      }
+
+      function show(html) {
+        loadingView.style.display = "none";
+        appView.style.display = "";
+        appView.innerHTML = html;
+      }
+
+      function showError(msg) {
+        show(`<div class="card" style="text-align:center;padding:40px 20px;">
+          <div style="font-size:40px;margin-bottom:12px;">⚠️</div>
+          <p style="color:#c0392b;font-size:14px;">${esc(msg)}</p>
+          <button class="btn btn-secondary" style="margin-top:16px;width:auto;padding:10px 24px" onclick="LiffAuth.closeOrBack()">閉じる</button>
+        </div>`);
+      }
+
+      // ---- 設問描画 ----
+      function renderQuestion(index) {
+        const { survey, questions } = surveyData;
+        const q = questions[index];
+        if (!q) { renderCompletion(null); return; }
+
+        const pct = Math.round((index / questions.length) * 100);
+        const rewardLabel = survey.reward_type === "fixed"
+          ? `${survey.reward_points}pt`
+          : `${survey.reward_min_points}〜${survey.reward_max_points}pt`;
+
+        let inputHtml = "";
+        if (q.question_type === "single_choice") {
+          inputHtml = `<div class="options-list">` +
+            (q.answer_options || []).map(opt => `
+              <label class="option-label">
+                <input type="radio" name="q_${esc(q.id)}" value="${esc(opt.value)}"
+                  ${answers[q.id] === opt.value ? "checked" : ""} />
+                ${esc(opt.label)}
+              </label>`).join("") +
+            `</div>`;
+        } else if (q.question_type === "multiple_choice") {
+          const sel = Array.isArray(answers[q.id]) ? answers[q.id] : [];
+          inputHtml = `<div class="options-list">` +
+            (q.answer_options || []).map(opt => `
+              <label class="option-label">
+                <input type="checkbox" name="q_${esc(q.id)}" value="${esc(opt.value)}"
+                  ${sel.includes(opt.value) ? "checked" : ""} />
+                ${esc(opt.label)}
+              </label>`).join("") +
+            `</div>`;
+        } else if (q.question_type === "scale") {
+          const opts = q.answer_options?.length ? q.answer_options
+            : [1,2,3,4,5].map(n => ({ label: String(n), value: String(n) }));
+          inputHtml = `
+            <div class="scale-row">
+              ${opts.map(opt => `
+                <button type="button" class="scale-btn${answers[q.id] === opt.value ? " selected" : ""}"
+                  data-val="${esc(opt.value)}" onclick="selectScale('${esc(q.id)}', '${esc(opt.value)}', this)">
+                  ${esc(opt.label)}
+                </button>`).join("")}
+            </div>
+            ${opts.length >= 2 ? `<div class="scale-labels"><span>${esc(opts[0].label)}</span><span>${esc(opts[opts.length-1].label)}</span></div>` : ""}`;
+        } else {
+          inputHtml = `<textarea class="text-input" id="text-answer" placeholder="ここに入力してください">${esc(answers[q.id] ?? "")}</textarea>`;
+        }
+
+        show(`
+          <div class="card">
+            <div class="survey-header">
+              <div class="icon">📋</div>
+              <h2>${esc(survey.title)}</h2>
+              ${survey.description ? `<p>${esc(survey.description)}</p>` : ""}
+              <div class="reward-chip">🎁 回答で ${esc(rewardLabel)} 獲得</div>
+            </div>
+          </div>
+
+          <div class="card progress-wrap">
+            <div class="progress-row">
+              <span>Q${index + 1} / ${questions.length}</span>
+              <span>${pct}%</span>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fg" style="width:${pct}%"></div>
+            </div>
+          </div>
+
+          <div class="card question-card">
+            <div class="question-num">質問 ${index + 1}</div>
+            <div class="question-text">${esc(q.question_text)}</div>
+            ${inputHtml}
+          </div>
+
+          <p id="q-status" class="status-msg"></p>
+          <div style="display:flex;gap:10px;margin-bottom:20px;">
+            ${index > 0
+              ? `<button class="btn btn-secondary" style="flex:1" onclick="goBack()">← 戻る</button>`
+              : ""}
+            <button class="btn btn-primary" style="flex:2" id="btn-next" onclick="goNext()">
+              ${index < questions.length - 1 ? "次へ →" : "回答を送信する"}
+            </button>
+          </div>
+        `);
+      }
+
+      window.selectScale = function(questionId, value, btn) {
+        answers[questionId] = value;
+        document.querySelectorAll(".scale-btn").forEach(b => b.classList.remove("selected"));
+        btn.classList.add("selected");
+      };
+
+      window.goBack = function() {
+        saveCurrentAnswer();
+        currentQ = Math.max(0, currentQ - 1);
+        renderQuestion(currentQ);
+      };
+
+      window.goNext = function() {
+        const q = surveyData.questions[currentQ];
+        const statusEl = document.getElementById("q-status");
+
+        if (!saveCurrentAnswer()) {
+          if (statusEl) {
+            statusEl.textContent = "回答を選択してください。";
+            statusEl.className = "status-msg error";
+          }
+          return;
+        }
+
+        if (currentQ < surveyData.questions.length - 1) {
+          currentQ++;
+          renderQuestion(currentQ);
+        } else {
+          submitAnswers();
+        }
+      };
+
+      function saveCurrentAnswer() {
+        const q = surveyData.questions[currentQ];
+        if (!q) return true;
+
+        if (q.question_type === "single_choice") {
+          const checked = document.querySelector(`input[name="q_${q.id}"]:checked`);
+          if (!checked) return false;
+          answers[q.id] = checked.value;
+        } else if (q.question_type === "multiple_choice") {
+          const checked = [...document.querySelectorAll(`input[name="q_${q.id}"]:checked`)].map(i => i.value);
+          if (checked.length === 0) return false;
+          answers[q.id] = checked;
+        } else if (q.question_type === "scale") {
+          if (!answers[q.id]) return false;
+        } else {
+          const ta = document.getElementById("text-answer");
+          const val = ta ? ta.value.trim() : "";
+          if (!val) return false;
+          answers[q.id] = val;
+        }
+        return true;
+      }
+
+      async function submitAnswers() {
+        const btn = document.getElementById("btn-next");
+        const statusEl = document.getElementById("q-status");
+        if (btn) btn.disabled = true;
+        if (statusEl) { statusEl.textContent = "送信中..."; statusEl.className = "status-msg"; }
+
+        try {
+          const payload = {
+            deliveryId: surveyData.delivery?.id ?? null,
+            answers: Object.entries(answers).map(([questionId, answerValue]) => ({
+              questionId,
+              answerValue
+            }))
+          };
+          const res = await fetch(answerUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || "送信に失敗しました。");
+          }
+          const result = await res.json();
+          renderCompletion(result);
+        } catch (err) {
+          if (statusEl) { statusEl.textContent = err.message || "送信に失敗しました。"; statusEl.className = "status-msg error"; }
+          if (btn) btn.disabled = false;
+        }
+      }
+
+      // ---- 完了演出 ----
+      function renderCompletion(result) {
+        const r = result || {};
+        const pts   = r.pointsAwarded ?? 0;
+        const bonus = r.streakBonusAwarded ?? 0;
+        const streak = r.currentStreak ?? 0;
+        const rankUp = r.rankChanged && r.newRankName;
+        const badges = r.newBadges || [];
+
+        const badgeHtml = badges.length
+          ? `<div class="badge-list">${badges.map(b => `<div class="badge-chip">🏅 ${esc(b)}</div>`).join("")}</div>`
+          : "";
+
+        const rankHtml = rankUp
+          ? `<div class="rank-up-banner">🎉 ランクアップ！ → ${esc(r.newRankName)}</div>`
+          : "";
+
+        show(`
+          <div class="card completion-card">
+            <div class="completion-icon">🎉</div>
+            <div class="completion-title">回答ありがとうございました！</div>
+            <div class="completion-sub">
+              ポイントを獲得しました。<br>
+              毎日回答してボーナスポイントをゲットしよう！
+            </div>
+
+            ${rankHtml}
+
+            <div class="reward-row">
+              <div class="reward-box">
+                <div class="reward-val">+${pts}<span class="reward-unit">pt</span></div>
+                <div class="reward-label">獲得ポイント</div>
+              </div>
+              ${bonus > 0 ? `
+              <div class="reward-box">
+                <div class="reward-val">+${bonus}<span class="reward-unit">pt</span></div>
+                <div class="reward-label">ストリークボーナス</div>
+              </div>` : ""}
+              ${streak > 0 ? `
+              <div class="reward-box">
+                <div class="reward-val">${streak}<span class="reward-unit" style="font-size:14px">日</span></div>
+                <div class="reward-label">連続回答</div>
+              </div>` : ""}
+            </div>
+
+            ${badgeHtml}
+
+            <button class="btn btn-primary" onclick="LiffAuth.closeOrBack()">閉じる</button>
+          </div>
+        `);
+      }
+
+      // ---- メインロード ----
+      async function load() {
+        if (!liffId) { showError("LIFF IDが設定されていません。"); return; }
+        if (!surveyId) { showError("アンケートIDが指定されていません。"); return; }
+
+        try {
+          const token = await LiffAuth.initLiffOrWebAuth(liffId);
+          if (!token) return;
+          idToken = token;
+
+          const res = await fetch(`/liff/daily-survey-data?survey_id=${encodeURIComponent(surveyId)}`, {
+            headers: { Authorization: `Bearer ${idToken}` }
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || "アンケートを読み込めませんでした。");
+          }
+          surveyData = await res.json();
+
+          if (surveyData.alreadyAnswered) {
+            show(`<div class="card completion-card">
+              <div class="completion-icon">✅</div>
+              <div class="completion-title">回答済みです</div>
+              <div class="completion-sub">このアンケートはすでに回答されています。<br>また明日のアンケートをお楽しみに！</div>
+              <button class="btn btn-secondary" style="margin-top:4px" onclick="LiffAuth.closeOrBack()">閉じる</button>
+            </div>`);
+            return;
+          }
+
+          if (!surveyData.questions || surveyData.questions.length === 0) {
+            showError("設問がありません。");
+            return;
+          }
+
+          renderQuestion(0);
+        } catch (err) {
+          showError(err.message || "読み込みに失敗しました。");
+        }
+      }
+
+      void load();
+    })();
+    </script>
+  </body>
+</html>

@@ -62,6 +62,8 @@ adminRoutes.get("/posts/:postId", asyncHandler(adminController.postDetail));
 adminRoutes.get("/post-analysis", asyncHandler(adminController.postAnalysis));
 
 adminRoutes.get("/points", asyncHandler(adminController.points));
+adminRoutes.post("/user-points/:lineUserId/adjust", asyncHandler(adminController.adjustUserPoints));
+adminRoutes.get("/badges", asyncHandler(adminController.badgesPage));
 adminRoutes.get("/ranks", asyncHandler(adminController.ranks));
 adminRoutes.post("/ranks/:rankId", asyncHandler(adminController.updateRank));
 
@@ -148,3 +150,27 @@ adminRoutes.get("/user-profiles/login", asyncHandler(adminController.userProfile
 adminRoutes.post("/user-profiles/login", asyncHandler(adminController.userProfilesLogin));
 adminRoutes.post("/user-profiles/logout", asyncHandler(adminController.userProfilesLogout));
 adminRoutes.get("/user-profiles", asyncHandler(adminController.userProfilesAdmin));
+
+// 通知テンプレート管理
+adminRoutes.get("/notification-templates", asyncHandler(adminController.notificationTemplates));
+adminRoutes.get("/notification-templates/new", asyncHandler(adminController.newNotificationTemplate));
+adminRoutes.post("/notification-templates", asyncHandler(adminController.createNotificationTemplate));
+adminRoutes.get("/notification-templates/:templateId/edit", asyncHandler(adminController.editNotificationTemplate));
+adminRoutes.post("/notification-templates/:templateId", asyncHandler(adminController.updateNotificationTemplate));
+adminRoutes.post("/notification-templates/:templateId/delete", asyncHandler(adminController.deleteNotificationTemplate));
+adminRoutes.post("/notification-templates/:templateId/toggle-active", asyncHandler(adminController.toggleNotificationTemplateActive));
+adminRoutes.post("/notification-templates/:templateId/set-default", asyncHandler(adminController.setNotificationTemplateDefault));
+
+// デイリーアンケート管理
+adminRoutes.get("/daily-surveys", asyncHandler(adminController.dailySurveys));
+adminRoutes.get("/daily-surveys/new", asyncHandler(adminController.newDailySurvey));
+adminRoutes.post("/daily-surveys", asyncHandler(adminController.createDailySurvey));
+adminRoutes.get("/daily-surveys/:surveyId", asyncHandler(adminController.showDailySurvey));
+adminRoutes.get("/daily-surveys/:surveyId/edit", asyncHandler(adminController.editDailySurvey));
+adminRoutes.post("/daily-surveys/:surveyId", asyncHandler(adminController.updateDailySurvey));
+adminRoutes.post("/daily-surveys/:surveyId/delete", asyncHandler(adminController.deleteDailySurvey));
+adminRoutes.post("/daily-surveys/:surveyId/status/:action", asyncHandler(adminController.updateDailySurveyStatus));
+adminRoutes.post("/daily-surveys/:surveyId/deliver", asyncHandler(adminController.deliverDailySurvey));
+adminRoutes.post("/daily-surveys/:surveyId/questions", asyncHandler(adminController.createDailySurveyQuestion));
+adminRoutes.post("/daily-surveys/:surveyId/questions/:questionId", asyncHandler(adminController.updateDailySurveyQuestion));
+adminRoutes.post("/daily-surveys/:surveyId/questions/:questionId/delete", asyncHandler(adminController.deleteDailySurveyQuestion));
