@@ -2377,6 +2377,26 @@ export const adminController = {
     });
   },
 
+  async updateBadgeStatus(req: Request, res: Response): Promise<void> {
+    const badgeId = routeParam(req, "badgeId");
+    const isActive = req.body.isActive === true || req.body.isActive === "true";
+    logger.info("[badge] updateStatus start", { badgeId, isActive });
+    try {
+      await userBadgeService.updateStatus(badgeId, isActive);
+      logger.info("[badge] updateStatus ok", { badgeId, isActive });
+      res.json({ ok: true });
+    } catch (err) {
+      logger.error("[badge] updateStatus failed", {
+        badgeId,
+        isActive,
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined
+      });
+      const statusCode = err instanceof HttpError ? err.statusCode : 500;
+      res.status(statusCode).json({ ok: false, error: err instanceof Error ? err.message : "更新に失敗しました" });
+    }
+  },
+
   async adjustPoints(req: Request, res: Response): Promise<void> {
     const respondentId = routeParam(req, "respondentId");
     await pointService.manualAdjust({

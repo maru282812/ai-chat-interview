@@ -64,6 +64,7 @@ adminRoutes.get("/post-analysis", asyncHandler(adminController.postAnalysis));
 adminRoutes.get("/points", asyncHandler(adminController.points));
 adminRoutes.post("/user-points/:lineUserId/adjust", asyncHandler(adminController.adjustUserPoints));
 adminRoutes.get("/badges", asyncHandler(adminController.badgesPage));
+adminRoutes.patch("/badges/:badgeId/status", asyncHandler(adminController.updateBadgeStatus));
 adminRoutes.get("/ranks", asyncHandler(adminController.ranks));
 adminRoutes.post("/ranks/:rankId", asyncHandler(adminController.updateRank));
 

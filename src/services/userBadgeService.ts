@@ -125,6 +125,18 @@ export const userBadgeService = {
     return { newlyAwarded, allEarned };
   },
 
+  async updateStatus(id: string, isActive: boolean): Promise<void> {
+    const { data, error } = await supabase
+      .from("user_badges")
+      .update({ is_active: isActive })
+      .eq("id", id)
+      .select("id");
+    throwIfError(error);
+    if (!data || (data as unknown[]).length === 0) {
+      throw new Error(`badge not found: id=${id}`);
+    }
+  },
+
   async getAwardCounts(): Promise<Record<string, number>> {
     const { data, error } = await supabase
       .from("user_badge_awards")
@@ -145,12 +157,12 @@ export const userBadgeService = {
   }>> {
     const { data, error } = await supabase
       .from("user_badge_awards")
-      .select("line_user_id, awarded_at, user_profiles!inner(display_name)")
+      .select("line_user_id, awarded_at, user_profiles!inner(nickname)")
       .order("awarded_at", { ascending: false });
     throwIfError(error);
 
     const map = new Map<string, { display_name: string | null; count: number; latest: string | null }>();
-    type AwardRow = { line_user_id: string; awarded_at: string; user_profiles: { display_name: string | null } | Array<{ display_name: string | null }> };
+    type AwardRow = { line_user_id: string; awarded_at: string; user_profiles: { nickname: string | null } | Array<{ nickname: string | null }> };
     for (const row of (data ?? []) as unknown as AwardRow[]) {
       const profile = Array.isArray(row.user_profiles) ? row.user_profiles[0] : row.user_profiles;
       const existing = map.get(row.line_user_id);
@@ -159,7 +171,7 @@ export const userBadgeService = {
         if (!existing.latest || row.awarded_at > existing.latest) existing.latest = row.awarded_at;
       } else {
         map.set(row.line_user_id, {
-          display_name: profile?.display_name ?? null,
+          display_name: profile?.nickname ?? null,
           count: 1,
           latest: row.awarded_at
         });

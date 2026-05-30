@@ -1,5 +1,46 @@
 <%- include("../../partials/header", { title }) %>
 
+<style>
+.toggle-switch { position:relative;display:inline-block;width:44px;height:24px;cursor:pointer;vertical-align:middle; }
+.toggle-switch input { opacity:0;width:0;height:0;position:absolute; }
+.toggle-slider {
+  position:absolute;top:0;left:0;right:0;bottom:0;
+  background:#ccc;border-radius:24px;transition:.25s;
+}
+.toggle-slider::before {
+  content:"";position:absolute;width:18px;height:18px;
+  left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.25s;
+  box-shadow:0 1px 3px rgba(0,0,0,.2);
+}
+input:checked + .toggle-slider { background:#2ca87a; }
+input:checked + .toggle-slider::before { transform:translateX(20px); }
+.toggle-switch input:disabled + .toggle-slider { opacity:.6;cursor:not-allowed; }
+
+/* モーダル */
+#badge-modal-overlay {
+  display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1000;
+  align-items:center;justify-content:center;
+}
+#badge-modal-overlay.open { display:flex; }
+#badge-modal {
+  background:#fff;border-radius:8px;padding:24px;min-width:280px;max-width:360px;
+  box-shadow:0 8px 32px rgba(0,0,0,.2);
+}
+#badge-modal h4 { margin:0 0 8px;font-size:16px; }
+#badge-modal p { margin:0 0 20px;color:#555;font-size:14px;line-height:1.5; }
+#badge-modal .modal-actions { display:flex;gap:8px;justify-content:flex-end; }
+#badge-modal .btn-cancel {
+  padding:7px 16px;border:1px solid #ccc;border-radius:4px;
+  background:#fff;cursor:pointer;font-size:14px;
+}
+#badge-modal .btn-confirm {
+  padding:7px 16px;border:none;border-radius:4px;
+  color:#fff;cursor:pointer;font-size:14px;font-weight:600;
+}
+#badge-modal .btn-confirm.activate { background:#2ca87a; }
+#badge-modal .btn-confirm.deactivate { background:#e55; }
+</style>
+
 <div style="display:flex;align-items:center;gap:12px;margin-bottom:1rem">
   <a href="/admin/points" class="btn-secondary">← ポイント管理</a>
   <h2>バッジ管理</h2>
@@ -7,7 +48,17 @@
 
 <!-- バッジ定義一覧 -->
 <section class="card" style="margin-bottom:1.5rem">
-  <h3 style="margin-bottom:.75rem">バッジ定義 (<%= badges.length %> 種類)</h3>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;flex-wrap:wrap;gap:8px">
+    <h3 style="margin:0">バッジ定義 (<span id="visible-count"><%= badges.length %></span> / <%= badges.length %> 種類)</h3>
+    <div style="display:flex;align-items:center;gap:8px">
+      <label style="font-size:13px;color:#555">状態フィルタ：</label>
+      <select id="statusFilter" onchange="applyFilter()" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font-size:13px">
+        <option value="all">全て</option>
+        <option value="active">有効のみ</option>
+        <option value="inactive">無効のみ</option>
+      </select>
+    </div>
+  </div>
   <table>
     <thead>
       <tr>
@@ -15,10 +66,10 @@
         <th>バッジ</th>
         <th>条件種別</th>
         <th style="text-align:center">獲得者数</th>
-        <th>状態</th>
+        <th style="width:120px">状態</th>
       </tr>
     </thead>
-    <tbody>
+    <tbody id="badge-tbody">
       <% const COND_LABELS = {
         first_answer:       '初回回答',
         streak_7:           '7日連続',
@@ -38,7 +89,8 @@
         manual:             '手動付与'
       }; %>
       <% for (const b of badges) { %>
-      <tr style="<%= !b.is_active ? 'opacity:.5' : '' %>">
+      <tr data-active="<%= b.is_active %>" data-badge-id="<%= b.id %>"
+          style="<%= !b.is_active ? 'opacity:.5' : '' %>">
         <td style="text-align:center"><%= b.sort_order %></td>
         <td>
           <span style="font-size:24px"><%= b.icon_emoji %></span>
@@ -58,11 +110,15 @@
           <span class="muted" style="font-size:12px"> 人</span>
         </td>
         <td>
-          <% if (b.is_active) { %>
-            <span style="color:#2ca87a;font-size:12px">●有効</span>
-          <% } else { %>
-            <span style="color:#999;font-size:12px">○無効</span>
-          <% } %>
+          <label class="toggle-switch" title="<%= b.is_active ? '有効' : '無効' %>">
+            <input type="checkbox" <%= b.is_active ? 'checked' : '' %>
+                   data-id="<%= b.id %>" data-name="<%= b.badge_name %>"
+                   onchange="requestToggle(this)">
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="status-label" style="margin-left:6px;font-size:12px;vertical-align:middle;color:<%= b.is_active ? '#2ca87a' : '#999' %>">
+            <%= b.is_active ? '● 有効' : '● 無効' %>
+          </span>
         </td>
       </tr>
       <% } %>
@@ -108,5 +164,135 @@
   </table>
   <% } %>
 </section>
+
+<!-- 確認モーダル -->
+<div id="badge-modal-overlay">
+  <div id="badge-modal">
+    <h4 id="modal-title"></h4>
+    <p id="modal-body"></p>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">キャンセル</button>
+      <button class="btn-confirm" id="modal-confirm" onclick="confirmToggle()"></button>
+    </div>
+  </div>
+</div>
+
+<script>
+let _pendingCheckbox = null;
+let _pendingIsActive = false;
+
+function requestToggle(checkbox) {
+  const id = checkbox.dataset.id;
+  const name = checkbox.dataset.name;
+  const isActive = checkbox.checked;
+
+  // 即座に revert（確認後に apply）
+  checkbox.checked = !isActive;
+  checkbox.disabled = true;
+
+  _pendingCheckbox = checkbox;
+  _pendingIsActive = isActive;
+
+  const title = document.getElementById('modal-title');
+  const body  = document.getElementById('modal-body');
+  const btn   = document.getElementById('modal-confirm');
+
+  if (isActive) {
+    title.textContent = '有効にする';
+    body.textContent  = 'このバッジを有効にしますか？「' + name + '」';
+    btn.textContent   = '有効化';
+    btn.className     = 'btn-confirm activate';
+  } else {
+    title.textContent = '無効にする';
+    body.textContent  = 'このバッジを無効にしますか？「' + name + '」\n\n無効化しても既に獲得済みのバッジは剥奪されません。';
+    btn.textContent   = '無効化';
+    btn.className     = 'btn-confirm deactivate';
+  }
+
+  document.getElementById('badge-modal-overlay').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('badge-modal-overlay').classList.remove('open');
+  if (_pendingCheckbox) {
+    _pendingCheckbox.disabled = false;
+    _pendingCheckbox = null;
+  }
+}
+
+async function confirmToggle() {
+  const checkbox  = _pendingCheckbox;
+  const isActive  = _pendingIsActive;
+  const id        = checkbox.dataset.id;
+
+  document.getElementById('badge-modal-overlay').classList.remove('open');
+  checkbox.disabled = true;
+
+  try {
+    const res = await fetch('/admin/badges/' + id + '/status', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isActive })
+    });
+    if (!res.ok) {
+      let errMsg = 'HTTP ' + res.status;
+      try {
+        const body = await res.json();
+        if (body && body.error) errMsg = body.error;
+      } catch (_) { /* ignore parse error */ }
+      console.error('[badge] updateStatus failed', { id, isActive, status: res.status, errMsg });
+      throw new Error(errMsg);
+    }
+
+    // DOM を更新
+    checkbox.checked = isActive;
+    const row = checkbox.closest('tr');
+    const label = row.querySelector('.status-label');
+
+    if (isActive) {
+      row.style.opacity = '';
+      row.dataset.active = 'true';
+      label.style.color = '#2ca87a';
+      label.textContent = '● 有効';
+    } else {
+      row.style.opacity = '.5';
+      row.dataset.active = 'false';
+      label.style.color = '#999';
+      label.textContent = '● 無効';
+    }
+
+    applyFilter();
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    alert('更新に失敗しました。\n原因: ' + reason + '\n\nページをリロードしてください。');
+    console.error('[badge] confirmToggle error', e);
+  } finally {
+    checkbox.disabled = false;
+    _pendingCheckbox = null;
+  }
+}
+
+function applyFilter() {
+  const val  = document.getElementById('statusFilter').value;
+  const rows = document.querySelectorAll('#badge-tbody tr[data-badge-id]');
+  let visible = 0;
+
+  rows.forEach(row => {
+    const active = row.dataset.active === 'true';
+    let show = true;
+    if (val === 'active')   show = active;
+    if (val === 'inactive') show = !active;
+    row.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+
+  document.getElementById('visible-count').textContent = visible;
+}
+
+// オーバーレイクリックで閉じる
+document.getElementById('badge-modal-overlay').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+</script>
 
 <%- include("../../partials/footer") %>
