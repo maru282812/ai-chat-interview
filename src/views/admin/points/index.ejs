@@ -1,5 +1,11 @@
 <%- include("../../partials/header", { title }) %>
 
+<% if (typeof fetchError !== 'undefined' && fetchError) { %>
+<div style="background:#fff3cd;border:1px solid #ffc107;color:#856404;padding:12px 16px;border-radius:6px;margin-bottom:1rem">
+  <strong>エラー：</strong> <%= fetchError %>
+</div>
+<% } %>
+
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
   <h2>ポイント管理</h2>
   <div style="display:flex;gap:8px">
@@ -111,7 +117,9 @@
         </td>
         <td style="white-space:nowrap">
           <button type="button" class="btn-secondary" style="padding:2px 8px;font-size:12px"
-                  onclick="openAdjust('<%= u.line_user_id %>','<%= (u.display_name || u.line_user_id.slice(0,12)).replace(/'/g,\"\\\\'\" ) %>')">
+                  data-uid="<%= u.line_user_id %>"
+                  data-name="<%= u.display_name || u.line_user_id.slice(0,12) %>"
+                  onclick="openAdjust(this.dataset.uid, this.dataset.name)">
             pt調整
           </button>
         </td>

@@ -51,6 +51,10 @@ import { dailySurveyRepository } from "../repositories/dailySurveyRepository";
 import { notificationTemplateRepository } from "../repositories/notificationTemplateRepository";
 import { userPointService } from "../services/userPointService";
 import { userBadgeService } from "../services/userBadgeService";
+import { notificationSchedulerService } from "../services/notificationSchedulerService";
+import { rewardCampaignService } from "../services/rewardCampaignService";
+import { dailyQuestionPriorityService } from "../services/dailyQuestionPriorityService";
+import { missingAttributeService } from "../services/missingAttributeService";
 import type { DisplayTagsParsed, VisibilityCondition } from "../types/questionSchema";
 
 // USERプロファイル管理の簡易認証設定
@@ -92,6 +96,26 @@ function bodyString(value: unknown): string {
 function extractVariables(text: string): string[] {
   const matches = text.match(/\{(\w+)\}/g) ?? [];
   return [...new Set(matches)];
+}
+
+function buildConditionValue(b: Record<string, string>): Record<string, unknown> {
+  switch (b.condition_type) {
+    case "streak_days":
+      return { min_streak: Number(b.cond_min_streak ?? 7) };
+    case "date_range":
+      return { start: b.cond_start || null, end: b.cond_end || null };
+    default:
+      return {};
+  }
+}
+
+function parseDqpOptions(raw: string | undefined): Array<{ label: string; value: string }> {
+  if (!raw?.trim()) return [];
+  try {
+    return JSON.parse(raw) as Array<{ label: string; value: string }>;
+  } catch {
+    return [];
+  }
 }
 
 function bodyStringArray(value: unknown): string[] {
@@ -1585,6 +1609,199 @@ async function validateQuestionDefinition(input: {
   }
 }
 
+// ====================================================================
+// セグメント条件評価ヘルパー（previewSegment / evaluateSegment 共用）
+// ====================================================================
+
+type SegCond = { field: string; op: string; value: unknown };
+interface SegGroup { operator: "AND" | "OR"; conditions: SegCond[] }
+interface NormConds { operator: "AND" | "OR"; groups: SegGroup[] }
+
+function normalizeSegConds(raw: unknown): NormConds {
+  const r = raw as Record<string, unknown>;
+  if (Array.isArray(r.groups)) return r as unknown as NormConds;
+  // 旧フォーマット: { operator, conditions[] }
+  return {
+    operator: (r.operator as "AND" | "OR") ?? "AND",
+    groups: [{ operator: "AND" as const, conditions: (r.conditions as SegCond[]) ?? [] }],
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyProfileCond(query: any, c: SegCond): any {
+  const { field, op, value } = c;
+  switch (field) {
+    case "gender":
+      if (op === "eq")  return query.eq("gender", value);
+      if (op === "neq") return query.neq("gender", value);
+      if (op === "in" && Array.isArray(value)) return query.in("gender", value as string[]);
+      break;
+    case "prefecture":
+      if (op === "in" && Array.isArray(value)) return query.in("prefecture", value as string[]);
+      if (op === "eq")  return query.eq("prefecture", value);
+      if (op === "neq") return query.neq("prefecture", value);
+      break;
+    case "age": {
+      const today = new Date();
+      const n = Number(value);
+      if (op === "gte") {
+        // age >= n → birth_date <= today - n年
+        const d = new Date(today); d.setFullYear(d.getFullYear() - n);
+        return query.lte("birth_date", d.toISOString().split("T")[0]);
+      }
+      if (op === "lte") {
+        // age <= n → birth_date >= today - (n+1)年 + 1日
+        const d = new Date(today); d.setFullYear(d.getFullYear() - n - 1); d.setDate(d.getDate() + 1);
+        return query.gte("birth_date", d.toISOString().split("T")[0]);
+      }
+      if (op === "eq") {
+        const dMax = new Date(today); dMax.setFullYear(dMax.getFullYear() - n);
+        const dMin = new Date(today); dMin.setFullYear(dMin.getFullYear() - n - 1); dMin.setDate(dMin.getDate() + 1);
+        return query
+          .lte("birth_date", dMax.toISOString().split("T")[0])
+          .gte("birth_date", dMin.toISOString().split("T")[0]);
+      }
+      break;
+    }
+    case "occupation":
+      if (op === "eq")       return query.eq("occupation", value);
+      if (op === "neq")      return query.neq("occupation", value);
+      if (op === "contains") return query.ilike("occupation", `%${value}%`);
+      break;
+    case "industry":
+      if (op === "eq")       return query.eq("industry", value);
+      if (op === "neq")      return query.neq("industry", value);
+      if (op === "contains") return query.ilike("industry", `%${value}%`);
+      break;
+    case "marital_status":
+      if (op === "eq")  return query.eq("marital_status", value);
+      if (op === "neq") return query.neq("marital_status", value);
+      break;
+    case "has_children":    return query.eq("has_children", value);
+    case "is_blocked":      return query.eq("is_blocked", value);
+    case "profile_completed": return query.eq("profile_completed", value);
+    case "registered_at":
+      if (op === "gte") return query.gte("created_at", value);
+      if (op === "lte") return query.lte("created_at", value);
+      break;
+  }
+  return query;
+}
+
+const PROFILE_FIELDS = new Set([
+  "gender", "prefecture", "age", "occupation", "industry",
+  "marital_status", "has_children", "is_blocked", "profile_completed", "registered_at",
+]);
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function evalGroupIds(db: any, group: SegGroup): Promise<Set<string>> {
+  const profConds = group.conditions.filter(c => PROFILE_FIELDS.has(c.field));
+  const ptsConds  = group.conditions.filter(c => c.field === "total_points");
+
+  // プロフィール条件 → user_profiles
+  let profIds: Set<string> | null = null;
+  if (profConds.length > 0 || ptsConds.length === 0) {
+    if (group.operator === "AND") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q = db.from("user_profiles").select("line_user_id");
+      for (const c of profConds) q = applyProfileCond(q, c);
+      const { data } = await q;
+      profIds = new Set((data ?? []).map((r: any) => r.line_user_id as string));
+    } else {
+      profIds = new Set<string>();
+      if (profConds.length === 0) {
+        const { data } = await db.from("user_profiles").select("line_user_id");
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (data ?? []).forEach((r: any) => profIds!.add(r.line_user_id));
+      } else {
+        for (const c of profConds) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let q = db.from("user_profiles").select("line_user_id");
+          q = applyProfileCond(q, c);
+          const { data } = await q;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (data ?? []).forEach((r: any) => profIds!.add(r.line_user_id));
+        }
+      }
+    }
+  }
+
+  // total_points 条件 → user_points
+  let ptsIds: Set<string> | null = null;
+  if (ptsConds.length > 0) {
+    if (group.operator === "AND") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q = db.from("user_points").select("line_user_id");
+      for (const c of ptsConds) {
+        if (c.op === "gte") q = q.gte("total_points", c.value);
+        else if (c.op === "lte") q = q.lte("total_points", c.value);
+        else if (c.op === "eq")  q = q.eq("total_points", c.value);
+      }
+      const { data } = await q;
+      ptsIds = new Set((data ?? []).map((r: any) => r.line_user_id as string));
+    } else {
+      ptsIds = new Set<string>();
+      for (const c of ptsConds) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let q = db.from("user_points").select("line_user_id");
+        if (c.op === "gte") q = q.gte("total_points", c.value);
+        else if (c.op === "lte") q = q.lte("total_points", c.value);
+        else if (c.op === "eq")  q = q.eq("total_points", c.value);
+        const { data } = await q;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (data ?? []).forEach((r: any) => ptsIds!.add(r.line_user_id));
+      }
+    }
+  }
+
+  // 結合
+  if (profIds === null && ptsIds === null) return new Set();
+  if (profIds === null) return ptsIds!;
+  if (ptsIds  === null) return profIds;
+  if (group.operator === "AND") {
+    return new Set([...profIds].filter(id => ptsIds!.has(id)));
+  }
+  for (const id of ptsIds!) profIds.add(id);
+  return profIds;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function evaluateConditionsCount(db: any, rawConditions: unknown): Promise<number> {
+  const norm = normalizeSegConds(rawConditions);
+
+  // 高速パス: 単一グループ AND かつ全フィールドが user_profiles 上
+  const firstGroup = norm.groups[0];
+  if (
+    norm.groups.length === 1 &&
+    firstGroup &&
+    firstGroup.operator === "AND" &&
+    firstGroup.conditions.every(c => PROFILE_FIELDS.has(c.field))
+  ) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q = db.from("user_profiles").select("line_user_id", { count: "exact", head: true });
+    for (const c of firstGroup.conditions) q = applyProfileCond(q, c);
+    const { count, error } = await q;
+    if (error) throw new HttpError(500, error.message);
+    return count ?? 0;
+  }
+
+  // 通常パス: グループごとに ID 集合を評価して結合
+  const sets = await Promise.all(norm.groups.map(g => evalGroupIds(db, g)));
+  if (sets.length === 0) return 0;
+
+  if (norm.operator === "AND") {
+    let result: Set<string> = sets[0] ?? new Set();
+    for (let i = 1; i < sets.length; i++) {
+      const next = sets[i] ?? new Set<string>();
+      result = new Set([...result].filter(id => next.has(id)));
+    }
+    return result.size;
+  }
+  const result = new Set<string>();
+  for (const s of sets) if (s) for (const id of s) result.add(id);
+  return result.size;
+}
+
 export const adminController = {
   async dashboard(_req: Request, res: Response): Promise<void> {
     const stats = await adminService.dashboard();
@@ -2109,10 +2326,21 @@ export const adminController = {
   },
 
   async points(_req: Request, res: Response): Promise<void> {
-    const summaries = await userPointService.listSummaries(500);
+    let summaries: Awaited<ReturnType<typeof userPointService.listSummaries>> = [];
+    let fetchError: string | null = null;
+    try {
+      summaries = await userPointService.listSummaries(500);
+    } catch (err) {
+      logger.error("Failed to fetch point summaries", {
+        error: String(err),
+        stack: err instanceof Error ? err.stack : undefined
+      });
+      fetchError = "ポイント情報の取得に失敗しました。管理者へお問い合わせください。";
+    }
     res.render("admin/points/index", {
       title: "ポイント管理",
-      summaries
+      summaries,
+      fetchError
     });
   },
 
@@ -3414,38 +3642,27 @@ ${JSON.stringify(questionsForAI, null, 2)}
     const segmentId = routeParam(req, "segmentId");
     const segment = await segmentRepository.getById(segmentId);
     const { supabase: db } = await import("../config/supabase");
+    const count = await evaluateConditionsCount(db, segment.conditions);
+    await segmentRepository.updateEstimatedCount(segmentId, count);
+    res.json({ ok: true, estimated_count: count });
+  },
 
-    // conditions に基づいて user_profiles を動的フィルタリング
-    const conds = segment.conditions.conditions as Array<{
-      field: string; op: string; value: unknown; attr_value?: unknown;
-    }>;
-
-    let query = db.from("user_profiles").select("line_user_id", { count: "exact", head: false });
-
-    for (const c of conds) {
-      switch (c.field) {
-        case "gender":
-          if (c.op === "in" && Array.isArray(c.value)) query = query.in("gender", c.value as string[]);
-          break;
-        case "prefecture":
-          if (c.op === "in" && Array.isArray(c.value)) query = query.in("prefecture", c.value as string[]);
-          break;
-        case "is_blocked":
-          query = query.eq("is_blocked", c.value as boolean);
-          break;
-        case "profile_completed":
-          query = query.eq("profile_completed", c.value as boolean);
-          break;
-      }
+  async previewSegment(req: Request, res: Response): Promise<void> {
+    let conditions: unknown;
+    try {
+      const raw = req.body.conditions;
+      conditions = typeof raw === "string" ? JSON.parse(raw) : raw;
+    } catch {
+      res.json({ ok: false, error: "不正な条件 JSON です" });
+      return;
     }
-
-    const { data, count, error } = await query;
-    if (error) throw new HttpError(500, error.message);
-
-    const estimatedCount = count ?? (data?.length ?? 0);
-    await segmentRepository.updateEstimatedCount(segmentId, estimatedCount);
-
-    res.json({ ok: true, estimated_count: estimatedCount });
+    const { supabase: db } = await import("../config/supabase");
+    try {
+      const count = await evaluateConditionsCount(db, conditions);
+      res.json({ ok: true, estimated_count: count });
+    } catch (e) {
+      res.json({ ok: false, error: e instanceof Error ? e.message : "評価エラー" });
+    }
   },
 
   // ============================================================
@@ -4130,7 +4347,12 @@ ${JSON.stringify(questionsForAI, null, 2)}
 
   async newDailySurvey(req: Request, res: Response): Promise<void> {
     const templates = await notificationTemplateRepository.listByCategory("daily_survey");
-    const segments = await segmentRepository.list();
+    let segments: Awaited<ReturnType<typeof segmentRepository.list>> = [];
+    try {
+      segments = await segmentRepository.list();
+    } catch {
+      // segments テーブルが未設定または権限なしの場合は空配列で続行
+    }
     res.render("admin/daily-surveys/form", {
       title: "デイリーアンケート作成",
       survey: null,
@@ -4160,12 +4382,13 @@ ${JSON.stringify(questionsForAI, null, 2)}
 
   async editDailySurvey(req: Request, res: Response): Promise<void> {
     const surveyId = routeParam(req, "surveyId");
-    const [survey, questions, templates, segments] = await Promise.all([
+    const [survey, questions, templates, segmentsResult] = await Promise.all([
       dailySurveyService.getById(surveyId),
       dailySurveyService.listQuestions(surveyId),
       notificationTemplateRepository.listByCategory("daily_survey"),
-      segmentRepository.list()
+      segmentRepository.list().catch(() => [] as Awaited<ReturnType<typeof segmentRepository.list>>)
     ]);
+    const segments = segmentsResult;
     res.render("admin/daily-surveys/form", {
       title: "デイリーアンケート編集",
       survey,
@@ -4297,6 +4520,40 @@ ${JSON.stringify(questionsForAI, null, 2)}
     res.redirect(`/admin/daily-surveys/${surveyId}/edit`);
   },
 
+  // ── デイリーアンケート 配信分析ダッシュボード ──────────────────
+
+  async dailySurveyAnalytics(req: Request, res: Response): Promise<void> {
+    const surveyId = routeParam(req, "surveyId");
+    const [survey, deliveryStats, answerDistribution, timeline, notificationLogs] = await Promise.all([
+      dailySurveyService.getById(surveyId),
+      dailySurveyRepository.getDeliveryStats(surveyId),
+      dailySurveyRepository.getAnswerDistribution(surveyId),
+      dailySurveyRepository.getDeliveryTimeline(surveyId),
+      dailySurveyRepository.getNotificationLogs(surveyId, 50)
+    ]);
+    res.render("admin/daily-surveys/analytics", {
+      title: `${survey.title} - 配信分析`,
+      survey,
+      deliveryStats,
+      answerDistribution,
+      timeline,
+      notificationLogs
+    });
+  },
+
+  // ── AI 不足属性自動判定 API ────────────────────────────────────
+
+  async apiMissingAttributeCoverage(_req: Request, res: Response): Promise<void> {
+    const coverage = await missingAttributeService.computeCoverage();
+    res.json({ coverage });
+  },
+
+  async apiMissingAttributeSuggest(req: Request, res: Response): Promise<void> {
+    const topN = Number((req.query as Record<string, string>).top_n ?? "5");
+    const suggestions = await missingAttributeService.suggestQuestions(Math.min(topN, 10));
+    res.json({ suggestions });
+  },
+
   // ============================================================
   // 通知テンプレート管理
   // ============================================================
@@ -4402,5 +4659,214 @@ ${JSON.stringify(questionsForAI, null, 2)}
     }
     await notificationTemplateRepository.update(templateId, { is_default: true, is_active: true });
     res.redirect("/admin/notification-templates");
+  },
+
+  // ============================================================
+  // 通知スケジューラ設定
+  // ============================================================
+
+  async schedulerSettings(req: Request, res: Response): Promise<void> {
+    const settings = await notificationSchedulerService.getSettings();
+    const flash = req.query.saved ? "設定を保存しました" : null;
+    const jobResult = req.query.job
+      ? { job: req.query.job as string, sent: Number(req.query.sent ?? 0), failed: Number(req.query.failed ?? 0), total: Number(req.query.total ?? 0) }
+      : null;
+    res.render("admin/scheduler-settings/index", {
+      title: "通知スケジューラ設定",
+      settings,
+      flash,
+      jobResult,
+      activeJobCount: notificationSchedulerService.activeJobCount
+    });
+  },
+
+  async updateSchedulerSettings(req: Request, res: Response): Promise<void> {
+    const b = req.body as Record<string, string>;
+    await notificationSchedulerService.updateSettings({
+      morning_enabled: b.morning_enabled === "1",
+      morning_time: b.morning_time || "08:00",
+      evening_enabled: b.evening_enabled === "1",
+      evening_time: b.evening_time || "18:00",
+      reminder_enabled: b.reminder_enabled === "1",
+      reminder_time: b.reminder_time || "20:00"
+    });
+    res.redirect("/admin/scheduler-settings?saved=1");
+  },
+
+  async runSchedulerJob(req: Request, res: Response): Promise<void> {
+    const job = routeParam(req, "job") as "morning" | "evening" | "reminder";
+    let result;
+    if (job === "morning") result = await notificationSchedulerService.runDailyMorning();
+    else if (job === "evening") result = await notificationSchedulerService.runDailyEvening();
+    else result = await notificationSchedulerService.runUnansweredReminder();
+    res.redirect(
+      `/admin/scheduler-settings?job=${result.job}&sent=${result.sent}&failed=${result.failed}&total=${result.total}`
+    );
+  },
+
+  // ============================================================
+  // 報酬キャンペーン管理
+  // ============================================================
+
+  async rewardCampaigns(req: Request, res: Response): Promise<void> {
+    const campaigns = await rewardCampaignService.list();
+    const flash = req.query.saved ? "保存しました" : null;
+    res.render("admin/reward-campaigns/index", { title: "報酬キャンペーン", campaigns, flash });
+  },
+
+  async newRewardCampaign(req: Request, res: Response): Promise<void> {
+    const segments = await segmentRepository.list();
+    res.render("admin/reward-campaigns/form", {
+      title: "キャンペーン作成",
+      campaign: null,
+      segments,
+      mode: "create"
+    });
+  },
+
+  async createRewardCampaign(req: Request, res: Response): Promise<void> {
+    const b = req.body as Record<string, string>;
+    const conditionValue = buildConditionValue(b);
+    await rewardCampaignService.create({
+      name: bodyString(b.name),
+      description: b.description || null,
+      campaign_type: b.campaign_type as import("../repositories/rewardCampaignRepository").CampaignType,
+      bonus_points: Number(b.bonus_points ?? 0),
+      condition_type: b.condition_type as import("../repositories/rewardCampaignRepository").ConditionType,
+      condition_value: conditionValue,
+      target_segment_id: b.target_segment_id || null,
+      start_at: b.start_at || null,
+      end_at: b.end_at || null,
+      is_active: b.is_active === "1"
+    });
+    res.redirect("/admin/reward-campaigns?saved=1");
+  },
+
+  async editRewardCampaign(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    const [campaign, segments] = await Promise.all([
+      rewardCampaignService.getById(id),
+      segmentRepository.list()
+    ]);
+    res.render("admin/reward-campaigns/form", {
+      title: "キャンペーン編集",
+      campaign,
+      segments,
+      mode: "edit"
+    });
+  },
+
+  async updateRewardCampaign(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    const b = req.body as Record<string, string>;
+    const conditionValue = buildConditionValue(b);
+    await rewardCampaignService.update(id, {
+      name: bodyString(b.name),
+      description: b.description || null,
+      campaign_type: b.campaign_type as import("../repositories/rewardCampaignRepository").CampaignType,
+      bonus_points: Number(b.bonus_points ?? 0),
+      condition_type: b.condition_type as import("../repositories/rewardCampaignRepository").ConditionType,
+      condition_value: conditionValue,
+      target_segment_id: b.target_segment_id || null,
+      start_at: b.start_at || null,
+      end_at: b.end_at || null,
+      is_active: b.is_active === "1"
+    });
+    res.redirect("/admin/reward-campaigns?saved=1");
+  },
+
+  async deleteRewardCampaign(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    await rewardCampaignService.delete(id);
+    res.redirect("/admin/reward-campaigns");
+  },
+
+  async toggleRewardCampaign(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    await rewardCampaignService.toggleActive(id);
+    res.redirect("/admin/reward-campaigns");
+  },
+
+  // ============================================================
+  // デイリー設問優先度管理
+  // ============================================================
+
+  async dailyQuestionPriorities(req: Request, res: Response): Promise<void> {
+    const questions = await dailyQuestionPriorityService.list();
+    const flash = req.query.saved ? "保存しました" : null;
+    res.render("admin/daily-question-priorities/index", {
+      title: "デイリー設問優先度",
+      questions,
+      flash
+    });
+  },
+
+  async newDailyQuestionPriority(req: Request, res: Response): Promise<void> {
+    const attrKeys = await userAttributeRepository.listDefinitions();
+    res.render("admin/daily-question-priorities/form", {
+      title: "優先設問 作成",
+      question: null,
+      attrKeys,
+      mode: "create"
+    });
+  },
+
+  async createDailyQuestionPriority(req: Request, res: Response): Promise<void> {
+    const b = req.body as Record<string, string>;
+    const answerOptions = parseDqpOptions(b.answer_options);
+    await dailyQuestionPriorityService.create({
+      priority_type: b.priority_type as import("../repositories/dailyQuestionPriorityRepository").PriorityType,
+      attr_key: b.attr_key || null,
+      question_text: bodyString(b.question_text),
+      question_type: b.question_type as import("../repositories/dailyQuestionPriorityRepository").DailyQuestionType,
+      answer_options: answerOptions,
+      sort_order: Number(b.sort_order ?? 0),
+      weight: Number(b.weight ?? 10),
+      is_active: b.is_active === "1"
+    });
+    res.redirect("/admin/daily-question-priorities?saved=1");
+  },
+
+  async editDailyQuestionPriority(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    const [question, attrKeys] = await Promise.all([
+      dailyQuestionPriorityService.getById(id),
+      userAttributeRepository.listDefinitions()
+    ]);
+    res.render("admin/daily-question-priorities/form", {
+      title: "優先設問 編集",
+      question,
+      attrKeys,
+      mode: "edit"
+    });
+  },
+
+  async updateDailyQuestionPriority(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    const b = req.body as Record<string, string>;
+    const answerOptions = parseDqpOptions(b.answer_options);
+    await dailyQuestionPriorityService.update(id, {
+      priority_type: b.priority_type as import("../repositories/dailyQuestionPriorityRepository").PriorityType,
+      attr_key: b.attr_key || null,
+      question_text: bodyString(b.question_text),
+      question_type: b.question_type as import("../repositories/dailyQuestionPriorityRepository").DailyQuestionType,
+      answer_options: answerOptions,
+      sort_order: Number(b.sort_order ?? 0),
+      weight: Number(b.weight ?? 10),
+      is_active: b.is_active === "1"
+    });
+    res.redirect("/admin/daily-question-priorities?saved=1");
+  },
+
+  async deleteDailyQuestionPriority(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    await dailyQuestionPriorityService.delete(id);
+    res.redirect("/admin/daily-question-priorities");
+  },
+
+  async toggleDailyQuestionPriority(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    await dailyQuestionPriorityService.toggleActive(id);
+    res.redirect("/admin/daily-question-priorities");
   },
 };

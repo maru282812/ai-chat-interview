@@ -1,6 +1,7 @@
 import { createApp } from "./app";
 import { env } from "./config/env";
 import { logger } from "./lib/logger";
+import { notificationSchedulerService } from "./services/notificationSchedulerService";
 
 const app = createApp();
 
@@ -8,6 +9,10 @@ app.listen(env.PORT, () => {
   logger.info("Server started", {
     port: env.PORT,
     baseUrl: env.APP_BASE_URL
+  });
+
+  notificationSchedulerService.startScheduler().catch((e) => {
+    logger.warn("Scheduler: failed to start", { error: String(e) });
   });
 
   logger.info("env.liff.config", {

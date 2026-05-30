@@ -1,0 +1,93 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>デイリー設問優先度</h2>
+  <a href="/admin/daily-question-priorities/new" class="btn">＋ 新規作成</a>
+</div>
+
+<%
+const priorityLabel = {
+  admin: '管理者指定',
+  missing_attribute: '属性不足',
+  high_value_attribute: '高価値属性',
+  recent_gap: '最近ギャップ',
+  project_useful: 'プロジェクト有用'
+};
+const qtLabel = {
+  single_choice: '単一選択',
+  multiple_choice: '複数選択',
+  text: '自由記述',
+  scale: 'スケール'
+};
+%>
+
+<% if (flash) { %>
+  <div class="alert alert-success" style="margin-bottom:1rem"><%= flash %></div>
+<% } %>
+
+<div class="card" style="margin-bottom:1rem;background:#f0f7ff;padding:.75rem 1rem">
+  <p class="muted" style="margin:0">
+    ここで定義した設問は、デイリーアンケートが自動出題モードのときに <strong>weight</strong>（重み）と <strong>sort_order</strong>（順序）に従って選択されます。
+    属性キーを指定すると、その属性が未入力のユーザーに優先表示できます。
+  </p>
+</div>
+
+<% if (questions.length === 0) { %>
+  <div class="card" style="text-align:center;padding:2rem">
+    <p class="muted">優先設問がありません</p>
+    <a href="/admin/daily-question-priorities/new" class="btn" style="margin-top:1rem">＋ 最初の設問を登録</a>
+  </div>
+<% } else { %>
+<table>
+  <thead>
+    <tr>
+      <th>順序</th>
+      <th>設問文</th>
+      <th>優先度タイプ</th>
+      <th>形式</th>
+      <th>属性キー</th>
+      <th>重み</th>
+      <th>状態</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const q of questions) { %>
+    <tr>
+      <td style="text-align:center"><%= q.sort_order %></td>
+      <td>
+        <strong><%= q.question_text %></strong>
+        <% if (q.answer_options && q.answer_options.length > 0) { %>
+          <br><span class="muted" style="font-size:11px">
+            選択肢: <%= q.answer_options.map(o => o.label).slice(0,3).join(' / ') %><%= q.answer_options.length > 3 ? ' …' : '' %>
+          </span>
+        <% } %>
+      </td>
+      <td><span class="badge"><%= priorityLabel[q.priority_type] || q.priority_type %></span></td>
+      <td><%= qtLabel[q.question_type] || q.question_type %></td>
+      <td class="muted" style="font-size:12px"><%= q.attr_key || '—' %></td>
+      <td style="text-align:center"><strong><%= q.weight %></strong></td>
+      <td>
+        <span class="badge <%= q.is_active ? 'badge-green' : 'badge-gray' %>">
+          <%= q.is_active ? '有効' : '無効' %>
+        </span>
+      </td>
+      <td style="white-space:nowrap">
+        <a href="/admin/daily-question-priorities/<%= q.id %>/edit" class="btn btn-secondary" style="font-size:12px;padding:.2rem .5rem">編集</a>
+        <form method="POST" action="/admin/daily-question-priorities/<%= q.id %>/toggle" style="display:inline">
+          <button type="submit" class="btn btn-secondary" style="font-size:12px;padding:.2rem .5rem">
+            <%= q.is_active ? '無効化' : '有効化' %>
+          </button>
+        </form>
+        <form method="POST" action="/admin/daily-question-priorities/<%= q.id %>/delete" style="display:inline"
+          onsubmit="return confirm('削除しますか？')">
+          <button type="submit" class="btn btn-danger" style="font-size:12px;padding:.2rem .5rem">削除</button>
+        </form>
+      </td>
+    </tr>
+    <% } %>
+  </tbody>
+</table>
+<% } %>
+
+<%- include("../../partials/footer") %>

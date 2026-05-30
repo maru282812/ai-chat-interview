@@ -1,0 +1,148 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2><%= mode === 'create' ? 'キャンペーン作成' : 'キャンペーン編集' %></h2>
+  <a href="/admin/reward-campaigns" class="btn btn-secondary">← 一覧に戻る</a>
+</div>
+
+<% const v = campaign || {}; %>
+
+<form method="POST" action="<%= mode === 'create' ? '/admin/reward-campaigns' : `/admin/reward-campaigns/${v.id}` %>">
+  <div class="card" style="margin-bottom:1.5rem">
+    <h3 style="margin-bottom:1rem">基本情報</h3>
+
+    <div class="form-group">
+      <label>名前 <span style="color:red">*</span></label>
+      <input type="text" name="name" value="<%= v.name || '' %>" required
+        style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+    </div>
+
+    <div class="form-group">
+      <label>説明</label>
+      <textarea name="description" rows="2"
+        style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px"><%= v.description || '' %></textarea>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+      <div class="form-group">
+        <label>キャンペーン種別 <span style="color:red">*</span></label>
+        <select name="campaign_type" style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+          <% const types = ['streak_bonus','birthday','seasonal','referral','dormancy_recovery','manual']; %>
+          <% const typeLabel = { streak_bonus:'ストリークボーナス', birthday:'誕生日', seasonal:'季節・期間限定', referral:'紹介', dormancy_recovery:'休止復帰', manual:'手動' }; %>
+          <% for (const t of types) { %>
+            <option value="<%= t %>" <%= (v.campaign_type === t) ? 'selected' : '' %>><%= typeLabel[t] %></option>
+          <% } %>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>ボーナスポイント <span style="color:red">*</span></label>
+        <input type="number" name="bonus_points" value="<%= v.bonus_points ?? 0 %>" min="0" required
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:1.5rem">
+    <h3 style="margin-bottom:1rem">条件設定</h3>
+
+    <div class="form-group">
+      <label>条件タイプ</label>
+      <select name="condition_type" id="conditionType"
+        style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px"
+        onchange="updateConditionFields()">
+        <% const conds = ['streak_days','birthday_month','date_range','manual']; %>
+        <% const condLabel = { streak_days:'ストリーク日数', birthday_month:'誕生月', date_range:'日付範囲', manual:'手動実行' }; %>
+        <% for (const c of conds) { %>
+          <option value="<%= c %>" <%= (v.condition_type === c) ? 'selected' : '' %>><%= condLabel[c] %></option>
+        <% } %>
+      </select>
+    </div>
+
+    <div id="field-streak_days" class="condition-field form-group" style="display:none">
+      <label>最低ストリーク日数</label>
+      <input type="number" name="cond_min_streak"
+        value="<%= v.condition_value?.min_streak ?? 7 %>" min="1"
+        style="width:120px;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      <span class="muted">日以上</span>
+    </div>
+
+    <div id="field-date_range" class="condition-field form-group" style="display:none">
+      <label>適用日付範囲</label>
+      <div style="display:flex;gap:.5rem;align-items:center">
+        <input type="date" name="cond_start"
+          value="<%= v.condition_value?.start ?? '' %>"
+          style="padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+        〜
+        <input type="date" name="cond_end"
+          value="<%= v.condition_value?.end ?? '' %>"
+          style="padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+    </div>
+
+    <div id="field-birthday_month" class="condition-field" style="display:none">
+      <p class="muted">誕生月に自動的にポイントを付与します。追加の条件設定は不要です。</p>
+    </div>
+
+    <div id="field-manual" class="condition-field" style="display:none">
+      <p class="muted">条件判定なし。手動実行時のみポイントを付与します。</p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:1.5rem">
+    <h3 style="margin-bottom:1rem">対象・期間</h3>
+
+    <div class="form-group">
+      <label>対象セグメント（未選択=全ユーザー）</label>
+      <select name="target_segment_id"
+        style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+        <option value="">— 全ユーザー —</option>
+        <% for (const s of segments) { %>
+          <option value="<%= s.id %>" <%= (v.target_segment_id === s.id) ? 'selected' : '' %>>
+            <%= s.name %>
+          </option>
+        <% } %>
+      </select>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+      <div class="form-group">
+        <label>開始日時（空白=無制限）</label>
+        <input type="datetime-local" name="start_at"
+          value="<%= v.start_at ? v.start_at.slice(0,16) : '' %>"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+      <div class="form-group">
+        <label>終了日時（空白=無制限）</label>
+        <input type="datetime-local" name="end_at"
+          value="<%= v.end_at ? v.end_at.slice(0,16) : '' %>"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer">
+        <input type="checkbox" name="is_active" value="1"
+          <%= (v.is_active !== false) ? 'checked' : '' %>>
+        有効
+      </label>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:.75rem">
+    <button type="submit" class="btn"><%= mode === 'create' ? '作成' : '保存' %></button>
+    <a href="/admin/reward-campaigns" class="btn btn-secondary">キャンセル</a>
+  </div>
+</form>
+
+<script>
+function updateConditionFields() {
+  const type = document.getElementById('conditionType').value;
+  document.querySelectorAll('.condition-field').forEach(el => el.style.display = 'none');
+  const target = document.getElementById('field-' + type);
+  if (target) target.style.display = '';
+}
+document.addEventListener('DOMContentLoaded', updateConditionFields);
+</script>
+
+<%- include("../../partials/footer") %>

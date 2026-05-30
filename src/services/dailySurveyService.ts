@@ -135,6 +135,19 @@ export const dailySurveyService = {
         : `${survey.reward_min_points}〜${survey.reward_max_points}`;
 
     for (const lineUserId of lineUserIds) {
+      const sentAt = new Date().toISOString();
+      const renderedBody = notificationTemplateRepository.renderBody(template, {
+        point: pointLabel,
+        surveyUrl: liffUrl,
+        surveyTitle: survey.title,
+        streakDays: "",
+        daysToBonus: "",
+        bonusPoint: "",
+        expireDate: survey.expires_at
+          ? new Date(survey.expires_at).toLocaleDateString("ja-JP")
+          : ""
+      });
+
       try {
         if (!options.testMode) {
           await dailySurveyRepository.upsertDelivery({
@@ -144,19 +157,7 @@ export const dailySurveyService = {
           });
         }
 
-        const body = notificationTemplateRepository.renderBody(template, {
-          point: pointLabel,
-          surveyUrl: liffUrl,
-          surveyTitle: survey.title,
-          streakDays: "",
-          daysToBonus: "",
-          bonusPoint: "",
-          expireDate: survey.expires_at
-            ? new Date(survey.expires_at).toLocaleDateString("ja-JP")
-            : ""
-        });
-
-        await lineMessagingService.push(lineUserId, [{ type: "text", text: body }]);
+        await lineMessagingService.push(lineUserId, [{ type: "text", text: renderedBody }]);
 
         if (!options.testMode) {
           const { data } = await supabase
@@ -169,14 +170,50 @@ export const dailySurveyService = {
             await dailySurveyRepository.markDeliveryStatus(
               (data as { id: string }).id,
               "sent",
-              { sent_at: new Date().toISOString() }
+              { sent_at: sentAt }
             );
           }
+
+          await supabase.from("notification_logs").insert({
+            line_user_id: lineUserId,
+            template_id: template.id,
+            category: "daily_survey",
+            rendered_title: template.title_text ?? null,
+            rendered_body: renderedBody,
+            variables_used: {
+              survey_id: surveyId,
+              survey_title: survey.title,
+              point: pointLabel
+            },
+            status: "sent",
+            sent_at: sentAt
+          });
         }
 
         result.sent++;
       } catch (err) {
         logger.error(`daily survey delivery failed: survey=${surveyId} user=${lineUserId} err=${String(err)}`);
+
+        if (!options.testMode) {
+          try {
+            await supabase.from("notification_logs").insert({
+              line_user_id: lineUserId,
+              template_id: template.id,
+              category: "daily_survey",
+              rendered_title: template.title_text ?? null,
+              rendered_body: renderedBody,
+              variables_used: {
+                survey_id: surveyId,
+                survey_title: survey.title,
+                point: pointLabel
+              },
+              status: "failed",
+              error_message: String(err),
+              sent_at: sentAt
+            });
+          } catch { /* log insert failure is non-critical */ }
+        }
+
         result.failed++;
       }
     }

@@ -1,0 +1,115 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2><%= mode === 'create' ? '優先設問 作成' : '優先設問 編集' %></h2>
+  <a href="/admin/daily-question-priorities" class="btn btn-secondary">← 一覧に戻る</a>
+</div>
+
+<% const v = question || {}; %>
+
+<form method="POST" action="<%= mode === 'create' ? '/admin/daily-question-priorities' : `/admin/daily-question-priorities/${v.id}` %>">
+  <div class="card" style="margin-bottom:1.5rem">
+    <h3 style="margin-bottom:1rem">設問内容</h3>
+
+    <div class="form-group">
+      <label>設問文 <span style="color:red">*</span></label>
+      <textarea name="question_text" rows="3" required
+        style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px"
+        placeholder="例: 最近、スマートフォンのアプリを比較して選んだことはありますか？"><%= v.question_text || '' %></textarea>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+      <div class="form-group">
+        <label>回答形式 <span style="color:red">*</span></label>
+        <select name="question_type" id="questionType"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px"
+          onchange="updateOptionsField()">
+          <option value="single_choice" <%= (v.question_type === 'single_choice' || !v.question_type) ? 'selected' : '' %>>単一選択</option>
+          <option value="multiple_choice" <%= (v.question_type === 'multiple_choice') ? 'selected' : '' %>>複数選択</option>
+          <option value="text" <%= (v.question_type === 'text') ? 'selected' : '' %>>自由記述</option>
+          <option value="scale" <%= (v.question_type === 'scale') ? 'selected' : '' %>>スケール（1〜5）</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>優先度タイプ <span style="color:red">*</span></label>
+        <select name="priority_type"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+          <% const ptypes = ['admin','missing_attribute','high_value_attribute','recent_gap','project_useful']; %>
+          <% const ptLabel = { admin:'管理者指定', missing_attribute:'属性不足', high_value_attribute:'高価値属性', recent_gap:'最近ギャップ', project_useful:'プロジェクト有用' }; %>
+          <% for (const pt of ptypes) { %>
+            <option value="<%= pt %>" <%= (v.priority_type === pt) ? 'selected' : '' %>><%= ptLabel[pt] %></option>
+          <% } %>
+        </select>
+      </div>
+    </div>
+
+    <div id="answer-options-section" class="form-group">
+      <label>選択肢（JSON形式）</label>
+      <textarea name="answer_options" id="answerOptions" rows="5"
+        style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px;font-family:monospace;font-size:13px"
+        placeholder='[{"label":"はい","value":"yes"},{"label":"いいえ","value":"no"}]'
+      ><%= JSON.stringify(v.answer_options || [], null, 2) %></textarea>
+      <p class="muted" style="margin-top:.25rem;font-size:12px">
+        各要素は <code>{"label": "表示名", "value": "値"}</code> の形式で入力してください。
+      </p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:1.5rem">
+    <h3 style="margin-bottom:1rem">属性・重み設定</h3>
+
+    <div class="form-group">
+      <label>対象属性キー（省略可）</label>
+      <input type="text" name="attr_key" value="<%= v.attr_key || '' %>"
+        list="attrKeyList"
+        style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px"
+        placeholder="例: occupation, prefecture">
+      <datalist id="attrKeyList">
+        <% for (const a of attrKeys) { %>
+          <option value="<%= a.attr_key %>"><%= a.label || a.attr_key %></option>
+        <% } %>
+      </datalist>
+      <p class="muted" style="margin-top:.25rem;font-size:12px">
+        設定すると、この属性が未入力のユーザーに優先的に表示されます。
+      </p>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem">
+      <div class="form-group">
+        <label>表示順 (sort_order)</label>
+        <input type="number" name="sort_order" value="<%= v.sort_order ?? 0 %>" min="0"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+      <div class="form-group">
+        <label>重み (weight)</label>
+        <input type="number" name="weight" value="<%= v.weight ?? 10 %>" min="1"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+        <p class="muted" style="font-size:11px;margin-top:.2rem">大きいほど出題されやすい</p>
+      </div>
+      <div class="form-group" style="display:flex;align-items:center;padding-top:1.5rem">
+        <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer">
+          <input type="checkbox" name="is_active" value="1"
+            <%= (v.is_active !== false) ? 'checked' : '' %>>
+          有効
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:.75rem">
+    <button type="submit" class="btn"><%= mode === 'create' ? '作成' : '保存' %></button>
+    <a href="/admin/daily-question-priorities" class="btn btn-secondary">キャンセル</a>
+  </div>
+</form>
+
+<script>
+function updateOptionsField() {
+  const type = document.getElementById('questionType').value;
+  const section = document.getElementById('answer-options-section');
+  section.style.display = (type === 'text' || type === 'scale') ? 'none' : '';
+}
+document.addEventListener('DOMContentLoaded', updateOptionsField);
+</script>
+
+<%- include("../../partials/footer") %>

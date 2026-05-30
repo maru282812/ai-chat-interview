@@ -1,0 +1,99 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>報酬キャンペーン</h2>
+  <a href="/admin/reward-campaigns/new" class="btn">＋ 新規作成</a>
+</div>
+
+<%
+const typeLabel = {
+  streak_bonus: 'ストリークボーナス',
+  birthday: '誕生日',
+  seasonal: '季節・期間限定',
+  referral: '紹介',
+  dormancy_recovery: '休止復帰',
+  manual: '手動'
+};
+const condLabel = {
+  streak_days: 'ストリーク日数',
+  birthday_month: '誕生月',
+  date_range: '日付範囲',
+  manual: '手動実行'
+};
+%>
+
+<% if (flash) { %>
+  <div class="alert alert-success" style="margin-bottom:1rem"><%= flash %></div>
+<% } %>
+
+<% if (campaigns.length === 0) { %>
+  <div class="card" style="text-align:center;padding:2rem">
+    <p class="muted">キャンペーンがありません</p>
+    <a href="/admin/reward-campaigns/new" class="btn" style="margin-top:1rem">＋ 最初のキャンペーンを作成</a>
+  </div>
+<% } else { %>
+<table>
+  <thead>
+    <tr>
+      <th>名前</th>
+      <th>種別</th>
+      <th>条件</th>
+      <th>ボーナスpt</th>
+      <th>期間</th>
+      <th>状態</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const c of campaigns) { %>
+    <tr>
+      <td>
+        <strong><%= c.name %></strong>
+        <% if (c.description) { %>
+          <br><span class="muted" style="font-size:12px"><%= c.description %></span>
+        <% } %>
+      </td>
+      <td><%= typeLabel[c.campaign_type] || c.campaign_type %></td>
+      <td>
+        <%= condLabel[c.condition_type] || c.condition_type %>
+        <% if (c.condition_type === 'streak_days' && c.condition_value.min_streak) { %>
+          <span class="muted">（<%= c.condition_value.min_streak %>日以上）</span>
+        <% } %>
+        <% if (c.condition_type === 'date_range' && c.condition_value.start) { %>
+          <span class="muted">（<%= c.condition_value.start %> 〜 <%= c.condition_value.end %>）</span>
+        <% } %>
+      </td>
+      <td><strong><%= c.bonus_points %></strong> pt</td>
+      <td class="muted" style="font-size:12px">
+        <% if (c.start_at || c.end_at) { %>
+          <%= c.start_at ? new Date(c.start_at).toLocaleDateString('ja-JP') : '—' %>
+          〜
+          <%= c.end_at ? new Date(c.end_at).toLocaleDateString('ja-JP') : '—' %>
+        <% } else { %>
+          —
+        <% } %>
+      </td>
+      <td>
+        <span class="badge <%= c.is_active ? 'badge-green' : 'badge-gray' %>">
+          <%= c.is_active ? '有効' : '無効' %>
+        </span>
+      </td>
+      <td style="white-space:nowrap">
+        <a href="/admin/reward-campaigns/<%= c.id %>/edit" class="btn btn-secondary" style="font-size:12px;padding:.2rem .5rem">編集</a>
+        <form method="POST" action="/admin/reward-campaigns/<%= c.id %>/toggle" style="display:inline">
+          <button type="submit" class="btn btn-secondary" style="font-size:12px;padding:.2rem .5rem">
+            <%= c.is_active ? '無効化' : '有効化' %>
+          </button>
+        </form>
+        <form method="POST" action="/admin/reward-campaigns/<%= c.id %>/delete" style="display:inline"
+          onsubmit="return confirm('削除しますか？')">
+          <button type="submit" class="btn btn-danger" style="font-size:12px;padding:.2rem .5rem">削除</button>
+        </form>
+      </td>
+    </tr>
+    <% } %>
+  </tbody>
+</table>
+<% } %>
+
+<%- include("../../partials/footer") %>

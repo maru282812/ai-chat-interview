@@ -264,5 +264,121 @@ export const dailySurveyRepository = {
       .update(update)
       .eq("id", deliveryId);
     throwIfError(error);
+  },
+
+  // ── analytics ──────────────────────────────────────────────
+
+  async getAnswerDistribution(surveyId: string): Promise<Array<{
+    question_id: string;
+    question_text: string;
+    question_type: DailySurveyQuestion["question_type"];
+    answer_options: Array<{ label: string; value: string }>;
+    distribution: Record<string, number>;
+    total_answers: number;
+  }>> {
+    const [questionsRes, answersRes] = await Promise.all([
+      supabase
+        .from("daily_survey_questions")
+        .select("id, question_text, question_type, answer_options")
+        .eq("survey_id", surveyId)
+        .eq("is_active", true)
+        .order("sort_order"),
+      supabase
+        .from("daily_survey_answers")
+        .select("question_id, answer_value")
+        .eq("survey_id", surveyId)
+    ]);
+    throwIfError(questionsRes.error);
+    throwIfError(answersRes.error);
+
+    const questions = (questionsRes.data ?? []) as Array<{
+      id: string;
+      question_text: string;
+      question_type: DailySurveyQuestion["question_type"];
+      answer_options: Array<{ label: string; value: string }>;
+    }>;
+    const answers = (answersRes.data ?? []) as Array<{ question_id: string; answer_value: unknown }>;
+
+    return questions.map((q) => {
+      const qAnswers = answers.filter((a) => a.question_id === q.id);
+      const distribution: Record<string, number> = {};
+      for (const a of qAnswers) {
+        const val = a.answer_value;
+        const keys = Array.isArray(val) ? (val as string[]) : [String(val ?? "")];
+        for (const k of keys) {
+          distribution[k] = (distribution[k] ?? 0) + 1;
+        }
+      }
+      return {
+        question_id: q.id,
+        question_text: q.question_text,
+        question_type: q.question_type,
+        answer_options: q.answer_options ?? [],
+        distribution,
+        total_answers: qAnswers.length
+      };
+    });
+  },
+
+  async getDeliveryTimeline(surveyId: string): Promise<Array<{
+    date: string;
+    sent: number;
+    answered: number;
+  }>> {
+    const { data, error } = await supabase
+      .from("daily_survey_deliveries")
+      .select("status, sent_at, answered_at")
+      .eq("survey_id", surveyId);
+    throwIfError(error);
+
+    const rows = (data ?? []) as Array<{
+      status: string;
+      sent_at: string | null;
+      answered_at: string | null;
+    }>;
+
+    const byDate: Record<string, { sent: number; answered: number }> = {};
+    for (const r of rows) {
+      if (r.sent_at) {
+        const d = r.sent_at.slice(0, 10);
+        if (!byDate[d]) byDate[d] = { sent: 0, answered: 0 };
+        byDate[d].sent++;
+      }
+      if (r.answered_at) {
+        const d = r.answered_at.slice(0, 10);
+        if (!byDate[d]) byDate[d] = { sent: 0, answered: 0 };
+        byDate[d].answered++;
+      }
+    }
+
+    return Object.entries(byDate)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, counts]) => ({ date, ...counts }));
+  },
+
+  async getNotificationLogs(surveyId: string, limit = 100): Promise<Array<{
+    id: string;
+    line_user_id: string;
+    status: string;
+    error_message: string | null;
+    sent_at: string | null;
+    created_at: string;
+  }>> {
+    const { data, error } = await supabase
+      .from("notification_logs")
+      .select("id, line_user_id, status, error_message, sent_at, created_at")
+      .eq("category", "daily_survey")
+      .contains("variables_used", { survey_id: surveyId })
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    throwIfError(error);
+    return (data ?? []) as Array<{
+      id: string;
+      line_user_id: string;
+      status: string;
+      error_message: string | null;
+      sent_at: string | null;
+      created_at: string;
+    }>;
   }
 };

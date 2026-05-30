@@ -113,6 +113,7 @@ adminRoutes.post("/segments", asyncHandler(adminController.createSegment));
 adminRoutes.get("/segments/:segmentId/edit", asyncHandler(adminController.editSegmentPage));
 adminRoutes.post("/segments/:segmentId", asyncHandler(adminController.updateSegment));
 adminRoutes.post("/segments/:segmentId/delete", asyncHandler(adminController.deleteSegment));
+adminRoutes.post("/api/segments/preview", asyncHandler(adminController.previewSegment));
 adminRoutes.post("/api/segments/:segmentId/evaluate", asyncHandler(adminController.evaluateSegment));
 
 // Phase 2-B: AI分析ダッシュボード
@@ -161,11 +162,35 @@ adminRoutes.post("/notification-templates/:templateId/delete", asyncHandler(admi
 adminRoutes.post("/notification-templates/:templateId/toggle-active", asyncHandler(adminController.toggleNotificationTemplateActive));
 adminRoutes.post("/notification-templates/:templateId/set-default", asyncHandler(adminController.setNotificationTemplateDefault));
 
+// 通知スケジューラ設定
+adminRoutes.get("/scheduler-settings", asyncHandler(adminController.schedulerSettings));
+adminRoutes.post("/scheduler-settings", asyncHandler(adminController.updateSchedulerSettings));
+adminRoutes.post("/scheduler-settings/run/:job", asyncHandler(adminController.runSchedulerJob));
+
+// 報酬キャンペーン管理
+adminRoutes.get("/reward-campaigns", asyncHandler(adminController.rewardCampaigns));
+adminRoutes.get("/reward-campaigns/new", asyncHandler(adminController.newRewardCampaign));
+adminRoutes.post("/reward-campaigns", asyncHandler(adminController.createRewardCampaign));
+adminRoutes.get("/reward-campaigns/:id/edit", asyncHandler(adminController.editRewardCampaign));
+adminRoutes.post("/reward-campaigns/:id", asyncHandler(adminController.updateRewardCampaign));
+adminRoutes.post("/reward-campaigns/:id/delete", asyncHandler(adminController.deleteRewardCampaign));
+adminRoutes.post("/reward-campaigns/:id/toggle", asyncHandler(adminController.toggleRewardCampaign));
+
+// デイリー設問優先度管理
+adminRoutes.get("/daily-question-priorities", asyncHandler(adminController.dailyQuestionPriorities));
+adminRoutes.get("/daily-question-priorities/new", asyncHandler(adminController.newDailyQuestionPriority));
+adminRoutes.post("/daily-question-priorities", asyncHandler(adminController.createDailyQuestionPriority));
+adminRoutes.get("/daily-question-priorities/:id/edit", asyncHandler(adminController.editDailyQuestionPriority));
+adminRoutes.post("/daily-question-priorities/:id", asyncHandler(adminController.updateDailyQuestionPriority));
+adminRoutes.post("/daily-question-priorities/:id/delete", asyncHandler(adminController.deleteDailyQuestionPriority));
+adminRoutes.post("/daily-question-priorities/:id/toggle", asyncHandler(adminController.toggleDailyQuestionPriority));
+
 // デイリーアンケート管理
 adminRoutes.get("/daily-surveys", asyncHandler(adminController.dailySurveys));
 adminRoutes.get("/daily-surveys/new", asyncHandler(adminController.newDailySurvey));
 adminRoutes.post("/daily-surveys", asyncHandler(adminController.createDailySurvey));
 adminRoutes.get("/daily-surveys/:surveyId", asyncHandler(adminController.showDailySurvey));
+adminRoutes.get("/daily-surveys/:surveyId/analytics", asyncHandler(adminController.dailySurveyAnalytics));
 adminRoutes.get("/daily-surveys/:surveyId/edit", asyncHandler(adminController.editDailySurvey));
 adminRoutes.post("/daily-surveys/:surveyId", asyncHandler(adminController.updateDailySurvey));
 adminRoutes.post("/daily-surveys/:surveyId/delete", asyncHandler(adminController.deleteDailySurvey));
@@ -174,3 +199,7 @@ adminRoutes.post("/daily-surveys/:surveyId/deliver", asyncHandler(adminControlle
 adminRoutes.post("/daily-surveys/:surveyId/questions", asyncHandler(adminController.createDailySurveyQuestion));
 adminRoutes.post("/daily-surveys/:surveyId/questions/:questionId", asyncHandler(adminController.updateDailySurveyQuestion));
 adminRoutes.post("/daily-surveys/:surveyId/questions/:questionId/delete", asyncHandler(adminController.deleteDailySurveyQuestion));
+
+// AI 不足属性自動判定 API
+adminRoutes.get("/api/missing-attributes/coverage", asyncHandler(adminController.apiMissingAttributeCoverage));
+adminRoutes.get("/api/missing-attributes/suggest", asyncHandler(adminController.apiMissingAttributeSuggest));

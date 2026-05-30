@@ -1,37 +1,657 @@
 <%- include("../../partials/header", { title }) %>
-<h2><%= segment ? 'セグメント編集' : 'セグメント作成' %></h2>
 
-<form method="post" action="<%= segment ? `/admin/segments/${segment.id}` : '/admin/segments' %>"
-      style="max-width:700px">
-  <div class="form-row">
-    <label>セグメント名 <span class="required">*</span></label>
-    <input type="text" name="name" value="<%= segment?.name ?? '' %>" required placeholder="例: 20代女性 東京在住" />
-  </div>
-  <div class="form-row">
-    <label>説明</label>
-    <input type="text" name="description" value="<%= segment?.description ?? '' %>" placeholder="任意のメモ" />
+<style>
+.seg-section {
+  background: #fff; border-radius: 14px; padding: 1.25rem 1.5rem;
+  margin-bottom: 1.25rem; box-shadow: 0 10px 24px rgba(18,59,58,.08);
+}
+.seg-section h3 {
+  margin: 0 0 1rem; font-size: .95rem; font-weight: 600; color: #0b7a75;
+  border-bottom: 2px solid #eef7f5; padding-bottom: .5rem;
+}
+/* テンプレートボタン */
+.tmpl-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.tmpl-btn {
+  background: #f0f9f7; border: 1px solid #0b7a75; border-radius: 20px;
+  padding: 4px 14px; font-size: 12px; color: #0b7a75; cursor: pointer;
+  transition: .15s; font-family: inherit;
+}
+.tmpl-btn:hover { background: #0b7a75; color: #fff; }
+/* AND/OR トグル */
+.op-toggle {
+  display: inline-flex; border: 1px solid #c8d8d5; border-radius: 8px;
+  overflow: hidden;
+}
+.op-toggle button {
+  background: none; border: none; padding: 5px 16px; cursor: pointer;
+  font-size: 13px; font-weight: 500; color: #6a7b78;
+  transition: .15s; font-family: inherit;
+}
+.op-toggle button.active { background: #0b7a75; color: #fff; }
+/* グループ */
+.seg-group {
+  border: 1px solid #e3ecea; border-radius: 10px;
+  background: #fafcfb; overflow: hidden; margin-bottom: 10px;
+}
+.seg-group-hd {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; background: #eef7f5;
+}
+.seg-group-hd .g-label { font-size: 12px; font-weight: 600; color: #0b7a75; flex: 1; }
+.seg-group-body { padding: 10px 12px; }
+/* 条件行 */
+.seg-cond-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.seg-cond-row select,
+.seg-cond-row input[type=text],
+.seg-cond-row input[type=number],
+.seg-cond-row input[type=date] {
+  height: 34px; width: auto; padding: 0 8px;
+  border: 1px solid #c8d8d5; border-radius: 6px;
+  font-size: 13px; background: #fff; min-width: 0;
+}
+.fld-sel { width: 140px !important; }
+.op-sel  { width: 140px !important; }
+.val-wrap { min-width: 180px; position: relative; }
+.val-wrap select, .val-wrap input { width: 100% !important; height: 34px; }
+/* 都道府県ドロップダウン */
+.pref-btn {
+  width: 100%; height: 34px; background: #fff; border: 1px solid #c8d8d5;
+  border-radius: 6px; font-size: 13px; text-align: left; padding: 0 10px;
+  cursor: pointer; color: #1a1f1e; font-family: inherit;
+}
+.pref-dropdown {
+  display: none; position: absolute; top: 100%; left: 0; z-index: 300;
+  background: #fff; border: 1px solid #c8d8d5; border-radius: 8px;
+  padding: 8px; max-height: 240px; overflow-y: auto; min-width: 180px;
+  box-shadow: 0 8px 24px rgba(18,59,58,.15);
+}
+.pref-dropdown label {
+  display: flex; align-items: center; gap: 6px; padding: 3px 4px;
+  font-size: 13px; cursor: pointer; border-radius: 4px;
+}
+.pref-dropdown label:hover { background: #eef7f5; }
+.pref-dropdown input[type=checkbox] { width: auto !important; height: auto !important; padding: 0; margin: 0; }
+/* 削除ボタン */
+.del-cond-btn {
+  background: none; border: none; color: #c8d8d5; cursor: pointer;
+  font-size: 16px; padding: 0 6px; line-height: 1; transition: .15s;
+}
+.del-cond-btn:hover { color: #ef4444; }
+.del-grp-btn {
+  background: none; border: 1px solid #dce9e6; border-radius: 6px;
+  color: #aab8b5; cursor: pointer; font-size: 11px; padding: 3px 8px;
+  transition: .15s; font-family: inherit;
+}
+.del-grp-btn:hover { border-color: #ef4444; color: #ef4444; }
+/* 追加ボタン */
+.add-cond-btn {
+  background: none; border: 1px dashed #c8d8d5; border-radius: 6px;
+  color: #6a7b78; padding: 5px; font-size: 12px; cursor: pointer;
+  width: 100%; margin-top: 6px; font-family: inherit; transition: .15s;
+}
+.add-cond-btn:hover { border-color: #0b7a75; color: #0b7a75; background: #eef7f5; }
+.add-grp-btn {
+  background: none; border: 1px dashed #0b7a75; border-radius: 8px;
+  color: #0b7a75; padding: 8px; font-size: 13px; cursor: pointer;
+  width: 100%; font-family: inherit; transition: .15s;
+}
+.add-grp-btn:hover { background: #eef7f5; }
+/* グループ間コネクタ */
+.seg-connector {
+  text-align: center; font-size: 11px; font-weight: 700;
+  color: #0b7a75; letter-spacing: .1em; padding: 2px 0;
+}
+/* プレビュー */
+.preview-panel {
+  background: linear-gradient(135deg, #eef7f5, #f0f9f7);
+  border: 1px solid #0b7a75; border-radius: 10px;
+  padding: 1rem 1.5rem; display: flex; align-items: center; gap: 1.5rem;
+  flex-wrap: wrap;
+}
+.preview-num { font-size: 2.5rem; font-weight: 700; color: #0b7a75; line-height: 1; }
+.preview-unit { font-size: 1.1rem; color: #0b7a75; font-weight: 600; }
+.preview-sub { font-size: 12px; color: #6a7b78; margin-top: 2px; }
+</style>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem">
+  <h2 style="margin:0"><%= segment ? 'セグメント編集' : 'セグメント作成' %></h2>
+  <a href="/admin/segments" style="color:#6a7b78;font-size:14px">← 一覧に戻る</a>
+</div>
+
+<form id="segForm"
+      method="post"
+      action="<%= segment ? `/admin/segments/${segment.id}` : '/admin/segments' %>"
+      onsubmit="return prepareSubmit()">
+  <input type="hidden" name="name"        id="hName" />
+  <input type="hidden" name="description" id="hDesc" />
+  <input type="hidden" name="conditions"  id="hConds" />
+
+  <!-- ① 基本情報 -->
+  <div class="seg-section">
+    <h3>基本情報</h3>
+    <div style="display:grid;gap:12px;max-width:600px">
+      <div>
+        <label style="font-size:13px;font-weight:500;display:block;margin-bottom:4px">
+          セグメント名 <span style="color:#ef4444">*</span>
+        </label>
+        <input id="segName" type="text"
+               value="<%= segment?.name ?? '' %>"
+               placeholder="例: 20代女性 東京在住"
+               style="height:38px;max-width:100%" required />
+      </div>
+      <div>
+        <label style="font-size:13px;font-weight:500;display:block;margin-bottom:4px">
+          説明 <span style="font-size:11px;font-weight:400;color:#6a7b78">（管理者用メモ）</span>
+        </label>
+        <input id="segDesc" type="text"
+               value="<%= segment?.description ?? '' %>"
+               placeholder="例: 東京在住の20代女性向け配信"
+               style="height:38px;max-width:100%" />
+      </div>
+    </div>
   </div>
 
-  <div class="form-row">
-    <label>絞り込み条件 (JSON)</label>
-    <p class="muted" style="font-size:12px;margin-bottom:6px">
-      {"operator":"AND","conditions":[{"field":"gender","op":"in","value":["female"]},{"field":"prefecture","op":"in","value":["東京都"]}]}
+  <!-- ② テンプレート -->
+  <div class="seg-section">
+    <h3>テンプレートから開始</h3>
+    <p class="muted" style="font-size:12px;margin:0 0 10px">
+      クリックで現在の条件を置き換えます
     </p>
-    <textarea name="conditions" rows="8" style="font-family:monospace;font-size:12px;width:100%"><%= segment ? JSON.stringify(segment.conditions, null, 2) : JSON.stringify({operator:"AND",conditions:[]}, null, 2) %></textarea>
+    <div class="tmpl-grid" id="tmplGrid"></div>
   </div>
 
-  <div style="margin-top:1rem">
-    <p class="muted" style="font-size:12px;margin-bottom:8px">
-      対応フィールド: <code>gender</code>（op: in, value: ["male"/"female"]）,
-      <code>prefecture</code>（op: in, value: ["東京都",...]）,
-      <code>is_blocked</code>（op: eq, value: false）,
-      <code>profile_completed</code>（op: eq, value: true）
-    </p>
+  <!-- ③ 条件ビルダー -->
+  <div class="seg-section">
+    <h3>セグメント条件</h3>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem;flex-wrap:wrap">
+      <span style="font-size:13px;color:#374151">グループ間の結合方法:</span>
+      <div class="op-toggle">
+        <button type="button" id="topAnd" onclick="setTopOp('AND')" class="active">AND（すべて一致）</button>
+        <button type="button" id="topOr"  onclick="setTopOp('OR')">OR（いずれか一致）</button>
+      </div>
+      <span class="muted" style="font-size:11px">複数グループがある場合のみ有効</span>
+    </div>
+    <div id="grpContainer"></div>
+    <button type="button" class="add-grp-btn" onclick="addGroup()">＋ 条件グループを追加</button>
   </div>
 
-  <div style="display:flex;gap:12px;margin-top:1.5rem">
-    <button type="submit"><%= segment ? '更新' : '作成' %></button>
-    <a href="/admin/segments">キャンセル</a>
+  <!-- ④ 推定人数プレビュー -->
+  <div class="seg-section">
+    <h3>推定対象人数</h3>
+    <div class="preview-panel">
+      <div>
+        <div style="display:flex;align-items:baseline;gap:6px">
+          <span class="preview-num" id="pvNum">-</span>
+          <span class="preview-unit">人</span>
+        </div>
+      </div>
+      <div>
+        <div class="preview-sub" id="pvLabel">条件を設定すると対象人数が表示されます</div>
+        <button type="button" onclick="runPreview()"
+                style="margin-top:8px;font-size:12px;padding:4px 12px;
+                       background:#eef7f5;color:#0b7a75;border:1px solid #0b7a75;
+                       border-radius:6px;cursor:pointer;font-family:inherit">
+          今すぐ更新
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ⑤ 送信 -->
+  <div style="display:flex;gap:12px;align-items:center;margin-top:.5rem">
+    <button type="submit"><%= segment ? '更新する' : '作成する' %></button>
+    <a href="/admin/segments" style="color:#6a7b78">キャンセル</a>
   </div>
 </form>
+
+<script>
+// =============================================
+// フィールド定義
+// =============================================
+const PREFECTURES = [
+  '北海道','青森県','岩手県','宮城県','秋田県','山形県','福島県',
+  '茨城県','栃木県','群馬県','埼玉県','千葉県','東京都','神奈川県',
+  '新潟県','富山県','石川県','福井県','山梨県','長野県','岐阜県',
+  '静岡県','愛知県','三重県','滋賀県','京都府','大阪府','兵庫県',
+  '奈良県','和歌山県','鳥取県','島根県','岡山県','広島県','山口県',
+  '徳島県','香川県','愛媛県','高知県','福岡県','佐賀県','長崎県',
+  '熊本県','大分県','宮崎県','鹿児島県','沖縄県'
+];
+
+const FIELDS = {
+  gender:            { l:'性別',          vt:'select', opts:[{v:'male',l:'男性'},{v:'female',l:'女性'},{v:'other',l:'その他'},{v:'prefer_not_to_say',l:'回答しない'}], ops:['eq','neq'] },
+  prefecture:        { l:'都道府県',      vt:'pref',   ops:['in'] },
+  age:               { l:'年齢',          vt:'number', ph:'例: 25', ops:['gte','lte','eq'] },
+  occupation:        { l:'職業',          vt:'text',   ph:'例: 会社員', ops:['eq','neq','contains'] },
+  industry:          { l:'業種',          vt:'text',   ph:'例: IT・通信', ops:['eq','neq','contains'] },
+  marital_status:    { l:'婚姻状況',      vt:'select', opts:[{v:'single',l:'未婚'},{v:'married',l:'既婚'},{v:'divorced',l:'離婚'},{v:'widowed',l:'死別'}], ops:['eq','neq'] },
+  has_children:      { l:'子供有無',      vt:'bool',   ops:['eq'] },
+  is_blocked:        { l:'ブロック状態',  vt:'bool',   ops:['eq'] },
+  profile_completed: { l:'プロフィール完成', vt:'bool', ops:['eq'] },
+  registered_at:     { l:'登録日',        vt:'date',   ops:['gte','lte'] },
+  total_points:      { l:'累計ポイント',  vt:'number', ph:'例: 1000', ops:['gte','lte','eq'] },
+  answer_count:      { l:'回答回数',      vt:'number', ph:'例: 5', ops:['gte','lte','eq'] },
+};
+
+const OPS = {
+  eq:'等しい', neq:'等しくない', gte:'以上', lte:'以下',
+  contains:'含む（部分一致）', in:'のいずれか'
+};
+
+// =============================================
+// テンプレート
+// =============================================
+const TEMPLATES = [
+  { l:'20代女性',       c:{operator:'AND',groups:[{operator:'AND',conditions:[{field:'gender',op:'eq',value:'female'},{field:'age',op:'gte',value:20},{field:'age',op:'lte',value:29}]}]} },
+  { l:'30代',           c:{operator:'AND',groups:[{operator:'AND',conditions:[{field:'age',op:'gte',value:30},{field:'age',op:'lte',value:39}]}]} },
+  { l:'40代',           c:{operator:'AND',groups:[{operator:'AND',conditions:[{field:'age',op:'gte',value:40},{field:'age',op:'lte',value:49}]}]} },
+  { l:'男性',           c:{operator:'AND',groups:[{operator:'AND',conditions:[{field:'gender',op:'eq',value:'male'}]}]} },
+  { l:'女性',           c:{operator:'AND',groups:[{operator:'AND',conditions:[{field:'gender',op:'eq',value:'female'}]}]} },
+  { l:'東京都',         c:{operator:'AND',groups:[{operator:'AND',conditions:[{field:'prefecture',op:'in',value:['東京都']}]}]} },
+  { l:'関東地方',       c:{operator:'AND',groups:[{operator:'AND',conditions:[{field:'prefecture',op:'in',value:['東京都','神奈川県','埼玉県','千葉県','茨城県','栃木県','群馬県']}]}]} },
+  { l:'関西地方',       c:{operator:'AND',groups:[{operator:'AND',conditions:[{field:'prefecture',op:'in',value:['大阪府','京都府','兵庫県','奈良県','和歌山県','滋賀県']}]}]} },
+  { l:'子育て中',       c:{operator:'AND',groups:[{operator:'AND',conditions:[{field:'has_children',op:'eq',value:true}]}]} },
+  { l:'既婚者',         c:{operator:'AND',groups:[{operator:'AND',conditions:[{field:'marital_status',op:'eq',value:'married'}]}]} },
+  { l:'高ポイント(1000+)', c:{operator:'AND',groups:[{operator:'AND',conditions:[{field:'total_points',op:'gte',value:1000}]}]} },
+  { l:'プロフィール完成',   c:{operator:'AND',groups:[{operator:'AND',conditions:[{field:'profile_completed',op:'eq',value:true}]}]} },
+  { l:'未ブロック',         c:{operator:'AND',groups:[{operator:'AND',conditions:[{field:'is_blocked',op:'eq',value:false}]}]} },
+];
+
+// =============================================
+// 状態
+// =============================================
+let _uid = 0;
+const gid = () => 'i' + (++_uid);
+
+let S = { top: 'AND', groups: [] };
+
+const RAW_CONDITIONS = <%- JSON.stringify(segment?.conditions ?? null) %>;
+
+function initState() {
+  if (!RAW_CONDITIONS) {
+    S = { top: 'AND', groups: [{ id: gid(), op: 'AND', conds: [] }] };
+    return;
+  }
+  if (RAW_CONDITIONS.groups) {
+    // 新フォーマット
+    S = {
+      top: RAW_CONDITIONS.operator || 'AND',
+      groups: RAW_CONDITIONS.groups.map(g => ({
+        id: gid(), op: g.operator || 'AND',
+        conds: (g.conditions || []).map(c => ({ id: gid(), ...c }))
+      }))
+    };
+  } else {
+    // 旧フォーマット（conditions 配列）
+    S = {
+      top: RAW_CONDITIONS.operator || 'AND',
+      groups: [{
+        id: gid(), op: 'AND',
+        conds: (RAW_CONDITIONS.conditions || []).map(c => ({ id: gid(), ...c }))
+      }]
+    };
+  }
+  if (!S.groups.length) S.groups.push({ id: gid(), op: 'AND', conds: [] });
+}
+
+// =============================================
+// 状態変更
+// =============================================
+function setTopOp(op) {
+  S.top = op;
+  render();
+  schedulePreview();
+}
+
+function setGrpOp(gId, op) {
+  const g = S.groups.find(x => x.id === gId);
+  if (g) { g.op = op; render(); schedulePreview(); }
+}
+
+function addGroup() {
+  S.groups.push({ id: gid(), op: 'AND', conds: [] });
+  render();
+}
+
+function removeGroup(gId) {
+  if (S.groups.length <= 1) return;
+  S.groups = S.groups.filter(g => g.id !== gId);
+  render();
+  schedulePreview();
+}
+
+function addCond(gId) {
+  const g = S.groups.find(x => x.id === gId);
+  if (!g) return;
+  g.conds.push({ id: gid(), field: 'gender', op: 'eq', value: 'female' });
+  render();
+}
+
+function removeCond(gId, cId) {
+  const g = S.groups.find(x => x.id === gId);
+  if (!g) return;
+  g.conds = g.conds.filter(c => c.id !== cId);
+  render();
+  schedulePreview();
+}
+
+function updateField(gId, cId, field) {
+  const g = S.groups.find(x => x.id === gId);
+  const c = g && g.conds.find(x => x.id === cId);
+  if (!c) return;
+  const fd = FIELDS[field];
+  c.field = field;
+  c.op = fd.ops[0];
+  if (fd.vt === 'select') c.value = fd.opts[0].v;
+  else if (fd.vt === 'bool') c.value = true;
+  else if (fd.vt === 'pref') c.value = [];
+  else c.value = '';
+  render();
+  schedulePreview();
+}
+
+function updateOp(gId, cId, op) {
+  const g = S.groups.find(x => x.id === gId);
+  const c = g && g.conds.find(x => x.id === cId);
+  if (c) { c.op = op; schedulePreview(); }
+}
+
+function updateVal(gId, cId, val) {
+  const g = S.groups.find(x => x.id === gId);
+  const c = g && g.conds.find(x => x.id === cId);
+  if (c) { c.value = val; schedulePreview(); }
+}
+
+// =============================================
+// レンダリング
+// =============================================
+function render() {
+  document.getElementById('topAnd').className = S.top === 'AND' ? 'active' : '';
+  document.getElementById('topOr').className  = S.top === 'OR'  ? 'active' : '';
+
+  const cont = document.getElementById('grpContainer');
+  cont.innerHTML = '';
+
+  S.groups.forEach((g, gi) => {
+    if (gi > 0) {
+      const conn = document.createElement('div');
+      conn.className = 'seg-connector';
+      conn.textContent = S.top;
+      cont.appendChild(conn);
+    }
+    cont.appendChild(makeGroup(g, gi));
+  });
+}
+
+function makeGroup(g, gi) {
+  const wrap = document.createElement('div');
+  wrap.className = 'seg-group';
+
+  // ヘッダー
+  const hd = document.createElement('div');
+  hd.className = 'seg-group-hd';
+  hd.innerHTML =
+    '<span class="g-label">グループ ' + (gi + 1) + '</span>' +
+    '<span style="font-size:12px;color:#6a7b78">条件の結合:</span>' +
+    '<div class="op-toggle">' +
+      '<button type="button" onclick="setGrpOp(\'' + g.id + '\',\'AND\')" class="' + (g.op === 'AND' ? 'active' : '') + '">AND</button>' +
+      '<button type="button" onclick="setGrpOp(\'' + g.id + '\',\'OR\')"  class="' + (g.op === 'OR'  ? 'active' : '') + '">OR</button>' +
+    '</div>' +
+    (S.groups.length > 1 ? '<button type="button" class="del-grp-btn" onclick="removeGroup(\'' + g.id + '\')">グループ削除</button>' : '');
+  wrap.appendChild(hd);
+
+  // ボディ
+  const body = document.createElement('div');
+  body.className = 'seg-group-body';
+
+  g.conds.forEach((c, ci) => {
+    if (ci > 0) {
+      const conn = document.createElement('div');
+      conn.className = 'seg-connector';
+      conn.style.cssText = 'padding:2px 0;font-size:11px';
+      conn.textContent = g.op;
+      body.appendChild(conn);
+    }
+    body.appendChild(makeCondRow(g.id, c));
+  });
+
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'add-cond-btn';
+  addBtn.textContent = '＋ 条件を追加';
+  addBtn.onclick = () => addCond(g.id);
+  body.appendChild(addBtn);
+
+  wrap.appendChild(body);
+  return wrap;
+}
+
+function makeCondRow(gId, c) {
+  const row = document.createElement('div');
+  row.className = 'seg-cond-row';
+
+  // フィールド選択
+  const fSel = document.createElement('select');
+  fSel.className = 'fld-sel';
+  Object.entries(FIELDS).forEach(([k, fd]) => {
+    const o = document.createElement('option');
+    o.value = k; o.textContent = fd.l;
+    if (c.field === k) o.selected = true;
+    fSel.appendChild(o);
+  });
+  fSel.onchange = () => updateField(gId, c.id, fSel.value);
+
+  // 演算子選択
+  const fd = FIELDS[c.field] || FIELDS.gender;
+  const opSel = document.createElement('select');
+  opSel.className = 'op-sel';
+  fd.ops.forEach(op => {
+    const o = document.createElement('option');
+    o.value = op; o.textContent = OPS[op] || op;
+    if (c.op === op) o.selected = true;
+    opSel.appendChild(o);
+  });
+  opSel.onchange = () => updateOp(gId, c.id, opSel.value);
+
+  // 値入力
+  const valWrap = document.createElement('div');
+  valWrap.className = 'val-wrap';
+  valWrap.appendChild(makeValInput(gId, c, fd));
+
+  // 削除ボタン
+  const delBtn = document.createElement('button');
+  delBtn.type = 'button'; delBtn.className = 'del-cond-btn'; delBtn.title = '削除';
+  delBtn.textContent = '✕';
+  delBtn.onclick = () => removeCond(gId, c.id);
+
+  row.appendChild(fSel);
+  row.appendChild(opSel);
+  row.appendChild(valWrap);
+  row.appendChild(delBtn);
+  return row;
+}
+
+function makeValInput(gId, c, fd) {
+  if (fd.vt === 'select') {
+    const s = document.createElement('select');
+    (fd.opts || []).forEach(o => {
+      const el = document.createElement('option');
+      el.value = o.v; el.textContent = o.l;
+      if (String(c.value) === o.v) el.selected = true;
+      s.appendChild(el);
+    });
+    s.onchange = () => updateVal(gId, c.id, s.value);
+    return s;
+  }
+
+  if (fd.vt === 'bool') {
+    const s = document.createElement('select');
+    [{v: true, l: 'はい (true)'}, {v: false, l: 'いいえ (false)'}].forEach(o => {
+      const el = document.createElement('option');
+      el.value = String(o.v); el.textContent = o.l;
+      if (c.value === o.v) el.selected = true;
+      s.appendChild(el);
+    });
+    s.onchange = () => updateVal(gId, c.id, s.value === 'true');
+    return s;
+  }
+
+  if (fd.vt === 'number') {
+    const i = document.createElement('input');
+    i.type = 'number'; i.placeholder = fd.ph || '';
+    i.value = (c.value !== undefined && c.value !== '') ? c.value : '';
+    i.oninput = () => updateVal(gId, c.id, i.value === '' ? '' : Number(i.value));
+    return i;
+  }
+
+  if (fd.vt === 'date') {
+    const i = document.createElement('input');
+    i.type = 'date'; i.value = c.value || '';
+    i.onchange = () => updateVal(gId, c.id, i.value);
+    return i;
+  }
+
+  if (fd.vt === 'pref') {
+    return makePrefInput(gId, c);
+  }
+
+  // text（デフォルト）
+  const i = document.createElement('input');
+  i.type = 'text'; i.placeholder = fd.ph || '';
+  i.value = c.value || '';
+  i.oninput = () => updateVal(gId, c.id, i.value);
+  return i;
+}
+
+function makePrefInput(gId, c) {
+  const current = Array.isArray(c.value) ? c.value : [];
+  const wrap = document.createElement('div');
+  wrap.style.position = 'relative';
+
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'pref-btn';
+  btn.textContent = current.length ? fmtPref(current) : '都道府県を選択';
+
+  const dd = document.createElement('div');
+  dd.className = 'pref-dropdown';
+
+  PREFECTURES.forEach(p => {
+    const lbl = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.value = p; cb.checked = current.includes(p);
+    cb.onchange = () => {
+      const vals = Array.from(dd.querySelectorAll('input:checked')).map(x => x.value);
+      updateVal(gId, c.id, vals);
+      btn.textContent = vals.length ? fmtPref(vals) : '都道府県を選択';
+    };
+    lbl.appendChild(cb);
+    lbl.appendChild(document.createTextNode(p));
+    dd.appendChild(lbl);
+  });
+
+  btn.onclick = e => { e.stopPropagation(); dd.style.display = dd.style.display === 'block' ? 'none' : 'block'; };
+  document.addEventListener('click', () => { dd.style.display = 'none'; });
+
+  wrap.appendChild(btn);
+  wrap.appendChild(dd);
+  return wrap;
+}
+
+function fmtPref(vals) {
+  if (vals.length <= 3) return vals.join('、');
+  return vals.slice(0, 3).join('、') + ' 他' + (vals.length - 3) + '件';
+}
+
+// =============================================
+// シリアライズ
+// =============================================
+function serialize() {
+  return {
+    operator: S.top,
+    groups: S.groups.map(g => ({
+      operator: g.op,
+      conditions: g.conds.map(({ id, ...rest }) => rest)
+    }))
+  };
+}
+
+// =============================================
+// プレビュー
+// =============================================
+let pvTimer = null;
+function schedulePreview() {
+  clearTimeout(pvTimer);
+  pvTimer = setTimeout(runPreview, 900);
+}
+
+async function runPreview() {
+  document.getElementById('pvNum').textContent = '...';
+  document.getElementById('pvLabel').textContent = '計算中...';
+  try {
+    const res = await fetch('/admin/api/segments/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conditions: serialize() })
+    });
+    const d = await res.json();
+    if (d.ok) {
+      document.getElementById('pvNum').textContent = d.estimated_count.toLocaleString('ja-JP');
+      document.getElementById('pvLabel').textContent = '対象ユーザー数（推定）';
+    } else {
+      document.getElementById('pvNum').textContent = '-';
+      document.getElementById('pvLabel').textContent = 'エラー: ' + (d.error || '不明');
+    }
+  } catch {
+    document.getElementById('pvNum').textContent = '-';
+    document.getElementById('pvLabel').textContent = 'プレビュー取得に失敗しました';
+  }
+}
+
+// =============================================
+// テンプレート
+// =============================================
+function renderTemplates() {
+  const grid = document.getElementById('tmplGrid');
+  TEMPLATES.forEach(t => {
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'tmpl-btn'; btn.textContent = t.l;
+    btn.onclick = () => {
+      if (!confirm('テンプレート「' + t.l + '」を適用しますか？\n現在の条件は置き換えられます。')) return;
+      const craw = t.c;
+      S = {
+        top: craw.operator || 'AND',
+        groups: (craw.groups || []).map(g => ({
+          id: gid(), op: g.operator || 'AND',
+          conds: (g.conditions || []).map(cd => ({ id: gid(), ...cd }))
+        }))
+      };
+      if (!S.groups.length) S.groups.push({ id: gid(), op: 'AND', conds: [] });
+      render();
+      schedulePreview();
+    };
+    grid.appendChild(btn);
+  });
+}
+
+// =============================================
+// フォーム送信
+// =============================================
+function prepareSubmit() {
+  const name = document.getElementById('segName').value.trim();
+  if (!name) { alert('セグメント名を入力してください'); return false; }
+  document.getElementById('hName').value  = name;
+  document.getElementById('hDesc').value  = document.getElementById('segDesc').value.trim();
+  document.getElementById('hConds').value = JSON.stringify(serialize());
+  return true;
+}
+
+// =============================================
+// 初期化
+// =============================================
+initState();
+renderTemplates();
+render();
+runPreview();
+</script>
+
 <%- include("../../partials/footer") %>

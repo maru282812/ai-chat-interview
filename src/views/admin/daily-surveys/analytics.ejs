@@ -1,0 +1,262 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const statusLabel = { draft:'下書き', scheduled:'配信予約', active:'配信中', paused:'停止中', completed:'完了' };
+const statusClass  = { draft:'', scheduled:'badge-blue', active:'badge-green', paused:'badge-yellow', completed:'badge-gray' };
+%>
+
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:1rem">
+  <a href="/admin/daily-surveys/<%= survey.id %>" class="btn-secondary">← 詳細</a>
+  <h2><%= survey.title %></h2>
+  <span class="badge <%= statusClass[survey.status] || '' %>"><%= statusLabel[survey.status] || survey.status %></span>
+  <span style="color:#999;font-size:13px">配信分析</span>
+</div>
+
+<!-- 配信サマリー -->
+<div class="card" style="margin-bottom:1rem">
+  <h3>配信サマリー</h3>
+  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px">
+    <%
+    const answerRate = deliveryStats.sent > 0
+      ? Math.round(deliveryStats.answered / deliveryStats.sent * 100)
+      : 0;
+    const openRate = deliveryStats.sent > 0 ? 100 : 0;
+    const stats = [
+      { label:'配信総数',   value: deliveryStats.total,   color:'#333' },
+      { label:'送信済み',   value: deliveryStats.sent,    color:'#2ca87a' },
+      { label:'回答済み',   value: deliveryStats.answered, color:'#007bff' },
+      { label:'回答率',     value: answerRate + '%',       color: answerRate >= 50 ? '#2ca87a' : answerRate >= 20 ? '#f0ad4e' : '#dc3545' },
+      { label:'失敗',       value: deliveryStats.failed,  color:'#dc3545' },
+    ];
+    %>
+    <% for (const s of stats) { %>
+    <div style="text-align:center;padding:12px;background:#f8f9fa;border-radius:6px">
+      <div class="muted" style="font-size:12px"><%= s.label %></div>
+      <div style="font-size:28px;font-weight:700;color:<%= s.color %>"><%= s.value %></div>
+    </div>
+    <% } %>
+  </div>
+</div>
+
+<!-- 時系列グラフ -->
+<% if (timeline.length > 0) { %>
+<div class="card" style="margin-bottom:1rem">
+  <h3>送信・回答 時系列</h3>
+  <div style="overflow-x:auto">
+    <table style="min-width:400px">
+      <thead>
+        <tr>
+          <th>日付</th>
+          <th style="text-align:right">送信</th>
+          <th style="text-align:right">回答</th>
+          <th style="text-align:right">回答率</th>
+          <th style="width:200px">グラフ</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% const maxSent = Math.max(...timeline.map(t => t.sent), 1); %>
+        <% for (const row of timeline) { %>
+        <tr>
+          <td><%= row.date %></td>
+          <td style="text-align:right"><%= row.sent %></td>
+          <td style="text-align:right"><%= row.answered %></td>
+          <td style="text-align:right;color:<%= row.sent > 0 && row.answered/row.sent >= 0.3 ? '#2ca87a' : '#999' %>">
+            <%= row.sent > 0 ? Math.round(row.answered / row.sent * 100) + '%' : '-' %>
+          </td>
+          <td>
+            <div style="display:flex;gap:2px;align-items:flex-end;height:20px">
+              <div style="background:#2ca87a;width:<%= Math.round(row.sent / maxSent * 80) %>px;height:16px;border-radius:2px" title="送信: <%= row.sent %>"></div>
+              <div style="background:#007bff;width:<%= Math.round(row.answered / maxSent * 80) %>px;height:10px;border-radius:2px" title="回答: <%= row.answered %>"></div>
+            </div>
+          </td>
+        </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+<% } %>
+
+<!-- 設問別回答分布 -->
+<% if (answerDistribution.length > 0) { %>
+<div class="card" style="margin-bottom:1rem">
+  <h3>設問別回答分布</h3>
+  <% for (const q of answerDistribution) { %>
+  <div style="margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid #eee">
+    <div style="font-weight:600;margin-bottom:8px">
+      <%= q.question_text %>
+      <span class="muted" style="font-size:12px;font-weight:400;margin-left:8px">
+        (回答数: <%= q.total_answers %>件)
+      </span>
+    </div>
+
+    <% if (q.question_type === 'text') { %>
+      <p class="muted" style="font-size:13px">自由記述のため分布表示なし</p>
+    <% } else { %>
+      <%
+      const total = q.total_answers || 1;
+      const maxCount = Math.max(...Object.values(q.distribution), 1);
+      // 選択肢順 or 回答順で表示
+      const displayKeys = q.answer_options && q.answer_options.length > 0
+        ? q.answer_options.map(o => o.value)
+        : Object.keys(q.distribution).sort((a, b) => (q.distribution[b] || 0) - (q.distribution[a] || 0));
+      const labelMap = {};
+      for (const o of (q.answer_options || [])) { labelMap[o.value] = o.label; }
+      %>
+      <% for (const key of displayKeys) { %>
+        <% const count = q.distribution[key] || 0; %>
+        <% const pct = Math.round(count / total * 100); %>
+        <% const barW = Math.round(count / maxCount * 300); %>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:13px">
+          <div style="width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0" title="<%= labelMap[key] || key %>">
+            <%= labelMap[key] || key %>
+          </div>
+          <div style="background:#007bff;height:16px;border-radius:2px;min-width:2px;width:<%= barW %>px"></div>
+          <div style="color:#666"><%= count %>件 (<%= pct %>%)</div>
+        </div>
+      <% } %>
+      <!-- 選択肢外の回答 -->
+      <% for (const [k, v] of Object.entries(q.distribution)) { %>
+        <% if (!labelMap[k] && !q.answer_options?.some(o => o.value === k)) { %>
+        <% const pct = Math.round(v / total * 100); %>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:13px;color:#999">
+          <div style="width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0"><%= k %></div>
+          <div style="background:#ccc;height:16px;border-radius:2px;min-width:2px;width:<%= Math.round(v / maxCount * 300) %>px"></div>
+          <div><%= v %>件 (<%= pct %>%)</div>
+        </div>
+        <% } %>
+      <% } %>
+    <% } %>
+  </div>
+  <% } %>
+</div>
+<% } %>
+
+<!-- AI 不足属性判定パネル -->
+<div class="card" style="margin-bottom:1rem">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <h3>AI 不足属性自動判定</h3>
+    <button id="btn-suggest" class="btn-secondary" onclick="loadSuggestions()">AI提案を取得</button>
+  </div>
+  <div id="suggest-loading" style="display:none;color:#999;font-size:13px">分析中...</div>
+  <div id="suggest-result"></div>
+
+  <div style="margin-top:12px">
+    <h4 style="font-size:13px;margin-bottom:8px">属性カバレッジ</h4>
+    <div id="coverage-list">
+      <button class="btn-secondary" onclick="loadCoverage()" style="font-size:12px">カバレッジを確認</button>
+    </div>
+  </div>
+</div>
+
+<!-- 通知送信ログ -->
+<% if (notificationLogs.length > 0) { %>
+<div class="card">
+  <h3>通知送信ログ（最新50件）</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>LINE USER ID</th>
+        <th>ステータス</th>
+        <th>送信日時</th>
+        <th>エラー</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% for (const log of notificationLogs) { %>
+      <tr>
+        <td style="font-family:monospace;font-size:12px"><%= log.line_user_id.slice(0, 16) %>...</td>
+        <td>
+          <% if (log.status === 'sent') { %>
+            <span style="color:#2ca87a">送信済</span>
+          <% } else if (log.status === 'failed') { %>
+            <span style="color:#dc3545">失敗</span>
+          <% } else { %>
+            <span class="muted"><%= log.status %></span>
+          <% } %>
+        </td>
+        <td class="muted" style="font-size:12px">
+          <%= log.sent_at ? new Date(log.sent_at).toLocaleString('ja-JP') : '-' %>
+        </td>
+        <td style="font-size:12px;color:#dc3545;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          <%= log.error_message || '' %>
+        </td>
+      </tr>
+      <% } %>
+    </tbody>
+  </table>
+</div>
+<% } %>
+
+<script>
+async function loadSuggestions() {
+  const btn = document.getElementById('btn-suggest');
+  const loading = document.getElementById('suggest-loading');
+  const result = document.getElementById('suggest-result');
+  btn.disabled = true;
+  loading.style.display = 'block';
+  result.innerHTML = '';
+  try {
+    const res = await fetch('/admin/api/missing-attributes/suggest?top_n=5');
+    const json = await res.json();
+    if (!json.suggestions || json.suggestions.length === 0) {
+      result.innerHTML = '<p class="muted">提案なし（全属性が充足しています）</p>';
+      return;
+    }
+    let html = '<div style="display:flex;flex-direction:column;gap:12px">';
+    for (const s of json.suggestions) {
+      html += `
+        <div style="border:1px solid #e0e0e0;border-radius:6px;padding:12px">
+          <div style="font-weight:600">${escHtml(s.label)} <span class="muted" style="font-size:12px">${s.attr_key}</span>
+            <span style="margin-left:8px;font-size:12px;color:${s.coverage_rate < 30 ? '#dc3545' : '#f0ad4e'}">取得率 ${s.coverage_rate}%</span>
+          </div>
+          <div style="margin:6px 0;font-size:14px">💬 ${escHtml(s.suggested_question)}</div>
+          ${s.suggested_options.length > 0
+            ? '<div style="font-size:12px;color:#666">選択肢: ' + s.suggested_options.map(o => escHtml(o.label)).join(' / ') + '</div>'
+            : ''}
+          <div style="font-size:12px;color:#888;margin-top:4px">📌 ${escHtml(s.reason)}</div>
+        </div>`;
+    }
+    html += '</div>';
+    result.innerHTML = html;
+  } catch (e) {
+    result.innerHTML = '<p style="color:#dc3545">取得に失敗しました</p>';
+  } finally {
+    loading.style.display = 'none';
+    btn.disabled = false;
+  }
+}
+
+async function loadCoverage() {
+  const list = document.getElementById('coverage-list');
+  list.innerHTML = '<span class="muted" style="font-size:12px">読み込み中...</span>';
+  try {
+    const res = await fetch('/admin/api/missing-attributes/coverage');
+    const json = await res.json();
+    if (!json.coverage || json.coverage.length === 0) {
+      list.innerHTML = '<p class="muted">属性定義がありません</p>';
+      return;
+    }
+    let html = '<table style="font-size:13px"><thead><tr><th>属性</th><th>カテゴリ</th><th style="text-align:right">取得率</th><th style="width:160px">バー</th></tr></thead><tbody>';
+    for (const c of json.coverage) {
+      const color = c.coverage_rate >= 70 ? '#2ca87a' : c.coverage_rate >= 30 ? '#f0ad4e' : '#dc3545';
+      html += `<tr>
+        <td>${escHtml(c.label)} <span class="muted" style="font-size:11px">${escHtml(c.attr_key)}</span></td>
+        <td class="muted">${escHtml(c.category)}</td>
+        <td style="text-align:right;color:${color}">${c.coverage_rate}%</td>
+        <td><div style="background:${color};height:10px;border-radius:2px;width:${Math.round(c.coverage_rate * 1.4)}px"></div></td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    list.innerHTML = html;
+  } catch (e) {
+    list.innerHTML = '<p style="color:#dc3545">取得に失敗しました</p>';
+  }
+}
+
+function escHtml(str) {
+  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+
+<%- include("../../partials/footer") %>

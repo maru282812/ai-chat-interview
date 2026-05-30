@@ -66,6 +66,7 @@ const failedCount    = qp.get('failed');
     </table>
     <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
       <a href="/admin/daily-surveys/<%= survey.id %>/edit" class="btn-secondary">編集</a>
+      <a href="/admin/daily-surveys/<%= survey.id %>/analytics" class="btn-secondary">📊 配信分析</a>
       <% if (survey.status === 'draft' || survey.status === 'paused') { %>
         <form method="post" action="/admin/daily-surveys/<%= survey.id %>/status/activate" style="display:inline">
           <button type="submit" class="btn">配信開始</button>
