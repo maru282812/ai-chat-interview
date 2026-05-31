@@ -256,3 +256,56 @@ export function buildRankUpMessages(newRankName: string): LineMessage[] {
     }
   ];
 }
+
+export function buildNewProjectNotificationFlex(input: {
+  projectTitle: string;
+  category?: string | null;
+  rewardPoints?: number | null;
+  estimatedMinutes?: number | null;
+  url: string;
+}): LineFlexMessage {
+  const meta: string[] = [];
+  if (input.rewardPoints) meta.push(`謝礼 ${input.rewardPoints}pt`);
+  if (input.estimatedMinutes) meta.push(`約${input.estimatedMinutes}分`);
+  if (input.category) meta.push(input.category);
+
+  return {
+    type: "flex",
+    altText: `新着案件: ${input.projectTitle}`,
+    contents: bubble([
+      {
+        type: "text",
+        text: "新着案件のご案内",
+        size: "sm",
+        color: "#888888"
+      },
+      {
+        type: "text",
+        text: input.projectTitle,
+        size: "xl",
+        weight: "bold",
+        wrap: true
+      },
+      ...(meta.length > 0 ? [{
+        type: "text",
+        text: meta.join("  /  "),
+        size: "sm",
+        color: "#2ca87a",
+        wrap: true
+      }] : []),
+      {
+        type: "separator"
+      },
+      {
+        type: "button",
+        action: {
+          type: "uri",
+          label: "案件を確認する",
+          uri: input.url
+        },
+        style: "primary",
+        color: "#0B7A75"
+      }
+    ])
+  };
+}

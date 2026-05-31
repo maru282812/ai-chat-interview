@@ -1955,7 +1955,11 @@ export const adminController = {
         ai_state_json: aiStateJson,
         ai_state_generated_at: new Date().toISOString(),
         screening_config: buildScreeningConfig(req),
-        screening_last_question_order: existing.screening_last_question_order ?? null
+        screening_last_question_order: existing.screening_last_question_order ?? null,
+        is_discoverable: req.body.is_discoverable === "true" || req.body.is_discoverable === "on",
+        category: bodyString(req.body.category) || null,
+        estimated_minutes: parseOptionalInteger(req.body.estimated_minutes) ?? null,
+        max_respondents: parseOptionalInteger(req.body.max_respondents) ?? null,
       });
       try {
         const { screeningConditionRepository: scRepo } = await import("../repositories/screeningConditionRepository");

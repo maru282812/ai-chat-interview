@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <%- include('../partials/liff-auth') %>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+        background: #f0f4f3; min-height: 100vh;
+      }
+      .page-header {
+        background: #fff; padding: 16px;
+        border-bottom: 1px solid #e8eeec;
+        position: sticky; top: 0; z-index: 10;
+      }
+      .page-header h1 { font-size: 17px; font-weight: 700; color: #1a2f2a; }
+
+      .project-list { padding: 12px 16px; }
+
+      .project-card {
+        background: #fff; border-radius: 14px;
+        padding: 16px; margin-bottom: 10px;
+        box-shadow: 0 2px 6px rgba(0,0,0,.06);
+        cursor: pointer; position: relative;
+        display: flex; gap: 12px; align-items: flex-start;
+      }
+      .project-card:active { opacity: 0.85; }
+      .project-card.inactive { opacity: 0.55; }
+
+      .card-thumb {
+        width: 56px; height: 56px; border-radius: 8px;
+        object-fit: cover; flex-shrink: 0; background: #e0ede9;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 22px; color: #2ca87a;
+      }
+      .card-body { flex: 1; }
+      .card-title { font-size: 14px; font-weight: 700; color: #1a2f2a; line-height: 1.4; margin-bottom: 5px; }
+      .card-meta  { font-size: 12px; color: #60726f; display: flex; gap: 10px; margin-bottom: 6px; }
+      .card-reward { font-size: 14px; font-weight: 700; color: #2ca87a; }
+      .status-ended { font-size: 11px; background: #f0f0f0; color: #999; padding: 2px 8px; border-radius: 10px; }
+
+      .remove-btn {
+        position: absolute; top: 12px; right: 12px;
+        background: none; border: none; cursor: pointer;
+        font-size: 18px; color: #ccc; padding: 4px;
+      }
+      .remove-btn:hover { color: #c0392b; }
+
+      .empty-state {
+        text-align: center; padding: 60px 20px;
+        color: #60726f; font-size: 14px;
+      }
+      .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
+      .empty-link {
+        display: inline-block; margin-top: 16px;
+        padding: 12px 24px; background: #2ca87a; color: #fff;
+        border-radius: 12px; font-size: 14px; font-weight: 700;
+        text-decoration: none;
+      }
+
+      #loading-overlay {
+        display: flex; justify-content: center; align-items: center;
+        padding: 60px 20px;
+      }
+      .spinner {
+        width: 28px; height: 28px;
+        border: 3px solid #e0ede9; border-top-color: #2ca87a;
+        border-radius: 50%; animation: spin 0.7s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div class="page-header">
+      <h1>保存した案件</h1>
+    </div>
+
+    <div id="loading-overlay"><div class="spinner"></div></div>
+    <div class="project-list" id="project-list" style="display:none"></div>
+
+    <%- include('../partials/liff-bottom-nav', { active: 'saved' }) %>
+
+    <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+
+    <script>
+    (() => {
+      const d = JSON.parse(document.getElementById('initial-data').dataset.json || '{}');
+      const { liffId, savedDataUrl, projectDetailBaseUrl, projectsUrl } = d;
+      let idToken = null;
+      let savedProjects = [];
+
+      function esc(v) {
+        return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+      }
+
+      function render() {
+        const listEl = document.getElementById('project-list');
+        document.getElementById('loading-overlay').style.display = 'none';
+        listEl.style.display = '';
+
+        if (savedProjects.length === 0) {
+          listEl.innerHTML = `
+            <div class="empty-state">
+              <div class="icon">🏷️</div>
+              <p>保存した案件がありません</p>
+              <a class="empty-link" href="${esc(projectsUrl)}">案件を探す</a>
+            </div>`;
+          return;
+        }
+
+        listEl.innerHTML = savedProjects.map(p => `
+          <div class="project-card ${!p.is_active ? 'inactive' : ''}" data-id="${esc(p.id)}">
+            <div class="card-thumb">📋</div>
+            <div class="card-body">
+              <div class="card-title">${esc(p.title)}</div>
+              <div class="card-meta">
+                ${p.category ? `<span>${esc(p.category)}</span>` : ''}
+                ${p.estimated_minutes ? `<span>約${p.estimated_minutes}分</span>` : ''}
+              </div>
+              ${p.reward_points ? `<div class="card-reward">${p.reward_points.toLocaleString()}pt</div>` : ''}
+              ${!p.is_active ? '<span class="status-ended">募集終了</span>' : ''}
+            </div>
+            <button class="remove-btn" data-id="${esc(p.id)}" title="保存を解除">×</button>
+          </div>`).join('');
+
+        listEl.querySelectorAll('.project-card').forEach(card => {
+          card.addEventListener('click', e => {
+            if (e.target.closest('.remove-btn')) return;
+            if (!savedProjects.find(p => p.id === card.dataset.id)?.is_active) return;
+            window.location.href = `${projectDetailBaseUrl}/${card.dataset.id}`;
+          });
+        });
+
+        listEl.querySelectorAll('.remove-btn').forEach(btn => {
+          btn.addEventListener('click', async e => {
+            e.stopPropagation();
+            const projectId = btn.dataset.id;
+            btn.disabled = true;
+            try {
+              await fetch(`/liff/projects/${projectId}/favorite`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${idToken}` }
+              });
+              savedProjects = savedProjects.filter(p => p.id !== projectId);
+              render();
+            } catch (err) {
+              btn.disabled = false;
+            }
+          });
+        });
+      }
+
+      async function load() {
+        try {
+          const token = await LiffAuth.initLiffOrWebAuth(liffId);
+          if (!token) return;
+          idToken = token;
+
+          const res = await fetch(savedDataUrl, { headers: { Authorization: `Bearer ${idToken}` } });
+          const data = await res.json();
+          savedProjects = data.projects || [];
+          render();
+        } catch (err) {
+          document.getElementById('loading-overlay').style.display = 'none';
+          document.getElementById('project-list').style.display = '';
+          document.getElementById('project-list').innerHTML = `
+            <div class="empty-state"><div class="icon">⚠️</div><p>${esc(err.message || '読み込みに失敗しました')}</p></div>`;
+        }
+      }
+
+      void load();
+    })();
+    </script>
+  </body>
+</html>

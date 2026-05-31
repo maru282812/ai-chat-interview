@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <%- include('../partials/liff-auth') %>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+        background: #f0f4f3; min-height: 100vh;
+      }
+      .page-header {
+        background: #fff; padding: 16px;
+        border-bottom: 1px solid #e8eeec;
+        position: sticky; top: 0; z-index: 10;
+      }
+      .page-header h1 { font-size: 17px; font-weight: 700; color: #1a2f2a; }
+
+      .tab-bar {
+        display: flex; background: #fff;
+        border-bottom: 2px solid #e8eeec;
+      }
+      .tab {
+        flex: 1; padding: 12px 8px; text-align: center;
+        font-size: 13px; font-weight: 600; color: #60726f;
+        border-bottom: 2px solid transparent; cursor: pointer;
+        transition: color 0.15s;
+        margin-bottom: -2px;
+      }
+      .tab.active { color: #2ca87a; border-bottom-color: #2ca87a; }
+
+      .tab-content { display: none; padding: 12px 16px; }
+      .tab-content.active { display: block; }
+
+      .assignment-card {
+        background: #fff; border-radius: 14px;
+        padding: 16px; margin-bottom: 10px;
+        box-shadow: 0 2px 6px rgba(0,0,0,.06);
+      }
+      .card-header-row {
+        display: flex; justify-content: space-between; align-items: flex-start;
+        margin-bottom: 8px;
+      }
+      .card-title { font-size: 14px; font-weight: 700; color: #1a2f2a; flex: 1; padding-right: 8px; line-height: 1.4; }
+      .status-badge {
+        font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 20px;
+        white-space: nowrap; flex-shrink: 0;
+      }
+      .badge-assigned  { background: #eef4ff; color: #2563eb; }
+      .badge-started   { background: #fff3e0; color: #c26d00; }
+      .badge-completed { background: #e8f5ef; color: #1a7a5a; }
+      .badge-expired   { background: #f5f5f5; color: #999; }
+      .badge-cancelled { background: #f5f5f5; color: #999; }
+
+      .card-meta { font-size: 12px; color: #60726f; display: flex; gap: 12px; margin-bottom: 10px; }
+      .card-reward { font-size: 14px; font-weight: 700; color: #2ca87a; margin-bottom: 10px; }
+
+      .card-actions { display: flex; gap: 8px; }
+      .btn {
+        flex: 1; padding: 10px 14px;
+        border: none; border-radius: 10px;
+        font-size: 13px; font-weight: 600; cursor: pointer;
+        text-align: center; transition: opacity 0.15s;
+      }
+      .btn:active { opacity: 0.8; }
+      .btn-primary { background: #2ca87a; color: #fff; }
+      .btn-secondary { background: #f0f4f3; color: #333; border: 1px solid #d8e3e0; }
+
+      .empty-state {
+        text-align: center; padding: 50px 20px;
+        color: #60726f; font-size: 14px;
+      }
+      .empty-state .icon { font-size: 36px; margin-bottom: 10px; }
+      .empty-link {
+        display: inline-block; margin-top: 14px;
+        padding: 10px 20px; background: #2ca87a; color: #fff;
+        border-radius: 10px; font-size: 13px; font-weight: 700;
+        text-decoration: none;
+      }
+
+      #loading-overlay {
+        display: flex; justify-content: center; align-items: center;
+        padding: 60px 20px;
+      }
+      .spinner {
+        width: 28px; height: 28px;
+        border: 3px solid #e0ede9; border-top-color: #2ca87a;
+        border-radius: 50%; animation: spin 0.7s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div class="page-header">
+      <h1>やりとり</h1>
+    </div>
+
+    <div class="tab-bar">
+      <div class="tab active" data-tab="pending">実施予定</div>
+      <div class="tab" data-tab="in_progress">回答中</div>
+      <div class="tab" data-tab="completed">完了・履歴</div>
+    </div>
+
+    <div id="loading-overlay"><div class="spinner"></div></div>
+
+    <div id="tab-pending"     class="tab-content" style="display:none"></div>
+    <div id="tab-in_progress" class="tab-content" style="display:none"></div>
+    <div id="tab-completed"   class="tab-content" style="display:none"></div>
+
+    <%- include('../partials/liff-bottom-nav', { active: 'interactions' }) %>
+
+    <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+
+    <script>
+    (() => {
+      const d = JSON.parse(document.getElementById('initial-data').dataset.json || '{}');
+      const { liffId, interactionsDataUrl, surveyBaseUrl, projectsUrl } = d;
+      let idToken = null;
+      let currentTab = 'pending';
+
+      function esc(v) {
+        return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+      }
+
+      function fmtDate(iso) {
+        if (!iso) return '';
+        try {
+          const date = new Date(iso);
+          return `${date.getFullYear()}/${String(date.getMonth()+1).padStart(2,'0')}/${String(date.getDate()).padStart(2,'0')}`;
+        } catch { return ''; }
+      }
+
+      const statusBadge = {
+        assigned:  { label: '未開始',    cls: 'badge-assigned' },
+        sent:      { label: '未開始',    cls: 'badge-assigned' },
+        opened:    { label: '確認済み',  cls: 'badge-assigned' },
+        started:   { label: '回答中',   cls: 'badge-started' },
+        completed: { label: '完了',     cls: 'badge-completed' },
+        expired:   { label: '期限切れ', cls: 'badge-expired' },
+        cancelled: { label: 'キャンセル', cls: 'badge-cancelled' },
+      };
+
+      function makeCard(a, actions) {
+        const badge = statusBadge[a.status] || { label: a.status, cls: '' };
+        return `
+          <div class="assignment-card">
+            <div class="card-header-row">
+              <div class="card-title">${esc(a.title)}</div>
+              <span class="status-badge ${badge.cls}">${badge.label}</span>
+            </div>
+            <div class="card-meta">
+              ${a.estimated_minutes ? `<span>約${a.estimated_minutes}分</span>` : ''}
+              ${a.assigned_at ? `<span>配信 ${fmtDate(a.assigned_at)}</span>` : ''}
+              ${a.deadline ? `<span>期限 ${fmtDate(a.deadline)}</span>` : ''}
+            </div>
+            ${a.reward_points ? `<div class="card-reward">謝礼 ${a.reward_points.toLocaleString()}pt</div>` : ''}
+            ${actions ? `<div class="card-actions">${actions}</div>` : ''}
+          </div>`;
+      }
+
+      function renderTab(name, items) {
+        const el = document.getElementById(`tab-${name}`);
+        if (!items || items.length === 0) {
+          const emptyMsg = name === 'pending'
+            ? '実施予定の案件がありません'
+            : name === 'in_progress'
+              ? '回答中の案件がありません'
+              : '完了した案件がありません';
+          el.innerHTML = `
+            <div class="empty-state">
+              <div class="icon">📋</div>
+              <p>${emptyMsg}</p>
+              <a class="empty-link" href="${esc(projectsUrl)}">案件を探す</a>
+            </div>`;
+          return;
+        }
+
+        el.innerHTML = items.map(a => {
+          let actions = '';
+          if (name === 'pending') {
+            actions = `<a href="${esc(surveyBaseUrl)}/${esc(a.assignment_id)}" class="btn btn-primary" style="text-decoration:none;display:block;text-align:center;">回答を始める</a>`;
+          } else if (name === 'in_progress') {
+            actions = `<a href="${esc(surveyBaseUrl)}/${esc(a.assignment_id)}" class="btn btn-primary" style="text-decoration:none;display:block;text-align:center;">続きから回答する</a>`;
+          } else if (a.status === 'completed') {
+            const earned = a.reward_points ? `+${a.reward_points.toLocaleString()}pt 獲得` : '';
+            if (earned) actions = `<div class="btn btn-secondary" style="text-align:center;cursor:default;">${esc(earned)}</div>`;
+          }
+          return makeCard(a, actions);
+        }).join('');
+      }
+
+      function renderAll(data) {
+        document.getElementById('loading-overlay').style.display = 'none';
+        renderTab('pending',     data.pending || []);
+        renderTab('in_progress', data.in_progress || []);
+        renderTab('completed',   data.completed || []);
+        showTab(currentTab);
+      }
+
+      function showTab(name) {
+        currentTab = name;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+        document.querySelector(`.tab[data-tab="${name}"]`)?.classList.add('active');
+        document.getElementById(`tab-${name}`).style.display = 'block';
+      }
+
+      document.querySelector('.tab-bar').addEventListener('click', e => {
+        const tab = e.target.closest('.tab');
+        if (!tab) return;
+        showTab(tab.dataset.tab);
+      });
+
+      async function load() {
+        try {
+          const token = await LiffAuth.initLiffOrWebAuth(liffId);
+          if (!token) return;
+          idToken = token;
+
+          const res = await fetch(interactionsDataUrl, { headers: { Authorization: `Bearer ${idToken}` } });
+          const data = await res.json();
+          renderAll(data);
+        } catch (err) {
+          document.getElementById('loading-overlay').style.display = 'none';
+          document.getElementById('tab-pending').style.display = 'block';
+          document.getElementById('tab-pending').innerHTML = `
+            <div class="empty-state"><div class="icon">⚠️</div><p>${esc(err.message || '読み込みに失敗しました')}</p></div>`;
+        }
+      }
+
+      void load();
+    })();
+    </script>
+  </body>
+</html>

@@ -24,6 +24,27 @@
     完了ポイント
     <input type="number" name="reward_points" value="<%= project?.reward_points || 30 %>" />
   </label>
+  <label>
+    カテゴリ（LIFF案件一覧のタブ用）
+    <select name="category">
+      <option value="">未設定</option>
+      <% for (const cat of ["生活系","仕事系","子育て","健康","趣味","その他"]) { %>
+        <option value="<%= cat %>" <%= project?.category === cat ? "selected" : "" %>><%= cat %></option>
+      <% } %>
+    </select>
+  </label>
+  <label>
+    所要時間（分）
+    <input type="number" name="estimated_minutes" value="<%= project?.estimated_minutes || '' %>" placeholder="例: 10" min="1" />
+  </label>
+  <label>
+    最大応募人数
+    <input type="number" name="max_respondents" value="<%= project?.max_respondents || '' %>" placeholder="未設定で無制限" min="1" />
+  </label>
+  <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+    <input type="checkbox" name="is_discoverable" value="true" <%= project?.is_discoverable ? "checked" : "" %> />
+    LIFF案件一覧に公開する
+  </label>
   <button type="submit">保存</button>
 </form>
 <%- include("../../partials/footer") %>

@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <%- include('../partials/liff-auth') %>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+        background: #f0f4f3;
+        min-height: 100vh;
+      }
+      .page-header {
+        background: #fff;
+        padding: 12px 16px;
+        border-bottom: 1px solid #e8eeec;
+        display: flex; align-items: center; gap: 10px;
+        position: sticky; top: 0; z-index: 10;
+      }
+      .back-btn {
+        background: none; border: none; font-size: 22px; cursor: pointer;
+        padding: 0; color: #333; line-height: 1;
+      }
+      .page-header h1 { font-size: 16px; font-weight: 700; color: #1a2f2a; flex: 1; }
+
+      .container { max-width: 480px; margin: 0 auto; padding: 16px; }
+
+      .card {
+        background: #fff; border-radius: 14px;
+        padding: 20px; margin-bottom: 12px;
+        box-shadow: 0 2px 6px rgba(0,0,0,.06);
+      }
+
+      .thumb {
+        width: 100%; border-radius: 10px; object-fit: cover; max-height: 180px;
+        margin-bottom: 14px;
+      }
+
+      .project-title { font-size: 20px; font-weight: 700; color: #1a2f2a; line-height: 1.4; margin-bottom: 10px; }
+      .tag-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+      .tag { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
+      .tag-cat { background: #e8f5ef; color: #1a7a5a; }
+
+      .meta-grid {
+        display: grid; grid-template-columns: 1fr 1fr;
+        gap: 10px; margin-bottom: 16px;
+      }
+      .meta-item {
+        background: #f8faf9; border-radius: 10px; padding: 12px;
+        text-align: center;
+      }
+      .meta-value { font-size: 18px; font-weight: 700; color: #1a2f2a; }
+      .meta-unit  { font-size: 12px; color: #2ca87a; margin-left: 2px; }
+      .meta-label { font-size: 11px; color: #60726f; margin-top: 3px; }
+
+      .section-title { font-size: 13px; font-weight: 600; color: #60726f; margin-bottom: 8px; }
+      .desc { font-size: 14px; color: #333; line-height: 1.7; }
+
+      .progress-wrap { background: #e0ede9; border-radius: 6px; height: 6px; margin: 6px 0; }
+      .progress-fill { background: #2ca87a; height: 100%; border-radius: 6px; }
+
+      .action-area {
+        position: fixed; bottom: 60px; left: 0; right: 0;
+        background: #fff; border-top: 1px solid #e8eeec;
+        padding: 12px 16px;
+        display: flex; gap: 10px;
+        box-shadow: 0 -2px 8px rgba(0,0,0,.06);
+      }
+      .btn {
+        flex: 1; padding: 14px;
+        border: none; border-radius: 12px;
+        font-size: 15px; font-weight: 700; cursor: pointer;
+        text-align: center; transition: opacity 0.15s;
+      }
+      .btn:active { opacity: 0.8; }
+      .btn-primary { background: #2ca87a; color: #fff; }
+      .btn-secondary { background: #f0f4f3; color: #333; border: 1px solid #d8e3e0; }
+      .btn-save { flex: 0 0 48px; padding: 14px; font-size: 22px; }
+      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      .status-badge {
+        display: inline-block; padding: 4px 12px; border-radius: 20px;
+        font-size: 12px; font-weight: 700; margin-bottom: 10px;
+      }
+      .status-completed { background: #e8f5ef; color: #1a7a5a; }
+      .status-started   { background: #fff3e0; color: #c26d00; }
+      .status-assigned  { background: #eef4ff; color: #2563eb; }
+
+      #loading-view {
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        padding: 80px 20px; gap: 12px; color: #60726f; font-size: 14px;
+      }
+      .spinner {
+        width: 28px; height: 28px;
+        border: 3px solid #e0ede9; border-top-color: #2ca87a;
+        border-radius: 50%; animation: spin 0.7s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* action-area の分の余白 */
+      .detail-spacer { height: 80px; }
+    </style>
+  </head>
+  <body>
+    <div class="page-header">
+      <button class="back-btn" id="btn-back">←</button>
+      <h1>案件詳細</h1>
+    </div>
+
+    <div class="container">
+      <div id="loading-view"><div class="spinner"></div><span>読み込み中...</span></div>
+      <div id="content-view" style="display:none"></div>
+    </div>
+
+    <%- include('../partials/liff-bottom-nav', { active: 'projects' }) %>
+
+    <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+
+    <script>
+    (() => {
+      const d = JSON.parse(document.getElementById('initial-data').dataset.json || '{}');
+      const { liffId, dataUrl, favoriteUrl, surveyBaseUrl, projectsUrl } = d;
+      let idToken = null;
+      let projectData = null;
+      let isSaved = false;
+
+      function esc(v) {
+        return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+      }
+
+      document.getElementById('btn-back').addEventListener('click', () => {
+        window.location.href = projectsUrl;
+      });
+
+      const statusMap = {
+        assigned: { label: '応募済み', cls: 'status-assigned' },
+        sent:     { label: '応募済み', cls: 'status-assigned' },
+        opened:   { label: '応募済み', cls: 'status-assigned' },
+        started:  { label: '回答中',   cls: 'status-started' },
+        completed:{ label: '完了',     cls: 'status-completed' },
+        expired:  { label: '期限切れ', cls: '' },
+        cancelled:{ label: 'キャンセル', cls: '' },
+      };
+
+      function renderContent(json) {
+        const p = json.project;
+        projectData = p;
+        isSaved = json.is_saved;
+        const assignment = json.my_assignment;
+
+        const fillPct = p.max_respondents ? Math.min(100, Math.round(((json.completed_count ?? 0) / p.max_respondents) * 100)) : null;
+
+        const statusInfo = assignment ? statusMap[assignment.status] : null;
+
+        document.getElementById('loading-view').style.display = 'none';
+        const cv = document.getElementById('content-view');
+        cv.style.display = '';
+        cv.innerHTML = `
+          ${p.thumbnail_url ? `<img class="thumb" src="${esc(p.thumbnail_url)}" alt="${esc(p.title)}" />` : ''}
+          <div class="card">
+            ${statusInfo ? `<span class="status-badge ${statusInfo.cls}">${esc(statusInfo.label)}</span>` : ''}
+            <div class="project-title">${esc(p.title)}</div>
+            ${p.category ? `<div class="tag-row"><span class="tag tag-cat">${esc(p.category)}</span></div>` : ''}
+            <div class="meta-grid">
+              ${p.reward_points ? `
+              <div class="meta-item">
+                <div class="meta-value">${p.reward_points.toLocaleString()}<span class="meta-unit">pt</span></div>
+                <div class="meta-label">謝礼ポイント</div>
+              </div>` : ''}
+              ${p.estimated_minutes ? `
+              <div class="meta-item">
+                <div class="meta-value">約${p.estimated_minutes}<span class="meta-unit">分</span></div>
+                <div class="meta-label">所要時間</div>
+              </div>` : ''}
+            </div>
+            ${fillPct !== null ? `
+            <div class="section-title">応募状況</div>
+            <div class="progress-wrap"><div class="progress-fill" style="width:${fillPct}%"></div></div>
+            <p style="font-size:12px;color:#60726f;margin-top:4px">${json.completed_count ?? 0} / ${p.max_respondents ?? '−'} 人が完了</p>
+            ` : ''}
+          </div>
+          ${p.objective ? `
+          <div class="card">
+            <div class="section-title">案件について</div>
+            <p class="desc">${esc(p.objective)}</p>
+          </div>` : ''}
+          <div class="detail-spacer"></div>
+        `;
+
+        renderActionArea(assignment);
+      }
+
+      function renderActionArea(assignment) {
+        const existing = document.querySelector('.action-area');
+        if (existing) existing.remove();
+
+        const area = document.createElement('div');
+        area.className = 'action-area';
+
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'btn btn-secondary btn-save';
+        saveBtn.title = isSaved ? '保存を解除' : '保存する';
+        saveBtn.textContent = isSaved ? '🔖' : '🏷️';
+        saveBtn.addEventListener('click', async () => {
+          saveBtn.disabled = true;
+          try {
+            const res = await fetch(favoriteUrl, { method: 'POST', headers: { Authorization: `Bearer ${idToken}` } });
+            const json = await res.json();
+            isSaved = json.saved;
+            saveBtn.textContent = isSaved ? '🔖' : '🏷️';
+          } catch (e) { console.error(e); }
+          saveBtn.disabled = false;
+        });
+
+        const actionBtn = document.createElement('button');
+        actionBtn.className = 'btn btn-primary';
+
+        if (assignment && assignment.status === 'started') {
+          actionBtn.textContent = '続きから回答する';
+          actionBtn.addEventListener('click', () => {
+            window.location.href = `${surveyBaseUrl}/${assignment.assignment_id}`;
+          });
+        } else if (assignment && assignment.status === 'completed') {
+          actionBtn.textContent = '完了済み';
+          actionBtn.disabled = true;
+        } else if (assignment && ['assigned','sent','opened'].includes(assignment.status)) {
+          actionBtn.textContent = '回答を始める';
+          actionBtn.addEventListener('click', () => {
+            window.location.href = `${surveyBaseUrl}/${assignment.assignment_id}`;
+          });
+        } else {
+          actionBtn.textContent = '応募する';
+          actionBtn.addEventListener('click', () => {
+            // 案件への直接応募は管理者アサインが必要なため、現在は案件一覧に戻す
+            alert('応募はLINEトークから可能です。LINEでメッセージを送ってご連絡ください。');
+          });
+        }
+
+        area.appendChild(saveBtn);
+        area.appendChild(actionBtn);
+        document.body.appendChild(area);
+      }
+
+      async function load() {
+        try {
+          const token = await LiffAuth.initLiffOrWebAuth(liffId);
+          if (!token) return;
+          idToken = token;
+
+          const res = await fetch(dataUrl, { headers: { Authorization: `Bearer ${idToken}` } });
+          if (!res.ok) throw new Error('案件が見つかりませんでした。');
+          const json = await res.json();
+          renderContent(json);
+        } catch (err) {
+          document.getElementById('loading-view').style.display = 'none';
+          document.getElementById('content-view').style.display = '';
+          document.getElementById('content-view').innerHTML = `
+            <div style="text-align:center;padding:60px 20px;">
+              <div style="font-size:40px;margin-bottom:12px">⚠️</div>
+              <p style="color:#c0392b;font-size:14px">${esc(err.message || '読み込みに失敗しました')}</p>
+            </div>`;
+        }
+      }
+
+      void load();
+    })();
+    </script>
+  </body>
+</html>

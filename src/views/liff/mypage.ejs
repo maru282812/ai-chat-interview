@@ -174,6 +174,18 @@
         animation: spin 0.7s linear infinite;
       }
       @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* ---- 今月の応募状況 ---- */
+      .monthly-card {
+        background: #fff; border-radius: 16px; padding: 18px 20px;
+        margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.07);
+      }
+      .monthly-title { font-size: 13px; font-weight: 600; color: #60726f; margin-bottom: 12px; }
+      .monthly-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .monthly-item { background: #f8faf9; border-radius: 10px; padding: 12px; text-align: center; }
+      .monthly-value { font-size: 22px; font-weight: 700; color: #1a2f2a; }
+      .monthly-unit  { font-size: 12px; color: #2ca87a; margin-left: 2px; }
+      .monthly-label { font-size: 11px; color: #60726f; margin-top: 3px; }
     </style>
   </head>
   <body>
@@ -185,12 +197,14 @@
       <div id="app-view" style="display:none"></div>
     </div>
 
+    <%- include('../partials/liff-bottom-nav', { active: 'mypage' }) %>
+
     <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
 
     <script>
     (() => {
       const initialData = JSON.parse(document.getElementById("initial-data").dataset.json || "{}");
-      const { liffId, mode, next, sessionId, profileUrl, updateUrl, confirmMypageUrl, historyUrl, pointsUrl, consentUrl } = initialData;
+      const { liffId, mode, next, sessionId, profileUrl, updateUrl, confirmMypageUrl, historyUrl, pointsUrl, consentUrl, interactionsUrl } = initialData;
       const appView   = document.getElementById("app-view");
       const loadingView = document.getElementById("loading-view");
       let idToken = null;
@@ -312,6 +326,14 @@
             </div>
           </div>
 
+          <div class="monthly-card" id="monthly-stats-card" style="display:none">
+            <div class="monthly-title">今月の応募状況</div>
+            <div class="monthly-grid" id="monthly-grid"></div>
+            <div style="text-align:right;margin-top:10px">
+              <a href="${interactionsUrl || '/liff/interactions'}" style="font-size:12px;color:#2ca87a;font-weight:600;text-decoration:none">やりとりを見る →</a>
+            </div>
+          </div>
+
           <div class="card">
             <div class="section-title" style="margin-bottom:10px">獲得バッジ</div>
             <div style="display:flex;flex-wrap:wrap;gap:12px;justify-content:flex-start">
@@ -332,6 +354,9 @@
             <button class="btn btn-secondary btn-sm" id="btn-consent">同意・プライバシー設定</button>
           </div>
         `);
+
+        // 今月の応募状況を非同期ロード
+        loadMonthlyStats();
 
         document.getElementById("btn-history")?.addEventListener("click", () => {
           renderHistory();
@@ -820,6 +845,39 @@
             statusEl.className = "status-msg error";
           }
         });
+      }
+
+      // ---- 今月の応募状況 ----
+      async function loadMonthlyStats() {
+        if (!historyUrl) return;
+        try {
+          const res = await fetch(historyUrl, { headers: { Authorization: `Bearer ${idToken}` } });
+          if (!res.ok) return;
+          const data = await res.json();
+          const history = data.history || [];
+          const now = new Date();
+          const thisMonth = history.filter(h => {
+            const d = new Date(h.assigned_at || '');
+            return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+          });
+          const completedThisMonth = thisMonth.filter(h => h.status === 'completed');
+          const earnedThisMonth = completedThisMonth.reduce((sum, h) => sum + (h.reward_points || 0), 0);
+
+          const card = document.getElementById('monthly-stats-card');
+          const grid = document.getElementById('monthly-grid');
+          if (!card || !grid) return;
+
+          grid.innerHTML = `
+            <div class="monthly-item">
+              <div class="monthly-value">${thisMonth.length}<span class="monthly-unit">件</span></div>
+              <div class="monthly-label">今月の応募数</div>
+            </div>
+            <div class="monthly-item">
+              <div class="monthly-value">${earnedThisMonth}<span class="monthly-unit">pt</span></div>
+              <div class="monthly-label">今月の獲得ポイント</div>
+            </div>`;
+          card.style.display = '';
+        } catch (_) {}
       }
 
       // ---- メインロード ----

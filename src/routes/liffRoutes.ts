@@ -49,3 +49,15 @@ liffRoutes.post("/contact", asyncHandler(liffController.submitContact));
 liffRoutes.get("/daily-survey", asyncHandler(liffController.dailySurveyPage));
 liffRoutes.get("/daily-survey-data", asyncHandler(liffController.getDailySurveyData));
 liffRoutes.post("/daily-survey/:surveyId/answer", asyncHandler(liffController.submitDailySurveyAnswer));
+
+// 案件一覧・詳細・保存・やりとり
+// NOTE: /projects/:id の静的セグメントより先に定義
+liffRoutes.get("/projects", asyncHandler(liffController.projectsPage));
+liffRoutes.get("/projects-data", asyncHandler(liffController.getProjectsData));
+liffRoutes.get("/projects/:id/data", asyncHandler(liffController.getProjectDetailData));
+liffRoutes.post("/projects/:id/favorite", asyncHandler(liffController.toggleProjectFavorite));
+liffRoutes.get("/projects/:id", asyncHandler(liffController.projectDetailPage));
+liffRoutes.get("/saved-projects", asyncHandler(liffController.savedProjectsPage));
+liffRoutes.get("/saved-projects-data", asyncHandler(liffController.getSavedProjectsData));
+liffRoutes.get("/interactions", asyncHandler(liffController.interactionsPage));
+liffRoutes.get("/interactions-data", asyncHandler(liffController.getInteractionsData));

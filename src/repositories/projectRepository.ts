@@ -33,6 +33,11 @@ interface ProjectMutationInput {
   ai_state_generated_at?: string | null;
   screening_config?: ScreeningConfig | null;
   screening_last_question_order?: number | null;
+  is_discoverable?: boolean;
+  category?: string | null;
+  display_thumbnail_url?: string | null;
+  estimated_minutes?: number | null;
+  max_respondents?: number | null;
 }
 
 type ProjectUpdateInput = Partial<ProjectMutationInput>;
@@ -188,5 +193,27 @@ export const projectRepository = {
       .eq("status", status);
     throwIfError(error);
     return count ?? 0;
+  },
+
+  async listDiscoverable(): Promise<Project[]> {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("id, name, user_display_title, category, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at")
+      .eq("is_discoverable", true)
+      .eq("status", "active")
+      .order("created_at", { ascending: false });
+    throwIfError(error);
+    return (data ?? []) as unknown as Project[];
+  },
+
+  async getDiscoverableById(id: string): Promise<Project | null> {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("id, name, user_display_title, category, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at, objective, screening_config")
+      .eq("id", id)
+      .eq("is_discoverable", true)
+      .maybeSingle();
+    throwIfError(error);
+    return data as Project | null;
   }
 };

@@ -7,6 +7,7 @@ import { getProjectResearchSettings } from "../lib/projectResearch";
 import { normalizeQuestionMeta } from "../lib/questionMetadata";
 import { userProfileRepository, type UserProfileUpsertInput } from "../repositories/userProfileRepository";
 import { projectRepository } from "../repositories/projectRepository";
+import { projectFavoriteRepository } from "../repositories/projectFavoriteRepository";
 import { rankRepository } from "../repositories/rankRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
 import { pointTransactionRepository } from "../repositories/pointTransactionRepository";
@@ -423,6 +424,7 @@ export const liffController = {
         historyUrl: "/liff/history-data",
         pointsUrl: "/liff/points-data",
         consentUrl: "/liff/consent-data",
+        interactionsUrl: "/liff/interactions",
       }
     });
   },
@@ -1841,5 +1843,261 @@ export const liffController = {
     }
 
     res.json({ ok: true });
+  },
+
+  // ---- 案件一覧 ----
+
+  async projectDetailPage(req: Request, res: Response): Promise<void> {
+    const liffId = process.env.LINE_LIFF_ID_MYPAGE || process.env.LINE_LIFF_ID || null;
+    const projectId = stringValue(req.params.id).trim();
+    if (!projectId) throw new HttpError(400, "案件IDが指定されていません。");
+    res.render("liff/project-detail", {
+      title: "案件詳細",
+      initialData: {
+        liffId,
+        projectId,
+        dataUrl: `/liff/projects/${projectId}/data`,
+        favoriteUrl: `/liff/projects/${projectId}/favorite`,
+        surveyBaseUrl: "/liff/survey",
+        projectsUrl: "/liff/projects",
+        savedProjectsUrl: "/liff/saved-projects",
+        interactionsUrl: "/liff/interactions",
+        mypageUrl: "/liff/mypage",
+      }
+    });
+  },
+
+  async projectsPage(_req: Request, res: Response): Promise<void> {
+    const liffId = process.env.LINE_LIFF_ID_MYPAGE || process.env.LINE_LIFF_ID || null;
+    res.render("liff/projects", {
+      title: "案件を探す",
+      initialData: {
+        liffId,
+        projectsDataUrl: "/liff/projects-data",
+        projectDetailBaseUrl: "/liff/projects",
+        savedProjectsUrl: "/liff/saved-projects",
+        interactionsUrl: "/liff/interactions",
+        mypageUrl: "/liff/mypage",
+      }
+    });
+  },
+
+  async getProjectsData(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const lineUserId = verifiedUser.userId;
+    const category = stringValue(req.query.category).trim() || null;
+
+    const [projects, favoritedIds] = await Promise.all([
+      projectRepository.listDiscoverable(),
+      projectFavoriteRepository.getFavoritedProjectIds(lineUserId),
+    ]);
+
+    const filtered = category ? projects.filter(p => (p as unknown as Record<string, unknown>).category === category) : projects;
+
+    const items = filtered.map(p => ({
+      id: p.id,
+      title: (p as unknown as Record<string, unknown>).user_display_title || p.name,
+      category: (p as unknown as Record<string, unknown>).category ?? null,
+      reward_points: p.reward_points,
+      estimated_minutes: (p as unknown as Record<string, unknown>).estimated_minutes ?? null,
+      max_respondents: (p as unknown as Record<string, unknown>).max_respondents ?? null,
+      thumbnail_url: (p as unknown as Record<string, unknown>).display_thumbnail_url ?? null,
+      created_at: p.created_at,
+      is_saved: favoritedIds.has(p.id),
+    }));
+
+    res.json({ ok: true, projects: items });
+  },
+
+  async getProjectDetailData(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const lineUserId = verifiedUser.userId;
+    const projectId = stringValue(req.params.id).trim();
+
+    if (!projectId) throw new HttpError(400, "案件IDが指定されていません。");
+
+    const [project, isSaved] = await Promise.all([
+      projectRepository.getDiscoverableById(projectId),
+      projectFavoriteRepository.isFavorited(lineUserId, projectId),
+    ]);
+
+    if (!project) throw new HttpError(404, "案件が見つかりませんでした。");
+
+    const { supabase } = await import("../config/supabase");
+    const respondents = await respondentRepository.listByLineUserId(lineUserId);
+    let myAssignment: { id: string; status: string } | null = null;
+    if (respondents.length > 0) {
+      const respondentIds = respondents.map(r => r.id);
+      const { data } = await supabase
+        .from("project_assignments")
+        .select("id, status")
+        .eq("project_id", projectId)
+        .in("respondent_id", respondentIds)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      myAssignment = data as { id: string; status: string } | null;
+    }
+
+    const { data: completedCount } = await supabase
+      .from("project_assignments")
+      .select("id", { count: "exact", head: true })
+      .eq("project_id", projectId)
+      .eq("status", "completed");
+
+    res.json({
+      ok: true,
+      project: {
+        id: project.id,
+        title: (project as unknown as Record<string, unknown>).user_display_title || project.name,
+        category: (project as unknown as Record<string, unknown>).category ?? null,
+        reward_points: project.reward_points,
+        estimated_minutes: (project as unknown as Record<string, unknown>).estimated_minutes ?? null,
+        max_respondents: (project as unknown as Record<string, unknown>).max_respondents ?? null,
+        thumbnail_url: (project as unknown as Record<string, unknown>).display_thumbnail_url ?? null,
+        objective: project.objective ?? null,
+        created_at: project.created_at,
+      },
+      is_saved: isSaved,
+      my_assignment: myAssignment,
+      completed_count: completedCount ?? 0,
+    });
+  },
+
+  async toggleProjectFavorite(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const lineUserId = verifiedUser.userId;
+    const projectId = stringValue(req.params.id).trim();
+    if (!projectId) throw new HttpError(400, "案件IDが指定されていません。");
+
+    const result = await projectFavoriteRepository.toggle(lineUserId, projectId);
+    res.json({ ok: true, saved: result.saved });
+  },
+
+  // ---- 保存した案件 ----
+
+  async savedProjectsPage(_req: Request, res: Response): Promise<void> {
+    const liffId = process.env.LINE_LIFF_ID_MYPAGE || process.env.LINE_LIFF_ID || null;
+    res.render("liff/saved-projects", {
+      title: "保存した案件",
+      initialData: {
+        liffId,
+        savedDataUrl: "/liff/saved-projects-data",
+        projectDetailBaseUrl: "/liff/projects",
+        projectsUrl: "/liff/projects",
+        interactionsUrl: "/liff/interactions",
+        mypageUrl: "/liff/mypage",
+      }
+    });
+  },
+
+  async getSavedProjectsData(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const lineUserId = verifiedUser.userId;
+
+    const favorites = await projectFavoriteRepository.listByUser(lineUserId);
+    if (favorites.length === 0) {
+      res.json({ ok: true, projects: [] });
+      return;
+    }
+
+    const { supabase } = await import("../config/supabase");
+    const projectIds = favorites.map(f => f.project_id);
+    const { data: projects } = await supabase
+      .from("projects")
+      .select("id, name, user_display_title, category, display_thumbnail_url, estimated_minutes, reward_points, status")
+      .in("id", projectIds);
+
+    const projectMap = Object.fromEntries(
+      ((projects ?? []) as { id: string; [key: string]: unknown }[]).map(p => [p.id, p])
+    );
+
+    const items = favorites.map(f => {
+      const p = projectMap[f.project_id] as Record<string, unknown> | undefined;
+      return {
+        id: f.project_id,
+        title: p ? (String(p.user_display_title || p.name || "")) : "（削除済み）",
+        category: p?.category ?? null,
+        reward_points: p?.reward_points ?? null,
+        estimated_minutes: p?.estimated_minutes ?? null,
+        thumbnail_url: p?.display_thumbnail_url ?? null,
+        is_active: p ? p.status === "active" : false,
+        saved_at: f.created_at,
+      };
+    });
+
+    res.json({ ok: true, projects: items });
+  },
+
+  // ---- やりとり ----
+
+  async interactionsPage(_req: Request, res: Response): Promise<void> {
+    const liffId = process.env.LINE_LIFF_ID_MYPAGE || process.env.LINE_LIFF_ID || null;
+    res.render("liff/interactions", {
+      title: "やりとり",
+      initialData: {
+        liffId,
+        interactionsDataUrl: "/liff/interactions-data",
+        surveyBaseUrl: "/liff/survey",
+        projectsUrl: "/liff/projects",
+        savedProjectsUrl: "/liff/saved-projects",
+        mypageUrl: "/liff/mypage",
+      }
+    });
+  },
+
+  async getInteractionsData(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const lineUserId = verifiedUser.userId;
+
+    const respondents = await respondentRepository.listByLineUserId(lineUserId);
+    if (respondents.length === 0) {
+      res.json({ ok: true, pending: [], in_progress: [], completed: [] });
+      return;
+    }
+
+    const { supabase } = await import("../config/supabase");
+    const respondentIds = respondents.map(r => r.id);
+
+    const { data: assignments } = await supabase
+      .from("project_assignments")
+      .select("id, project_id, respondent_id, status, assigned_at, started_at, completed_at, expired_at, deadline")
+      .in("respondent_id", respondentIds)
+      .order("assigned_at", { ascending: false })
+      .limit(100);
+
+    const projectIds = [...new Set(((assignments ?? []) as { project_id: string }[]).map(a => a.project_id))];
+    const { data: projects } = projectIds.length > 0
+      ? await supabase.from("projects").select("id, name, user_display_title, reward_points, estimated_minutes").in("id", projectIds)
+      : { data: [] };
+
+    const projectMap = Object.fromEntries(
+      ((projects ?? []) as { id: string; [key: string]: unknown }[]).map(p => [p.id, p])
+    );
+
+    type AssignmentRow = { id: string; project_id: string; status: string; assigned_at: string | null; started_at: string | null; completed_at: string | null; expired_at: string | null; deadline: string | null };
+
+    function toItem(a: AssignmentRow) {
+      const p = projectMap[a.project_id] as Record<string, unknown> | undefined;
+      return {
+        assignment_id: a.id,
+        project_id: a.project_id,
+        title: p ? String(p.user_display_title || p.name || "") : "不明",
+        reward_points: p?.reward_points ?? null,
+        estimated_minutes: p?.estimated_minutes ?? null,
+        status: a.status,
+        assigned_at: a.assigned_at,
+        started_at: a.started_at,
+        completed_at: a.completed_at,
+        deadline: a.deadline,
+      };
+    }
+
+    const all = ((assignments ?? []) as AssignmentRow[]).map(toItem);
+    const pending    = all.filter(a => ["assigned", "sent", "opened"].includes(a.status));
+    const inProgress = all.filter(a => a.status === "started");
+    const done       = all.filter(a => ["completed", "expired", "cancelled"].includes(a.status));
+
+    res.json({ ok: true, pending, in_progress: inProgress, completed: done });
   },
 };
