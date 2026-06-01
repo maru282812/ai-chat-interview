@@ -213,3 +213,7 @@ adminRoutes.get("/delivery-templates/:id/edit",              asyncHandler(adminC
 adminRoutes.post("/delivery-templates/:id",                  asyncHandler(adminController.updateDeliveryTemplate));
 adminRoutes.post("/delivery-templates/:id/delete",           asyncHandler(adminController.deleteDeliveryTemplate));
 adminRoutes.post("/delivery-templates/:id/run",              asyncHandler(adminController.runDeliveryTemplate));
+
+// 配信オペレーション
+adminRoutes.get("/delivery-operations",                      asyncHandler(adminController.deliveryOperationsPage));
+adminRoutes.post("/api/delivery-operations/update-project",  asyncHandler(adminController.apiDeliveryOperationsUpdateProject));

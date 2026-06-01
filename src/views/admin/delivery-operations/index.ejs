@@ -1,0 +1,922 @@
+<%- include("../../partials/header", { title }) %>
+<style>
+  .ops-layout {
+    display: grid;
+    grid-template-columns: 280px 1fr 270px;
+    gap: 12px;
+    height: calc(100vh - 200px);
+    min-height: 580px;
+  }
+  .ops-panel {
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 10px 24px rgba(18,59,58,0.08);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .ops-panel-header {
+    padding: 11px 16px;
+    background: #eef7f5;
+    border-bottom: 1px solid #e3ecea;
+    font-weight: 700;
+    font-size: 13px;
+    color: #123b3a;
+    flex-shrink: 0;
+  }
+  .ops-panel-body {
+    padding: 10px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .filter-pills {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    padding: 8px 10px;
+    border-bottom: 1px solid #e3ecea;
+    flex-shrink: 0;
+  }
+  .filter-pill {
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    border: 1px solid #c8d8d5;
+    background: #fff;
+    cursor: pointer;
+    color: #123b3a;
+  }
+  .filter-pill.active {
+    background: #0b7a75;
+    color: #fff;
+    border-color: #0b7a75;
+  }
+  .sort-bar {
+    padding: 6px 10px;
+    border-bottom: 1px solid #e3ecea;
+    flex-shrink: 0;
+  }
+  .sort-bar select {
+    padding: 5px 8px;
+    font-size: 12px;
+    border-radius: 8px;
+    border: 1px solid #c8d8d5;
+    width: 100%;
+    background: #fff;
+  }
+  .proj-card {
+    border: 1px solid #e3ecea;
+    border-radius: 10px;
+    padding: 9px 11px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    background: #fff;
+  }
+  .proj-card:hover { border-color: #0b7a75; background: #f8fdfc; }
+  .proj-card.selected { border-color: #0b7a75; background: #f0fbf9; }
+  .proj-card .proj-name {
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .proj-card .proj-meta {
+    font-size: 11px;
+    color: #6a7b78;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .ds-badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .ds-undelivered { background: #f0f0f0; color: #555; }
+  .ds-ready       { background: #fff1d6; color: #9a6700; }
+  .ds-scheduled   { background: #d6eaff; color: #0a56a8; }
+  .ds-in_progress { background: #e8f7ef; color: #117a37; }
+  .ds-completed   { background: #eef7f5; color: #0b7a75; }
+  .ds-paused      { background: #fde8e8; color: #b42318; }
+  .campaign-card {
+    border: 1px solid #e3ecea;
+    border-radius: 8px;
+    padding: 9px 11px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .campaign-card:hover { border-color: #0b7a75; background: #f8fdfc; }
+  .campaign-card.selected { border-color: #0b7a75; background: #f0fbf9; }
+  .section-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: #6a7b78;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .kanban-board {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .kanban-col {
+    background: #f4f7f6;
+    border-radius: 8px;
+    padding: 7px;
+    min-height: 100px;
+    border: 2px solid transparent;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .kanban-col.drag-over {
+    background: #d0ede8;
+    border-color: #0b7a75;
+  }
+  .kanban-col-header {
+    font-size: 11px;
+    font-weight: 700;
+    color: #123b3a;
+    margin-bottom: 6px;
+    text-align: center;
+  }
+  .kanban-card {
+    background: #fff;
+    border-radius: 5px;
+    padding: 5px 7px;
+    margin-bottom: 3px;
+    font-size: 11px;
+    border: 1px solid #e3ecea;
+    cursor: grab;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .kanban-card:hover { border-color: #0b7a75; }
+  .line-preview {
+    background: linear-gradient(160deg, #67b1e7 0%, #4fa0d8 100%);
+    border-radius: 10px;
+    padding: 14px 14px 20px;
+  }
+  .line-preview-label {
+    text-align: center;
+    font-size: 10px;
+    color: rgba(255,255,255,0.8);
+    font-weight: 600;
+    margin-bottom: 10px;
+    letter-spacing: 0.5px;
+  }
+  .line-bubble {
+    background: #fff;
+    border-radius: 10px;
+    padding: 12px 14px;
+    max-width: 220px;
+    margin: 0 auto;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .line-bubble-title {
+    font-weight: 700;
+    font-size: 14px;
+    color: #123b3a;
+    margin-bottom: 6px;
+  }
+  .line-bubble-body { color: #333; white-space: pre-wrap; }
+  .line-bubble-action {
+    margin-top: 10px;
+    background: #06c755;
+    color: #fff;
+    border-radius: 6px;
+    padding: 7px 12px;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .info-table {
+    width: 100%;
+    font-size: 12px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #e3ecea;
+    box-shadow: none;
+  }
+  .info-table td { padding: 7px 10px; border-bottom: 1px solid #e3ecea; vertical-align: middle; }
+  .info-table tr:last-child td { border-bottom: 0; }
+  .info-table td:first-child { color: #6a7b78; width: 38%; background: #fafafa; }
+  .info-table td:last-child { font-weight: 600; }
+  .execute-btn {
+    width: 100%;
+    background: #117a37;
+    color: #fff;
+    border: 0;
+    border-radius: 10px;
+    padding: 13px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .execute-btn:hover { background: #0e6530; }
+  .execute-btn:disabled { background: #9abba8; cursor: not-allowed; }
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal-box {
+    background: #fff;
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 460px;
+    width: 92%;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  }
+  .modal-title { font-size: 17px; font-weight: 700; margin-bottom: 6px; color: #123b3a; }
+  .modal-sub { font-size: 13px; color: #6a7b78; margin-bottom: 16px; }
+  .confirm-table { width: 100%; font-size: 13px; margin-bottom: 16px; }
+  .confirm-table tr td { padding: 6px 0; }
+  .confirm-table tr td:first-child { color: #6a7b78; width: 38%; }
+  .confirm-table tr td:last-child { font-weight: 600; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+  .btn-cancel {
+    background: #d8ece8; color: #123b3a; border: 0;
+    border-radius: 8px; padding: 10px 20px; cursor: pointer; font-size: 14px;
+  }
+  .btn-execute {
+    background: #117a37; color: #fff; border: 0;
+    border-radius: 8px; padding: 10px 22px; font-weight: 700; cursor: pointer; font-size: 14px;
+  }
+  .btn-execute:disabled { background: #9abba8; cursor: not-allowed; }
+</style>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+  <div>
+    <h2 style="margin:0 0 2px;font-size:20px">配信オペレーション</h2>
+    <span style="font-size:13px;color:#6a7b78">プロジェクト・セグメント・キャンペーンを組み合わせて配信を実行するコックピット</span>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span style="font-size:12px;color:#6a7b78">対象: <%= projects.length %>件</span>
+    <a href="/admin/segments/campaigns/new" style="background:#0b7a75;color:#fff;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:600">
+      ＋ キャンペーン作成
+    </a>
+    <a href="/admin/segments" style="background:#d8ece8;color:#123b3a;padding:8px 14px;border-radius:8px;font-size:13px">
+      セグメント管理
+    </a>
+  </div>
+</div>
+
+<div class="ops-layout">
+
+  <!-- ========== 左: プロジェクト一覧 ========== -->
+  <div class="ops-panel">
+    <div class="ops-panel-header">配信対象プロジェクト</div>
+    <div class="filter-pills">
+      <button class="filter-pill active" data-filter="all" onclick="setFilter('all',this)">全件</button>
+      <button class="filter-pill" data-filter="undelivered" onclick="setFilter('undelivered',this)">未配信</button>
+      <button class="filter-pill" data-filter="ready" onclick="setFilter('ready',this)">準備中</button>
+      <button class="filter-pill" data-filter="scheduled" onclick="setFilter('scheduled',this)">予約済</button>
+      <button class="filter-pill" data-filter="in_progress" onclick="setFilter('in_progress',this)">配信中</button>
+      <button class="filter-pill" data-filter="completed" onclick="setFilter('completed',this)">完了</button>
+    </div>
+    <div class="sort-bar">
+      <select id="sort-select" onchange="applySort(this.value)">
+        <option value="created_at">作成日順</option>
+        <option value="points">ポイント順</option>
+        <option value="campaigns">キャンペーン数順</option>
+      </select>
+    </div>
+    <div class="ops-panel-body" id="project-list">
+      <% for (const p of projects) { %>
+        <div class="proj-card"
+             data-id="<%= p.id %>"
+             data-status="<%= p.deliveryStatus %>"
+             data-points="<%= p.reward_points %>"
+             data-campaigns="<%= p.campaigns.length %>"
+             onclick="selectProject('<%= p.id %>')">
+          <div class="proj-name" title="<%= p.name %>"><%= p.name %></div>
+          <div style="margin-bottom:3px">
+            <span class="ds-badge ds-<%= p.deliveryStatus %>">
+              <%= ({undelivered:'未配信',ready:'配信準備中',scheduled:'配信予約済',in_progress:'配信中',completed:'配信終了',paused:'停止中'})[p.deliveryStatus] || p.deliveryStatus %>
+            </span>
+          </div>
+          <div class="proj-meta">
+            <span><%= p.reward_points %>pt</span>
+            <% if (p.delivery_type) { %><span><%= p.delivery_type %></span><% } %>
+            <% if (p.campaigns.length > 0) { %>
+              <span>キャンペーン <%= p.campaigns.length %>件</span>
+            <% } %>
+          </div>
+        </div>
+      <% } %>
+      <% if (projects.length === 0) { %>
+        <div style="text-align:center;padding:30px;color:#6a7b78;font-size:13px">
+          プロジェクトがありません
+        </div>
+      <% } %>
+    </div>
+  </div>
+
+  <!-- ========== 中央: 配信作業エリア ========== -->
+  <div class="ops-panel">
+    <div class="ops-panel-header">配信作業エリア</div>
+    <div class="ops-panel-body">
+
+      <!-- 未選択プレースホルダー -->
+      <div id="no-selection" style="text-align:center;padding:48px 24px;color:#6a7b78">
+        <div style="font-size:48px;margin-bottom:12px;opacity:0.4">📋</div>
+        <div style="font-size:14px">左のプロジェクトをクリックして選択してください</div>
+      </div>
+
+      <!-- 選択後の作業エリア -->
+      <div id="project-work-area" style="display:none">
+        <!-- 選択プロジェクト情報 -->
+        <div style="background:#eef7f5;border-radius:10px;padding:11px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div style="font-size:15px;font-weight:700;color:#123b3a" id="sel-project-name"></div>
+            <div style="font-size:12px;color:#6a7b78;margin-top:3px">
+              <span id="sel-project-status"></span> &nbsp;|&nbsp;
+              <span id="sel-project-points"></span>pt &nbsp;|&nbsp;
+              <span id="sel-delivery-status-badge"></span>
+            </div>
+          </div>
+          <a id="sel-project-link" href="#" style="font-size:11px;color:#0b7a75">配信設定</a>
+        </div>
+
+        <!-- キャンペーン選択 -->
+        <div style="margin-bottom:14px">
+          <div class="section-label">配信キャンペーンを選択</div>
+          <div id="campaign-list"></div>
+          <a id="new-campaign-link" href="#"
+             style="font-size:12px;display:inline-block;margin-top:6px;color:#0b7a75">
+            ＋ このプロジェクトのキャンペーンを新規作成
+          </a>
+        </div>
+
+        <!-- セグメント情報 (選択キャンペーンに紐づく) -->
+        <div style="margin-bottom:14px">
+          <div class="section-label">セグメント</div>
+          <div id="sel-segment-info" style="font-size:13px;color:#6a7b78;padding:6px 0">
+            キャンペーンを選択してください
+          </div>
+        </div>
+
+        <!-- 通知テンプレート情報 -->
+        <div style="margin-bottom:14px">
+          <div class="section-label">通知テンプレート</div>
+          <div id="sel-template-info" style="font-size:13px;color:#6a7b78;padding:6px 0">
+            キャンペーンを選択してください
+          </div>
+        </div>
+
+        <!-- セパレータ -->
+        <div style="border-top:1px solid #e3ecea;margin:14px 0 12px"></div>
+
+        <!-- カンバンボード -->
+        <div>
+          <div style="font-size:13px;font-weight:700;color:#123b3a;margin-bottom:8px">配信状況ボード（全案件）</div>
+          <div class="kanban-board" id="kanban-board">
+            <% const kanbanCols = [
+              { key: 'undelivered', label: '未配信' },
+              { key: 'ready',       label: '準備中' },
+              { key: 'scheduled',   label: '予約済' },
+              { key: 'in_progress', label: '配信中' },
+              { key: 'completed',   label: '完了' },
+            ] %>
+            <% for (const col of kanbanCols) { %>
+              <div class="kanban-col"
+                   id="kancol-<%= col.key %>"
+                   ondragover="event.preventDefault();this.classList.add('drag-over')"
+                   ondragleave="this.classList.remove('drag-over')"
+                   ondrop="handleDrop(event,'<%= col.key %>')">
+                <div class="kanban-col-header"><%= col.label %></div>
+                <% for (const p of projects.filter(p => p.deliveryStatus === col.key)) { %>
+                  <div class="kanban-card"
+                       draggable="true"
+                       data-id="<%= p.id %>"
+                       title="<%= p.name %>"
+                       ondragstart="handleDragStart(event,'<%= p.id %>')"
+                       onclick="selectProject('<%= p.id %>')">
+                    <%= p.name.length > 16 ? p.name.slice(0,14) + '…' : p.name %>
+                  </div>
+                <% } %>
+                <% if (projects.filter(p => p.deliveryStatus === col.key).length === 0) { %>
+                  <div style="font-size:10px;color:#aaa;text-align:center;padding:4px 0">なし</div>
+                <% } %>
+              </div>
+            <% } %>
+          </div>
+          <div style="font-size:11px;color:#6a7b78;margin-top:6px">
+            カードをドラッグして配信状態を変更できます
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 右: 配信プレビュー ========== -->
+  <div class="ops-panel">
+    <div class="ops-panel-header">配信プレビュー</div>
+    <div class="ops-panel-body" style="display:flex;flex-direction:column;gap:12px">
+
+      <div id="preview-empty" style="text-align:center;padding:30px 16px;color:#6a7b78;font-size:13px">
+        <div style="font-size:36px;margin-bottom:10px;opacity:0.4">📱</div>
+        プロジェクトとキャンペーンを選択するとプレビューが表示されます
+      </div>
+
+      <div id="preview-content" style="display:none;display:flex;flex-direction:column;gap:12px">
+        <!-- LINE吹き出しプレビュー -->
+        <div class="line-preview">
+          <div class="line-preview-label">LINE 通知プレビュー</div>
+          <div class="line-bubble">
+            <div class="line-bubble-title" id="preview-title"></div>
+            <div class="line-bubble-body" id="preview-body"></div>
+            <div class="line-bubble-action">回答する</div>
+          </div>
+        </div>
+
+        <!-- 配信サマリ -->
+        <table class="info-table">
+          <tbody>
+            <tr><td>対象案件</td><td id="sum-project"></td></tr>
+            <tr><td>セグメント</td><td id="sum-segment"></td></tr>
+            <tr>
+              <td>推定対象人数</td>
+              <td id="sum-count" style="color:#117a37;font-size:15px;font-weight:800"></td>
+            </tr>
+            <tr><td>テンプレート</td><td id="sum-template"></td></tr>
+            <tr><td>キャンペーン</td><td id="sum-campaign"></td></tr>
+          </tbody>
+        </table>
+
+        <!-- 配信ボタン -->
+        <button id="execute-btn" class="execute-btn" onclick="showConfirmModal()">
+          配信を実行
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 下部: 配信状況一覧テーブル ========== -->
+<div style="margin-top:20px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <h3 style="margin:0;font-size:16px">配信状況一覧</h3>
+    <input type="text" id="table-search"
+           placeholder="案件名で検索..."
+           style="width:200px;padding:6px 11px;font-size:13px;border-radius:8px;border:1px solid #c8d8d5"
+           oninput="filterTable(this.value)">
+  </div>
+  <div class="table-scroll">
+    <table id="summary-table">
+      <thead>
+        <tr>
+          <th>案件名</th>
+          <th>配信状態</th>
+          <th>ポイント</th>
+          <th>配信タイプ</th>
+          <th>送信済キャンペーン</th>
+          <th>最終配信日時</th>
+          <th style="white-space:nowrap">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const p of projects) { %>
+          <tr data-name="<%= p.name.toLowerCase().replace(/"/g, '&quot;') %>">
+            <td>
+              <strong><%= p.name %></strong>
+              <% if (p.delivery_enabled) { %>
+                <span style="font-size:10px;color:#0b7a75;background:#eef7f5;padding:1px 6px;border-radius:999px;margin-left:4px">配信有効</span>
+              <% } %>
+            </td>
+            <td>
+              <span class="ds-badge ds-<%= p.deliveryStatus %>">
+                <%= ({undelivered:'未配信',ready:'配信準備中',scheduled:'配信予約済',in_progress:'配信中',completed:'配信終了',paused:'停止中'})[p.deliveryStatus] || p.deliveryStatus %>
+              </span>
+            </td>
+            <td><%= p.reward_points %>pt</td>
+            <td><span style="font-size:12px;color:#6a7b78"><%= p.delivery_type || '-' %></span></td>
+            <td>
+              <% const sentCampaigns = p.campaigns.filter(c => c.status === 'sent') %>
+              <% if (p.campaigns.length > 0) { %>
+                <span style="font-size:12px">
+                  <%= sentCampaigns.length %>/<%= p.campaigns.length %>件
+                  <% const totalSent = p.campaigns.reduce((s, c) => s + (c.sent_count || 0), 0) %>
+                  <% const totalCompleted = p.campaigns.reduce((s, c) => s + (c.completed_count || 0), 0) %>
+                  <% if (totalSent > 0) { %>
+                    &nbsp;<span style="color:#6a7b78">(送信<%= totalSent %>名 / 完了<%= totalCompleted %>名)</span>
+                  <% } %>
+                </span>
+              <% } else { %>
+                <span style="color:#aaa;font-size:12px">-</span>
+              <% } %>
+            </td>
+            <td>
+              <% if (p.delivered_at) { %>
+                <span style="font-size:12px;color:#6a7b78">
+                  <%= new Date(p.delivered_at).toLocaleString('ja-JP', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) %>
+                </span>
+              <% } else { %>
+                <span style="color:#aaa;font-size:12px">-</span>
+              <% } %>
+            </td>
+            <td style="white-space:nowrap">
+              <button onclick="selectProject('<%= p.id %>')"
+                      style="background:#d8ece8;color:#123b3a;border:0;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer">
+                選択
+              </button>
+              <a href="/admin/projects/<%= p.id %>/delivery"
+                 style="font-size:12px;margin-left:6px">配信設定</a>
+            </td>
+          </tr>
+        <% } %>
+        <% if (projects.length === 0) { %>
+          <tr>
+            <td colspan="7" style="text-align:center;color:#6a7b78;padding:24px">プロジェクトがありません</td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ========== 確認モーダル ========== -->
+<div class="modal-overlay" id="confirm-modal" onclick="handleModalOverlayClick(event)">
+  <div class="modal-box">
+    <div class="modal-title">配信確認</div>
+    <div class="modal-sub">以下の内容で配信を実行します。よろしいですか？</div>
+    <table class="confirm-table">
+      <tbody>
+        <tr><td>対象案件</td><td id="modal-project"></td></tr>
+        <tr>
+          <td>推定対象人数</td>
+          <td id="modal-count" style="font-size:18px;color:#117a37"></td>
+        </tr>
+        <tr><td>セグメント</td><td id="modal-segment"></td></tr>
+        <tr><td>テンプレート</td><td id="modal-template"></td></tr>
+        <tr><td>キャンペーン</td><td id="modal-campaign"></td></tr>
+      </tbody>
+    </table>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">キャンセル</button>
+      <button class="btn-execute" id="modal-confirm-btn" onclick="executeDelivery()">
+        配信を実行
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ============================================================
+  // 静的データ
+  // ============================================================
+  const PROJECTS_DATA = <%- JSON.stringify(projects) %>;
+  const CAMPAIGNS_DATA = <%- JSON.stringify(campaigns) %>;
+  const SEGMENTS_DATA = <%- JSON.stringify(segments) %>;
+
+  const DS_LABELS = {
+    undelivered: '未配信',
+    ready: '配信準備中',
+    scheduled: '配信予約済',
+    in_progress: '配信中',
+    completed: '配信終了',
+    paused: '停止中',
+  };
+
+  // ============================================================
+  // 状態
+  // ============================================================
+  let currentFilter = 'all';
+  let selectedProjectId = null;
+  let selectedCampaignId = null;
+  let draggedProjectId = null;
+
+  // ============================================================
+  // フィルタ / ソート
+  // ============================================================
+  function setFilter(status, btn) {
+    currentFilter = status;
+    document.querySelectorAll('.filter-pill').forEach(el => el.classList.remove('active'));
+    btn.classList.add('active');
+    applyFilterSort();
+  }
+
+  function applySort(sortKey) {
+    applyFilterSort(sortKey);
+  }
+
+  function applyFilterSort(sortKey) {
+    sortKey = sortKey || document.getElementById('sort-select').value;
+    const cards = Array.from(document.querySelectorAll('#project-list .proj-card'));
+
+    // フィルタ
+    cards.forEach(card => {
+      const st = card.dataset.status;
+      card.style.display = (currentFilter === 'all' || st === currentFilter) ? '' : 'none';
+    });
+
+    // ソート (DOM並べ替え)
+    const visible = cards.filter(c => c.style.display !== 'none');
+    visible.sort((a, b) => {
+      if (sortKey === 'points') return parseInt(b.dataset.points) - parseInt(a.dataset.points);
+      if (sortKey === 'campaigns') return parseInt(b.dataset.campaigns) - parseInt(a.dataset.campaigns);
+      return 0; // created_at は元の順序
+    });
+    const list = document.getElementById('project-list');
+    visible.forEach(c => list.appendChild(c));
+  }
+
+  // ============================================================
+  // プロジェクト選択
+  // ============================================================
+  function selectProject(projectId) {
+    selectedProjectId = projectId;
+    selectedCampaignId = null;
+
+    document.querySelectorAll('.proj-card').forEach(c =>
+      c.classList.toggle('selected', c.dataset.id === projectId));
+
+    const project = PROJECTS_DATA.find(p => p.id === projectId);
+    if (!project) return;
+
+    document.getElementById('no-selection').style.display = 'none';
+    document.getElementById('project-work-area').style.display = '';
+
+    document.getElementById('sel-project-name').textContent = project.name;
+    document.getElementById('sel-project-status').textContent = project.status;
+    document.getElementById('sel-project-points').textContent = project.reward_points;
+    document.getElementById('sel-delivery-status-badge').innerHTML =
+      `<span class="ds-badge ds-${project.deliveryStatus}">${DS_LABELS[project.deliveryStatus] || project.deliveryStatus}</span>`;
+    document.getElementById('sel-project-link').href = `/admin/projects/${projectId}/delivery`;
+    document.getElementById('new-campaign-link').href =
+      `/admin/segments/campaigns/new?project_id=${projectId}`;
+
+    // キャンペーン一覧描画
+    const projectCampaigns = CAMPAIGNS_DATA.filter(c => c.project_id === projectId);
+    renderCampaignList(projectCampaigns);
+
+    // セグメント・テンプレート情報リセット
+    document.getElementById('sel-segment-info').textContent = 'キャンペーンを選択してください';
+    document.getElementById('sel-template-info').textContent = 'キャンペーンを選択してください';
+
+    // プレビューを非表示
+    hidePreview();
+
+    // テーブル行をハイライト
+    document.querySelectorAll('#summary-table tbody tr').forEach(row => {
+      const btn = row.querySelector('button');
+      if (btn && btn.getAttribute('onclick') === `selectProject('${projectId}')`) {
+        row.style.background = '#f0fbf9';
+      } else {
+        row.style.background = '';
+      }
+    });
+  }
+
+  function renderCampaignList(campaigns) {
+    const container = document.getElementById('campaign-list');
+    if (campaigns.length === 0) {
+      container.innerHTML =
+        '<div style="font-size:13px;color:#6a7b78;padding:6px 0">このプロジェクトのキャンペーンがありません</div>';
+      return;
+    }
+
+    const statusColors = { draft: '#6a7b78', scheduled: '#0a56a8', sent: '#117a37', cancelled: '#b42318' };
+    const statusLabels = { draft: '下書き', scheduled: '予約済', sent: '送信済', cancelled: 'キャンセル' };
+
+    container.innerHTML = campaigns.map(c => `
+      <div class="campaign-card" data-id="${c.id}" onclick="selectCampaign('${c.id}')">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+          <strong style="font-size:13px">${escHtml(c.name)}</strong>
+          <span style="font-size:11px;font-weight:700;color:${statusColors[c.status] || '#333'}">
+            ${statusLabels[c.status] || c.status}
+          </span>
+        </div>
+        <div style="font-size:11px;color:#6a7b78">
+          ${c.segment ? escHtml(c.segment.name) : '全会員'} &nbsp;|&nbsp;
+          送信 ${c.sent_count}名 &nbsp;|&nbsp; 完了 ${c.completed_count}名
+        </div>
+        ${c.scheduled_at
+          ? `<div style="font-size:11px;color:#6a7b78;margin-top:2px">予定: ${new Date(c.scheduled_at).toLocaleString('ja-JP')}</div>`
+          : ''}
+      </div>
+    `).join('');
+  }
+
+  // ============================================================
+  // キャンペーン選択
+  // ============================================================
+  function selectCampaign(campaignId) {
+    selectedCampaignId = campaignId;
+
+    document.querySelectorAll('.campaign-card').forEach(c =>
+      c.classList.toggle('selected', c.dataset.id === campaignId));
+
+    const campaign = CAMPAIGNS_DATA.find(c => c.id === campaignId);
+    if (!campaign) return;
+
+    // セグメント情報更新
+    const segEl = document.getElementById('sel-segment-info');
+    if (campaign.segment) {
+      const seg = SEGMENTS_DATA.find(s => s.id === campaign.segment_id);
+      const count = seg && seg.estimated_count != null ? `推定 ${seg.estimated_count}名` : '人数未評価';
+      segEl.innerHTML = `<strong>${escHtml(campaign.segment.name)}</strong>
+        <span style="color:#6a7b78;font-size:11px">&nbsp;（${count}）</span>`;
+    } else {
+      segEl.textContent = '全会員';
+    }
+
+    // テンプレート情報
+    document.getElementById('sel-template-info').textContent = 'LINE通知（プロジェクト標準）';
+
+    // プレビュー更新
+    updatePreview(campaign);
+  }
+
+  function updatePreview(campaign) {
+    const project = PROJECTS_DATA.find(p => p.id === selectedProjectId);
+    if (!project || !campaign) return;
+
+    const seg = campaign.segment;
+    const segObj = seg ? SEGMENTS_DATA.find(s => s.id === campaign.segment_id) : null;
+    const countText = segObj && segObj.estimated_count != null
+      ? `${segObj.estimated_count}名`
+      : '全会員';
+
+    // LINE吹き出し
+    document.getElementById('preview-title').textContent = `🎯 ${project.name}`;
+    document.getElementById('preview-body').textContent =
+      `${project.reward_points}ptを獲得できます！\n\nご協力をお願いします。`;
+
+    // サマリ
+    document.getElementById('sum-project').textContent = project.name;
+    document.getElementById('sum-segment').textContent = seg ? seg.name : '全会員';
+    document.getElementById('sum-count').textContent = countText;
+    document.getElementById('sum-template').textContent = 'LINE通知（プロジェクト標準）';
+    document.getElementById('sum-campaign').textContent = campaign.name;
+
+    // プレビュー表示
+    document.getElementById('preview-empty').style.display = 'none';
+    document.getElementById('preview-content').style.display = 'flex';
+    document.getElementById('preview-content').style.flexDirection = 'column';
+  }
+
+  function hidePreview() {
+    document.getElementById('preview-empty').style.display = '';
+    document.getElementById('preview-content').style.display = 'none';
+  }
+
+  // ============================================================
+  // 確認モーダル
+  // ============================================================
+  function showConfirmModal() {
+    if (!selectedCampaignId || !selectedProjectId) return;
+    const campaign = CAMPAIGNS_DATA.find(c => c.id === selectedCampaignId);
+    const project = PROJECTS_DATA.find(p => p.id === selectedProjectId);
+    if (!campaign || !project) return;
+
+    const seg = campaign.segment;
+    const segObj = seg ? SEGMENTS_DATA.find(s => s.id === campaign.segment_id) : null;
+    const countText = segObj && segObj.estimated_count != null
+      ? `${segObj.estimated_count}名`
+      : '全会員';
+
+    document.getElementById('modal-project').textContent = project.name;
+    document.getElementById('modal-count').textContent = countText;
+    document.getElementById('modal-segment').textContent = seg ? seg.name : '全会員';
+    document.getElementById('modal-template').textContent = 'LINE通知（プロジェクト標準）';
+    document.getElementById('modal-campaign').textContent = campaign.name;
+    document.getElementById('modal-confirm-btn').disabled = false;
+    document.getElementById('modal-confirm-btn').textContent = '配信を実行';
+
+    document.getElementById('confirm-modal').classList.add('active');
+  }
+
+  function closeModal() {
+    document.getElementById('confirm-modal').classList.remove('active');
+  }
+
+  function handleModalOverlayClick(e) {
+    if (e.target === document.getElementById('confirm-modal')) closeModal();
+  }
+
+  async function executeDelivery() {
+    if (!selectedCampaignId) return;
+    const btn = document.getElementById('modal-confirm-btn');
+    btn.textContent = '送信中...';
+    btn.disabled = true;
+
+    try {
+      const res = await fetch(`/admin/api/campaigns/${selectedCampaignId}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        closeModal();
+        alert(`配信完了！\n送信数: ${data.sentCount || 0}件`);
+        location.reload();
+      } else {
+        alert(`エラー: ${data.error || '配信に失敗しました'}`);
+        btn.disabled = false;
+        btn.textContent = '配信を実行';
+      }
+    } catch {
+      alert('通信エラーが発生しました');
+      btn.disabled = false;
+      btn.textContent = '配信を実行';
+    }
+  }
+
+  // ============================================================
+  // カンバン ドラッグ & ドロップ
+  // ============================================================
+  function handleDragStart(event, projectId) {
+    draggedProjectId = projectId;
+    event.dataTransfer.effectAllowed = 'move';
+  }
+
+  async function handleDrop(event, targetStatus) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('drag-over');
+    if (!draggedProjectId) return;
+
+    const project = PROJECTS_DATA.find(p => p.id === draggedProjectId);
+    if (!project || project.deliveryStatus === targetStatus) {
+      draggedProjectId = null;
+      return;
+    }
+
+    if (targetStatus === 'ready') {
+      if (!confirm(`「${project.name}」を配信準備中に変更します。\n（delivery_enabled = true に設定）`)) {
+        draggedProjectId = null;
+        return;
+      }
+      await patchProjectDelivery(draggedProjectId, true);
+    } else if (targetStatus === 'undelivered' || targetStatus === 'paused') {
+      if (!confirm(`「${project.name}」の自動配信を無効化します。\n（delivery_enabled = false に設定）`)) {
+        draggedProjectId = null;
+        return;
+      }
+      await patchProjectDelivery(draggedProjectId, false);
+    } else {
+      alert(`「${DS_LABELS[targetStatus] || targetStatus}」への変更は\nキャンペーン画面から行ってください。`);
+    }
+
+    draggedProjectId = null;
+  }
+
+  async function patchProjectDelivery(projectId, deliveryEnabled) {
+    try {
+      const res = await fetch('/admin/api/delivery-operations/update-project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId, delivery_enabled: deliveryEnabled }),
+      });
+      if (res.ok) {
+        location.reload();
+      } else {
+        alert('更新に失敗しました');
+      }
+    } catch {
+      alert('通信エラーが発生しました');
+    }
+  }
+
+  // ============================================================
+  // テーブル検索
+  // ============================================================
+  function filterTable(query) {
+    const q = query.toLowerCase();
+    document.querySelectorAll('#summary-table tbody tr').forEach(row => {
+      const name = (row.dataset.name || '');
+      row.style.display = name.includes(q) ? '' : 'none';
+    });
+  }
+
+  // ============================================================
+  // ユーティリティ
+  // ============================================================
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+</script>
+
+<%- include("../../partials/footer") %>

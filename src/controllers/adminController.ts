@@ -5023,4 +5023,55 @@ ${JSON.stringify(questionsForAI, null, 2)}
     const result = await projectDeliveryService.runTemplate(id);
     res.json({ ok: true, result });
   },
+
+  // ============================================================
+  // 配信オペレーション
+  // ============================================================
+
+  async deliveryOperationsPage(_req: Request, res: Response): Promise<void> {
+    const [projects, segments, notificationTemplates, campaigns] = await Promise.all([
+      projectRepository.list(),
+      segmentRepository.list(),
+      notificationTemplateRepository.list(),
+      deliveryCampaignRepository.list(),
+    ]);
+
+    const campaignsByProject = new Map<string, typeof campaigns>();
+    for (const c of campaigns) {
+      if (!campaignsByProject.has(c.project_id)) campaignsByProject.set(c.project_id, []);
+      campaignsByProject.get(c.project_id)!.push(c);
+    }
+
+    const projectsWithMeta = projects.map(p => {
+      const pCampaigns = campaignsByProject.get(p.id) ?? [];
+      const hasScheduled = pCampaigns.some(c => c.status === "scheduled");
+      const hasSent = pCampaigns.some(c => c.status === "sent");
+      let deliveryStatus = "undelivered";
+      if (hasScheduled) deliveryStatus = "scheduled";
+      else if (hasSent && p.delivery_enabled) deliveryStatus = "in_progress";
+      else if (hasSent) deliveryStatus = "completed";
+      else if (p.delivery_enabled) deliveryStatus = "ready";
+      else if (p.delivered_at) deliveryStatus = "paused";
+      return { ...p, deliveryStatus, campaigns: pCampaigns };
+    });
+
+    res.render("admin/delivery-operations/index", {
+      title: "配信オペレーション",
+      projects: projectsWithMeta,
+      segments,
+      notificationTemplates,
+      campaigns,
+    });
+  },
+
+  async apiDeliveryOperationsUpdateProject(req: Request, res: Response): Promise<void> {
+    const projectId = bodyString(req.body.project_id);
+    if (!projectId) {
+      res.status(400).json({ error: "project_id is required" });
+      return;
+    }
+    const deliveryEnabled: boolean = req.body.delivery_enabled === true || req.body.delivery_enabled === "true";
+    await projectRepository.update(projectId, { delivery_enabled: deliveryEnabled });
+    res.json({ ok: true });
+  },
 };
