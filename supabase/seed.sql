@@ -10,7 +10,7 @@ insert into projects (
   '飲料利用実態インタビュー',
   'Sample Client',
   '飲料カテゴリの利用シーン、購入動機、不満点を把握する',
-  'active',
+  'published',
   30
 )
 on conflict (id) do update

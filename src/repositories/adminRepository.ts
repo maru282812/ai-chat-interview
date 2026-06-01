@@ -5,7 +5,7 @@ import { sessionRepository } from "./sessionRepository";
 export const adminRepository = {
   async getDashboardStats() {
     const [activeProjects, activeSessions, completedSessions, totalRespondents] = await Promise.all([
-      projectRepository.countByStatus("active"),
+      projectRepository.countByStatus("published"),
       sessionRepository.countByStatus("active"),
       sessionRepository.countByStatus("completed"),
       respondentRepository.countAll()

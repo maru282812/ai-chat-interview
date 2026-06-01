@@ -55,6 +55,9 @@ import { notificationSchedulerService } from "../services/notificationSchedulerS
 import { rewardCampaignService } from "../services/rewardCampaignService";
 import { dailyQuestionPriorityService } from "../services/dailyQuestionPriorityService";
 import { missingAttributeService } from "../services/missingAttributeService";
+import { deliveryTemplateRepository } from "../repositories/deliveryTemplateRepository";
+import type { DeliveryTemplateMutationInput, DeliveryScheduleType } from "../repositories/deliveryTemplateRepository";
+import { projectDeliveryService } from "../services/projectDeliveryService";
 import type { DisplayTagsParsed, VisibilityCondition } from "../types/questionSchema";
 
 // USERプロファイル管理の簡易認証設定
@@ -1802,6 +1805,29 @@ async function evaluateConditionsCount(db: any, rawConditions: unknown): Promise
   return result.size;
 }
 
+function buildScheduleConfig(
+  scheduleType: string,
+  b: Record<string, string | string[]>
+): import("../repositories/deliveryTemplateRepository").DeliveryScheduleConfig {
+  if (scheduleType === "weekly") {
+    return {
+      weekday: Number(bodyString(b.schedule_weekday)) || 1,
+      hour: Number(bodyString(b.schedule_hour)) || 9,
+      minute: Number(bodyString(b.schedule_minute)) || 0,
+    };
+  }
+  if (scheduleType === "interval") {
+    return {
+      interval_minutes: Number(bodyString(b.schedule_interval_minutes)) || 60,
+    };
+  }
+  // daily (default)
+  return {
+    hour: Number(bodyString(b.schedule_hour)) || 9,
+    minute: Number(bodyString(b.schedule_minute)) || 0,
+  };
+}
+
 export const adminController = {
   async dashboard(_req: Request, res: Response): Promise<void> {
     const stats = await adminService.dashboard();
@@ -1840,7 +1866,7 @@ export const adminController = {
         user_display_title: bodyString(req.body.user_display_title) || null,
         client_name: bodyString(req.body.client_name) || null,
         objective,
-        status: bodyString(req.body.status || "draft") as "draft" | "active" | "paused" | "archived",
+        status: bodyString(req.body.status || "draft") as import("../types/domain").ProjectStatus,
         reward_points: numberField(req.body.reward_points),
         research_mode: researchMode,
         primary_objectives: objective ? [objective] : [],
@@ -1938,7 +1964,7 @@ export const adminController = {
         user_display_title: bodyString(req.body.user_display_title) || null,
         client_name: bodyString(req.body.client_name) || null,
         objective,
-        status: bodyString(req.body.status || "draft") as "draft" | "active" | "paused" | "archived",
+        status: bodyString(req.body.status || "draft") as import("../types/domain").ProjectStatus,
         reward_points: numberField(req.body.reward_points),
         research_mode: researchMode,
         primary_objectives: objective ? [objective] : [],
@@ -1960,6 +1986,8 @@ export const adminController = {
         category: bodyString(req.body.category) || null,
         estimated_minutes: parseOptionalInteger(req.body.estimated_minutes) ?? null,
         max_respondents: parseOptionalInteger(req.body.max_respondents) ?? null,
+        delivery_enabled: req.body.delivery_enabled === "true" || req.body.delivery_enabled === "on",
+        delivery_type: (bodyString(req.body.delivery_type) || null) as import("../types/domain").DeliveryType | null,
       });
       try {
         const { screeningConditionRepository: scRepo } = await import("../repositories/screeningConditionRepository");
@@ -4892,5 +4920,107 @@ ${JSON.stringify(questionsForAI, null, 2)}
     const id = routeParam(req, "id");
     await dailyQuestionPriorityService.toggleActive(id);
     res.redirect("/admin/daily-question-priorities");
+  },
+
+  // ============================================================
+  // 配信テンプレート管理
+  // ============================================================
+
+  async listDeliveryTemplates(_req: Request, res: Response): Promise<void> {
+    const [templates, logs] = await Promise.all([
+      deliveryTemplateRepository.list(),
+      deliveryTemplateRepository.listAllLogs(30),
+    ]);
+    const notificationTemplates = await notificationTemplateRepository.list();
+    res.render("admin/delivery-templates/list", {
+      title: "配信テンプレート管理",
+      templates,
+      logs,
+      notificationTemplates,
+    });
+  },
+
+  async newDeliveryTemplate(_req: Request, res: Response): Promise<void> {
+    const notificationTemplates = await notificationTemplateRepository.list();
+    res.render("admin/delivery-templates/form", {
+      title: "配信テンプレート 新規作成",
+      template: null,
+      action: "/admin/delivery-templates",
+      notificationTemplates,
+    });
+  },
+
+  async createDeliveryTemplate(req: Request, res: Response): Promise<void> {
+    const b = req.body as Record<string, string | string[]>;
+    const rawTargetTypes = Array.isArray(b.target_types) ? b.target_types : (b.target_types ? [b.target_types] : []);
+    const scheduleType = bodyString(b.schedule_type) as DeliveryScheduleType;
+    const scheduleConfig = buildScheduleConfig(scheduleType, b);
+    const input: DeliveryTemplateMutationInput = {
+      name: bodyString(b.name),
+      is_enabled: b.is_enabled === "on" || b.is_enabled === "true",
+      schedule_type: scheduleType,
+      schedule_config: scheduleConfig,
+      target_types: rawTargetTypes as import("../types/domain").DeliveryType[],
+      require_status: bodyString(b.require_status) || "ready",
+      require_delivery_enabled: b.require_delivery_enabled !== "false",
+      created_within_hours: parseOptionalInteger(b.created_within_hours),
+      notification_template_id: bodyString(b.notification_template_id) || null,
+    };
+    await deliveryTemplateRepository.create(input);
+    res.redirect("/admin/delivery-templates?created=1");
+  },
+
+  async editDeliveryTemplate(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    const [template, notificationTemplates] = await Promise.all([
+      deliveryTemplateRepository.getById(id),
+      notificationTemplateRepository.list(),
+    ]);
+    const logs = await deliveryTemplateRepository.listLogs(id);
+    res.render("admin/delivery-templates/form", {
+      title: "配信テンプレート 編集",
+      template,
+      action: `/admin/delivery-templates/${id}`,
+      notificationTemplates,
+      logs,
+    });
+  },
+
+  async updateDeliveryTemplate(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    const b = req.body as Record<string, string | string[]>;
+    const rawTargetTypes = Array.isArray(b.target_types) ? b.target_types : (b.target_types ? [b.target_types] : []);
+    const scheduleType = bodyString(b.schedule_type) as DeliveryScheduleType;
+    const scheduleConfig = buildScheduleConfig(scheduleType, b);
+    const input: Partial<DeliveryTemplateMutationInput> = {
+      name: bodyString(b.name),
+      is_enabled: b.is_enabled === "on" || b.is_enabled === "true",
+      schedule_type: scheduleType,
+      schedule_config: scheduleConfig,
+      target_types: rawTargetTypes as import("../types/domain").DeliveryType[],
+      require_status: bodyString(b.require_status) || "ready",
+      require_delivery_enabled: b.require_delivery_enabled !== "false",
+      created_within_hours: parseOptionalInteger(b.created_within_hours),
+      notification_template_id: bodyString(b.notification_template_id) || null,
+    };
+    await deliveryTemplateRepository.update(id, input);
+    // スケジューラーを再起動して新しいcronを反映
+    const { notificationSchedulerService } = await import("../services/notificationSchedulerService");
+    await notificationSchedulerService.restartScheduler();
+    res.redirect(`/admin/delivery-templates/${id}/edit?saved=1`);
+  },
+
+  async deleteDeliveryTemplate(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    await deliveryTemplateRepository.deleteById(id);
+    const { notificationSchedulerService } = await import("../services/notificationSchedulerService");
+    await notificationSchedulerService.restartScheduler();
+    res.redirect("/admin/delivery-templates?deleted=1");
+  },
+
+  async runDeliveryTemplate(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    const result = await projectDeliveryService.runTemplate(id);
+    res.json({ ok: true, result });
   },
 };

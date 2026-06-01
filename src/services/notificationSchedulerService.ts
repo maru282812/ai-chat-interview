@@ -3,6 +3,9 @@ import { supabase } from "../config/supabase";
 import { dailySurveyService } from "./dailySurveyService";
 import { lineMessagingService } from "./lineMessagingService";
 import { notificationTemplateRepository } from "../repositories/notificationTemplateRepository";
+import { deliveryTemplateRepository } from "../repositories/deliveryTemplateRepository";
+import type { DeliveryTemplate, DailyScheduleConfig, WeeklyScheduleConfig, IntervalScheduleConfig } from "../repositories/deliveryTemplateRepository";
+import { projectDeliveryService } from "./projectDeliveryService";
 import { logger } from "../lib/logger";
 import { env } from "../config/env";
 
@@ -228,9 +231,70 @@ class NotificationSchedulerService {
       logger.info(`Scheduler: reminder job registered at ${settings.reminder_time} JST (cron: ${expr})`);
     }
 
+    // 配信テンプレートのスケジュールを登録
+    await this._registerDeliveryTemplateJobs();
+
     if (this.tasks.length === 0) {
       logger.info("Scheduler: no jobs enabled, scheduler is idle");
     }
+  }
+
+  private async _registerDeliveryTemplateJobs(): Promise<void> {
+    let templates: DeliveryTemplate[];
+    try {
+      templates = await deliveryTemplateRepository.listEnabled();
+    } catch (e) {
+      logger.warn("Scheduler: could not load delivery templates", { error: String(e) });
+      return;
+    }
+
+    for (const template of templates) {
+      const expr = this._buildCronExpr(template);
+      if (!expr) {
+        logger.warn(`Scheduler: unsupported schedule_type for template ${template.id}`, {
+          schedule_type: template.schedule_type,
+        });
+        continue;
+      }
+
+      const task = cron.schedule(expr, async () => {
+        logger.info(`Scheduler: running delivery template "${template.name}"`);
+        await projectDeliveryService.runTemplate(template.id).catch((e) =>
+          logger.error("Scheduler delivery template error", {
+            templateId: template.id,
+            error: String(e),
+          })
+        );
+      });
+      this.tasks.push(task);
+      logger.info(`Scheduler: delivery template "${template.name}" registered (cron: ${expr})`);
+    }
+  }
+
+  private _buildCronExpr(template: DeliveryTemplate): string | null {
+    const cfg = template.schedule_config;
+    if (template.schedule_type === "daily") {
+      const { hour, minute } = cfg as DailyScheduleConfig;
+      // JST → UTC
+      const utcHour = (hour - 9 + 24) % 24;
+      return `${minute} ${utcHour} * * *`;
+    }
+    if (template.schedule_type === "weekly") {
+      const { weekday, hour, minute } = cfg as WeeklyScheduleConfig;
+      const utcHour = (hour - 9 + 24) % 24;
+      // 深夜を跨ぐ場合の weekday 補正
+      const utcWeekday = hour < 9 ? (weekday - 1 + 7) % 7 : weekday;
+      return `${minute} ${utcHour} * * ${utcWeekday}`;
+    }
+    if (template.schedule_type === "interval") {
+      const { interval_minutes } = cfg as IntervalScheduleConfig;
+      if (interval_minutes < 60) {
+        return `*/${interval_minutes} * * * *`;
+      }
+      const hours = Math.floor(interval_minutes / 60);
+      return `0 */${hours} * * *`;
+    }
+    return null;
   }
 
   stopScheduler(): void {

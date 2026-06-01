@@ -1,5 +1,6 @@
 import { supabase } from "../config/supabase";
 import type {
+  DeliveryType,
   Project,
   ProjectAIState,
   ProjectProbePolicy,
@@ -38,6 +39,9 @@ interface ProjectMutationInput {
   display_thumbnail_url?: string | null;
   estimated_minutes?: number | null;
   max_respondents?: number | null;
+  delivery_enabled?: boolean;
+  delivery_type?: DeliveryType | null;
+  delivered_at?: string | null;
 }
 
 type ProjectUpdateInput = Partial<ProjectMutationInput>;
@@ -59,7 +63,7 @@ export const projectRepository = {
     const { data, error } = await supabase
       .from("projects")
       .select("*")
-      .eq("status", "active")
+      .eq("status", "published")
       .order("created_at", { ascending: false });
     throwIfError(error);
     return (data ?? []) as Project[];
@@ -168,7 +172,7 @@ export const projectRepository = {
     ]);
 
     const hasExecutionHistory =
-      project.status === "active" || respondentCount > 0 || sessionCount > 0 || assignmentCount > 0;
+      project.status === "published" || respondentCount > 0 || sessionCount > 0 || assignmentCount > 0;
 
     if (hasExecutionHistory) {
       const archivedProject = await this.update(id, { status: "archived" });
@@ -198,9 +202,8 @@ export const projectRepository = {
   async listDiscoverable(): Promise<Project[]> {
     const { data, error } = await supabase
       .from("projects")
-      .select("id, name, user_display_title, category, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at")
-      .eq("is_discoverable", true)
-      .eq("status", "active")
+      .select("id, name, user_display_title, category, delivery_type, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at")
+      .eq("status", "published")
       .order("created_at", { ascending: false });
     throwIfError(error);
     return (data ?? []) as unknown as Project[];
@@ -209,11 +212,47 @@ export const projectRepository = {
   async getDiscoverableById(id: string): Promise<Project | null> {
     const { data, error } = await supabase
       .from("projects")
-      .select("id, name, user_display_title, category, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at, objective, screening_config")
+      .select("id, name, user_display_title, category, delivery_type, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at, objective, screening_config")
       .eq("id", id)
-      .eq("is_discoverable", true)
+      .eq("status", "published")
       .maybeSingle();
     throwIfError(error);
     return data as Project | null;
+  },
+
+  async listReadyForDelivery(targetTypes: string[], createdWithinHours?: number | null): Promise<Project[]> {
+    let query = supabase
+      .from("projects")
+      .select("*")
+      .eq("status", "ready")
+      .eq("delivery_enabled", true);
+
+    if (targetTypes.length > 0) {
+      query = query.in("delivery_type", targetTypes);
+    }
+    if (createdWithinHours != null) {
+      const cutoff = new Date(Date.now() - createdWithinHours * 60 * 60 * 1000).toISOString();
+      query = query.gte("created_at", cutoff);
+    }
+
+    query = query.order("created_at", { ascending: true });
+    const { data, error } = await query;
+    throwIfError(error);
+    return (data ?? []) as Project[];
+  },
+
+  async markAsDelivered(id: string): Promise<Project> {
+    const { data, error } = await supabase
+      .from("projects")
+      .update({
+        status: "published",
+        delivery_enabled: false,
+        delivered_at: new Date().toISOString()
+      })
+      .eq("id", id)
+      .select("*")
+      .single();
+    throwIfError(error);
+    return data as Project;
   }
 };

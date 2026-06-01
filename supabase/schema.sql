@@ -678,7 +678,7 @@ insert into projects (
   '飲料利用実態インタビュー',
   'Sample Client',
   '飲料カテゴリの利用シーン、購入動機、不満点を把握する',
-  'active',
+  'published',
   30,
   'survey_with_interview_probe',
   '["飲用シーンごとの選択理由","継続利用を左右する決定要因"]'::jsonb,

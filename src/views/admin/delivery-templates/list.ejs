@@ -1,0 +1,131 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const DELIVERY_TYPE_LABELS = {
+  new_project:  '新着案件',
+  interview:    'インタビュー',
+  survey:       'アンケート',
+  daily_survey: 'デイリーアンケート',
+  high_point:   '高ポイント案件',
+  urgent:       '緊急募集'
+};
+
+function scheduleLabel(t) {
+  const cfg = t.schedule_config || {};
+  if (t.schedule_type === 'daily') {
+    return `毎日 ${String(cfg.hour).padStart(2,'0')}:${String(cfg.minute).padStart(2,'0')}`;
+  }
+  if (t.schedule_type === 'weekly') {
+    const days = ['日','月','火','水','木','金','土'];
+    return `毎週${days[cfg.weekday] ?? '?'}曜 ${String(cfg.hour).padStart(2,'0')}:${String(cfg.minute).padStart(2,'0')}`;
+  }
+  if (t.schedule_type === 'interval') {
+    return `${cfg.interval_minutes}分ごと`;
+  }
+  return t.schedule_type;
+}
+%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>配信テンプレート管理</h2>
+  <a href="/admin/delivery-templates/new" class="btn">＋ 新規作成</a>
+</div>
+
+<% if (locals.created) { %><p style="color:green">作成しました。</p><% } %>
+<% if (locals.deleted) { %><p style="color:green">削除しました。</p><% } %>
+
+<table>
+  <thead>
+    <tr>
+      <th>テンプレート名</th>
+      <th>有効</th>
+      <th>スケジュール</th>
+      <th>対象分類</th>
+      <th>作成日時条件</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const t of templates) { %>
+    <tr>
+      <td><a href="/admin/delivery-templates/<%= t.id %>/edit"><%= t.name %></a></td>
+      <td><%= t.is_enabled ? '✅ 有効' : '❌ 無効' %></td>
+      <td><%= scheduleLabel(t) %></td>
+      <td>
+        <% if (t.target_types && t.target_types.length > 0) { %>
+          <%= t.target_types.map(v => DELIVERY_TYPE_LABELS[v] || v).join(' / ') %>
+        <% } else { %>
+          <span style="color:#999">未設定</span>
+        <% } %>
+      </td>
+      <td><%= t.created_within_hours != null ? `${t.created_within_hours}時間以内` : '制限なし' %></td>
+      <td style="white-space:nowrap">
+        <a href="/admin/delivery-templates/<%= t.id %>/edit">編集</a>
+        <button
+          onclick="if(confirm('今すぐ実行しますか？')) runTemplate('<%= t.id %>', this)"
+          style="margin-left:8px;cursor:pointer">今すぐ実行</button>
+        <form method="post" action="/admin/delivery-templates/<%= t.id %>/delete" style="display:inline;margin-left:8px"
+              onsubmit="return confirm('削除しますか？')">
+          <button type="submit" style="color:red">削除</button>
+        </form>
+      </td>
+    </tr>
+    <% } %>
+    <% if (templates.length === 0) { %>
+    <tr><td colspan="6" style="text-align:center;color:#999">テンプレートがまだありません</td></tr>
+    <% } %>
+  </tbody>
+</table>
+
+<h3 style="margin-top:2rem">最近の配信ログ</h3>
+<table>
+  <thead>
+    <tr>
+      <th>実行日時</th>
+      <th>テンプレート</th>
+      <th>対象案件数</th>
+      <th>対象ユーザー数</th>
+      <th>成功</th>
+      <th>失敗</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const log of logs) { %>
+    <%
+      const tmpl = templates.find(t => t.id === log.template_id);
+      const tmplName = tmpl ? tmpl.name : log.template_id.slice(0,8) + '...';
+    %>
+    <tr>
+      <td><%= new Date(log.executed_at).toLocaleString('ja-JP') %></td>
+      <td><%= tmplName %></td>
+      <td><%= log.project_ids ? log.project_ids.length : 0 %></td>
+      <td><%= log.target_user_count %></td>
+      <td style="color:green"><%= log.success_count %></td>
+      <td style="color:<%= log.fail_count > 0 ? 'red' : 'inherit' %>"><%= log.fail_count %></td>
+    </tr>
+    <% } %>
+    <% if (logs.length === 0) { %>
+    <tr><td colspan="6" style="text-align:center;color:#999">ログがまだありません</td></tr>
+    <% } %>
+  </tbody>
+</table>
+
+<script>
+async function runTemplate(id, btn) {
+  btn.disabled = true;
+  btn.textContent = '実行中...';
+  try {
+    const res = await fetch(`/admin/delivery-templates/${id}/run`, { method: 'POST' });
+    const json = await res.json();
+    const r = json.result;
+    alert(`完了: 対象案件${r.projects_matched}件 / 配信ユーザー${r.target_user_count}人 / 成功${r.success_count} / 失敗${r.fail_count}`);
+    location.reload();
+  } catch(e) {
+    alert('実行エラー: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '今すぐ実行';
+  }
+}
+</script>
+
+<%- include("../../partials/footer") %>

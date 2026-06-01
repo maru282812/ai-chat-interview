@@ -1,0 +1,175 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const DELIVERY_TYPE_OPTIONS = [
+  { value: 'new_project',  label: '新着案件' },
+  { value: 'interview',    label: 'インタビュー' },
+  { value: 'survey',       label: 'アンケート' },
+  { value: 'daily_survey', label: 'デイリーアンケート' },
+  { value: 'high_point',   label: '高ポイント案件' },
+  { value: 'urgent',       label: '緊急募集' },
+];
+const cfg = template?.schedule_config || {};
+const currentTypes = template?.target_types || [];
+%>
+
+<% if (locals.saved) { %><p style="color:green">保存しました。</p><% } %>
+
+<form class="card" method="post" action="<%= action %>">
+  <h3 style="margin:0 0 12px">基本情報</h3>
+
+  <label>
+    テンプレート名
+    <input type="text" name="name" value="<%= template?.name || '' %>" required />
+  </label>
+
+  <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px">
+    <input type="checkbox" name="is_enabled" value="true" <%= template == null || template?.is_enabled ? "checked" : "" %> />
+    有効にする
+  </label>
+
+  <hr style="margin:16px 0" />
+  <h3 style="margin:0 0 12px">配信スケジュール</h3>
+
+  <label>
+    スケジュール種別
+    <select name="schedule_type" id="schedule_type" onchange="updateScheduleFields()">
+      <option value="daily"    <%= (template?.schedule_type || 'daily') === 'daily'    ? 'selected' : '' %>>毎日（時刻指定）</option>
+      <option value="weekly"   <%= template?.schedule_type === 'weekly'   ? 'selected' : '' %>>毎週（曜日＋時刻）</option>
+      <option value="interval" <%= template?.schedule_type === 'interval' ? 'selected' : '' %>>間隔（分単位）</option>
+    </select>
+  </label>
+
+  <div id="fields-daily" style="display:none">
+    <label>
+      時刻（JST）
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" name="schedule_hour" min="0" max="23" value="<%= cfg.hour ?? 9 %>" style="width:80px" /> 時
+        <input type="number" name="schedule_minute" min="0" max="59" value="<%= cfg.minute ?? 0 %>" style="width:80px" /> 分
+      </div>
+    </label>
+  </div>
+
+  <div id="fields-weekly" style="display:none">
+    <label>
+      曜日
+      <select name="schedule_weekday">
+        <% const DAYS = ['日','月','火','水','木','金','土']; %>
+        <% for (let i = 0; i < 7; i++) { %>
+          <option value="<%= i %>" <%= (cfg.weekday ?? 1) == i ? 'selected' : '' %>><%= DAYS[i] %>曜日</option>
+        <% } %>
+      </select>
+    </label>
+    <label>
+      時刻（JST）
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" name="schedule_hour" min="0" max="23" value="<%= cfg.hour ?? 9 %>" style="width:80px" /> 時
+        <input type="number" name="schedule_minute" min="0" max="59" value="<%= cfg.minute ?? 0 %>" style="width:80px" /> 分
+      </div>
+    </label>
+  </div>
+
+  <div id="fields-interval" style="display:none">
+    <label>
+      実行間隔（分）
+      <input type="number" name="schedule_interval_minutes" min="5" max="1440" value="<%= cfg.interval_minutes ?? 60 %>" style="width:100px" />
+    </label>
+  </div>
+
+  <hr style="margin:16px 0" />
+  <h3 style="margin:0 0 12px">対象条件</h3>
+
+  <label>
+    対象配信分類（複数選択可）
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">
+      <% for (const opt of DELIVERY_TYPE_OPTIONS) { %>
+        <label style="display:flex;align-items:center;gap:4px;font-weight:normal;cursor:pointer">
+          <input type="checkbox" name="target_types" value="<%= opt.value %>"
+            <%= currentTypes.includes(opt.value) ? 'checked' : '' %> />
+          <%= opt.label %>
+        </label>
+      <% } %>
+    </div>
+  </label>
+
+  <label>
+    対象ステータス
+    <select name="require_status">
+      <option value="ready" <%= (template?.require_status || 'ready') === 'ready' ? 'selected' : '' %>>ready（配信待ち）</option>
+    </select>
+  </label>
+
+  <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px">
+    <input type="checkbox" name="require_delivery_enabled" value="true"
+      <%= template == null || template?.require_delivery_enabled ? 'checked' : '' %> />
+    delivery_enabled = true の案件のみ対象にする
+  </label>
+
+  <label style="margin-top:8px">
+    作成日時条件（〇時間以内に作成された案件のみ）
+    <div style="display:flex;align-items:center;gap:8px">
+      <input type="number" name="created_within_hours" min="1" value="<%= template?.created_within_hours ?? '' %>"
+        placeholder="空欄=制限なし" style="width:120px" />
+      <span>時間以内（空欄で制限なし）</span>
+    </div>
+  </label>
+
+  <hr style="margin:16px 0" />
+  <h3 style="margin:0 0 12px">通知設定</h3>
+
+  <label>
+    通知テンプレート
+    <select name="notification_template_id">
+      <option value="">未選択（デフォルトメッセージを使用）</option>
+      <% for (const nt of notificationTemplates) { %>
+        <option value="<%= nt.id %>"
+          <%= template?.notification_template_id === nt.id ? 'selected' : '' %>>
+          [<%= nt.category %>] <%= nt.name %> <%= nt.is_default ? '（デフォルト）' : '' %>
+        </option>
+      <% } %>
+    </select>
+  </label>
+
+  <div style="margin-top:16px;display:flex;gap:8px">
+    <button type="submit">保存</button>
+    <a href="/admin/delivery-templates" style="padding:8px 16px">← 一覧へ</a>
+  </div>
+</form>
+
+<% if (locals.logs && logs.length > 0) { %>
+<h3 style="margin-top:2rem">配信ログ（最新20件）</h3>
+<table>
+  <thead>
+    <tr>
+      <th>実行日時</th>
+      <th>対象案件数</th>
+      <th>対象ユーザー数</th>
+      <th>成功</th>
+      <th>失敗</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const log of logs) { %>
+    <tr>
+      <td><%= new Date(log.executed_at).toLocaleString('ja-JP') %></td>
+      <td><%= log.project_ids ? log.project_ids.length : 0 %></td>
+      <td><%= log.target_user_count %></td>
+      <td style="color:green"><%= log.success_count %></td>
+      <td style="color:<%= log.fail_count > 0 ? 'red' : 'inherit' %>"><%= log.fail_count %></td>
+    </tr>
+    <% } %>
+  </tbody>
+</table>
+<% } %>
+
+<script>
+function updateScheduleFields() {
+  const type = document.getElementById('schedule_type').value;
+  document.getElementById('fields-daily').style.display    = type === 'daily'    ? '' : 'none';
+  document.getElementById('fields-weekly').style.display   = type === 'weekly'   ? '' : 'none';
+  document.getElementById('fields-interval').style.display = type === 'interval' ? '' : 'none';
+}
+updateScheduleFields();
+</script>
+
+<%- include("../../partials/footer") %>

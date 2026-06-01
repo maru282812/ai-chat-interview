@@ -1,6 +1,13 @@
 export type UUID = string;
 
-export type ProjectStatus = "draft" | "active" | "paused" | "archived";
+export type ProjectStatus = "draft" | "ready" | "published" | "paused" | "closed" | "archived";
+export type DeliveryType =
+  | "new_project"   // 新着案件
+  | "interview"     // インタビュー
+  | "survey"        // アンケート
+  | "daily_survey"  // デイリーアンケート
+  | "high_point"    // 高ポイント案件
+  | "urgent";       // 緊急募集
 export type ResearchMode = "survey_interview" | "interview";
 export type RespondentStatus = "invited" | "active" | "completed" | "dropped";
 export type SessionStatus = "pending" | "active" | "completed" | "abandoned";
@@ -218,6 +225,12 @@ export interface Project {
   ai_state_generated_at: string | null;
   screening_config: ScreeningConfig | null;
   screening_last_question_order: number | null;
+  /** 配信可能フラグ。true の場合のみ自動配信テンプレートの対象になる */
+  delivery_enabled: boolean;
+  /** 配信分類。配信テンプレートの target_types 条件に使用 */
+  delivery_type: DeliveryType | null;
+  /** 最後に自動配信が完了した日時 */
+  delivered_at: string | null;
   created_at: string;
   updated_at: string;
 }

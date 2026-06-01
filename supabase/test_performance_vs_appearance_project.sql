@@ -69,7 +69,7 @@ values (
   'テスト用: 性能と見た目の重視度調査 回答形式確認',
   'Internal Test',
   '性能と見た目のどちらを重視するかをテーマに、スクリーニング、AI深掘り、分岐、隠し項目を除く回答形式の入力・保存・表示を確認する。',
-  'active',
+  'published',
   10,
   'survey_with_interview_probe',
   'interview_chat',

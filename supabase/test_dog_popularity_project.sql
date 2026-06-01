@@ -63,7 +63,7 @@ values (
   'テスト用調査（人気犬種調査・全回答形式確認）',
   'Internal Test',
   '犬の人気と飼育意向を題材に、13種類の回答形式・AI深掘り・分岐動作を確認する。',
-  'active',
+  'published',
   10,
   'interview',
   'interview_chat',

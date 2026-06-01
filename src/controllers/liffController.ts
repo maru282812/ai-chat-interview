@@ -2021,7 +2021,7 @@ export const liffController = {
         reward_points: p?.reward_points ?? null,
         estimated_minutes: p?.estimated_minutes ?? null,
         thumbnail_url: p?.display_thumbnail_url ?? null,
-        is_active: p ? p.status === "active" : false,
+        is_active: p ? p.status === "published" : false,
         saved_at: f.created_at,
       };
     });

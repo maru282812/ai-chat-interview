@@ -204,3 +204,12 @@ adminRoutes.post("/daily-surveys/:surveyId/questions/:questionId/delete", asyncH
 // AI 不足属性自動判定 API
 adminRoutes.get("/api/missing-attributes/coverage", asyncHandler(adminController.apiMissingAttributeCoverage));
 adminRoutes.get("/api/missing-attributes/suggest", asyncHandler(adminController.apiMissingAttributeSuggest));
+
+// 配信テンプレート管理
+adminRoutes.get("/delivery-templates",                       asyncHandler(adminController.listDeliveryTemplates));
+adminRoutes.get("/delivery-templates/new",                   asyncHandler(adminController.newDeliveryTemplate));
+adminRoutes.post("/delivery-templates",                      asyncHandler(adminController.createDeliveryTemplate));
+adminRoutes.get("/delivery-templates/:id/edit",              asyncHandler(adminController.editDeliveryTemplate));
+adminRoutes.post("/delivery-templates/:id",                  asyncHandler(adminController.updateDeliveryTemplate));
+adminRoutes.post("/delivery-templates/:id/delete",           asyncHandler(adminController.deleteDeliveryTemplate));
+adminRoutes.post("/delivery-templates/:id/run",              asyncHandler(adminController.runDeliveryTemplate));

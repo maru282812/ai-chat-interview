@@ -70,7 +70,7 @@ values (
   'テスト用: 春にやりたいこと調査 全機能確認',
   'Internal Test',
   '春にやりたいことをテーマに、スクリーニング、AI深掘り、分岐、全回答形式の入力・保存・表示を確認する。',
-  'active',
+  'published',
   10,
   'survey_with_interview_probe',
   'interview_chat',

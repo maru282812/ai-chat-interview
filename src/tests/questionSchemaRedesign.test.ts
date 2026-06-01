@@ -133,6 +133,9 @@ function createInterviewProjectFixture(): Project {
     ai_state_generated_at: null,
     screening_config: null,
     screening_last_question_order: null,
+    delivery_enabled: false,
+    delivery_type: null,
+    delivered_at: null,
     created_at: "2026-04-20T00:00:00.000Z",
     updated_at: "2026-04-20T00:00:00.000Z"
   };
