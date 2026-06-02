@@ -5,7 +5,7 @@ export type CampaignStatus = "draft" | "scheduled" | "sent" | "cancelled";
 
 export interface DeliveryCampaign {
   id: string;
-  project_id: string;
+  project_id: string | null;
   segment_id: string | null;
   name: string;
   status: CampaignStatus;
@@ -26,7 +26,7 @@ export interface DeliveryCampaignWithProject extends DeliveryCampaign {
 }
 
 export interface DeliveryCampaignCreateInput {
-  project_id: string;
+  project_id: string | null;
   segment_id?: string | null;
   name: string;
   delivery_channel?: "liff" | "line";

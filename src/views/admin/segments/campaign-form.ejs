@@ -14,14 +14,15 @@
           <td><input type="text" name="name" value="<%= campaign?.name ?? '' %>" required style="width:360px" /></td>
         </tr>
         <tr>
-          <th>対象プロジェクト <span style="color:#e05555">*</span></th>
+          <th>対象プロジェクト</th>
           <td>
-            <select name="project_id" required style="width:360px">
-              <option value="">選択してください</option>
+            <select name="project_id" style="width:360px">
+              <option value="">（未選択）</option>
               <% for (const p of projects) { %>
                 <option value="<%= p.id %>" <%= (campaign?.project_id === p.id) ? 'selected' : '' %>><%= p.name %></option>
               <% } %>
             </select>
+            <p class="muted" style="margin-top:4px;font-size:12px">配信オペレーション実行時に選択可。空白のまま保存できます。</p>
           </td>
         </tr>
         <tr>

@@ -111,6 +111,15 @@ adminRoutes.post("/attributes/definitions/:defId/delete", asyncHandler(adminCont
 adminRoutes.get("/segments", asyncHandler(adminController.segmentsPage));
 adminRoutes.get("/segments/new", asyncHandler(adminController.newSegmentPage));
 adminRoutes.post("/segments", asyncHandler(adminController.createSegment));
+// Phase 2-D: キャンペーン管理（静的パスを :segmentId より先に定義）
+adminRoutes.get("/segments/campaigns", asyncHandler(adminController.campaignsPage));
+adminRoutes.get("/segments/campaigns/new", asyncHandler(adminController.newCampaignPage));
+adminRoutes.post("/segments/campaigns", asyncHandler(adminController.createCampaign));
+adminRoutes.get("/segments/campaigns/:campaignId/edit", asyncHandler(adminController.editCampaignPage));
+adminRoutes.post("/segments/campaigns/:campaignId", asyncHandler(adminController.updateCampaign));
+adminRoutes.post("/segments/campaigns/:campaignId/cancel", asyncHandler(adminController.cancelCampaign));
+adminRoutes.post("/api/campaigns/:campaignId/execute", asyncHandler(adminController.executeCampaign));
+// 動的パスは静的パスの後
 adminRoutes.get("/segments/:segmentId/edit", asyncHandler(adminController.editSegmentPage));
 adminRoutes.post("/segments/:segmentId", asyncHandler(adminController.updateSegment));
 adminRoutes.post("/segments/:segmentId/delete", asyncHandler(adminController.deleteSegment));
@@ -124,14 +133,6 @@ adminRoutes.get("/ai-analysis", asyncHandler(adminController.aiAnalysisPage));
 adminRoutes.get("/ai-analysis/report", asyncHandler(adminController.aiReportPage));
 adminRoutes.post("/api/ai/analyze-post/:postId", asyncHandler(adminController.runExtendedPostAnalysis));
 adminRoutes.post("/api/ai/generate-user-tags/:respondentId", asyncHandler(adminController.runUserTagGeneration));
-
-// Phase 2-D: キャンペーン管理
-adminRoutes.get("/segments/campaigns/new", asyncHandler(adminController.newCampaignPage));
-adminRoutes.post("/segments/campaigns", asyncHandler(adminController.createCampaign));
-adminRoutes.get("/segments/campaigns/:campaignId/edit", asyncHandler(adminController.editCampaignPage));
-adminRoutes.post("/segments/campaigns/:campaignId", asyncHandler(adminController.updateCampaign));
-adminRoutes.post("/segments/campaigns/:campaignId/cancel", asyncHandler(adminController.cancelCampaign));
-adminRoutes.post("/api/campaigns/:campaignId/execute", asyncHandler(adminController.executeCampaign));
 
 // Phase 2-D: データ管理（NGワード・カテゴリ）
 adminRoutes.get("/data-management", asyncHandler(adminController.dataManagementPage));

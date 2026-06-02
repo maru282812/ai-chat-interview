@@ -891,7 +891,7 @@ function buildQuestionFormValues(
     question_code: overrides.question_code ?? question?.question_code ?? "",
     question_text: overrides.question_text ?? question?.question_text ?? "",
     question_role: overrides.question_role ?? question?.question_role ?? "main",
-    question_type: overrides.question_type ?? question?.question_type ?? "text",
+    question_type: overrides.question_type ?? question?.question_type ?? "free_text_short",
     sort_order_text: overrides.sort_order_text ?? String(question?.sort_order ?? 1),
     is_required: overrides.is_required ?? question?.is_required ?? true,
     ai_probe_enabled: overrides.ai_probe_enabled ?? question?.ai_probe_enabled ?? true,
@@ -4009,6 +4009,11 @@ ${JSON.stringify(questionsForAI, null, 2)}
   // Phase 2-D: キャンペーン管理
   // ============================================================
 
+  async campaignsPage(_req: Request, res: Response): Promise<void> {
+    const campaigns = await deliveryCampaignRepository.list();
+    res.render("admin/segments/campaigns", { title: "配信キャンペーン", campaigns });
+  },
+
   async newCampaignPage(_req: Request, res: Response): Promise<void> {
     const [projects, segments] = await Promise.all([
       projectRepository.list(),
@@ -4025,14 +4030,13 @@ ${JSON.stringify(questionsForAI, null, 2)}
   async createCampaign(req: Request, res: Response): Promise<void> {
     const name = bodyString(req.body.name).trim();
     if (!name) throw new HttpError(400, "キャンペーン名は必須です");
-    const projectId = bodyString(req.body.project_id).trim();
-    if (!projectId) throw new HttpError(400, "プロジェクトを選択してください");
+    const projectId = bodyString(req.body.project_id).trim() || null;
     const segmentId = bodyString(req.body.segment_id).trim() || null;
     const deliveryChannel = bodyString(req.body.delivery_channel) === "line" ? "line" : "liff";
     const scheduledAt = parseNullableDateTime(req.body.scheduled_at);
     const deadline = parseNullableDateTime(req.body.deadline);
 
-    const campaign = await deliveryCampaignRepository.create({
+    await deliveryCampaignRepository.create({
       name,
       project_id: projectId,
       segment_id: segmentId,
@@ -4040,12 +4044,8 @@ ${JSON.stringify(questionsForAI, null, 2)}
       scheduled_at: scheduledAt,
     });
 
-    // deadline は campaign テーブルには無いので別途 metadata に入れる必要がある場合は拡張。
-    // 今は scheduled_at のみ保存して完了。
-    void deadline; // 将来利用
-    void campaign;
-
-    res.redirect("/admin/segments");
+    void deadline;
+    res.redirect("/admin/segments/campaigns");
   },
 
   async editCampaignPage(req: Request, res: Response): Promise<void> {
@@ -4067,8 +4067,7 @@ ${JSON.stringify(questionsForAI, null, 2)}
     const campaignId = routeParam(req, "campaignId");
     const name = bodyString(req.body.name).trim();
     if (!name) throw new HttpError(400, "キャンペーン名は必須です");
-    const projectId = bodyString(req.body.project_id).trim();
-    if (!projectId) throw new HttpError(400, "プロジェクトを選択してください");
+    const projectId = bodyString(req.body.project_id).trim() || null;
     const segmentId = bodyString(req.body.segment_id).trim() || null;
     const deliveryChannel = bodyString(req.body.delivery_channel) === "line" ? "line" : "liff";
     const scheduledAt = parseNullableDateTime(req.body.scheduled_at);
@@ -4081,13 +4080,13 @@ ${JSON.stringify(questionsForAI, null, 2)}
       scheduled_at: scheduledAt,
       status: scheduledAt ? "scheduled" : "draft",
     });
-    res.redirect("/admin/segments");
+    res.redirect("/admin/segments/campaigns");
   },
 
   async cancelCampaign(req: Request, res: Response): Promise<void> {
     const campaignId = routeParam(req, "campaignId");
     await deliveryCampaignRepository.update(campaignId, { status: "cancelled" });
-    res.redirect("/admin/segments");
+    res.redirect("/admin/segments/campaigns");
   },
 
   async executeCampaign(req: Request, res: Response): Promise<void> {
@@ -4097,6 +4096,10 @@ ${JSON.stringify(questionsForAI, null, 2)}
     const campaign = await deliveryCampaignRepository.getById(campaignId);
     if (campaign.status === "sent" || campaign.status === "cancelled") {
       res.status(400).json({ error: "このキャンペーンは実行できません" });
+      return;
+    }
+    if (!campaign.project_id) {
+      res.status(400).json({ error: "対象プロジェクトが設定されていません。編集画面でプロジェクトを選択してください。" });
       return;
     }
 
@@ -5038,6 +5041,7 @@ ${JSON.stringify(questionsForAI, null, 2)}
 
     const campaignsByProject = new Map<string, typeof campaigns>();
     for (const c of campaigns) {
+      if (!c.project_id) continue;
       if (!campaignsByProject.has(c.project_id)) campaignsByProject.set(c.project_id, []);
       campaignsByProject.get(c.project_id)!.push(c);
     }
