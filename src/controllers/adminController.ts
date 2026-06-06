@@ -4091,6 +4091,8 @@ ${JSON.stringify(questionsForAI, null, 2)}
 
   async executeCampaign(req: Request, res: Response): Promise<void> {
     const campaignId = routeParam(req, "campaignId");
+    const segmentIdOverride = bodyString(req.body.segment_id) || null;
+    const projectIdOverride = bodyString(req.body.project_id) || null;
     const { supabase: db } = await import("../config/supabase");
 
     const campaign = await deliveryCampaignRepository.getById(campaignId);
@@ -4098,16 +4100,20 @@ ${JSON.stringify(questionsForAI, null, 2)}
       res.status(400).json({ error: "このキャンペーンは実行できません" });
       return;
     }
-    if (!campaign.project_id) {
-      res.status(400).json({ error: "対象プロジェクトが設定されていません。編集画面でプロジェクトを選択してください。" });
+
+    // 画面で選択したプロジェクトを優先。それもなければキャンペーンのproject_idを使用
+    const effectiveProjectId = projectIdOverride ?? campaign.project_id;
+    if (!effectiveProjectId) {
+      res.status(400).json({ error: "対象プロジェクトが設定されていません。配信オペレーション画面でプロジェクトを選択してください。" });
       return;
     }
 
-    // セグメント条件からターゲットユーザーを取得
+    // セグメント条件からターゲットユーザーを取得（画面からのsegment_idがあれば優先）
+    const effectiveSegmentId = segmentIdOverride ?? campaign.segment_id;
     let targetLineUserIds: string[] = [];
 
-    if (campaign.segment_id) {
-      const segment = await segmentRepository.getById(campaign.segment_id);
+    if (effectiveSegmentId) {
+      const segment = await segmentRepository.getById(effectiveSegmentId);
       const conds = segment.conditions.conditions as Array<{
         field: string; op: string; value: unknown;
       }>;
@@ -4148,7 +4154,7 @@ ${JSON.stringify(questionsForAI, null, 2)}
 
     // assignmentService でバッチアサイン
     const createdAssignments = await assignmentService.assignManual({
-      projectId: campaign.project_id,
+      projectId: effectiveProjectId,
       sourceRespondentIds: respondentIds,
       deadline: null,
       deliveryChannel: campaign.delivery_channel,
@@ -5077,5 +5083,288 @@ ${JSON.stringify(questionsForAI, null, 2)}
     const deliveryEnabled: boolean = req.body.delivery_enabled === true || req.body.delivery_enabled === "true";
     await projectRepository.update(projectId, { delivery_enabled: deliveryEnabled });
     res.json({ ok: true });
+  },
+
+  // ============================================================
+  // 書類管理 (documents)
+  // ============================================================
+
+  async documentsList(req: Request, res: Response): Promise<void> {
+    const { documentRepository } = await import("../repositories/documentRepository");
+    let documents: Awaited<ReturnType<typeof documentRepository.list>> = [];
+    let errorMessage: string | null = null;
+    try {
+      documents = await documentRepository.list();
+    } catch {
+      errorMessage = "書類の取得に失敗しました。システム管理者へお問い合わせください。";
+      logger.error("documentsList: failed to fetch documents");
+    }
+    res.render("admin/documents/index", {
+      title: "書類管理",
+      documents,
+      errorMessage,
+      created: req.query.created === "1",
+      saved: req.query.saved === "1",
+    });
+  },
+
+  async newDocumentPage(_req: Request, res: Response): Promise<void> {
+    res.render("admin/documents/form", {
+      title: "書類を新規作成",
+      action: "/admin/documents",
+      document: null,
+    });
+  },
+
+  async createDocument(req: Request, res: Response): Promise<void> {
+    const { documentRepository } = await import("../repositories/documentRepository");
+    const { consentService } = await import("../services/consentService");
+
+    const title = bodyString(req.body.title).trim();
+    const documentType = bodyString(req.body.document_type).trim();
+    const description = bodyString(req.body.description).trim() || null;
+    const isActive = req.body.is_active === "true";
+    const isRequiredGlobal = req.body.is_required_global === "true";
+
+    if (!title || !documentType) {
+      res.render("admin/documents/form", {
+        title: "書類を新規作成",
+        action: "/admin/documents",
+        document: req.body,
+        error: "書類種別とタイトルは必須です",
+      });
+      return;
+    }
+
+    let doc;
+    try {
+      doc = await documentRepository.create({ document_type: documentType, title, description: description ?? undefined, is_active: isActive, is_required_global: isRequiredGlobal });
+    } catch {
+      logger.error("createDocument: failed to create document");
+      res.render("admin/documents/form", {
+        title: "書類を新規作成",
+        action: "/admin/documents",
+        document: req.body,
+        error: "書類の登録に失敗しました。システム管理者へお問い合わせください。",
+      });
+      return;
+    }
+
+    const content = bodyString(req.body.content).trim();
+    const versionNo = bodyString(req.body.version_no).trim() || "1.0";
+    if (content) {
+      try {
+        await consentService.publishNewVersion(doc.id, {
+          versionNo,
+          content,
+          changeReason: bodyString(req.body.change_reason).trim() || "初版",
+          createdBy: "admin",
+        });
+      } catch {
+        logger.error("createDocument: failed to create initial version");
+        res.render("admin/documents/form", {
+          title: "書類を新規作成",
+          action: "/admin/documents",
+          document: req.body,
+          error: "書類は登録されましたが、バージョンの作成に失敗しました。システム管理者へお問い合わせください。",
+        });
+        return;
+      }
+    }
+
+    res.redirect(`/admin/documents?created=1`);
+  },
+
+  async showDocument(req: Request, res: Response): Promise<void> {
+    const { documentRepository } = await import("../repositories/documentRepository");
+    const docId = routeParam(req, "documentId");
+    const [doc, versions] = await Promise.all([
+      documentRepository.getById(docId),
+      documentRepository.listVersions(docId),
+    ]);
+    if (!doc) throw new HttpError(404, "書類が見つかりません");
+    res.render("admin/documents/show", {
+      title: doc.title,
+      document: doc,
+      versions,
+    });
+  },
+
+  async editDocumentPage(req: Request, res: Response): Promise<void> {
+    const { documentRepository } = await import("../repositories/documentRepository");
+    const docId = routeParam(req, "documentId");
+    const doc = await documentRepository.getById(docId);
+    if (!doc) throw new HttpError(404, "書類が見つかりません");
+    res.render("admin/documents/form", {
+      title: `編集: ${doc.title}`,
+      action: `/admin/documents/${docId}`,
+      document: doc,
+    });
+  },
+
+  async updateDocument(req: Request, res: Response): Promise<void> {
+    const { documentRepository } = await import("../repositories/documentRepository");
+    const docId = routeParam(req, "documentId");
+    const title = bodyString(req.body.title).trim();
+    const documentType = bodyString(req.body.document_type).trim();
+    const description = bodyString(req.body.description).trim() || null;
+    const isActive = req.body.is_active === "true";
+    const isRequiredGlobal = req.body.is_required_global === "true";
+
+    try {
+      await documentRepository.update(docId, {
+        title: title || undefined,
+        document_type: documentType || undefined,
+        description: description !== null ? description : undefined,
+        is_active: isActive,
+        is_required_global: isRequiredGlobal,
+      });
+    } catch {
+      logger.error("updateDocument: failed to update document", { docId });
+      const doc = await documentRepository.getById(docId).catch(() => null);
+      res.status(500).render("admin/documents/form", {
+        title: `編集: ${doc?.title ?? docId}`,
+        action: `/admin/documents/${docId}`,
+        document: { ...req.body, id: docId },
+        error: "書類の更新に失敗しました。システム管理者へお問い合わせください。",
+      });
+      return;
+    }
+    res.redirect(`/admin/documents/${docId}?saved=1`);
+  },
+
+  async newDocumentVersionPage(req: Request, res: Response): Promise<void> {
+    const { documentRepository } = await import("../repositories/documentRepository");
+    const docId = routeParam(req, "documentId");
+    const doc = await documentRepository.getById(docId);
+    if (!doc) throw new HttpError(404, "書類が見つかりません");
+
+    let suggestedVersionNo = "1.0";
+    if (doc.current_version) {
+      const parts = doc.current_version.version_no.split(".");
+      const minor = parseInt(parts[1] ?? "0", 10) + 1;
+      suggestedVersionNo = `${parts[0]}.${minor}`;
+    }
+
+    res.render("admin/documents/version-form", {
+      title: `新バージョン追加: ${doc.title}`,
+      document: doc,
+      suggestedVersionNo,
+    });
+  },
+
+  async createDocumentVersion(req: Request, res: Response): Promise<void> {
+    const { consentService } = await import("../services/consentService");
+    const docId = routeParam(req, "documentId");
+    const versionNo = bodyString(req.body.version_no).trim();
+    const content = bodyString(req.body.content).trim();
+    const changeReason = bodyString(req.body.change_reason).trim();
+
+    if (!versionNo || !content) {
+      const { documentRepository } = await import("../repositories/documentRepository");
+      const doc = await documentRepository.getById(docId);
+      res.render("admin/documents/version-form", {
+        title: `新バージョン追加`,
+        document: doc,
+        suggestedVersionNo: versionNo,
+        error: "バージョン番号と本文は必須です",
+      });
+      return;
+    }
+
+    try {
+      await consentService.publishNewVersion(docId, {
+        versionNo,
+        content,
+        changeReason: changeReason || undefined,
+        createdBy: "admin",
+      });
+    } catch {
+      logger.error("createDocumentVersion: failed to publish version", { docId });
+      const { documentRepository: repo } = await import("../repositories/documentRepository");
+      const doc = await repo.getById(docId).catch(() => null);
+      res.status(500).render("admin/documents/version-form", {
+        title: `新バージョン追加`,
+        document: doc,
+        suggestedVersionNo: versionNo,
+        error: "バージョンの公開に失敗しました。システム管理者へお問い合わせください。",
+      });
+      return;
+    }
+
+    res.redirect(`/admin/documents/${docId}?saved=1`);
+  },
+
+  async documentConsentAudit(req: Request, res: Response): Promise<void> {
+    const { documentRepository } = await import("../repositories/documentRepository");
+    const { userConsentRecordRepository } = await import("../repositories/userConsentRecordRepository");
+    const docId = routeParam(req, "documentId");
+
+    const doc = await documentRepository.getById(docId);
+    if (!doc) throw new HttpError(404, "書類が見つかりません");
+
+    const versions = await documentRepository.listVersions(docId);
+    const selectedVersionId = typeof req.query.version_id === "string" ? req.query.version_id : undefined;
+    const selectedLineUserId = typeof req.query.line_user_id === "string" ? req.query.line_user_id : undefined;
+    const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
+    const pageSize = 50;
+
+    const { records, total } = await userConsentRecordRepository.listByDocument(
+      docId,
+      selectedVersionId,
+      pageSize,
+      (page - 1) * pageSize
+    );
+
+    // ユーザーIDフィルタ（DBフィルタに追加）
+    const filteredRecords = selectedLineUserId
+      ? records.filter(r => r.line_user_id.includes(selectedLineUserId))
+      : records;
+
+    res.render("admin/documents/consent-audit", {
+      title: `同意者一覧: ${doc.title}`,
+      document: doc,
+      versions,
+      records: filteredRecords,
+      total,
+      page,
+      pageSize,
+      selectedVersionId,
+      selectedLineUserId,
+    });
+  },
+
+  async exportDocumentConsents(req: Request, res: Response): Promise<void> {
+    const { userConsentRecordRepository } = await import("../repositories/userConsentRecordRepository");
+    const filters = {
+      documentId: typeof req.query.document_id === "string" ? req.query.document_id : undefined,
+      versionId: typeof req.query.version_id === "string" ? req.query.version_id : undefined,
+      projectId: typeof req.query.project_id === "string" ? req.query.project_id : undefined,
+      lineUserId: typeof req.query.line_user_id === "string" ? req.query.line_user_id : undefined,
+      fromDate: typeof req.query.from_date === "string" ? req.query.from_date : undefined,
+      toDate: typeof req.query.to_date === "string" ? req.query.to_date : undefined,
+    };
+
+    const records = await userConsentRecordRepository.listForExport(filters);
+
+    const header = "line_user_id,document_id,document_title,version_no,project_id,consented_at,consent_source,ip_address\n";
+    const rows = records.map(r => {
+      const docTitle = (r.document as { title?: string } | null)?.title ?? "";
+      const versionNo = (r.document_version as { version_no?: string } | null)?.version_no ?? "";
+      return [
+        r.line_user_id,
+        r.document_id,
+        `"${docTitle.replace(/"/g, '""')}"`,
+        versionNo,
+        r.project_id ?? "",
+        r.consented_at,
+        r.consent_source,
+        r.ip_address ?? "",
+      ].join(",");
+    });
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=consents.csv");
+    res.send("﻿" + header + rows.join("\n"));
   },
 };

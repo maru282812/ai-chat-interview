@@ -359,27 +359,39 @@
         <!-- キャンペーン選択 -->
         <div style="margin-bottom:14px">
           <div class="section-label">配信キャンペーンを選択</div>
-          <div id="campaign-list"></div>
+          <select id="campaign-select" onchange="selectCampaign(this.value)"
+                  style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #c8d8d5;font-size:13px;margin-bottom:6px;background:#fff">
+            <option value="">-- キャンペーンを選択 --</option>
+          </select>
+          <div id="campaign-detail" style="display:none;background:#f4f7f6;border-radius:8px;padding:8px 11px;font-size:12px;color:#333;margin-bottom:4px"></div>
           <a id="new-campaign-link" href="#"
-             style="font-size:12px;display:inline-block;margin-top:6px;color:#0b7a75">
+             style="font-size:12px;display:inline-block;margin-top:2px;color:#0b7a75">
             ＋ このプロジェクトのキャンペーンを新規作成
           </a>
         </div>
 
-        <!-- セグメント情報 (選択キャンペーンに紐づく) -->
+        <!-- セグメント選択 -->
         <div style="margin-bottom:14px">
-          <div class="section-label">セグメント</div>
-          <div id="sel-segment-info" style="font-size:13px;color:#6a7b78;padding:6px 0">
-            キャンペーンを選択してください
-          </div>
+          <div class="section-label">セグメントを選択</div>
+          <select id="segment-select" onchange="selectSegment(this.value)"
+                  style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #c8d8d5;font-size:13px;background:#fff">
+            <option value="">-- セグメントを選択（全会員） --</option>
+          </select>
+          <div id="sel-segment-info" style="font-size:12px;color:#6a7b78;padding:4px 0"></div>
+          <a id="segment-guide" href="/admin/segments"
+             style="font-size:12px;color:#0b7a75;display:none">
+            → セグメント管理でセグメントを作成してください
+          </a>
         </div>
 
-        <!-- 通知テンプレート情報 -->
+        <!-- 通知テンプレート選択 -->
         <div style="margin-bottom:14px">
-          <div class="section-label">通知テンプレート</div>
-          <div id="sel-template-info" style="font-size:13px;color:#6a7b78;padding:6px 0">
-            キャンペーンを選択してください
-          </div>
+          <div class="section-label">通知テンプレートを選択</div>
+          <select id="template-select" onchange="selectTemplate(this.value)"
+                  style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #c8d8d5;font-size:13px;background:#fff">
+            <option value="">-- テンプレートを選択 --</option>
+          </select>
+          <div id="sel-template-info" style="font-size:12px;color:#6a7b78;padding:4px 0"></div>
         </div>
 
         <!-- セパレータ -->
@@ -586,6 +598,7 @@
   const PROJECTS_DATA = <%- JSON.stringify(projects) %>;
   const CAMPAIGNS_DATA = <%- JSON.stringify(campaigns) %>;
   const SEGMENTS_DATA = <%- JSON.stringify(segments) %>;
+  const NOTIFICATION_TEMPLATES_DATA = <%- JSON.stringify(notificationTemplates) %>;
 
   const DS_LABELS = {
     undelivered: '未配信',
@@ -595,6 +608,8 @@
     completed: '配信終了',
     paused: '停止中',
   };
+  const CAMPAIGN_STATUS_LABELS = { draft: '下書き', scheduled: '予約済', sent: '送信済', cancelled: 'キャンセル' };
+  const CAMPAIGN_STATUS_COLORS = { draft: '#6a7b78', scheduled: '#0a56a8', sent: '#117a37', cancelled: '#b42318' };
 
   // ============================================================
   // 状態
@@ -602,6 +617,8 @@
   let currentFilter = 'all';
   let selectedProjectId = null;
   let selectedCampaignId = null;
+  let selectedSegmentId = null;
+  let selectedTemplateId = null;
   let draggedProjectId = null;
 
   // ============================================================
@@ -622,18 +639,16 @@
     sortKey = sortKey || document.getElementById('sort-select').value;
     const cards = Array.from(document.querySelectorAll('#project-list .proj-card'));
 
-    // フィルタ
     cards.forEach(card => {
       const st = card.dataset.status;
       card.style.display = (currentFilter === 'all' || st === currentFilter) ? '' : 'none';
     });
 
-    // ソート (DOM並べ替え)
     const visible = cards.filter(c => c.style.display !== 'none');
     visible.sort((a, b) => {
       if (sortKey === 'points') return parseInt(b.dataset.points) - parseInt(a.dataset.points);
       if (sortKey === 'campaigns') return parseInt(b.dataset.campaigns) - parseInt(a.dataset.campaigns);
-      return 0; // created_at は元の順序
+      return 0;
     });
     const list = document.getElementById('project-list');
     visible.forEach(c => list.appendChild(c));
@@ -645,6 +660,8 @@
   function selectProject(projectId) {
     selectedProjectId = projectId;
     selectedCampaignId = null;
+    selectedSegmentId = null;
+    selectedTemplateId = null;
 
     document.querySelectorAll('.proj-card').forEach(c =>
       c.classList.toggle('selected', c.dataset.id === projectId));
@@ -664,18 +681,26 @@
     document.getElementById('new-campaign-link').href =
       `/admin/segments/campaigns/new?project_id=${projectId}`;
 
-    // キャンペーン一覧描画
-    const projectCampaigns = CAMPAIGNS_DATA.filter(c => c.project_id === projectId);
-    renderCampaignList(projectCampaigns);
+    // キャンペーンドロップダウン（プロジェクト固有 + 全体配信 project_id=null）
+    const projectCampaigns = CAMPAIGNS_DATA.filter(
+      c => c.project_id === projectId || c.project_id === null
+    );
+    renderCampaignDropdown(projectCampaigns);
 
-    // セグメント・テンプレート情報リセット
-    document.getElementById('sel-segment-info').textContent = 'キャンペーンを選択してください';
-    document.getElementById('sel-template-info').textContent = 'キャンペーンを選択してください';
+    // セグメントドロップダウン
+    renderSegmentDropdown();
 
-    // プレビューを非表示
+    // テンプレートドロップダウン
+    renderTemplateDropdown();
+
+    // 詳細・情報欄リセット
+    document.getElementById('campaign-detail').style.display = 'none';
+    document.getElementById('sel-segment-info').textContent = '';
+    document.getElementById('sel-template-info').textContent = '';
+    updateExecuteBtn();
+
     hidePreview();
 
-    // テーブル行をハイライト
     document.querySelectorAll('#summary-table tbody tr').forEach(row => {
       const btn = row.querySelector('button');
       if (btn && btn.getAttribute('onclick') === `selectProject('${projectId}')`) {
@@ -686,89 +711,171 @@
     });
   }
 
-  function renderCampaignList(campaigns) {
-    const container = document.getElementById('campaign-list');
+  // ============================================================
+  // ドロップダウン描画
+  // ============================================================
+  function renderCampaignDropdown(campaigns) {
+    const sel = document.getElementById('campaign-select');
+    sel.innerHTML = '<option value="">-- キャンペーンを選択 --</option>';
+    campaigns.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      const globalTag = c.project_id === null ? ' [全体]' : '';
+      opt.textContent = `${c.name}${globalTag}  [${CAMPAIGN_STATUS_LABELS[c.status] || c.status}]`;
+      sel.appendChild(opt);
+    });
     if (campaigns.length === 0) {
-      container.innerHTML =
-        '<div style="font-size:13px;color:#6a7b78;padding:6px 0">このプロジェクトのキャンペーンがありません</div>';
-      return;
+      const opt = document.createElement('option');
+      opt.disabled = true;
+      opt.textContent = '（このプロジェクトのキャンペーンはありません）';
+      sel.appendChild(opt);
     }
+  }
 
-    const statusColors = { draft: '#6a7b78', scheduled: '#0a56a8', sent: '#117a37', cancelled: '#b42318' };
-    const statusLabels = { draft: '下書き', scheduled: '予約済', sent: '送信済', cancelled: 'キャンセル' };
+  function renderSegmentDropdown() {
+    const sel = document.getElementById('segment-select');
+    sel.innerHTML = '<option value="">-- セグメントを選択（全会員） --</option>';
+    const guide = document.getElementById('segment-guide');
+    if (SEGMENTS_DATA.length === 0) {
+      guide.style.display = '';
+    } else {
+      guide.style.display = 'none';
+      SEGMENTS_DATA.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        const countText = s.estimated_count != null ? ` (${s.estimated_count}名)` : '';
+        opt.textContent = s.name + countText;
+        sel.appendChild(opt);
+      });
+    }
+  }
 
-    container.innerHTML = campaigns.map(c => `
-      <div class="campaign-card" data-id="${c.id}" onclick="selectCampaign('${c.id}')">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
-          <strong style="font-size:13px">${escHtml(c.name)}</strong>
-          <span style="font-size:11px;font-weight:700;color:${statusColors[c.status] || '#333'}">
-            ${statusLabels[c.status] || c.status}
-          </span>
-        </div>
-        <div style="font-size:11px;color:#6a7b78">
-          ${c.segment ? escHtml(c.segment.name) : '全会員'} &nbsp;|&nbsp;
-          送信 ${c.sent_count}名 &nbsp;|&nbsp; 完了 ${c.completed_count}名
-        </div>
-        ${c.scheduled_at
-          ? `<div style="font-size:11px;color:#6a7b78;margin-top:2px">予定: ${new Date(c.scheduled_at).toLocaleString('ja-JP')}</div>`
-          : ''}
-      </div>
-    `).join('');
+  function renderTemplateDropdown() {
+    const sel = document.getElementById('template-select');
+    sel.innerHTML = '<option value="">-- テンプレートを選択 --</option>';
+    NOTIFICATION_TEMPLATES_DATA.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = t.name;
+      sel.appendChild(opt);
+    });
   }
 
   // ============================================================
   // キャンペーン選択
   // ============================================================
   function selectCampaign(campaignId) {
-    selectedCampaignId = campaignId;
+    selectedCampaignId = campaignId || null;
 
-    document.querySelectorAll('.campaign-card').forEach(c =>
-      c.classList.toggle('selected', c.dataset.id === campaignId));
+    const detail = document.getElementById('campaign-detail');
+    if (!campaignId) {
+      detail.style.display = 'none';
+      updateExecuteBtn();
+      maybeUpdatePreview();
+      return;
+    }
 
     const campaign = CAMPAIGNS_DATA.find(c => c.id === campaignId);
     if (!campaign) return;
 
-    // セグメント情報更新
-    const segEl = document.getElementById('sel-segment-info');
-    if (campaign.segment) {
-      const seg = SEGMENTS_DATA.find(s => s.id === campaign.segment_id);
-      const count = seg && seg.estimated_count != null ? `推定 ${seg.estimated_count}名` : '人数未評価';
-      segEl.innerHTML = `<strong>${escHtml(campaign.segment.name)}</strong>
-        <span style="color:#6a7b78;font-size:11px">&nbsp;（${count}）</span>`;
-    } else {
-      segEl.textContent = '全会員';
+    detail.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <strong>${escHtml(campaign.name)}</strong>
+        <span style="color:${CAMPAIGN_STATUS_COLORS[campaign.status] || '#333'};font-weight:700">
+          ${CAMPAIGN_STATUS_LABELS[campaign.status] || campaign.status}
+        </span>
+      </div>
+      <div style="color:#6a7b78">
+        送信 ${campaign.sent_count}名 | 完了 ${campaign.completed_count}名
+        ${campaign.scheduled_at ? ` | 予定: ${new Date(campaign.scheduled_at).toLocaleString('ja-JP')}` : ''}
+      </div>`;
+    detail.style.display = '';
+
+    // キャンペーンにセグメントが紐付いていれば自動選択
+    if (campaign.segment_id) {
+      const sel = document.getElementById('segment-select');
+      sel.value = campaign.segment_id;
+      selectSegment(campaign.segment_id);
     }
 
-    // テンプレート情報
-    document.getElementById('sel-template-info').textContent = 'LINE通知（プロジェクト標準）';
-
-    // プレビュー更新
-    updatePreview(campaign);
+    updateExecuteBtn();
+    maybeUpdatePreview();
   }
 
-  function updatePreview(campaign) {
-    const project = PROJECTS_DATA.find(p => p.id === selectedProjectId);
-    if (!project || !campaign) return;
+  // ============================================================
+  // セグメント選択
+  // ============================================================
+  function selectSegment(segmentId) {
+    selectedSegmentId = segmentId || null;
 
-    const seg = campaign.segment;
-    const segObj = seg ? SEGMENTS_DATA.find(s => s.id === campaign.segment_id) : null;
-    const countText = segObj && segObj.estimated_count != null
-      ? `${segObj.estimated_count}名`
-      : '全会員';
+    const infoEl = document.getElementById('sel-segment-info');
+    if (!segmentId) {
+      infoEl.textContent = '全会員が対象です';
+      maybeUpdatePreview();
+      return;
+    }
+
+    const seg = SEGMENTS_DATA.find(s => s.id === segmentId);
+    if (seg) {
+      const count = seg.estimated_count != null ? `推定 ${seg.estimated_count}名` : '人数未評価';
+      infoEl.innerHTML = `対象: <strong>${escHtml(seg.name)}</strong>（${count}）`;
+    }
+    maybeUpdatePreview();
+  }
+
+  // ============================================================
+  // 通知テンプレート選択
+  // ============================================================
+  function selectTemplate(templateId) {
+    selectedTemplateId = templateId || null;
+
+    const infoEl = document.getElementById('sel-template-info');
+    if (!templateId) {
+      infoEl.textContent = '';
+      maybeUpdatePreview();
+      return;
+    }
+
+    const tmpl = NOTIFICATION_TEMPLATES_DATA.find(t => t.id === templateId);
+    if (tmpl) {
+      infoEl.textContent = tmpl.description || tmpl.name;
+    }
+    maybeUpdatePreview();
+  }
+
+  // ============================================================
+  // プレビュー
+  // ============================================================
+  function maybeUpdatePreview() {
+    if (selectedProjectId) updatePreview();
+  }
+
+  function updatePreview() {
+    const project = PROJECTS_DATA.find(p => p.id === selectedProjectId);
+    if (!project) return;
+
+    const seg = selectedSegmentId ? SEGMENTS_DATA.find(s => s.id === selectedSegmentId) : null;
+    const tmpl = selectedTemplateId ? NOTIFICATION_TEMPLATES_DATA.find(t => t.id === selectedTemplateId) : null;
+    const campaign = selectedCampaignId ? CAMPAIGNS_DATA.find(c => c.id === selectedCampaignId) : null;
+
+    const countText = seg && seg.estimated_count != null ? `${seg.estimated_count}名` : '全会員';
 
     // LINE吹き出し
-    document.getElementById('preview-title').textContent = `🎯 ${project.name}`;
-    document.getElementById('preview-body').textContent =
-      `${project.reward_points}ptを獲得できます！\n\nご協力をお願いします。`;
+    const title = tmpl ? (tmpl.title_text || project.name) : `🎯 ${project.name}`;
+    const body = tmpl ? tmpl.body_text : `${project.reward_points}ptを獲得できます！\n\nご協力をお願いします。`;
+    const actionLabel = tmpl ? (tmpl.action_label || '回答する') : '回答する';
+
+    document.getElementById('preview-title').textContent = title;
+    document.getElementById('preview-body').textContent = body;
+    document.querySelector('.line-bubble-action').textContent = actionLabel;
 
     // サマリ
     document.getElementById('sum-project').textContent = project.name;
     document.getElementById('sum-segment').textContent = seg ? seg.name : '全会員';
     document.getElementById('sum-count').textContent = countText;
-    document.getElementById('sum-template').textContent = 'LINE通知（プロジェクト標準）';
-    document.getElementById('sum-campaign').textContent = campaign.name;
+    document.getElementById('sum-template').textContent = tmpl ? tmpl.name : '（未選択）';
+    document.getElementById('sum-campaign').textContent = campaign ? campaign.name : '（未選択）';
 
-    // プレビュー表示
     document.getElementById('preview-empty').style.display = 'none';
     document.getElementById('preview-content').style.display = 'flex';
     document.getElementById('preview-content').style.flexDirection = 'column';
@@ -779,25 +886,29 @@
     document.getElementById('preview-content').style.display = 'none';
   }
 
+  function updateExecuteBtn() {
+    const btn = document.getElementById('execute-btn');
+    btn.disabled = !(selectedProjectId && selectedCampaignId);
+  }
+
   // ============================================================
   // 確認モーダル
   // ============================================================
   function showConfirmModal() {
-    if (!selectedCampaignId || !selectedProjectId) return;
-    const campaign = CAMPAIGNS_DATA.find(c => c.id === selectedCampaignId);
-    const project = PROJECTS_DATA.find(p => p.id === selectedProjectId);
-    if (!campaign || !project) return;
+    if (!selectedProjectId || !selectedCampaignId) return;
 
-    const seg = campaign.segment;
-    const segObj = seg ? SEGMENTS_DATA.find(s => s.id === campaign.segment_id) : null;
-    const countText = segObj && segObj.estimated_count != null
-      ? `${segObj.estimated_count}名`
-      : '全会員';
+    const project = PROJECTS_DATA.find(p => p.id === selectedProjectId);
+    const campaign = CAMPAIGNS_DATA.find(c => c.id === selectedCampaignId);
+    if (!project || !campaign) return;
+
+    const seg = selectedSegmentId ? SEGMENTS_DATA.find(s => s.id === selectedSegmentId) : null;
+    const tmpl = selectedTemplateId ? NOTIFICATION_TEMPLATES_DATA.find(t => t.id === selectedTemplateId) : null;
+    const countText = seg && seg.estimated_count != null ? `${seg.estimated_count}名` : '全会員';
 
     document.getElementById('modal-project').textContent = project.name;
     document.getElementById('modal-count').textContent = countText;
     document.getElementById('modal-segment').textContent = seg ? seg.name : '全会員';
-    document.getElementById('modal-template').textContent = 'LINE通知（プロジェクト標準）';
+    document.getElementById('modal-template').textContent = tmpl ? tmpl.name : '（プロジェクト標準）';
     document.getElementById('modal-campaign').textContent = campaign.name;
     document.getElementById('modal-confirm-btn').disabled = false;
     document.getElementById('modal-confirm-btn').textContent = '配信を実行';
@@ -823,11 +934,16 @@
       const res = await fetch(`/admin/api/campaigns/${selectedCampaignId}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          segment_id: selectedSegmentId || null,
+          project_id: selectedProjectId || null,
+          notification_template_id: selectedTemplateId || null,
+        }),
       });
       const data = await res.json();
       if (res.ok) {
         closeModal();
-        alert(`配信完了！\n送信数: ${data.sentCount || 0}件`);
+        alert(`配信完了！\n送信数: ${data.sent_count || 0}件`);
         location.reload();
       } else {
         alert(`エラー: ${data.error || '配信に失敗しました'}`);

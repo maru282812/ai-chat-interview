@@ -218,3 +218,15 @@ adminRoutes.post("/delivery-templates/:id/run",              asyncHandler(adminC
 // 配信オペレーション
 adminRoutes.get("/delivery-operations",                      asyncHandler(adminController.deliveryOperationsPage));
 adminRoutes.post("/api/delivery-operations/update-project",  asyncHandler(adminController.apiDeliveryOperationsUpdateProject));
+
+// 書類管理
+adminRoutes.get("/documents",                                     asyncHandler(adminController.documentsList));
+adminRoutes.get("/documents/new",                                 asyncHandler(adminController.newDocumentPage));
+adminRoutes.post("/documents",                                    asyncHandler(adminController.createDocument));
+adminRoutes.get("/documents/exports/consents.csv",                asyncHandler(adminController.exportDocumentConsents));
+adminRoutes.get("/documents/:documentId",                         asyncHandler(adminController.showDocument));
+adminRoutes.get("/documents/:documentId/edit",                    asyncHandler(adminController.editDocumentPage));
+adminRoutes.post("/documents/:documentId",                        asyncHandler(adminController.updateDocument));
+adminRoutes.get("/documents/:documentId/versions/new",            asyncHandler(adminController.newDocumentVersionPage));
+adminRoutes.post("/documents/:documentId/versions",               asyncHandler(adminController.createDocumentVersion));
+adminRoutes.get("/documents/:documentId/consent-audit",           asyncHandler(adminController.documentConsentAudit));

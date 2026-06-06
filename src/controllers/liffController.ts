@@ -2100,4 +2100,121 @@ export const liffController = {
 
     res.json({ ok: true, pending, in_progress: inProgress, completed: done });
   },
+
+  // ============================================================
+  // 書類・同意管理
+  // ============================================================
+
+  async consentPage(req: Request, res: Response): Promise<void> {
+    const liffId = env.LINE_LIFF_ID ?? "";
+    const mode = (req.query.mode as string) || "initial";
+    const projectId = (req.query.project_id as string) || "";
+    const redirectTo = (req.query.redirect as string) || "/liff/mypage";
+    res.render("liff/consent", {
+      title: mode === "update" ? "規約の更新" : "ご利用前の確認",
+      liffId,
+      mode,
+      projectId,
+      redirectTo,
+    });
+  },
+
+  // グローバルまたは案件別の未同意書類を返す API
+  async getConsentCheck(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const { consentService } = await import("../services/consentService");
+    const projectId = typeof req.query.project_id === "string" ? req.query.project_id : null;
+
+    const pending = projectId
+      ? await consentService.getPendingProjectConsents(verifiedUser.userId, projectId)
+      : await consentService.getPendingGlobalConsents(verifiedUser.userId);
+
+    const items = pending.map(p => ({
+      documentId: p.document.id,
+      versionId: p.versionId,
+      versionNo: p.versionNo,
+      title: p.document.title,
+      content: p.content,
+      isRequired: p.isRequired,
+    }));
+
+    res.json({ ok: true, pending: items, count: items.length });
+  },
+
+  // 同意を一括送信する API
+  async submitConsents(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const { consentService } = await import("../services/consentService");
+    const body = req.body as { items?: Array<{ documentId: string; versionId: string; projectId?: string | null }> };
+
+    if (!Array.isArray(body.items) || body.items.length === 0) {
+      throw new HttpError(400, "同意アイテムが指定されていません");
+    }
+
+    const ipAddress = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
+      || req.socket?.remoteAddress
+      || null;
+    const userAgent = req.headers["user-agent"] ?? null;
+
+    await consentService.recordBatchConsents(
+      verifiedUser.userId,
+      body.items,
+      { source: "liff", ipAddress, userAgent }
+    );
+
+    res.json({ ok: true, recorded: body.items.length });
+  },
+
+  // マイページ用: 同意状況サマリー取得
+  async getConsentStatuses(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const { consentService } = await import("../services/consentService");
+
+    const statuses = await consentService.getUserConsentStatuses(verifiedUser.userId);
+    const result = statuses.map(s => ({
+      documentId: s.document.id,
+      title: s.document.title,
+      documentType: s.document.document_type,
+      consented: s.consented,
+      consentedAt: s.consentedAt,
+      consentedVersionNo: s.consentedVersionNo,
+      isLatestVersion: s.isLatestVersion,
+      currentVersionNo: s.document.current_version
+        ? (s.document.current_version as { version_no?: string }).version_no ?? null
+        : null,
+    }));
+
+    const hasUnsigned = result.some(r => !r.consented || !r.isLatestVersion);
+    res.json({ ok: true, statuses: result, has_unsigned: hasUnsigned });
+  },
+
+  // 特定書類の本文を取得（マイページ「利用規約を読む」用）
+  async getDocumentContent(req: Request, res: Response): Promise<void> {
+    const { documentRepository } = await import("../repositories/documentRepository");
+    const docId = stringValue(req.params.documentId ?? "").trim();
+    const versionId = typeof req.query.version_id === "string" ? req.query.version_id : null;
+
+    const doc = await documentRepository.getById(docId);
+    if (!doc || !doc.is_active) throw new HttpError(404, "書類が見つかりません");
+
+    let version = doc.current_version ?? null;
+    if (versionId) {
+      const v = await documentRepository.getVersion(versionId);
+      if (v && v.document_id === docId) version = v;
+    }
+
+    if (!version) throw new HttpError(404, "バージョンが見つかりません");
+
+    res.json({
+      ok: true,
+      document: { id: doc.id, title: doc.title, document_type: doc.document_type },
+      version: {
+        id: version.id,
+        version_no: version.version_no,
+        content: version.content,
+        effective_from: version.effective_from,
+        change_reason: version.change_reason,
+      },
+    });
+  },
 };

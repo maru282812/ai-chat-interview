@@ -1,0 +1,82 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const TYPE_OPTIONS = [
+  { value: 'terms_of_service',        label: '利用規約' },
+  { value: 'privacy_policy',          label: 'プライバシーポリシー' },
+  { value: 'survey_participation',    label: 'アンケート参加規約' },
+  { value: 'interview_participation', label: 'インタビュー参加規約' },
+  { value: 'point_service',           label: 'ポイント利用規約' },
+  { value: 'data_usage',              label: 'データ利用同意書' },
+  { value: 'third_party_sharing',     label: '第三者提供同意書' },
+  { value: 'campaign_terms',          label: 'キャンペーン応募規約' },
+  { value: 'project_specific',        label: '案件向け個別同意書' },
+];
+const isNew = !locals.document;
+%>
+
+<a href="/admin/documents" style="color:#60726f;font-size:13px">← 書類一覧</a>
+<h2><%= isNew ? '書類を新規作成' : '書類を編集' %></h2>
+
+<% if (locals.error) { %><p style="color:red"><%= error %></p><% } %>
+<% if (locals.saved) { %><p style="color:green">保存しました。</p><% } %>
+
+<form class="card" method="post" action="<%= action %>">
+  <label>
+    書類種別 <span style="color:red">*</span>
+    <select name="document_type" required>
+      <option value="">— 選択してください —</option>
+      <% for (const opt of TYPE_OPTIONS) { %>
+        <option value="<%= opt.value %>" <%= (document?.document_type === opt.value) ? 'selected' : '' %>>
+          <%= opt.label %>
+        </option>
+      <% } %>
+    </select>
+  </label>
+
+  <label>
+    タイトル <span style="color:red">*</span>
+    <input type="text" name="title" value="<%= document?.title || '' %>" required placeholder="例: 利用規約" />
+  </label>
+
+  <label>
+    説明（管理画面内のメモ）
+    <input type="text" name="description" value="<%= document?.description || '' %>" placeholder="例: サービス全般の利用規約" />
+  </label>
+
+  <div style="display:flex;gap:24px;margin-top:8px">
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+      <input type="checkbox" name="is_active" value="true" <%= (!document || document.is_active) ? 'checked' : '' %> />
+      公開中
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+      <input type="checkbox" name="is_required_global" value="true" <%= document?.is_required_global ? 'checked' : '' %> />
+      グローバル必須（全ユーザーのログイン時にチェック）
+    </label>
+  </div>
+
+  <% if (isNew) { %>
+  <hr style="margin:16px 0" />
+  <h4 style="margin:0 0 12px">初版の本文（v1.0）</h4>
+  <p style="font-size:12px;color:#60726f;margin-bottom:8px">Markdown 形式で記述できます。書類作成後に追加バージョンを追加することもできます。</p>
+  <label>
+    バージョン番号
+    <input type="text" name="version_no" value="1.0" placeholder="例: 1.0" style="width:120px" />
+  </label>
+  <label>
+    本文
+    <textarea name="content" rows="14" placeholder="# タイトル&#10;&#10;## 第1条&#10;本規約は..."></textarea>
+  </label>
+  <label>
+    改定理由
+    <input type="text" name="change_reason" value="初版" placeholder="例: 初版" />
+  </label>
+  <% } %>
+
+  <div style="margin-top:16px;display:flex;gap:12px">
+    <button type="submit" class="btn"><%= isNew ? '作成する' : '保存する' %></button>
+    <a href="/admin/documents<%= document ? '/' + document.id : '' %>" style="padding:8px 16px;color:#60726f">キャンセル</a>
+  </div>
+</form>
+
+<%- include("../../partials/footer") %>

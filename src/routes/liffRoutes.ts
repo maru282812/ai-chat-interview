@@ -61,3 +61,10 @@ liffRoutes.get("/saved-projects", asyncHandler(liffController.savedProjectsPage)
 liffRoutes.get("/saved-projects-data", asyncHandler(liffController.getSavedProjectsData));
 liffRoutes.get("/interactions", asyncHandler(liffController.interactionsPage));
 liffRoutes.get("/interactions-data", asyncHandler(liffController.getInteractionsData));
+
+// 書類・同意管理
+liffRoutes.get("/consent",                asyncHandler(liffController.consentPage));
+liffRoutes.get("/consent-check",          asyncHandler(liffController.getConsentCheck));
+liffRoutes.post("/consent-submit",        asyncHandler(liffController.submitConsents));
+liffRoutes.get("/consent-statuses",       asyncHandler(liffController.getConsentStatuses));
+liffRoutes.get("/documents/:documentId",  asyncHandler(liffController.getDocumentContent));

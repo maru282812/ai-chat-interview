@@ -1,0 +1,96 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const TYPE_LABELS = {
+  terms_of_service:        '利用規約',
+  privacy_policy:          'プライバシーポリシー',
+  survey_participation:    'アンケート参加規約',
+  interview_participation: 'インタビュー参加規約',
+  point_service:           'ポイント利用規約',
+  data_usage:              'データ利用同意書',
+  third_party_sharing:     '第三者提供同意書',
+  campaign_terms:          'キャンペーン応募規約',
+  project_specific:        '案件向け個別同意書',
+};
+%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>書類管理</h2>
+  <a href="/admin/documents/new" class="btn">＋ 新規書類</a>
+</div>
+
+<% if (locals.errorMessage) { %>
+<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:12px 16px;margin-bottom:1rem;color:#991b1b">
+  <strong>エラー:</strong> 書類の取得に失敗しました。システム管理者へお問い合わせください。
+</div>
+<% } %>
+<% if (locals.created) { %><p style="color:green">書類を作成しました。</p><% } %>
+<% if (locals.saved) { %><p style="color:green">保存しました。</p><% } %>
+
+<p style="color:#60726f;margin-bottom:1rem">
+  利用規約・プライバシーポリシー・同意書等の書類を管理します。<br>
+  本文の更新は必ず新バージョンとして追加してください（既存バージョンは変更不可）。
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>書類種別</th>
+      <th>タイトル</th>
+      <th>現在バージョン</th>
+      <th>公開状態</th>
+      <th>グローバル必須</th>
+      <th>最終更新</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const doc of documents) { %>
+    <tr>
+      <td><span style="font-size:12px;background:#f0f4f3;padding:2px 8px;border-radius:4px"><%= TYPE_LABELS[doc.document_type] || doc.document_type %></span></td>
+      <td><a href="/admin/documents/<%= doc.id %>"><strong><%= doc.title %></strong></a></td>
+      <td>
+        <% if (doc.current_version) { %>
+          <code style="font-size:13px">v<%= doc.current_version.version_no %></code>
+          <span style="font-size:11px;color:#60726f">
+            (<%= new Date(doc.current_version.effective_from).toLocaleDateString('ja-JP') %>〜)
+          </span>
+        <% } else { %>
+          <span style="color:#999">なし</span>
+        <% } %>
+      </td>
+      <td>
+        <% if (doc.is_active) { %>
+          <span style="color:#2ca87a">● 公開中</span>
+        <% } else { %>
+          <span style="color:#999">○ 非公開</span>
+        <% } %>
+      </td>
+      <td style="text-align:center">
+        <%= doc.is_required_global ? '✅' : '—' %>
+      </td>
+      <td><%= new Date(doc.updated_at).toLocaleDateString('ja-JP') %></td>
+      <td style="white-space:nowrap">
+        <a href="/admin/documents/<%= doc.id %>">詳細</a>
+        <a href="/admin/documents/<%= doc.id %>/edit" style="margin-left:8px">編集</a>
+        <a href="/admin/documents/<%= doc.id %>/consent-audit" style="margin-left:8px">同意者</a>
+      </td>
+    </tr>
+    <% } %>
+    <% if (documents.length === 0) { %>
+    <tr><td colspan="7" style="text-align:center;color:#999">書類がまだありません</td></tr>
+    <% } %>
+  </tbody>
+</table>
+
+<div style="margin-top:2rem;padding:16px;background:#f8faf9;border-radius:8px;border-left:4px solid #2ca87a">
+  <h4 style="margin:0 0 8px">書類管理ポリシー</h4>
+  <ul style="font-size:13px;color:#60726f;margin:0;padding-left:1.2em;line-height:1.8">
+    <li>書類本文の更新は既存バージョンを変更せず、<strong>必ず新バージョンを追加</strong>すること</li>
+    <li>過去バージョンはユーザーの同意証跡として永続保存されます（削除不可）</li>
+    <li>バージョン更新後、未同意のユーザーはログイン時または LIFF 起動時に再同意を求められます</li>
+    <li>「グローバル必須」の書類は全ユーザーのログイン時にチェック対象となります</li>
+  </ul>
+</div>
+
+<%- include("../../partials/footer") %>

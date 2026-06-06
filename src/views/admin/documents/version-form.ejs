@@ -1,0 +1,50 @@
+<%- include("../../partials/header", { title }) %>
+
+<a href="/admin/documents/<%= document.id %>" style="color:#60726f;font-size:13px">← <%= document.title %></a>
+<h2>新バージョンを追加</h2>
+
+<div style="background:#fff8e1;border:1px solid #f0c040;border-radius:8px;padding:12px 16px;margin-bottom:1.5rem">
+  <strong>重要:</strong> 既存のバージョン（<code>v<%= document.current_version?.version_no %></code>）は変更されません。
+  新しいバージョンが公開されると、未同意のユーザーは次回ログイン時に再同意を求められます。
+</div>
+
+<% if (locals.error) { %><p style="color:red"><%= error %></p><% } %>
+
+<!-- 現在版との比較 -->
+<% if (document.current_version) { %>
+<details style="margin-bottom:1.5rem">
+  <summary style="cursor:pointer;font-weight:600;color:#1a7a5a">現在版（v<%= document.current_version.version_no %>）の本文を確認</summary>
+  <div style="background:#f8faf9;border-radius:8px;padding:16px;margin-top:8px;max-height:300px;overflow-y:auto">
+    <pre style="white-space:pre-wrap;font-size:13px;line-height:1.7;margin:0"><%= document.current_version.content %></pre>
+  </div>
+</details>
+<% } %>
+
+<form class="card" method="post" action="/admin/documents/<%= document.id %>/versions">
+  <label>
+    新バージョン番号 <span style="color:red">*</span>
+    <input type="text" name="version_no" required placeholder="例: 1.1, 2.0" style="width:160px"
+      value="<%= suggestedVersionNo || '' %>" />
+  </label>
+
+  <label>
+    改定理由 <span style="color:red">*</span>
+    <input type="text" name="change_reason" required placeholder="例: 第3条に新たな利用制限を追記" />
+  </label>
+
+  <label>
+    新バージョンの本文 <span style="color:red">*</span>
+    <textarea name="content" rows="16" required
+      placeholder="# タイトル&#10;&#10;## 第1条&#10;..."><%= document.current_version?.content || '' %></textarea>
+  </label>
+  <p style="font-size:12px;color:#60726f;margin-top:4px">Markdown 形式で記述できます。現在版の本文をコピーして編集することを推奨します。</p>
+
+  <div style="margin-top:16px;display:flex;gap:12px">
+    <button type="submit" class="btn" style="background:#1a7a5a" onclick="return confirm('新バージョンを追加すると、未同意ユーザーへの再同意確認が開始されます。続けますか？')">
+      バージョンを追加して公開
+    </button>
+    <a href="/admin/documents/<%= document.id %>" style="padding:8px 16px;color:#60726f">キャンセル</a>
+  </div>
+</form>
+
+<%- include("../../partials/footer") %>

@@ -1,0 +1,100 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const TYPE_LABELS = {
+  terms_of_service:        '利用規約',
+  privacy_policy:          'プライバシーポリシー',
+  survey_participation:    'アンケート参加規約',
+  interview_participation: 'インタビュー参加規約',
+  point_service:           'ポイント利用規約',
+  data_usage:              'データ利用同意書',
+  third_party_sharing:     '第三者提供同意書',
+  campaign_terms:          'キャンペーン応募規約',
+  project_specific:        '案件向け個別同意書',
+};
+%>
+
+<a href="/admin/documents/<%= document.id %>" style="color:#60726f;font-size:13px">← <%= document.title %></a>
+<h2>同意者一覧: <%= document.title %></h2>
+
+<!-- フィルタ -->
+<form method="get" style="display:flex;gap:12px;align-items:flex-end;margin-bottom:1.5rem;flex-wrap:wrap">
+  <label style="flex:0 0 auto">
+    バージョン
+    <select name="version_id" onchange="this.form.submit()">
+      <option value="">— 全バージョン —</option>
+      <% for (const v of versions) { %>
+        <option value="<%= v.id %>" <%= (locals.selectedVersionId === v.id) ? 'selected' : '' %>>
+          v<%= v.version_no %>
+        </option>
+      <% } %>
+    </select>
+  </label>
+  <label style="flex:0 0 auto">
+    ユーザーID
+    <input type="text" name="line_user_id" value="<%= locals.selectedLineUserId || '' %>" placeholder="line_user_id で絞り込み" style="width:200px" />
+  </label>
+  <button type="submit" class="btn">絞り込み</button>
+  <a href="/admin/documents/<%= document.id %>/consent-audit" style="padding:8px 12px;color:#60726f;font-size:13px">リセット</a>
+  <a href="/admin/documents/exports/consents.csv?document_id=<%= document.id %><%= locals.selectedVersionId ? '&version_id=' + locals.selectedVersionId : '' %><%= locals.selectedLineUserId ? '&line_user_id=' + locals.selectedLineUserId : '' %>"
+     style="margin-left:auto;padding:8px 16px;background:#555;color:#fff;border-radius:4px;text-decoration:none;font-size:13px">
+    CSV出力
+  </a>
+</form>
+
+<p style="color:#60726f;font-size:13px;margin-bottom:12px">
+  <%= total %> 件の同意レコード
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>ユーザーID</th>
+      <th>バージョン</th>
+      <th>同意日時</th>
+      <th>同意元</th>
+      <th>案件</th>
+      <th>IP</th>
+      <th>UA</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const r of records) { %>
+    <tr>
+      <td style="font-size:12px"><code><%= r.line_user_id %></code></td>
+      <td><code style="font-size:12px">v<%= r.document_version?.version_no || '—' %></code></td>
+      <td><%= new Date(r.consented_at).toLocaleString('ja-JP') %></td>
+      <td><span style="font-size:11px;background:#f0f4f3;padding:1px 6px;border-radius:3px"><%= r.consent_source %></span></td>
+      <td>
+        <% if (r.project_id) { %>
+          <a href="/admin/projects/<%= r.project_id %>/respondents" style="font-size:12px"><%= r.project_id.slice(0,8) %>...</a>
+        <% } else { %>
+          <span style="color:#999">—</span>
+        <% } %>
+      </td>
+      <td style="font-size:11px;color:#999"><%= r.ip_address || '—' %></td>
+      <td style="font-size:11px;color:#999;max-width:200px;overflow:hidden;text-overflow:ellipsis" title="<%= r.user_agent || '' %>">
+        <%= r.user_agent ? r.user_agent.slice(0, 40) + '...' : '—' %>
+      </td>
+    </tr>
+    <% } %>
+    <% if (records.length === 0) { %>
+    <tr><td colspan="7" style="text-align:center;color:#999">同意レコードがありません</td></tr>
+    <% } %>
+  </tbody>
+</table>
+
+<!-- ページネーション -->
+<% if (total > pageSize) { %>
+<div style="display:flex;gap:8px;margin-top:12px;align-items:center">
+  <% if (page > 1) { %>
+    <a href="?page=<%= page - 1 %><%= locals.selectedVersionId ? '&version_id=' + locals.selectedVersionId : '' %><%= locals.selectedLineUserId ? '&line_user_id=' + locals.selectedLineUserId : '' %>">&laquo; 前へ</a>
+  <% } %>
+  <span style="font-size:13px;color:#60726f"><%= page %> / <%= Math.ceil(total / pageSize) %> ページ</span>
+  <% if (page < Math.ceil(total / pageSize)) { %>
+    <a href="?page=<%= page + 1 %><%= locals.selectedVersionId ? '&version_id=' + locals.selectedVersionId : '' %><%= locals.selectedLineUserId ? '&line_user_id=' + locals.selectedLineUserId : '' %>">次へ &raquo;</a>
+  <% } %>
+</div>
+<% } %>
+
+<%- include("../../partials/footer") %>
