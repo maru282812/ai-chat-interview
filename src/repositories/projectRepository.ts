@@ -1,5 +1,8 @@
 import { supabase } from "../config/supabase";
 import type {
+  AIPromptOverrides,
+  AIPromptPolicy,
+  AIPromptTemplateMap,
   DeliveryType,
   Project,
   ProjectAIState,
@@ -42,6 +45,11 @@ interface ProjectMutationInput {
   delivery_enabled?: boolean;
   delivery_type?: DeliveryType | null;
   delivered_at?: string | null;
+  ai_prompt_policy_json?: AIPromptPolicy | null;
+  ai_prompt_templates_json?: AIPromptTemplateMap | null;
+  ai_prompt_mode?: 'custom' | 'package';
+  ai_prompt_package_version_id?: string | null;
+  ai_prompt_overrides_json?: AIPromptOverrides | null;
 }
 
 type ProjectUpdateInput = Partial<ProjectMutationInput>;
@@ -112,7 +120,12 @@ export const projectRepository = {
       response_style: source.response_style,
       ai_state_json: source.ai_state_json,
       ai_state_template_key: source.ai_state_template_key,
-      ai_state_generated_at: source.ai_state_generated_at
+      ai_state_generated_at: source.ai_state_generated_at,
+      ai_prompt_policy_json: source.ai_prompt_policy_json ?? null,
+      ai_prompt_templates_json: source.ai_prompt_templates_json ?? null,
+      ai_prompt_mode: source.ai_prompt_mode ?? 'custom',
+      ai_prompt_package_version_id: source.ai_prompt_package_version_id ?? null,
+      ai_prompt_overrides_json: source.ai_prompt_overrides_json ?? null
     });
     const normalizedCopiedProject = await this.update(copiedProject.id, {
       name: source.name.endsWith(" (Copy)") ? `${source.name} 2` : `${source.name} (Copy)`,

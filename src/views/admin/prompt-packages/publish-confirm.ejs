@@ -1,0 +1,111 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="margin-bottom:1rem">
+  <a href="/admin/prompt-packages/<%= pkg.id %>" style="color:#60726f;font-size:13px">← パッケージ詳細に戻る</a>
+  <h2 style="margin:4px 0 0">公開バージョン切り替え確認</h2>
+  <p style="color:#60726f;font-size:13px"><%= pkg.name %> — v<%= version.version_no %>（draft）を公開します</p>
+</div>
+
+<!-- バリデーション結果 -->
+<% if (validationErrors.length > 0) { %>
+<div style="background:#fdecea;border:1px solid #e57373;border-radius:10px;padding:16px;margin-bottom:1rem">
+  <p style="margin:0 0 8px;font-weight:700;color:#c62828">✗ バリデーションエラーがあるため公開できません</p>
+  <ul style="margin:0;padding-left:20px;font-size:13px;color:#c62828">
+    <% for (const e of validationErrors) { %><li><%= e %></li><% } %>
+  </ul>
+</div>
+<% } %>
+<% if (validationWarnings.length > 0) { %>
+<div style="background:#fff8e1;border:1px solid #f9a825;border-radius:10px;padding:16px;margin-bottom:1rem">
+  <p style="margin:0 0 8px;font-weight:700;color:#b36200">⚠ 警告</p>
+  <ul style="margin:0;padding-left:20px;font-size:13px;color:#b36200">
+    <% for (const w of validationWarnings) { %><li><%= w %></li><% } %>
+  </ul>
+</div>
+<% } %>
+
+<!-- 切り替え内容 -->
+<div style="background:#f7fbf9;border:1px solid #c8dcd6;border-radius:10px;padding:16px;margin-bottom:1rem;font-size:13px">
+  <% if (currentPublished) { %>
+    <p style="margin:0">
+      公開バージョンを <code>v<%= currentPublished.version_no %></code> から <code>v<%= version.version_no %></code> に切り替えます。
+      現在の公開バージョン <code>v<%= currentPublished.version_no %></code> は自動で archived になります。
+    </p>
+  <% } else { %>
+    <p style="margin:0">
+      このパッケージに公開中バージョンはありません。<code>v<%= version.version_no %></code> が最初の公開バージョンになります。
+    </p>
+  <% } %>
+</div>
+
+<!-- 影響プロジェクト一覧 -->
+<% if (affectedProjects.length > 0) { %>
+<div style="background:#fff8e1;border:1px solid #f9a825;border-radius:10px;padding:16px;margin-bottom:1.5rem">
+  <p style="margin:0 0 10px;font-weight:700;color:#b36200">
+    ⚠ このパッケージは以下の <%= affectedProjects.length %> プロジェクトで使用中です。公開後は実行時設定が v<%= version.version_no %> の内容に変わります。
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>プロジェクト名</th>
+        <th>ステータス</th>
+        <th>選択中バージョン</th>
+        <th>公開後の動作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% for (const row of affectedProjects) { %>
+      <tr>
+        <td>
+          <a href="/admin/projects/<%= row.project.id %>/edit" style="color:#1a7a5a"><strong><%= row.project.name %></strong></a>
+        </td>
+        <td><span class="tag"><%= row.project.status %></span></td>
+        <td>
+          <% if (row.usedVersionNo) { %>
+            <code>v<%= row.usedVersionNo %></code>
+            <span style="font-size:11px;color:#60726f"><%= row.usedStatus %></span>
+          <% } else { %>
+            <span style="color:#999;font-size:12px">不明</span>
+          <% } %>
+        </td>
+        <td style="font-size:12px">
+          <% if (row.willFallback) { %>
+            <span style="color:#b36200">⚠ v<%= version.version_no %>（新公開）へ fallback</span>
+          <% } else { %>
+            <span style="color:#1a7a5a">v<%= version.version_no %> を直接使用</span>
+          <% } %>
+        </td>
+      </tr>
+      <% } %>
+    </tbody>
+  </table>
+</div>
+<% } else { %>
+<div style="background:#f0f4f3;border:1px solid #d8e3e0;border-radius:10px;padding:16px;margin-bottom:1.5rem">
+  <p style="margin:0;color:#60726f;font-size:13px">このパッケージを使用中のプロジェクトはありません。安全に公開できます。</p>
+</div>
+<% } %>
+
+<!-- アクション -->
+<% if (validationErrors.length === 0) { %>
+<div style="display:flex;gap:12px;align-items:center">
+  <form method="post" action="/admin/prompt-packages/<%= pkg.id %>/versions/<%= version.id %>/publish" id="publish-form">
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:10px;cursor:pointer">
+      <input type="checkbox" id="confirm-check" onchange="document.getElementById('publish-btn').disabled = !this.checked">
+      上記の影響を確認しました
+    </label>
+    <button type="submit" id="publish-btn" disabled
+      style="background:#1a7a5a;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:14px">
+      影響を確認した上で、公開バージョンを v<%= version.version_no %> に切り替える
+    </button>
+  </form>
+  <a href="/admin/prompt-packages/<%= pkg.id %>" style="font-size:14px;color:#60726f">キャンセル</a>
+</div>
+<% } else { %>
+<div>
+  <a href="/admin/prompt-packages/<%= pkg.id %>/versions/<%= version.id %>/edit" class="button-link">エラーを修正する</a>
+  <a href="/admin/prompt-packages/<%= pkg.id %>" style="margin-left:12px;font-size:14px;color:#60726f">キャンセル</a>
+</div>
+<% } %>
+
+<%- include("../../partials/footer") %>

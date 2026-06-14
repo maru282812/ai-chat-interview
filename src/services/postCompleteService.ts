@@ -1,8 +1,10 @@
 import { logger } from "../lib/logger";
 import { rankService } from "./rankService";
 import { pointService } from "./pointService";
+import { userPointService } from "./userPointService";
 import { lineMessagingService } from "./lineMessagingService";
 import type { Session, Respondent, Project, LineTextMessage } from "../types/domain";
+import type { UserPointTransactionType } from "../types/domain";
 
 interface PostCompleteParams {
   assignmentId: string;
@@ -11,6 +13,15 @@ interface PostCompleteParams {
   project: Project;
   lineUserId: string | null;
 }
+
+// 旧スキーマ PointTransactionType → 新スキーマ UserPointTransactionType へのマッピング
+const TYPE_MAP: Record<string, UserPointTransactionType> = {
+  project_completion: "project_completion",
+  first_bonus:        "first_bonus",
+  continuity_bonus:   "continuity_bonus",
+  project_bonus:      "project_bonus",
+  manual_adjustment:  "manual_adjustment",
+};
 
 /**
  * アンケート完了後の非同期後処理。
@@ -29,6 +40,7 @@ export async function runPostCompleteProcess({
 
   if (session && lineUserId) {
     try {
+      // 旧スキーマへの書き込み（respondents.total_points / ランク同期のために維持）
       awardResult = await pointService.awardCompletionPoints({
         respondent,
         sessionId: session.id,
@@ -40,6 +52,23 @@ export async function runPostCompleteProcess({
       rankResult = await rankService.syncRespondentRank(
         awardResult.updatedRespondent,
         "session_completed",
+      );
+
+      // 新スキーマへの書き込み（user_points / point_histories に統一）
+      // idempotency_key = "session:{session_id}:{type}" で二重付与を防止
+      await Promise.allSettled(
+        awardResult.transactions.map((tx) => {
+          const newType = TYPE_MAP[tx.transaction_type] ?? "manual_adjustment";
+          return userPointService.awardPoints({
+            lineUserId,
+            transactionType:  newType,
+            points:           tx.points,
+            reason:           tx.reason,
+            referenceType:    "session",
+            referenceId:      session.id,
+            idempotencyKey:   `session:${session.id}:${tx.transaction_type}`,
+          });
+        }),
       );
     } catch (err) {
       logger.error("postComplete.award.failed", {
@@ -58,6 +87,15 @@ export async function runPostCompleteProcess({
     const messages: LineTextMessage[] = [];
 
     if (awardResult) {
+      // 通知メッセージは新スキーマの残高を優先（なければ旧スキーマから）
+      let displayTotal = awardResult.updatedRespondent.total_points;
+      try {
+        const newBalance = await userPointService.getBalance(lineUserId);
+        displayTotal = newBalance.available_points;
+      } catch {
+        // 新スキーマ取得失敗時は旧スキーマの値を使用
+      }
+
       const [currentRank, nextRank] = await Promise.all([
         rankResult?.newRank
           ? Promise.resolve(rankResult.newRank)
@@ -67,7 +105,7 @@ export async function runPostCompleteProcess({
 
       const lines = [
         `獲得ポイント: ${awardResult.totalAwarded}pt`,
-        `累計ポイント: ${awardResult.updatedRespondent.total_points}pt`,
+        `累計ポイント: ${displayTotal}pt`,
         `現在ランク: ${currentRank?.rank_name ?? "Bronze"}`,
         nextRank
           ? `次ランクまで: ${nextRank.min_points - awardResult.updatedRespondent.total_points}pt`

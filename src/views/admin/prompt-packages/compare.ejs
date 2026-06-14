@@ -1,0 +1,123 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const STATUS_LABELS = { draft: 'ドラフト', published: '公開中', archived: 'アーカイブ' };
+function versionLabel(v) {
+  return 'v' + v.version_no + '（' + (STATUS_LABELS[v.status] || v.status) + '）' + (v.change_note ? ' · ' + v.change_note : '');
+}
+%>
+
+<a href="/admin/prompt-packages/<%= pkg.id %>" style="color:#60726f;font-size:13px">← <%= pkg.name %></a>
+<h2 style="margin:4px 0 12px">バージョン比較: <%= pkg.name %></h2>
+
+<% if (versions.length < 2) { %>
+  <p style="color:#60726f">比較にはバージョンが2つ以上必要です。</p>
+<% } else { %>
+
+<form method="get" action="/admin/prompt-packages/<%= pkg.id %>/compare"
+  style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;background:#f8faf9;border:1px solid #d8e3e0;border-radius:10px;padding:14px 16px;margin-bottom:1.5rem">
+  <label style="font-size:13px">
+    比較元（from）
+    <select name="from" style="margin-top:4px;min-width:220px">
+      <% for (const v of versions) { %>
+        <option value="<%= v.id %>" <%= (fromVersion && fromVersion.id === v.id) ? 'selected' : '' %>><%= versionLabel(v) %></option>
+      <% } %>
+    </select>
+  </label>
+  <span style="font-size:18px;color:#60726f;padding-bottom:6px">→</span>
+  <label style="font-size:13px">
+    比較先（to）
+    <select name="to" style="margin-top:4px;min-width:220px">
+      <% for (const v of versions) { %>
+        <option value="<%= v.id %>" <%= (toVersion && toVersion.id === v.id) ? 'selected' : '' %>><%= versionLabel(v) %></option>
+      <% } %>
+    </select>
+  </label>
+  <button type="submit" class="btn" style="height:36px">比較する</button>
+</form>
+
+<% if (!diff) { %>
+  <p style="color:#b36200">⚠ 異なる2つのバージョンを選択してください。</p>
+<% } else { %>
+
+  <!-- 方針（policy）の差分 -->
+  <h3 style="margin:0 0 8px">変更された方針（policy_json）</h3>
+  <% if (diff.policyChanges.length === 0) { %>
+    <p style="color:#60726f;font-size:13px;margin-bottom:1.5rem">方針の変更はありません。</p>
+  <% } else { %>
+    <table style="margin-bottom:1.5rem">
+      <thead>
+        <tr><th>方針</th><th>v<%= fromVersion.version_no %>（比較元）</th><th>v<%= toVersion.version_no %>（比較先）</th></tr>
+      </thead>
+      <tbody>
+        <% for (const c of diff.policyChanges) { %>
+        <tr>
+          <td><strong><%= c.label %></strong> <code style="font-size:11px;color:#60726f"><%= c.key %></code></td>
+          <td style="background:#fff5f5"><%= c.fromValue === null ? '（未設定）' : c.fromValue %></td>
+          <td style="background:#f0faf5"><%= c.toValue === null ? '（未設定）' : c.toValue %></td>
+        </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } %>
+
+  <!-- テンプレートの差分 -->
+  <h3 style="margin:0 0 8px">
+    変更されたプロンプト（templates_json）
+    <span style="font-size:13px;font-weight:normal;color:#60726f">— <%= diff.changedTemplateCount %> / <%= diff.templateChanges.length %> 件に変更あり</span>
+  </h3>
+  <% if (diff.changedTemplateCount === 0) { %>
+    <p style="color:#60726f;font-size:13px">プロンプト本文の変更はありません。</p>
+  <% } %>
+
+  <% for (const t of diff.templateChanges) { %>
+    <% if (t.changeType === 'unchanged') continue; %>
+    <%
+      const typeBadge = t.changeType === 'added'
+        ? { label: 'カスタム化（デフォルト→カスタム）', bg: '#e8f5ef', color: '#1a7a5a' }
+        : t.changeType === 'removed'
+          ? { label: 'デフォルトに戻った（カスタム→デフォルト）', bg: '#fdecea', color: '#c62828' }
+          : { label: '本文変更', bg: '#fff8e1', color: '#b36200' };
+    %>
+    <details style="border:1px solid #d8e3e0;border-radius:10px;padding:10px 14px;margin-bottom:10px" open>
+      <summary style="cursor:pointer;font-weight:600">
+        <%= t.label %>
+        <code style="font-size:11px;font-weight:normal;color:#60726f"><%= t.key %></code>
+        <span style="font-size:11px;background:<%= typeBadge.bg %>;color:<%= typeBadge.color %>;padding:1px 8px;border-radius:4px;margin-left:6px"><%= typeBadge.label %></span>
+      </summary>
+      <div style="margin-top:10px">
+        <% if (t.addedPlaceholders.length > 0 || t.removedPlaceholders.length > 0) { %>
+          <div style="font-size:12px;margin-bottom:8px">
+            <% if (t.addedPlaceholders.length > 0) { %>
+              <span style="color:#1a7a5a">追加された変数:</span>
+              <% for (const p of t.addedPlaceholders) { %>
+                <code style="background:#e8f5ef;border-radius:4px;padding:1px 6px;font-size:11px;margin:0 2px">{{<%= p %>}}</code>
+              <% } %>
+            <% } %>
+            <% if (t.removedPlaceholders.length > 0) { %>
+              <span style="color:#c62828;margin-left:8px">削除された変数:</span>
+              <% for (const p of t.removedPlaceholders) { %>
+                <code style="background:#fdecea;border-radius:4px;padding:1px 6px;font-size:11px;margin:0 2px">{{<%= p %>}}</code>
+              <% } %>
+            <% } %>
+          </div>
+        <% } %>
+        <div style="font-family:monospace;font-size:11px;line-height:1.6;border:1px solid #e0e8e4;border-radius:8px;overflow:auto;max-height:480px;background:#fff">
+          <% for (const row of t.lines) { %>
+            <% if (row.type === 'added') { %>
+              <div style="background:#e8f5ef;color:#0d5c40;padding:0 10px;white-space:pre-wrap">+ <%= row.text %></div>
+            <% } else if (row.type === 'removed') { %>
+              <div style="background:#fdecea;color:#922b21;padding:0 10px;white-space:pre-wrap">- <%= row.text %></div>
+            <% } else { %>
+              <div style="color:#60726f;padding:0 10px;white-space:pre-wrap">  <%= row.text %></div>
+            <% } %>
+          <% } %>
+        </div>
+      </div>
+    </details>
+  <% } %>
+
+<% } %>
+<% } %>
+
+<%- include("../../partials/footer") %>

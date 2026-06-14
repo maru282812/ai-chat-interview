@@ -62,6 +62,10 @@ liffRoutes.get("/saved-projects-data", asyncHandler(liffController.getSavedProje
 liffRoutes.get("/interactions", asyncHandler(liffController.interactionsPage));
 liffRoutes.get("/interactions-data", asyncHandler(liffController.getInteractionsData));
 
+// ポイント交換申請
+liffRoutes.post("/exchange-requests",             asyncHandler(liffController.requestExchange));
+liffRoutes.post("/exchange-requests/:id/cancel",  asyncHandler(liffController.cancelExchange));
+
 // 書類・同意管理
 liffRoutes.get("/consent",                asyncHandler(liffController.consentPage));
 liffRoutes.get("/consent-check",          asyncHandler(liffController.getConsentCheck));

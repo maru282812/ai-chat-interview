@@ -2,6 +2,7 @@ import { analysisRepository } from "../repositories/analysisRepository";
 import { postAnalysisRepository } from "../repositories/postAnalysisRepository";
 import { postRepository } from "../repositories/postRepository";
 import { projectAnalysisRepository } from "../repositories/projectAnalysisRepository";
+import { projectRepository } from "../repositories/projectRepository";
 import type {
   PostActionability,
   PostInsightType,
@@ -298,12 +299,20 @@ export const analysisService = {
       return null;
     }
 
+    // Phase 7-A: 投稿がプロジェクトに紐づく場合はテンプレート解決用に渡す（取得失敗時は legacy 動作）
+    let project: Project | null = null;
+    if (post.project_id) {
+      project = await projectRepository.getById(post.project_id).catch(() => null);
+    }
+
     const quality = this.scorePostQuality({ content: post.content });
     const result = await aiService.analyzePost({
       postId: post.id,
       postType: post.type,
       content: post.content,
-      sourceMode: post.source_mode
+      sourceMode: post.source_mode,
+      project,
+      sessionId: post.session_id ?? null
     });
 
     const specificity =

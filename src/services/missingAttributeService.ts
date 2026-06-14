@@ -1,8 +1,9 @@
 import { supabase } from "../config/supabase";
 import { throwIfError } from "../repositories/baseRepository";
 import { userAttributeRepository } from "../repositories/userAttributeRepository";
-import { openai } from "../config/openai";
 import { logger } from "../lib/logger";
+import { runAdminToolPrompt } from "./aiService";
+import { buildMissingAttributeSuggestionsPrompt } from "../prompts/adminPrompts";
 
 export interface AttributeCoverage {
   attr_key: string;
@@ -74,29 +75,23 @@ export const missingAttributeService = {
 
     if (targets.length === 0) return [];
 
-    const prompt = `あなたはユーザーリサーチプラットフォームのAIです。
-以下のユーザー属性が不足しています。各属性に対して、LINEデイリーアンケートで使える自然な日本語の設問文と選択肢を提案してください。
+    const attributeList = targets
+      .map((t) => `- ${t.attr_key}（${t.label}）: 取得率 ${t.coverage_rate}%`)
+      .join("\n");
 
-属性リスト:
-${targets.map((t) => `- ${t.attr_key}（${t.label}）: 取得率 ${t.coverage_rate}%`).join("\n")}
-
-JSON配列で返してください。各要素:
-{
-  "attr_key": "属性キー",
-  "suggested_question": "設問文（〜ですか？ 形式）",
-  "suggested_options": [{"label": "表示名", "value": "値"}],
-  "reason": "この属性を優先すべき理由（1文）"
-}`;
+    const built = buildMissingAttributeSuggestionsPrompt({ attributeList });
 
     try {
-      const res = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" },
-        temperature: 0.3
+      const raw = await runAdminToolPrompt({
+        purpose: "missing_attribute_suggestions",
+        systemPrompt: built.systemPrompt,
+        userPrompt: built.userPrompt,
+        maxTokens: 1500,
+        temperature: 0.3,
+        promptKey: built.promptKey,
+        templateMode: built.templateMode,
+        renderedPrompt: built.renderedPrompt,
       });
-
-      const raw = res.choices[0]?.message?.content ?? "{}";
       const parsed = JSON.parse(raw) as { suggestions?: unknown[] } | unknown[];
       const items = Array.isArray(parsed)
         ? parsed

@@ -1,0 +1,186 @@
+<%- include("../../partials/header", { title }) %>
+
+<style>
+.log-detail-grid { display: grid; gap: 14px; }
+.log-field { border: 1px solid #e8efed; border-radius: 10px; overflow: hidden; }
+.log-field-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; background: #f0f7f5; font-size: 12px; font-weight: 600;
+  cursor: pointer;
+}
+.log-field-body {
+  padding: 12px 14px;
+}
+.log-field-body pre {
+  margin: 0; white-space: pre-wrap; word-break: break-all;
+  font-family: monospace; font-size: 12px; line-height: 1.5;
+}
+.collapsible-body { display: none; }
+.collapsible-body.open { display: block; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.badge-custom { background: #e8f4ff; color: #1a5ca8; }
+.badge-base   { background: #f0f7f5; color: #1a7a5a; }
+.badge-legacy { background: #f5f0e8; color: #8a6400; }
+.meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 13px; }
+.meta-item { background: #f8fbfa; border-radius: 8px; padding: 8px 12px; }
+.meta-item strong { display: block; font-size: 11px; color: #60726f; margin-bottom: 2px; }
+</style>
+
+<div class="stack">
+  <div style="display:flex;align-items:center;gap:12px">
+    <a href="/admin/ai-logs" style="font-size:13px;color:#60726f">← AIログ一覧</a>
+    <h1 style="margin:0;font-size:18px">AIログ詳細</h1>
+  </div>
+
+  <!-- メタ情報 -->
+  <div class="meta-grid">
+    <div class="meta-item">
+      <strong>実行日時</strong>
+      <%= new Date(log.created_at).toLocaleString('ja-JP') %>
+    </div>
+    <div class="meta-item">
+      <strong>prompt_key</strong>
+      <span style="font-family:monospace"><%= log.prompt_key || '—' %></span>
+    </div>
+    <div class="meta-item">
+      <strong>template_mode</strong>
+      <% if (log.template_mode === 'package_template') { %>
+        <span class="badge" style="background:#f3e8ff;color:#6b21a8">パッケージ</span>
+      <% } else if (log.template_mode === 'custom_template') { %>
+        <span class="badge badge-custom">カスタム</span>
+      <% } else if (log.template_mode === 'base_template') { %>
+        <span class="badge badge-base">ベース</span>
+      <% } else if (log.template_mode === 'legacy') { %>
+        <span class="badge badge-legacy">レガシー</span>
+      <% } else { %>
+        —
+      <% } %>
+    </div>
+    <div class="meta-item">
+      <strong>プロジェクト</strong>
+      <% if (log.project_id) { %>
+        <a href="/admin/projects/<%= log.project_id %>/edit"><%= log.project_name || log.project_id %></a>
+      <% } else { %>
+        —
+      <% } %>
+    </div>
+    <div class="meta-item">
+      <strong>session_id</strong>
+      <span style="font-family:monospace;font-size:11px"><%= log.session_id || '—（セッション外実行）' %></span>
+    </div>
+    <div class="meta-item">
+      <strong>purpose</strong>
+      <%= log.purpose %>
+    </div>
+  </div>
+
+  <% if (log.package_version_id) { %>
+    <div style="background:#f9f2ff;border:1px solid #d4b8f5;border-radius:8px;padding:12px 16px">
+      <strong style="color:#6b21a8;font-size:13px">使用プロンプト：プロンプトパッケージ</strong>
+      <div class="meta-grid" style="margin-top:8px">
+        <% if (log.package_slug) { %>
+          <div class="meta-item">
+            <strong>slug</strong>
+            <span style="font-family:monospace"><%= log.package_slug %></span>
+          </div>
+        <% } %>
+        <% if (log.package_version_no != null) { %>
+          <div class="meta-item">
+            <strong>バージョン番号</strong>
+            v<%= log.package_version_no %>
+          </div>
+        <% } %>
+        <% if (log.package_id) { %>
+          <div class="meta-item">
+            <strong>package_id</strong>
+            <span style="font-family:monospace;font-size:11px"><%= log.package_id %></span>
+          </div>
+        <% } %>
+        <div class="meta-item">
+          <strong>version_id</strong>
+          <span style="font-family:monospace;font-size:11px"><%= log.package_version_id %></span>
+        </div>
+      </div>
+    </div>
+  <% } %>
+
+  <% if (log.error_message) { %>
+    <div style="background:#fff5f5;border:1px solid #f5c6c6;border-radius:8px;padding:12px 16px">
+      <strong style="color:#c0392b;font-size:13px">エラー</strong>
+      <pre style="margin:4px 0 0;font-size:12px;color:#922b21;white-space:pre-wrap"><%= log.error_message %></pre>
+    </div>
+  <% } %>
+
+  <div class="log-detail-grid">
+
+    <% if (log.rendered_prompt) { %>
+    <div class="log-field">
+      <div class="log-field-header" onclick="toggleSection('rendered_prompt')">
+        <span>rendered_prompt（最終プロンプト）</span>
+        <span id="toggle-rendered_prompt">▼</span>
+      </div>
+      <div id="section-rendered_prompt" class="log-field-body collapsible-body open">
+        <pre><%= log.rendered_prompt %></pre>
+      </div>
+    </div>
+    <% } %>
+
+    <div class="log-field">
+      <div class="log-field-header" onclick="toggleSection('prompt')">
+        <span>prompt（AI送信プロンプト）</span>
+        <span id="toggle-prompt">▼</span>
+      </div>
+      <div id="section-prompt" class="log-field-body collapsible-body open">
+        <pre><%= log.prompt %></pre>
+      </div>
+    </div>
+
+    <div class="log-field">
+      <div class="log-field-header" onclick="toggleSection('response')">
+        <span>response（AIレスポンス）</span>
+        <span id="toggle-response">▼</span>
+      </div>
+      <div id="section-response" class="log-field-body collapsible-body">
+        <pre><%= log.response %></pre>
+      </div>
+    </div>
+
+    <% if (log.policy_snapshot) { %>
+    <div class="log-field">
+      <div class="log-field-header" onclick="toggleSection('policy_snapshot')">
+        <span>policy_snapshot（適用ポリシー）</span>
+        <span id="toggle-policy_snapshot">▶</span>
+      </div>
+      <div id="section-policy_snapshot" class="log-field-body collapsible-body">
+        <pre><%= JSON.stringify(log.policy_snapshot, null, 2) %></pre>
+      </div>
+    </div>
+    <% } %>
+
+    <% if (log.token_usage) { %>
+    <div class="log-field">
+      <div class="log-field-header" onclick="toggleSection('token_usage')">
+        <span>token_usage</span>
+        <span id="toggle-token_usage">▶</span>
+      </div>
+      <div id="section-token_usage" class="log-field-body collapsible-body">
+        <pre><%= JSON.stringify(log.token_usage, null, 2) %></pre>
+      </div>
+    </div>
+    <% } %>
+
+  </div>
+</div>
+
+<script>
+function toggleSection(id) {
+  var body = document.getElementById('section-' + id);
+  var icon = document.getElementById('toggle-' + id);
+  if (!body) return;
+  var isOpen = body.classList.contains('open');
+  body.classList.toggle('open', !isOpen);
+  if (icon) icon.textContent = isOpen ? '▶' : '▼';
+}
+</script>
+
+<%- include("../../partials/footer") %>

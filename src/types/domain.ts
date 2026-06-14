@@ -44,8 +44,15 @@ export type QuestionRole =
 /**
  * QuestionType: Phase1 拡張型
  * DB 制約は 016_question_schema_redesign.sql 参照
+ * 後方互換型は同ファイルで "後方互換" として許容しておく（DBがまだ受け入れる値）
  */
 export type QuestionType =
+  // 後方互換（migration 016以前のデータ用。DB CHECK制約で引き続き許容）
+  | "text"
+  | "scale"
+  | "single_select"
+  | "multi_select"
+  | "yes_no"
   // 選択系
   | "single_choice"
   | "multi_choice"
@@ -182,6 +189,35 @@ export interface ProjectAIState {
   probe_guideline?: string;
 }
 
+export interface AIPromptPolicy {
+  researchType?: string;
+  audience?: string;
+  probeStyle?: string;
+  noneAnswerPolicy?: string;
+  ambiguousAnswerRule?: string;
+  freeAnswerPolicy?: string;
+  restrictions?: string[];
+  priority?: string;
+}
+
+export interface AIPromptTemplateEntry {
+  enabled?: boolean;
+  template?: string;
+}
+
+export type AIPromptTemplateMap = {
+  [promptKey: string]: AIPromptTemplateEntry;
+}
+
+/**
+ * プロジェクト個別オーバーライド (Migration 057 / Phase 6-B)。
+ * package モード時にパッケージ設定へ部分的に上書きする。
+ * 初期実装では policy のみ対応（テンプレート本文の上書きはパッケージ中心管理を崩すため未対応）。
+ */
+export interface AIPromptOverrides {
+  policy?: AIPromptPolicy;
+}
+
 export interface ScreeningConfig {
   enabled?: boolean;
   pass_message?: string | null;
@@ -225,6 +261,16 @@ export interface Project {
   ai_state_generated_at: string | null;
   screening_config: ScreeningConfig | null;
   screening_last_question_order: number | null;
+  /** AIプロンプト方針設定 */
+  ai_prompt_policy_json: AIPromptPolicy | null;
+  /** ベースプロンプトテンプレート上書き設定 */
+  ai_prompt_templates_json: AIPromptTemplateMap | null;
+  /** プロンプト設定方式: custom=個別設定 / package=パッケージ適用 (Migration 054) */
+  ai_prompt_mode: 'custom' | 'package';
+  /** パッケージモード時に参照するバージョンID (Migration 054) */
+  ai_prompt_package_version_id: UUID | null;
+  /** パッケージモード時の個別オーバーライド（policy のみ）(Migration 057) */
+  ai_prompt_overrides_json?: AIPromptOverrides | null;
   /** 配信可能フラグ。true の場合のみ自動配信テンプレートの対象になる */
   delivery_enabled: boolean;
   /** 配信分類。配信テンプレートの target_types 条件に使用 */
@@ -729,11 +775,25 @@ export interface AIAnalysisResult {
 
 export interface AILog {
   id: UUID;
-  session_id: UUID;
+  /** セッション外実行（プロジェクト分析・投稿分析・ペルソナタグ等）は null (Migration 059) */
+  session_id: UUID | null;
   purpose: string;
   prompt: string;
   response: string;
   token_usage: Record<string, unknown> | null;
+  // Phase 3: プロンプト追跡フィールド
+  prompt_key: string | null;
+  template_key: string | null;
+  template_mode: string | null;
+  policy_snapshot: Record<string, unknown> | null;
+  rendered_prompt: string | null;
+  // Phase 3 (プロンプトパッケージ): パッケージ追跡フィールド (Migration 054)
+  package_id: UUID | null;
+  package_version_id: UUID | null;
+  package_slug: string | null;
+  package_version_no: number | null;
+  // Phase A (プロンプト管理主体変更): 実行時解決状態スナップショット (Migration 061)
+  resolution_json: Record<string, unknown> | null;
   created_at: string;
 }
 
@@ -970,12 +1030,16 @@ export type UserPointTransactionType =
   | "continuity_bonus"
   | "project_bonus"
   | "manual_adjustment"
-  | "redemption";
+  | "redemption"
+  | "exchange_request"
+  | "exchange_cancel"
+  | "exchange_refund";
 
 export interface UserPoints {
   line_user_id: string;
   total_points: number;
   available_points: number;
+  pending_points: number;
   lifetime_points: number;
   updated_at: string;
 }
@@ -988,7 +1052,46 @@ export interface PointHistory {
   reason: string;
   reference_type: string | null;
   reference_id: UUID | null;
+  idempotency_key: string | null;
   created_at: string;
+}
+
+// ── point_exchange_requests ────────────────────────────────────
+
+export type PointExchangeStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "fulfilled"
+  | "canceled";
+
+export interface PointExchangeRequest {
+  id: UUID;
+  line_user_id: string;
+  requested_points: number;
+  gift_amount_jpy: number;
+  status: PointExchangeStatus;
+  gift_provider: string | null;
+  gift_code: string | null;
+  gift_url: string | null;
+  provider_request_id: string | null;
+  provider_status: string | null;
+  expires_at: string | null;
+  admin_memo: string | null;
+  handled_by: string | null;
+  failed_reason: string | null;
+  notification_sent: boolean;
+  notification_sent_at: string | null;
+  notification_error: string | null;
+  requested_at: string;
+  approved_at: string | null;
+  rejected_at: string | null;
+  fulfilled_at: string | null;
+  canceled_at: string | null;
+  sent_at: string | null;
+  delivered_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface UserRank {
@@ -1031,6 +1134,7 @@ export interface UserPointSummary {
   display_name: string | null;
   total_points: number;
   available_points: number;
+  pending_points: number;
   lifetime_points: number;
   rank_code: string | null;
   rank_name: string | null;

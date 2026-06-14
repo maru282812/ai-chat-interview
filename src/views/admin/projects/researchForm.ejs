@@ -16,6 +16,9 @@
     { value: "closed", label: "募集終了" },
     { value: "archived", label: "アーカイブ" }
   ];
+  const safeTemplateErrors = typeof templateErrors !== "undefined" ? templateErrors : [];
+  const safeTemplateWarnings = typeof templateWarnings !== "undefined" ? templateWarnings : [];
+  const safePromptKeyDefs = typeof promptKeyDefs !== "undefined" ? promptKeyDefs : [];
 %>
 
 <style>
@@ -112,7 +115,7 @@
   }
 </style>
 
-<form class="card stack" method="post" action="<%= action %>">
+<form class="card stack" method="post" action="<%= action %>" onsubmit="return confirmPromptPackageSelection();">
   <% if (successMessage) { %>
     <section class="card subtle-card success-card">
       <strong class="success-text"><%= successMessage %></strong>
@@ -123,6 +126,18 @@
     <section class="card subtle-card">
       <strong class="danger-text">入力内容を確認してください</strong>
       <p class="danger-text"><%= errorMessage %></p>
+    </section>
+  <% } %>
+
+  <% if (safeTemplateWarnings.length > 0) { %>
+    <section class="card subtle-card" style="border-left:4px solid #f5a623">
+      <strong style="color:#b36000">⚠ テンプレートに使用できないプレースホルダーがあります</strong>
+      <ul style="margin:6px 0 0;padding-left:18px;font-size:13px;color:#b36000">
+        <% for (const w of safeTemplateWarnings) { %>
+          <li><%= w %></li>
+        <% } %>
+      </ul>
+      <p class="helper-text" style="margin-top:6px">保存は完了しています。プロンプト実行時に該当プレースホルダーは空文字に置換されます。</p>
     </section>
   <% } %>
 
@@ -523,8 +538,329 @@
     </div>
   </section>
 
+  <%
+    // ──────────────────────────────────────────────
+    // 5. AIプロンプト設定
+    // ──────────────────────────────────────────────
+    const currentPolicy = (project && project.ai_prompt_policy_json) ? project.ai_prompt_policy_json : {};
+
+    const RESEARCH_TYPE_OPTIONS = [
+      { key: "standard_research",    label: "標準リサーチ" },
+      { key: "interview_research",   label: "インタビューリサーチ" },
+      { key: "survey_interview",     label: "サーベイ+インタビュー" },
+      { key: "exploratory_research", label: "探索的リサーチ" }
+    ];
+    const AUDIENCE_OPTIONS = [
+      { key: "general",          label: "一般（指定なし）" },
+      { key: "female_friendly",  label: "女性向け（丁寧・共感重視）" },
+      { key: "young_casual",     label: "若年層（カジュアル）" },
+      { key: "business",         label: "ビジネス層（フォーマル）" },
+      { key: "senior_friendly",  label: "シニア向け（わかりやすく）" }
+    ];
+    const PROBE_STYLE_OPTIONS = [
+      { key: "standard",             label: "標準" },
+      { key: "reason_and_scene",     label: "理由・場面を引き出す" },
+      { key: "comparison",           label: "比較・違いを引き出す" },
+      { key: "emotion_and_context",  label: "感情・背景を引き出す" },
+      { key: "decision_process",     label: "判断プロセスを引き出す" }
+    ];
+    const NONE_ANSWER_POLICY_OPTIONS = [
+      { key: "default",            label: "デフォルト（既存ルール）" },
+      { key: "accept",             label: "そのまま受け入れる" },
+      { key: "retry_once_softly",  label: "一度だけやさしく再確認" },
+      { key: "ask_for_small_hint", label: "小さなヒントを求める" }
+    ];
+    const AMBIGUOUS_ANSWER_RULE_OPTIONS = [
+      { key: "default",           label: "デフォルト（既存ルール）" },
+      { key: "ask_clarification", label: "具体化を求める" },
+      { key: "accept_and_note",   label: "受け入れてメモ" },
+      { key: "concrete_example",  label: "具体例を引き出す" }
+    ];
+    const FREE_ANSWER_POLICY_OPTIONS = [
+      { key: "default",          label: "デフォルト（既存ルール）" },
+      { key: "accept_none",      label: "「特になし」を受け入れる" },
+      { key: "include_verbatim", label: "発言をそのまま含める" },
+      { key: "summarize_only",   label: "要約のみ記録" }
+    ];
+    const RESTRICTION_OPTIONS = [
+      { key: "no_leading_question",              label: "誘導質問禁止" },
+      { key: "one_question_only",                label: "1回につき1質問のみ" },
+      { key: "avoid_sensitive_personal_data",    label: "個人情報を引き出さない" },
+      { key: "no_medical_legal_financial_claim", label: "医療・法律・金融の断言禁止" },
+      { key: "no_internal_codes",                label: "内部コードを表示しない" }
+    ];
+    const PRIORITY_OPTIONS = [
+      { key: "research_quality_first",   label: "調査品質優先" },
+      { key: "respondent_comfort_first", label: "回答者の負担軽減優先" },
+      { key: "comparability_first",      label: "比較可能性優先" }
+    ];
+  %>
+
+  <details class="editor-section" id="ai-prompt-section">
+    <summary class="summary-toggle">5. AIプロンプト設定</summary>
+    <div class="stack" style="margin-top:14px">
+      <p class="helper-text">
+        プロンプト本文（systemPrompt / userPrompt / テンプレート）の編集は<a href="/admin/prompt-packages" target="_blank">プロンプトパッケージ画面</a>に集約されています。
+        この画面では「どのパッケージ・公開バージョンを使うか」と「このプロジェクト固有の方針の上書き」のみを設定します。
+      </p>
+
+      <%
+        // 新規プロジェクトはパッケージ運用を既定にする（プロンプト本文はパッケージ画面で一元管理）
+        const currentPromptMode = project ? (project.ai_prompt_mode || 'custom') : 'package';
+        const currentPackageVersionId = (project && project.ai_prompt_package_version_id) ? project.ai_prompt_package_version_id : '';
+        // 選択可能（published / archived）バージョンを持つパッケージのみ
+        const selectablePackages = (promptPackages || []).filter(p => Array.isArray(p.selectable_versions) && p.selectable_versions.length > 0);
+        // 現在選択中のバージョンからパッケージ・バージョンを逆引き
+        let currentPkg = null;
+        let currentVersion = null;
+        for (const p of selectablePackages) {
+          const v = p.selectable_versions.find(v => v.id === currentPackageVersionId);
+          if (v) { currentPkg = p; currentVersion = v; break; }
+        }
+        // Phase 6-B: 個別オーバーライド（policy のみ）
+        const currentOverridePolicy = (project && project.ai_prompt_overrides_json && project.ai_prompt_overrides_json.policy)
+          ? project.ai_prompt_overrides_json.policy : {};
+        const overrideRestrictionsEnabled = Array.isArray(currentOverridePolicy.restrictions);
+        const currentOverrideRestrictions = overrideRestrictionsEnabled ? currentOverridePolicy.restrictions : [];
+      %>
+
+      <!-- Phase 8: 現在適用中のAIプロンプト状態パネル（プロジェクト画面は参照と選択のみ） -->
+      <div style="border:1px solid #c8dcd6;border-radius:10px;padding:14px 16px;background:#fff;margin-bottom:12px">
+        <h3 style="margin:0 0 10px;font-size:14px;font-weight:700">現在適用中のAIプロンプト</h3>
+        <% if (currentPromptMode === 'package' && currentPkg && currentVersion) { %>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;font-size:13px">
+            <div><span class="muted">モード</span><br><strong>プロンプトパッケージ</strong></div>
+            <div><span class="muted">パッケージ</span><br><strong><%= currentPkg.name %></strong></div>
+            <div><span class="muted">バージョン</span><br><strong>v<%= currentVersion.version_no %></strong></div>
+            <div><span class="muted">公開状態</span><br>
+              <% if (currentVersion.status === 'published') { %>
+                <span style="background:#e8f5ef;color:#1a7a5a;padding:1px 8px;border-radius:4px;font-weight:600">公開中</span>
+              <% } else { %>
+                <span style="background:#fff3e0;color:#b36200;padding:1px 8px;border-radius:4px;font-weight:600">アーカイブ（実行時は公開版へfallback）</span>
+              <% } %>
+            </div>
+            <div><span class="muted">最終更新</span><br><strong><%= currentVersion.updated_at ? new Date(currentVersion.updated_at).toLocaleString('ja-JP') : '—' %></strong></div>
+          </div>
+        <% } else if (currentPromptMode === 'package') { %>
+          <p style="margin:0;font-size:13px;color:#b36200">パッケージ未選択です。下で公開済みパッケージ・バージョンを選択してください。</p>
+        <% } else { %>
+          <p style="margin:0;font-size:13px;color:#60726f">
+            モード: <strong>プロジェクト個別設定（非推奨・後方互換）</strong>。プロンプトパッケージへの移行を推奨します。
+          </p>
+        <% } %>
+        <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
+          <a href="/admin/prompt-packages" target="_blank"
+            style="font-size:12px;padding:5px 14px;background:#1a7a5a;color:#fff;border-radius:6px;text-decoration:none">
+            プロンプトパッケージ管理へ移動
+          </a>
+          <a href="#prompt-package-area"
+            style="font-size:12px;padding:5px 14px;background:#fff;color:#1a7a5a;border:1px solid #1a7a5a;border-radius:6px;text-decoration:none">
+            このプロジェクトに適用するパッケージを変更
+          </a>
+        </div>
+      </div>
+
+      <!-- パッケージ選択 UI -->
+      <div style="border:1px solid #c8dcd6;border-radius:10px;padding:16px;background:#f7fbf9;margin-bottom:4px">
+        <h3 style="margin:0 0 10px;font-size:14px;font-weight:700">適用するプロンプトパッケージ</h3>
+
+        <%
+          // Phase B: プロジェクト編集画面は「適用先選択」のみ。モードはラジオではなく hidden で送る。
+          //  - 新規 / 既存 package プロジェクト → package
+          //  - 既存 custom（legacy）プロジェクト → custom を維持（パッケージ選択時に JS で package へ昇格）
+          const initialPromptMode = currentPromptMode === 'custom' ? 'custom' : 'package';
+        %>
+        <input type="hidden" name="ai_prompt_mode" id="ai_prompt_mode_hidden"
+          data-initial="<%= initialPromptMode %>" value="<%= initialPromptMode %>" />
+
+        <% if (currentPromptMode === 'custom') { %>
+          <div style="background:#f4f6f5;border:1px solid #d8e3e0;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#60726f">
+            このプロジェクトは旧「プロジェクト個別設定（custom・非推奨）」で動作しています。プロンプト本文・方針はこの画面では編集できません。
+            <strong>公開済みパッケージを選択すると package モードへ移行します。</strong>
+            <% if (project && project.id) { %>
+              既存の個別設定は<a href="/admin/projects/<%= project.id %>/prompt-package-history" target="_blank" style="color:#1a7a5a">変更履歴</a>から確認できます。
+            <% } %>
+          </div>
+        <% } %>
+
+        <div id="prompt-package-area" style="display:block">
+          <% if (locals.packageFallbackWarning !== undefined && packageFallbackWarning !== null) { %>
+            <div style="background:#fff8e1;border:1px solid #f9a825;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px">
+              <strong style="color:#b36200">⚠ 設定中のパッケージバージョンは archived のため、公開中の最新バージョンを使用しています。</strong>
+              <% if (packageFallbackWarning) { %>
+                <span style="display:block;margin-top:4px;color:#60726f">
+                  現在適用中: v<%= packageFallbackWarning.version_no %>（公開中）
+                  <a href="#prompt-package-area" style="margin-left:8px;color:#1a7a5a">↓ パッケージを再選択してください</a>
+                </span>
+              <% } else { %>
+                <span style="display:block;margin-top:4px;color:#c62828">公開中バージョンが存在しないため、AIプロンプトはカスタム設定で動作しています。</span>
+              <% } %>
+            </div>
+          <% } %>
+          <% if (selectablePackages.length === 0) { %>
+            <p class="helper-text" style="color:#b36200">適用可能なプロンプトパッケージがありません。先に<a href="/admin/prompt-packages">パッケージを作成・公開</a>してください。</p>
+          <% } else { %>
+            <!-- Phase 6-A: パッケージ → バージョンの2段選択 -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;max-width:760px">
+              <label style="display:block;font-size:13px">
+                1. パッケージを選択
+                <select id="pkg-package-select" onchange="onPackageSelectChange()" style="margin-top:4px;width:100%">
+                  <option value="">-- パッケージを選択してください --</option>
+                  <% for (const pkg of selectablePackages) { %>
+                    <option value="<%= pkg.id %>" <%= (currentPkg && currentPkg.id === pkg.id) ? 'selected' : '' %>>
+                      <%= pkg.name %><% if (pkg.description) { %> · <%= pkg.description %><% } %>
+                    </option>
+                  <% } %>
+                </select>
+              </label>
+              <label style="display:block;font-size:13px">
+                2. バージョンを選択
+                <select name="ai_prompt_package_version_id" id="pkg-version-select" onchange="syncPromptMode()" style="margin-top:4px;width:100%">
+                  <% if (currentPkg) { %>
+                    <% for (const v of currentPkg.selectable_versions) { %>
+                      <option value="<%= v.id %>" <%= (currentPackageVersionId === v.id) ? 'selected' : '' %>>
+                        v<%= v.version_no %><%= v.status === 'published' ? '（公開中）' : '（アーカイブ・実行時は公開版へfallback）' %><% if (v.change_note) { %> · <%= v.change_note %><% } %>
+                      </option>
+                    <% } %>
+                  <% } else { %>
+                    <option value="">-- 先にパッケージを選択 --</option>
+                  <% } %>
+                </select>
+              </label>
+            </div>
+            <p style="margin:6px 0 0">
+              <a id="pkg-detail-link" href="<%= currentPkg ? '/admin/prompt-packages/' + currentPkg.id : '#' %>" target="_blank"
+                style="font-size:12px;color:#1a7a5a;<%= currentPkg ? '' : 'display:none' %>">
+                選択中パッケージの詳細を確認 →
+              </a>
+            </p>
+
+            <!-- Phase 5-A: 適用前プレビュー -->
+            <div style="margin-top:10px">
+              <button type="button" id="pkg-preview-btn" onclick="loadPackagePreview()"
+                style="font-size:12px;padding:4px 12px;border:1px solid #1a7a5a;color:#1a7a5a;background:#fff;border-radius:6px;cursor:pointer">
+                選択中バージョンの内容をプレビュー
+              </button>
+              <span id="pkg-preview-status" style="font-size:12px;color:#60726f;margin-left:8px"></span>
+            </div>
+            <div id="pkg-preview-area" style="display:none;margin-top:10px;border:1px solid #d8e3e0;border-radius:8px;background:#fff;padding:12px 14px;font-size:12px"></div>
+
+            <label style="display:block;margin-top:10px;font-size:13px">
+              変更理由（任意・履歴に記録されます）
+              <input type="text" name="package_change_reason" placeholder="例: 女性向け対象に変更" style="margin-top:4px;width:100%;max-width:480px" />
+            </label>
+
+            <!-- Phase B: 個別オーバーライド編集UIは撤去（プロジェクト画面は適用先選択のみ）。
+                 既存の ai_prompt_overrides_json は保全されるが新規編集は不可。下に read-only 表示のみ残す。 -->
+            <% if (Object.keys(currentOverridePolicy).length > 0) { %>
+              <div style="margin-top:14px;border:1px solid #f0d8b8;border-radius:10px;padding:10px 14px;background:#fffaf2;font-size:12px;color:#60726f">
+                <strong style="color:#b36200">個別オーバーライド（非推奨・読み取り専用）</strong>
+                <span style="margin-left:6px">このプロジェクトには過去に設定されたパッケージ上書きが <%= Object.keys(currentOverridePolicy).length %> 項目あります（実行時に適用されますが deprecated）。</span>
+                <code style="display:block;margin-top:6px;white-space:pre-wrap;background:#fff;border:1px solid #eadfcb;border-radius:6px;padding:6px 8px"><%= JSON.stringify(currentOverridePolicy) %></code>
+              </div>
+            <% } %>
+          <% } %>
+        </div>
+        <% if (project && project.id) { %>
+          <p style="margin-top:8px;font-size:12px">
+            <a href="/admin/projects/<%= project.id %>/prompt-package-history" target="_blank" style="color:#60726f">
+              AIプロンプト変更履歴を確認 →
+            </a>
+          </p>
+        <% } %>
+
+      </div>
+
+      <!-- Phase B: プロジェクト個別の policy 編集（旧 Section A）と override 編集は撤去。
+           プロンプト方針・本文の真実はパッケージバージョンに集約。既存 custom データは controller 側で保全。 -->
+
+      <!-- Phase 6-A: プロンプト本文の編集UIは撤去（パッケージ画面に集約）。動作確認のみ残す -->
+      <% if (project && project.id) { %>
+        <details style="border:1px solid #d8e3e0;border-radius:10px;padding:10px 14px;background:#fff">
+          <summary style="cursor:pointer;font-weight:600;font-size:13px">プロンプト動作確認（プレビュー / テスト実行）</summary>
+          <div style="margin-top:10px">
+            <p class="helper-text" style="margin-bottom:8px">
+              現在の設定（パッケージ / 個別設定）で実際に使われるプロンプトを確認できます。本文の編集は
+              <a href="/admin/prompt-packages" target="_blank">プロンプトパッケージ画面</a>で行ってください。
+            </p>
+            <% for (const pkDef of safePromptKeyDefs) { %>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid #eef4f2;font-size:12px">
+                <span style="flex:1;min-width:220px">
+                  <strong><%= pkDef.label %></strong>
+                  <span class="muted" style="font-weight:normal">(<%= pkDef.key %>)</span>
+                </span>
+                <button type="button"
+                  onclick="openPromptPreview('<%= project.id %>', '<%= pkDef.key %>')"
+                  style="font-size:12px;padding:3px 10px;background:#f0f7f5;border:1px solid #9dbab4;border-radius:6px;cursor:pointer">
+                  プレビュー
+                </button>
+                <button type="button"
+                  onclick="openPromptTest('<%= project.id %>', '<%= pkDef.key %>', '<%= pkDef.label %>')"
+                  style="font-size:12px;padding:3px 10px;background:#f5f0ff;border:1px solid #b09ddb;border-radius:6px;cursor:pointer">
+                  テスト実行
+                </button>
+              </div>
+            <% } %>
+          </div>
+        </details>
+      <% } %>
+    </div>
+  </details>
+
   <button type="submit"><%= project ? "更新する" : "作成する" %></button>
 </form>
+
+<!-- ─── プロンプトプレビューモーダル ─── -->
+<div id="preview-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;overflow:auto">
+  <div style="background:#fff;border-radius:12px;max-width:820px;margin:40px auto;padding:24px;position:relative">
+    <button onclick="closeModal('preview-modal')"
+      style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:20px;cursor:pointer">×</button>
+    <h3 id="preview-title" style="margin:0 0 12px">プロンプトプレビュー</h3>
+    <div id="preview-meta" style="font-size:12px;color:#60726f;margin-bottom:10px"></div>
+    <div id="preview-tabs" style="display:flex;gap:4px;margin-bottom:10px">
+      <button onclick="showPreviewTab('rendered')" id="tab-rendered"
+        class="preview-tab active-tab">最終プロンプト</button>
+      <button onclick="showPreviewTab('template')" id="tab-template"
+        class="preview-tab">テンプレート</button>
+      <button onclick="showPreviewTab('policy')" id="tab-policy"
+        class="preview-tab">適用ポリシー</button>
+    </div>
+    <div id="preview-loading" style="display:none;color:#60726f;font-size:13px">読み込み中...</div>
+    <pre id="preview-rendered" style="white-space:pre-wrap;background:#f8fbfa;border:1px solid #d8e3e0;border-radius:8px;padding:14px;font-size:12px;max-height:500px;overflow:auto;margin:0"></pre>
+    <pre id="preview-template" style="display:none;white-space:pre-wrap;background:#f8fbfa;border:1px solid #d8e3e0;border-radius:8px;padding:14px;font-size:12px;max-height:500px;overflow:auto;margin:0"></pre>
+    <pre id="preview-policy" style="display:none;white-space:pre-wrap;background:#f8fbfa;border:1px solid #d8e3e0;border-radius:8px;padding:14px;font-size:12px;max-height:500px;overflow:auto;margin:0"></pre>
+  </div>
+</div>
+
+<!-- ─── テスト実行モーダル ─── -->
+<div id="test-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;overflow:auto">
+  <div style="background:#fff;border-radius:12px;max-width:880px;margin:40px auto;padding:24px;position:relative">
+    <button onclick="closeModal('test-modal')"
+      style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:20px;cursor:pointer">×</button>
+    <h3 id="test-title" style="margin:0 0 4px">テスト実行</h3>
+    <p style="font-size:12px;color:#60726f;margin:0 0 14px">各プレースホルダーに任意の値を入力して最終プロンプトを確認できます。</p>
+    <div id="test-fields" style="display:grid;gap:8px;margin-bottom:12px"></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="test-call-ai" />
+        AIへ送信する（実際にAPIを呼び出します）
+      </label>
+      <button id="test-run-btn" onclick="runPromptTest()"
+        style="padding:6px 16px;background:#3d7a70;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px">
+        実行
+      </button>
+    </div>
+    <div id="test-loading" style="display:none;color:#60726f;font-size:13px;margin-bottom:8px">実行中...</div>
+    <div id="test-result" style="display:none">
+      <div id="test-result-tabs" style="display:flex;gap:4px;margin-bottom:10px">
+        <button onclick="showTestTab('rendered')" id="test-tab-rendered" class="preview-tab active-tab">最終プロンプト</button>
+        <button onclick="showTestTab('ai')" id="test-tab-ai" class="preview-tab">AIレスポンス</button>
+      </div>
+      <pre id="test-rendered" style="white-space:pre-wrap;background:#f8fbfa;border:1px solid #d8e3e0;border-radius:8px;padding:14px;font-size:12px;max-height:400px;overflow:auto;margin:0"></pre>
+      <pre id="test-ai-response" style="display:none;white-space:pre-wrap;background:#f8fbfa;border:1px solid #d8e3e0;border-radius:8px;padding:14px;font-size:12px;max-height:400px;overflow:auto;margin:0"></pre>
+    </div>
+  </div>
+</div>
 
 <script>
 function toggleScreeningDetails(enabled) {
@@ -534,6 +870,355 @@ function toggleScreeningDetails(enabled) {
 function toggleCondFields(id, enabled) {
   var el = document.getElementById(id);
   if (el) el.style.display = enabled ? '' : 'none';
+}
+
+// Phase B: ai_prompt_mode は hidden で送信する（ラジオ撤去）。
+//  - 初期が package（新規 / 既存 package）→ 常に package
+//  - 初期が custom（legacy）→ パッケージ未選択なら custom 維持、選択したら package へ昇格
+function syncPromptMode() {
+  var hidden = document.getElementById('ai_prompt_mode_hidden');
+  if (!hidden) return;
+  var versionSelect = document.querySelector('[name="ai_prompt_package_version_id"]');
+  var hasVersion = !!(versionSelect && (versionSelect.value || '').trim() !== '');
+  if (hidden.getAttribute('data-initial') === 'custom' && !hasVersion) {
+    hidden.value = 'custom';
+  } else {
+    hidden.value = 'package';
+  }
+}
+
+(function() {
+  var form = document.querySelector('form.card');
+  if (!form) return;
+  form.addEventListener('submit', syncPromptMode);
+})();
+
+// Phase G/B: package モードでバージョン未選択のまま送信しようとした場合に明確に警告する
+function confirmPromptPackageSelection() {
+  syncPromptMode();
+  var hidden = document.getElementById('ai_prompt_mode_hidden');
+  if (!hidden || hidden.value !== 'package') return true;
+  var versionSelect = document.querySelector('[name="ai_prompt_package_version_id"]');
+  var versionId = versionSelect ? (versionSelect.value || '').trim() : '';
+  if (versionId) return true;
+  return window.confirm(
+    'プロンプトパッケージのバージョンが未選択です。\n' +
+    'このまま保存すると、公開済みパッケージを割り当てるまで既定プロンプト（BASE）で動作します。\n\n' +
+    'このまま続行しますか？（OK＝続行 / キャンセル＝戻ってパッケージを選択）'
+  );
+}
+
+// Phase 6-A: パッケージ → バージョンの2段選択
+var PKG_DATA = <%- JSON.stringify((promptPackages || [])
+  .filter(function(p) { return Array.isArray(p.selectable_versions) && p.selectable_versions.length > 0; })
+  .map(function(p) {
+    return {
+      id: p.id,
+      versions: p.selectable_versions,
+      publishedVersionId: p.published_version ? p.published_version.id : null
+    };
+  })) %>;
+
+function onPackageSelectChange() {
+  var pkgSelect = document.getElementById('pkg-package-select');
+  var versionSelect = document.getElementById('pkg-version-select');
+  var detailLink = document.getElementById('pkg-detail-link');
+  if (!pkgSelect || !versionSelect) return;
+
+  var pkg = null;
+  for (var i = 0; i < PKG_DATA.length; i++) {
+    if (PKG_DATA[i].id === pkgSelect.value) { pkg = PKG_DATA[i]; break; }
+  }
+
+  versionSelect.innerHTML = '';
+  if (!pkg) {
+    var emptyOpt = document.createElement('option');
+    emptyOpt.value = '';
+    emptyOpt.textContent = '-- 先にパッケージを選択 --';
+    versionSelect.appendChild(emptyOpt);
+    if (detailLink) detailLink.style.display = 'none';
+    return;
+  }
+
+  pkg.versions.forEach(function(v) {
+    var opt = document.createElement('option');
+    opt.value = v.id;
+    var label = 'v' + v.version_no + (v.status === 'published' ? '（公開中）' : '（アーカイブ・実行時は公開版へfallback）');
+    if (v.change_note) label += ' · ' + v.change_note;
+    opt.textContent = label;
+    if (pkg.publishedVersionId ? v.id === pkg.publishedVersionId : false) opt.selected = true;
+    versionSelect.appendChild(opt);
+  });
+
+  if (detailLink) {
+    detailLink.href = '/admin/prompt-packages/' + pkg.id;
+    detailLink.style.display = '';
+  }
+  syncPromptMode();
+}
+
+// Phase 5-A: 選択中パッケージバージョンの適用前プレビュー
+function escapeHtmlForPreview(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function loadPackagePreview() {
+  var select = document.querySelector('[name="ai_prompt_package_version_id"]');
+  var area = document.getElementById('pkg-preview-area');
+  var status = document.getElementById('pkg-preview-status');
+  if (!select || !area) return;
+  if (!select.value) {
+    status.textContent = 'パッケージを選択してください。';
+    area.style.display = 'none';
+    return;
+  }
+  status.textContent = '読み込み中…';
+  fetch('/admin/api/prompt-package-versions/' + encodeURIComponent(select.value) + '/preview')
+    .then(function(res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    })
+    .then(function(p) {
+      status.textContent = '';
+      var html = '';
+      html += '<div style="margin-bottom:8px">'
+        + '<strong>' + escapeHtmlForPreview(p.packageName || '') + '</strong> '
+        + '<code style="font-size:11px">' + escapeHtmlForPreview(p.packageSlug || '') + '</code> '
+        + '— 選択中: v' + escapeHtmlForPreview(p.selectedVersionNo)
+        + ' <span style="color:#60726f">(' + escapeHtmlForPreview(p.selectedStatus) + ')</span>'
+        + '</div>';
+
+      if (p.customEquivalent) {
+        html += '<div style="background:#fdecea;border:1px solid #e57373;border-radius:6px;padding:8px 12px;color:#c62828;margin-bottom:8px">'
+          + '✗ fallback 先の公開バージョンがないため、このプロジェクトは<strong>プロジェクト個別設定（custom 相当）</strong>で動作します。'
+          + 'パッケージの policy / templates は適用されません。'
+          + '</div>';
+        area.innerHTML = html;
+        area.style.display = 'block';
+        return;
+      }
+
+      if (p.isFallback) {
+        html += '<div style="background:#fff8e1;border:1px solid #f9a825;border-radius:6px;padding:8px 12px;color:#b36200;margin-bottom:8px">'
+          + '⚠ 選択中バージョンは archived のため、公開中の <strong>v' + escapeHtmlForPreview(p.fallbackVersionNo) + '</strong> に fallback されます。'
+          + '以下は fallback 後（実際に使用される）の内容です。'
+          + '</div>';
+      }
+
+      html += '<div style="margin-bottom:8px;color:#60726f">'
+        + '適用バージョン: <strong>v' + escapeHtmlForPreview(p.effectiveVersionNo) + '</strong>'
+        + ' (' + escapeHtmlForPreview(p.effectiveStatus) + ') / fallback: ' + (p.isFallback ? 'あり' : 'なし')
+        + '</div>';
+
+      html += '<div style="margin-bottom:10px"><strong>policy_json</strong>'
+        + '<pre style="font-size:11px;margin:4px 0 0;background:#f8faf9;border:1px solid #e0e8e4;border-radius:6px;padding:8px;white-space:pre-wrap;max-height:160px;overflow-y:auto">'
+        + escapeHtmlForPreview(p.policyJson ? JSON.stringify(p.policyJson, null, 2) : '（未設定 — プロジェクト個別設定を使用）')
+        + '</pre></div>';
+
+      html += '<strong>実際に使用されるプロンプトテンプレート</strong>';
+      (p.templates || []).forEach(function(t) {
+        var badge = t.source === 'package'
+          ? '<span style="font-size:10px;background:#e8f5ef;color:#1a7a5a;padding:1px 6px;border-radius:4px">package_template</span>'
+          : '<span style="font-size:10px;background:#f0f4f3;color:#60726f;padding:1px 6px;border-radius:4px">base_template' + (t.source === 'disabled' ? '（無効化→デフォルト）' : '') + '</span>';
+        html += '<details style="margin-top:6px;border:1px solid #e0e8e4;border-radius:6px;padding:6px 10px">'
+          + '<summary style="cursor:pointer;font-size:12px">' + escapeHtmlForPreview(t.label)
+          + ' <code style="font-size:10px">' + escapeHtmlForPreview(t.key) + '</code> ' + badge + '</summary>'
+          + '<pre style="font-size:11px;margin:6px 0 0;background:#f8faf9;border:1px solid #e0e8e4;border-radius:6px;padding:8px;white-space:pre-wrap;max-height:240px;overflow-y:auto">'
+          + escapeHtmlForPreview(t.template) + '</pre>'
+          + '</details>';
+      });
+
+      area.innerHTML = html;
+      area.style.display = 'block';
+    })
+    .catch(function(err) {
+      status.textContent = 'プレビューの取得に失敗しました（' + err.message + '）';
+      area.style.display = 'none';
+    });
+}
+</script>
+
+<style>
+.preview-tab {
+  padding: 4px 12px;
+  font-size: 12px;
+  border: 1px solid #d8e3e0;
+  border-radius: 6px;
+  background: #f8fbfa;
+  cursor: pointer;
+}
+.preview-tab.active-tab {
+  background: #3d7a70;
+  color: #fff;
+  border-color: #3d7a70;
+}
+</style>
+
+<script>
+var _previewProjectId = null;
+var _previewPromptKey = null;
+var _testProjectId = null;
+var _testPromptKey = null;
+var _testPlaceholders = [];
+
+function closeModal(id) {
+  document.getElementById(id).style.display = 'none';
+}
+
+// キーボードでモーダルを閉じる
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('[id$="-modal"]').forEach(function(el) {
+      el.style.display = 'none';
+    });
+  }
+});
+
+/* ── プレビューモーダル ── */
+function showPreviewTab(tab) {
+  ['rendered','template','policy'].forEach(function(t) {
+    document.getElementById('preview-' + t).style.display = t === tab ? '' : 'none';
+    var btn = document.getElementById('tab-' + t);
+    if (btn) btn.className = t === tab ? 'preview-tab active-tab' : 'preview-tab';
+  });
+}
+
+function openPromptPreview(projectId, promptKey) {
+  _previewProjectId = projectId;
+  _previewPromptKey = promptKey;
+  document.getElementById('preview-modal').style.display = '';
+  document.getElementById('preview-title').textContent = 'プロンプトプレビュー: ' + promptKey;
+  document.getElementById('preview-meta').textContent = '';
+  document.getElementById('preview-rendered').textContent = '';
+  document.getElementById('preview-template').textContent = '';
+  document.getElementById('preview-policy').textContent = '';
+  document.getElementById('preview-loading').style.display = '';
+  showPreviewTab('rendered');
+
+  fetch('/admin/api/projects/' + projectId + '/prompt-preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'prompt_key=' + encodeURIComponent(promptKey)
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    document.getElementById('preview-loading').style.display = 'none';
+    if (data.error) {
+      document.getElementById('preview-rendered').textContent = 'エラー: ' + data.error;
+      return;
+    }
+    document.getElementById('preview-meta').textContent =
+      'モード: ' + data.templateMode + '  |  ' + data.label;
+    document.getElementById('preview-rendered').textContent = data.rendered;
+    document.getElementById('preview-template').textContent = data.template;
+    document.getElementById('preview-policy').textContent =
+      JSON.stringify(data.policy, null, 2);
+  })
+  .catch(function(err) {
+    document.getElementById('preview-loading').style.display = 'none';
+    document.getElementById('preview-rendered').textContent = 'リクエスト失敗: ' + err.message;
+  });
+}
+
+/* ── テスト実行モーダル ── */
+function showTestTab(tab) {
+  ['rendered','ai-response'].forEach(function(t) {
+    var el = document.getElementById('test-' + t);
+    if (el) el.style.display = t === tab ? '' : 'none';
+    var tid = t === 'rendered' ? 'test-tab-rendered' : 'test-tab-ai';
+    var btn = document.getElementById(tid);
+    if (btn) btn.className = t === tab ? 'preview-tab active-tab' : 'preview-tab';
+  });
+}
+
+function openPromptTest(projectId, promptKey, label) {
+  _testProjectId = projectId;
+  _testPromptKey = promptKey;
+  document.getElementById('test-modal').style.display = '';
+  document.getElementById('test-title').textContent = 'テスト実行: ' + label;
+  document.getElementById('test-result').style.display = 'none';
+  document.getElementById('test-loading').style.display = 'none';
+  document.getElementById('test-call-ai').checked = false;
+
+  // プレースホルダー入力欄を生成するためプレビューAPIで定義を取得
+  var fields = document.getElementById('test-fields');
+  fields.innerHTML = '<span style="font-size:12px;color:#60726f">読み込み中...</span>';
+
+  fetch('/admin/api/projects/' + projectId + '/prompt-preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'prompt_key=' + encodeURIComponent(promptKey)
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    _testPlaceholders = data.allowedPlaceholders || [];
+    fields.innerHTML = '';
+    _testPlaceholders.forEach(function(ph) {
+      var wrap = document.createElement('label');
+      wrap.style.cssText = 'display:grid;gap:2px;font-size:12px;color:#60726f';
+      var isLong = ['sessionSummary','answers','collectedSoFar','existingSlots','extractedSlots'].indexOf(ph.key) >= 0;
+      wrap.innerHTML =
+        '<span>{{' + ph.key + '}} <span style="color:#9ab">' + ph.description + '</span></span>' +
+        (isLong
+          ? '<textarea id="test-ph-' + ph.key + '" rows="3" style="font-family:monospace;font-size:11px" placeholder="（任意）サンプル値"></textarea>'
+          : '<input id="test-ph-' + ph.key + '" type="text" style="font-family:monospace;font-size:11px" placeholder="（任意）サンプル値" />');
+      fields.appendChild(wrap);
+    });
+  })
+  .catch(function() {
+    fields.innerHTML = '<span style="color:#c0392b;font-size:12px">プレースホルダー情報の取得に失敗しました</span>';
+  });
+}
+
+function runPromptTest() {
+  var sampleValues = {};
+  _testPlaceholders.forEach(function(ph) {
+    var el = document.getElementById('test-ph-' + ph.key);
+    if (el && el.value.trim()) sampleValues[ph.key] = el.value.trim();
+  });
+
+  var callAI = document.getElementById('test-call-ai').checked ? '1' : '0';
+  document.getElementById('test-loading').style.display = '';
+  document.getElementById('test-result').style.display = 'none';
+  document.getElementById('test-run-btn').disabled = true;
+
+  fetch('/admin/api/projects/' + _testProjectId + '/prompt-test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'prompt_key=' + encodeURIComponent(_testPromptKey) +
+          '&call_ai=' + callAI +
+          '&sample_values=' + encodeURIComponent(JSON.stringify(sampleValues))
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    document.getElementById('test-loading').style.display = 'none';
+    document.getElementById('test-run-btn').disabled = false;
+    document.getElementById('test-result').style.display = '';
+
+    if (data.error) {
+      document.getElementById('test-rendered').textContent = 'エラー: ' + data.error;
+      return;
+    }
+
+    document.getElementById('test-rendered').textContent = data.rendered;
+
+    var aiEl = document.getElementById('test-ai-response');
+    if (data.aiResponse) {
+      aiEl.textContent = data.aiResponse;
+    } else if (data.aiError) {
+      aiEl.textContent = 'AIエラー: ' + data.aiError;
+    } else {
+      aiEl.textContent = '（AIへの送信は選択されませんでした）';
+    }
+    showTestTab('rendered');
+  })
+  .catch(function(err) {
+    document.getElementById('test-loading').style.display = 'none';
+    document.getElementById('test-run-btn').disabled = false;
+    document.getElementById('test-rendered').textContent = 'リクエスト失敗: ' + err.message;
+    document.getElementById('test-result').style.display = '';
+  });
 }
 </script>
 

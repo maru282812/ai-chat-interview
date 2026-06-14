@@ -1,0 +1,465 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const isNew = !locals.version || !version?.id;
+const currentPolicy    = version?.policy_json    ?? {};
+const currentTemplates = version?.templates_json ?? {};
+const safePromptKeyDefs = Array.isArray(locals.promptKeyDefs) ? promptKeyDefs : [];
+
+const RESEARCH_TYPE_OPTIONS = [
+  { key: "standard_research",    label: "標準リサーチ" },
+  { key: "interview_research",   label: "インタビューリサーチ" },
+  { key: "survey_interview",     label: "サーベイ+インタビュー" },
+  { key: "exploratory_research", label: "探索的リサーチ" }
+];
+const AUDIENCE_OPTIONS = [
+  { key: "general",          label: "一般（指定なし）" },
+  { key: "female_friendly",  label: "女性向け（丁寧・共感重視）" },
+  { key: "young_casual",     label: "若年層（カジュアル）" },
+  { key: "business",         label: "ビジネス層（フォーマル）" },
+  { key: "senior_friendly",  label: "シニア向け（わかりやすく）" }
+];
+const PROBE_STYLE_OPTIONS = [
+  { key: "standard",             label: "標準" },
+  { key: "reason_and_scene",     label: "理由・場面を引き出す" },
+  { key: "comparison",           label: "比較・違いを引き出す" },
+  { key: "emotion_and_context",  label: "感情・背景を引き出す" },
+  { key: "decision_process",     label: "判断プロセスを引き出す" }
+];
+const NONE_ANSWER_POLICY_OPTIONS = [
+  { key: "default",            label: "デフォルト（既存ルール）" },
+  { key: "accept",             label: "そのまま受け入れる" },
+  { key: "retry_once_softly",  label: "一度だけやさしく再確認" },
+  { key: "ask_for_small_hint", label: "小さなヒントを求める" }
+];
+const AMBIGUOUS_ANSWER_RULE_OPTIONS = [
+  { key: "default",           label: "デフォルト（既存ルール）" },
+  { key: "ask_clarification", label: "具体化を求める" },
+  { key: "accept_and_note",   label: "受け入れてメモ" },
+  { key: "concrete_example",  label: "具体例を引き出す" }
+];
+const FREE_ANSWER_POLICY_OPTIONS = [
+  { key: "default",          label: "デフォルト（既存ルール）" },
+  { key: "accept_none",      label: "「特になし」を受け入れる" },
+  { key: "include_verbatim", label: "発言をそのまま含める" },
+  { key: "summarize_only",   label: "要約のみ記録" }
+];
+const RESTRICTION_OPTIONS = [
+  { key: "no_leading_question",              label: "誘導質問禁止" },
+  { key: "one_question_only",                label: "1回につき1質問のみ" },
+  { key: "avoid_sensitive_personal_data",    label: "個人情報を引き出さない" },
+  { key: "no_medical_legal_financial_claim", label: "医療・法律・金融の断言禁止" },
+  { key: "no_internal_codes",                label: "内部コードを表示しない" }
+];
+const PRIORITY_OPTIONS = [
+  { key: "research_quality_first",   label: "調査品質優先" },
+  { key: "respondent_comfort_first", label: "回答者の負担軽減優先" },
+  { key: "comparability_first",      label: "比較可能性優先" }
+];
+const currentRestrictions = Array.isArray(currentPolicy.restrictions) ? currentPolicy.restrictions : [];
+%>
+
+<style>
+.form-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:12px }
+.helper-text { margin:0;font-size:12px;color:#60726f }
+</style>
+
+<a href="/admin/prompt-packages/<%= pkg.id %>" style="color:#60726f;font-size:13px">← <%= pkg.name %></a>
+<h2 style="margin:4px 0 12px"><%= title %></h2>
+
+<% if (locals.isInit) { %>
+<div style="background:#e8f5ef;border:1px solid #a0d8c0;border-radius:8px;padding:12px 16px;margin-bottom:1rem;font-size:13px;color:#1a5a45">
+  <strong>Version 1 初期設定</strong><br>
+  パッケージが作成されました。ポリシーとテンプレートを設定して「ドラフトとして作成」を押してください。<br>
+  <span style="font-size:12px;color:#60726f">設定は後からバージョン編集でいつでも変更できます。テンプレートを空のままにしておくと BASE_PROMPT_TEMPLATES（デフォルト）が使用されます。</span>
+</div>
+<% } %>
+
+<% if (locals.error) { %><p style="color:red"><%= error %></p><% } %>
+
+<% if (locals.validationErrors && validationErrors.length > 0) { %>
+<div style="background:#fdecea;border:1px solid #e57373;border-radius:8px;padding:12px 16px;margin-bottom:1rem">
+  <strong style="color:#c62828;font-size:13px">✗ エラー（修正するまで保存できません）</strong>
+  <ul style="margin:6px 0 0;padding-left:20px;font-size:13px;color:#c62828">
+    <% for (const e of validationErrors) { %><li><%= e %></li><% } %>
+  </ul>
+</div>
+<% } %>
+<% if (locals.validationWarnings && validationWarnings.length > 0) { %>
+<div style="background:#fff8e1;border:1px solid #f9a825;border-radius:8px;padding:12px 16px;margin-bottom:1rem">
+  <strong style="color:#b36200;font-size:13px">⚠ 警告（保存は可能です）</strong>
+  <ul style="margin:6px 0 0;padding-left:20px;font-size:13px;color:#b36200">
+    <% for (const w of validationWarnings) { %><li><%= w %></li><% } %>
+  </ul>
+</div>
+<% } %>
+
+<% if (!isNew) { %>
+<div style="background:#fffbf0;border:1px solid #f0d080;border-radius:6px;padding:10px 14px;margin-bottom:1rem;font-size:13px">
+  <strong style="color:#8a6400">⚠ draft のみ編集可能です。</strong>
+  公開後に内容を変更したい場合は「＋ 新バージョン」から新しい draft を作成してください。
+</div>
+<% } %>
+
+<form class="card" method="post" action="<%= action %>">
+
+  <label style="margin-bottom:12px">
+    変更メモ（任意）
+    <input type="text" name="change_note" value="<%= version?.change_note || '' %>"
+      placeholder="例: 女性向けトーン調整、probe スタイル変更" style="margin-top:4px" />
+  </label>
+
+  <hr style="margin:16px 0" />
+
+  <!-- A. ポリシー設定 -->
+  <h3 style="margin:0 0 8px">A. AIプロンプト補助方針（policy_json）</h3>
+  <p class="helper-text" style="margin-bottom:12px">
+    設定しないキーは各プロジェクトのデフォルト（または既存の BASE ルール）が適用されます。パッケージは疎な定義でOKです。
+  </p>
+
+  <div class="form-grid">
+    <label>
+      調査タイプ
+      <select name="ai_policy_researchType">
+        <% for (const opt of RESEARCH_TYPE_OPTIONS) { %>
+          <option value="<%= opt.key %>" <%= (currentPolicy.researchType === opt.key) ? 'selected' : '' %>><%= opt.label %></option>
+        <% } %>
+      </select>
+    </label>
+    <label>
+      対象者向け
+      <select name="ai_policy_audience">
+        <% for (const opt of AUDIENCE_OPTIONS) { %>
+          <option value="<%= opt.key %>" <%= (currentPolicy.audience === opt.key) ? 'selected' : '' %>><%= opt.label %></option>
+        <% } %>
+      </select>
+    </label>
+    <label>
+      深掘りスタイル
+      <select name="ai_policy_probeStyle">
+        <% for (const opt of PROBE_STYLE_OPTIONS) { %>
+          <option value="<%= opt.key %>" <%= (currentPolicy.probeStyle === opt.key) ? 'selected' : '' %>><%= opt.label %></option>
+        <% } %>
+      </select>
+    </label>
+    <label>
+      「特になし・わからない」回答
+      <small class="helper-text">free_commentには適用されません。</small>
+      <select name="ai_policy_noneAnswerPolicy">
+        <% for (const opt of NONE_ANSWER_POLICY_OPTIONS) { %>
+          <option value="<%= opt.key %>" <%= (currentPolicy.noneAnswerPolicy === opt.key) ? 'selected' : '' %>><%= opt.label %></option>
+        <% } %>
+      </select>
+    </label>
+    <label>
+      曖昧回答への対応
+      <select name="ai_policy_ambiguousAnswerRule">
+        <% for (const opt of AMBIGUOUS_ANSWER_RULE_OPTIONS) { %>
+          <option value="<%= opt.key %>" <%= (currentPolicy.ambiguousAnswerRule === opt.key) ? 'selected' : '' %>><%= opt.label %></option>
+        <% } %>
+      </select>
+    </label>
+    <label>
+      自由回答の扱い
+      <select name="ai_policy_freeAnswerPolicy">
+        <% for (const opt of FREE_ANSWER_POLICY_OPTIONS) { %>
+          <option value="<%= opt.key %>" <%= (currentPolicy.freeAnswerPolicy === opt.key) ? 'selected' : '' %>><%= opt.label %></option>
+        <% } %>
+      </select>
+    </label>
+    <label>
+      優先方針
+      <select name="ai_policy_priority">
+        <option value="">未設定</option>
+        <% for (const opt of PRIORITY_OPTIONS) { %>
+          <option value="<%= opt.key %>" <%= (currentPolicy.priority === opt.key) ? 'selected' : '' %>><%= opt.label %></option>
+        <% } %>
+      </select>
+    </label>
+  </div>
+
+  <div style="margin-bottom:12px">
+    <label style="font-weight:600">制限ルール（複数選択可）</label>
+    <div style="display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:6px">
+      <% for (const opt of RESTRICTION_OPTIONS) { %>
+        <label style="display:flex;align-items:center;gap:4px;margin:0;font-weight:normal">
+          <input type="checkbox" name="ai_policy_restrictions" value="<%= opt.key %>"
+            <%= currentRestrictions.includes(opt.key) ? 'checked' : '' %> />
+          <%= opt.label %>
+        </label>
+      <% } %>
+    </div>
+  </div>
+
+  <input type="hidden" name="ai_prompt_policy_json" id="ai_prompt_policy_json_hidden" value="" />
+
+  <hr style="margin:16px 0" />
+
+  <!-- B. ベースプロンプトテンプレート -->
+  <h3 style="margin:0 0 8px">B. ベースプロンプトテンプレート（templates_json）</h3>
+  <p class="helper-text" style="margin-bottom:12px">
+    疎な定義でOKです。未設定のキーは <code>BASE_PROMPT_TEMPLATES</code> にフォールバックします。<br>
+    変数は <code>{{placeholder}}</code> 形式で記述してください。
+  </p>
+
+  <% for (const pkDef of safePromptKeyDefs) { %>
+    <%
+      const tmplEntry = currentTemplates[pkDef.key];
+      const isEnabled = !tmplEntry || tmplEntry.enabled !== false;
+      const tmplText  = (tmplEntry && tmplEntry.template) ? tmplEntry.template : '';
+      // 3状態バッジ: 無効 / カスタム済み / BASE使用中
+      let stateBadge;
+      if (!isEnabled) {
+        stateBadge = { label: '無効', bg: '#fdecea', fg: '#c62828' };
+      } else if (tmplText) {
+        stateBadge = { label: 'カスタム済み', bg: '#e8f5ef', fg: '#1a7a5a' };
+      } else {
+        stateBadge = { label: 'BASE使用中', bg: '#eef2f7', fg: '#5a6b80' };
+      }
+    %>
+    <details style="border:1px solid #d8e3e0;border-radius:10px;padding:10px 14px;margin-bottom:8px">
+      <summary style="cursor:pointer;font-weight:600">
+        <%= pkDef.label %>
+        <span style="font-weight:normal;font-size:12px;color:#60726f">(<%= pkDef.key %>)</span>
+        <span style="font-size:11px;background:<%= stateBadge.bg %>;color:<%= stateBadge.fg %>;padding:1px 6px;border-radius:4px;margin-left:6px"><%= stateBadge.label %></span>
+      </summary>
+      <div style="margin-top:10px">
+        <!-- Phase 6-C: プロンプト可視化メタ情報 -->
+        <div style="background:#f8faf9;border:1px solid #e0e8e4;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px">
+          <table style="border-collapse:collapse;width:100%">
+            <tr>
+              <td style="padding:2px 12px 2px 0;color:#60726f;white-space:nowrap;vertical-align:top">用途</td>
+              <td style="padding:2px 0"><%= pkDef.description %></td>
+            </tr>
+            <tr>
+              <td style="padding:2px 12px 2px 0;color:#60726f;white-space:nowrap;vertical-align:top">呼び出しタイミング</td>
+              <td style="padding:2px 0"><%= pkDef.callTiming %></td>
+            </tr>
+            <tr>
+              <td style="padding:2px 12px 2px 0;color:#60726f;white-space:nowrap;vertical-align:top">影響範囲</td>
+              <td style="padding:2px 0"><%= pkDef.impactScope %></td>
+            </tr>
+            <tr>
+              <td style="padding:2px 12px 2px 0;color:#60726f;white-space:nowrap;vertical-align:top">出力形式</td>
+              <td style="padding:2px 0"><code style="font-size:11px"><%= pkDef.outputFormat %></code></td>
+            </tr>
+            <tr>
+              <td style="padding:2px 12px 2px 0;color:#60726f;white-space:nowrap;vertical-align:top">利用ポリシー</td>
+              <td style="padding:2px 0">
+                <% for (const pol of (pkDef.usedPolicies || [])) { %>
+                  <span style="display:inline-block;background:#eef4f2;border:1px solid #d0e0db;border-radius:4px;padding:1px 6px;margin:1px 2px;font-size:11px"><%= pol %></span>
+                <% } %>
+              </td>
+            </tr>
+          </table>
+        </div>
+        <details style="margin-bottom:10px;font-size:12px">
+          <summary style="cursor:pointer;color:#60726f;font-size:12px">
+            利用変数（使えるプレースホルダー: <%= pkDef.allowedPlaceholders.length %>個）
+          </summary>
+          <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 8px">
+            <% for (const ph of pkDef.allowedPlaceholders) { %>
+              <span title="<%= ph.description || ph.key %>"
+                style="background:#f0f7f5;border:1px solid #c8dcd8;border-radius:4px;padding:2px 6px;font-family:monospace;font-size:11px;cursor:help">
+                {{<%= ph.key %>}}
+              </span>
+            <% } %>
+          </div>
+        </details>
+        <!-- Phase C: 現在の BASE 本文を表示 -->
+        <details style="margin-bottom:8px;font-size:12px">
+          <summary style="cursor:pointer;color:#60726f;font-size:12px">▼ 現在の BASE 本文（ソースコードのデフォルト全文）</summary>
+          <pre id="base-body-<%= pkDef.key %>" style="margin:6px 0 0;padding:10px 12px;background:#f6f8f7;border:1px solid #e0e8e4;border-radius:6px;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:280px;overflow:auto"><%= pkDef.baseTemplate %></pre>
+        </details>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:6px">
+          <input type="checkbox" name="ai_tmpl_enabled[<%= pkDef.key %>]" value="1"
+            <%= isEnabled ? 'checked' : '' %> />
+          このテンプレートを有効にする（未チェック＝無効化）
+        </label>
+        <label style="font-size:12px;color:#60726f">
+          カスタムテンプレート（空のままにするとデフォルトを使用）
+          <textarea name="ai_tmpl_template[<%= pkDef.key %>]" id="tmpl-<%= pkDef.key %>" rows="6"
+            style="font-family:monospace;font-size:12px;margin-top:4px"
+            placeholder="空のままにするとソースコードのデフォルトが使用されます"><%= tmplText %></textarea>
+        </label>
+        <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn-ghost" onclick="loadBaseBody('<%= pkDef.key %>')"
+            style="font-size:12px;padding:4px 10px;border:1px solid #c8dcd8;border-radius:6px;background:#fff;cursor:pointer;color:#1a7a5a">
+            この本文を編集用に読み込む
+          </button>
+          <button type="button" class="btn-ghost" onclick="pkgPromptPreview('<%= pkDef.key %>')"
+            style="font-size:12px;padding:4px 10px;border:1px solid #c8dcd8;border-radius:6px;background:#fff;cursor:pointer;color:#2a6a5a">
+            プレビュー
+          </button>
+          <button type="button" class="btn-ghost" onclick="pkgPromptTest('<%= pkDef.key %>')"
+            style="font-size:12px;padding:4px 10px;border:1px solid #c8dcd8;border-radius:6px;background:#fff;cursor:pointer;color:#2a6a5a">
+            テスト実行
+          </button>
+        </div>
+      </div>
+    </details>
+  <% } %>
+
+  <input type="hidden" name="ai_prompt_templates_json" id="ai_prompt_templates_json_hidden" value="" />
+
+  <div style="margin-top:1.5rem;display:flex;gap:12px">
+    <button type="submit" class="btn"><%= isNew ? 'ドラフトとして作成' : '保存' %></button>
+    <a href="/admin/prompt-packages/<%= pkg.id %>" style="color:#60726f;align-self:center">キャンセル</a>
+  </div>
+</form>
+
+<script>
+// Phase C: BASE 本文を編集用テキストエリアへ読み込む
+function loadBaseBody(key) {
+  var pre = document.getElementById('base-body-' + key);
+  var ta  = document.getElementById('tmpl-' + key);
+  if (!pre || !ta) return;
+  if (ta.value.trim() && !confirm('現在の入力内容を BASE 本文で上書きします。よろしいですか？')) return;
+  ta.value = pre.textContent;
+  // 有効チェックボックスもオンに
+  var enabledEl = document.querySelector('[name="ai_tmpl_enabled[' + key + ']"]');
+  if (enabledEl) enabledEl.checked = true;
+}
+
+(function() {
+  var form = document.querySelector('form.card');
+  if (!form) return;
+  form.addEventListener('submit', function() {
+    // A. ポリシーを JSON に組み立てる
+    var policy = {};
+    ['researchType','audience','probeStyle','noneAnswerPolicy','ambiguousAnswerRule','freeAnswerPolicy','priority'].forEach(function(f) {
+      var el = form.querySelector('[name="ai_policy_' + f + '"]');
+      if (el && el.value && el.value !== 'default' && el.value !== '') policy[f] = el.value;
+    });
+    var restrictionEls = form.querySelectorAll('[name="ai_policy_restrictions"]:checked');
+    if (restrictionEls.length > 0) {
+      policy.restrictions = Array.from(restrictionEls).map(function(el) { return el.value; });
+    }
+    document.getElementById('ai_prompt_policy_json_hidden').value =
+      Object.keys(policy).length > 0 ? JSON.stringify(policy) : '';
+
+    // B. テンプレートを JSON に組み立てる
+    var templates = {};
+    var PROMPT_KEYS = <%- JSON.stringify(safePromptKeyDefs.map(function(d) { return d.key; })) %>;
+    PROMPT_KEYS.forEach(function(pk) {
+      var enabledEl  = form.querySelector('[name="ai_tmpl_enabled[' + pk + ']"]');
+      var templateEl = form.querySelector('[name="ai_tmpl_template[' + pk + ']"]');
+      var enabled = enabledEl ? enabledEl.checked : true;
+      var tmpl    = templateEl ? templateEl.value.trim() : '';
+      if (!enabled || tmpl) {
+        templates[pk] = { enabled: enabled };
+        if (tmpl) templates[pk].template = tmpl;
+      }
+    });
+    document.getElementById('ai_prompt_templates_json_hidden').value =
+      Object.keys(templates).length > 0 ? JSON.stringify(templates) : '';
+  });
+})();
+</script>
+
+<!-- Phase D: パッケージ単位プレビュー/テスト モーダル -->
+<div id="pkg-prompt-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;padding:24px;overflow:auto">
+  <div style="max-width:780px;margin:0 auto;background:#fff;border-radius:12px;padding:20px 24px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3 id="pkg-modal-title" style="margin:0">プレビュー</h3>
+      <button type="button" onclick="closePkgModal()" style="border:none;background:none;font-size:22px;cursor:pointer;color:#60726f">×</button>
+    </div>
+    <div id="pkg-modal-body" style="font-size:13px"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var VERSION_ID = <%- version && version.id ? JSON.stringify(version.id) : 'null' %>;
+  var PACKAGE_ID = <%- JSON.stringify(pkg.id) %>;
+  var form = document.querySelector('form.card');
+
+  function collectPolicy() {
+    var policy = {};
+    ['researchType','audience','probeStyle','noneAnswerPolicy','ambiguousAnswerRule','freeAnswerPolicy','priority'].forEach(function(f) {
+      var el = form.querySelector('[name="ai_policy_' + f + '"]');
+      if (el && el.value && el.value !== 'default' && el.value !== '') policy[f] = el.value;
+    });
+    var rs = form.querySelectorAll('[name="ai_policy_restrictions"]:checked');
+    if (rs.length > 0) policy.restrictions = Array.from(rs).map(function(el){ return el.value; });
+    return policy;
+  }
+
+  function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
+
+  window.closePkgModal = function() { document.getElementById('pkg-prompt-modal').style.display = 'none'; };
+
+  function openModal(title, html) {
+    document.getElementById('pkg-modal-title').textContent = title;
+    document.getElementById('pkg-modal-body').innerHTML = html;
+    document.getElementById('pkg-prompt-modal').style.display = 'block';
+  }
+
+  function requireVersion() {
+    if (!VERSION_ID) {
+      alert('プレビュー/テストはバージョンを保存してから利用できます。先に「ドラフトとして作成」してください。');
+      return false;
+    }
+    return true;
+  }
+
+  function post(path, body) {
+    return fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: Object.keys(body).map(function(k){ return encodeURIComponent(k) + '=' + encodeURIComponent(body[k]); }).join('&')
+    }).then(function(r){ return r.json(); });
+  }
+
+  function blockSection(label, text) {
+    return '<div style="margin-top:10px"><div style="font-weight:600;color:#60726f;font-size:12px;margin-bottom:4px">' + esc(label) + '</div>'
+      + '<pre style="margin:0;padding:10px 12px;background:#f6f8f7;border:1px solid #e0e8e4;border-radius:6px;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto">' + esc(text) + '</pre></div>';
+  }
+
+  window.pkgPromptPreview = function(key) {
+    if (!requireVersion()) return;
+    var ta = document.getElementById('tmpl-' + key);
+    openModal('プレビュー: ' + key, '<p style="color:#60726f">レンダリング中…</p>');
+    post('/admin/prompt-packages/' + PACKAGE_ID + '/versions/' + VERSION_ID + '/prompt-preview', {
+      prompt_key: key,
+      template_override: ta ? ta.value : '',
+      policy_override: JSON.stringify(collectPolicy())
+    }).then(function(d){
+      if (d.error) { openModal('プレビュー: ' + key, '<p style="color:red">' + esc(d.error) + '</p>'); return; }
+      var html = '<div style="font-size:12px;color:#60726f">モード: <strong>' + esc(d.templateMode) + '</strong></div>'
+        + blockSection('最終プロンプト（レンダリング後）', d.rendered)
+        + blockSection('テンプレート本文', d.template)
+        + blockSection('適用ポリシー', JSON.stringify(d.policy, null, 2));
+      openModal('プレビュー: ' + esc(d.label), html);
+    }).catch(function(e){ openModal('プレビュー: ' + key, '<p style="color:red">' + esc(e) + '</p>'); });
+  };
+
+  window.pkgPromptTest = function(key) {
+    if (!requireVersion()) return;
+    var ta = document.getElementById('tmpl-' + key);
+    var html = '<p style="font-size:12px;color:#60726f">サンプル値はラベル付きプレースホルダーで自動補完されます。実 AI 呼び出しを行うとトークンを消費します。</p>'
+      + '<label style="display:flex;align-items:center;gap:6px;margin:8px 0"><input type="checkbox" id="pkg-test-callai" /> 実際に AI を呼び出す</label>'
+      + '<button type="button" class="btn" id="pkg-test-run" style="font-size:13px">テスト実行</button>'
+      + '<div id="pkg-test-result" style="margin-top:12px"></div>';
+    openModal('テスト実行: ' + key, html);
+    document.getElementById('pkg-test-run').addEventListener('click', function() {
+      var callai = document.getElementById('pkg-test-callai').checked;
+      document.getElementById('pkg-test-result').innerHTML = '<p style="color:#60726f">実行中…</p>';
+      post('/admin/prompt-packages/' + PACKAGE_ID + '/versions/' + VERSION_ID + '/prompt-test', {
+        prompt_key: key,
+        template_override: ta ? ta.value : '',
+        policy_override: JSON.stringify(collectPolicy()),
+        call_ai: callai ? '1' : '0'
+      }).then(function(d){
+        if (d.error) { document.getElementById('pkg-test-result').innerHTML = '<p style="color:red">' + esc(d.error) + '</p>'; return; }
+        var out = blockSection('最終プロンプト', d.rendered);
+        if (d.aiError) out += blockSection('AIエラー', d.aiError);
+        else if (d.aiResponse != null) out += blockSection('AIレスポンス', d.aiResponse);
+        document.getElementById('pkg-test-result').innerHTML = out;
+      }).catch(function(e){ document.getElementById('pkg-test-result').innerHTML = '<p style="color:red">' + esc(e) + '</p>'; });
+    });
+  };
+})();
+</script>
+
+<%- include("../../partials/footer") %>

@@ -1,0 +1,100 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const CATEGORY_LABELS = {
+  interview: 'インタビュー', survey: 'アンケート', diary: '日記',
+  analysis: '分析', chat: 'AIチャット', other: 'その他'
+};
+%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>プロンプトパッケージ管理</h2>
+  <div style="display:flex;gap:8px">
+    <a href="/admin/prompt-packages/migration" class="btn secondary">移行レポート（custom 整理）</a>
+    <a href="/admin/prompt-packages/new" class="btn">＋ 新規パッケージ</a>
+  </div>
+</div>
+
+<% if (locals.created) { %><p style="color:green">パッケージを作成しました。</p><% } %>
+<% if (locals.saved) { %><p style="color:green">保存しました。</p><% } %>
+<% if (locals.cloned) { %><p style="color:green">パッケージを複製しました。</p><% } %>
+
+<p style="color:#60726f;margin-bottom:1rem">
+  標準インタビュー用・女性向け・ビジネス向けなどのAIプロンプト設定をパッケージ化し、各プロジェクトで選択できます。<br>
+  既存プロジェクトへの影響はなく、プロジェクト編集画面でモードを <strong>package</strong> に切り替えたときのみ適用されます。
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>パッケージ名</th>
+      <th>slug</th>
+      <th>公開バージョン</th>
+      <th>総バージョン数</th>
+      <th>利用プロジェクト数</th>
+      <th>最終更新</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const pkg of packages) { %>
+    <tr>
+      <td>
+        <a href="/admin/prompt-packages/<%= pkg.id %>"><strong><%= pkg.name %></strong></a>
+        <% if (pkg.category) { %>
+          <span style="font-size:11px;background:#eef4f2;border:1px solid #c8dcd8;border-radius:4px;padding:1px 6px;margin-left:6px;color:#2a6a5a"><%= CATEGORY_LABELS[pkg.category] || pkg.category %></span>
+        <% } %>
+        <% if (pkg.description) { %>
+          <br><span style="font-size:12px;color:#60726f"><%= pkg.description %></span>
+        <% } %>
+      </td>
+      <td><code style="font-size:12px"><%= pkg.slug %></code></td>
+      <td>
+        <% if (pkg.published_version) { %>
+          <span style="background:#e8f5ef;color:#1a7a5a;padding:2px 8px;border-radius:4px;font-size:12px">
+            ● v<%= pkg.published_version.version_no %> 公開中
+          </span>
+          <% const sum = summarizeTemplateDefinitions(pkg.published_version.templates_json); %>
+          <br><span style="font-size:11px;color:#60726f" title="カスタム <%= sum.custom %> / BASE利用 <%= sum.base %> / 無効 <%= sum.disabled %>">
+            <%= sum.defined %>/<%= sum.total %> キー定義
+          </span>
+        <% } else { %>
+          <span style="color:#999;font-size:12px">未公開</span>
+        <% } %>
+      </td>
+      <td style="text-align:center"><%= pkg.versions_count ?? 0 %></td>
+      <td style="text-align:center">
+        <% if ((pkg.using_projects_count ?? 0) > 0) { %>
+          <a href="/admin/prompt-packages/<%= pkg.id %>#using-projects" title="利用中プロジェクト一覧を表示">
+            <strong><%= pkg.using_projects_count %></strong> 件
+          </a>
+        <% } else { %>
+          <span style="color:#999;font-size:12px">0 件</span>
+        <% } %>
+      </td>
+      <td><%= new Date(pkg.updated_at).toLocaleDateString('ja-JP') %></td>
+      <td style="white-space:nowrap">
+        <a href="/admin/prompt-packages/<%= pkg.id %>">詳細</a>
+        <a href="/admin/prompt-packages/<%= pkg.id %>/edit" style="margin-left:8px">編集</a>
+        <a href="/admin/prompt-packages/new?mode=version&package_id=<%= pkg.id %>" style="margin-left:8px">Version追加</a>
+        <a href="/admin/prompt-packages/<%= pkg.id %>#versions" style="margin-left:8px">履歴</a>
+      </td>
+    </tr>
+    <% } %>
+    <% if (packages.length === 0) { %>
+    <tr><td colspan="7" style="text-align:center;color:#999">パッケージがまだありません</td></tr>
+    <% } %>
+  </tbody>
+</table>
+
+<div style="margin-top:2rem;padding:16px;background:#f8faf9;border-radius:8px;border-left:4px solid #2ca87a">
+  <h4 style="margin:0 0 8px">パッケージ管理ポリシー</h4>
+  <ul style="font-size:13px;color:#60726f;margin:0;padding-left:1.2em;line-height:1.8">
+    <li>公開済みバージョンは直接編集できません。新しいバージョンを作成して公開してください。</li>
+    <li>バージョンを公開すると、同一パッケージの過去の公開バージョンは自動でアーカイブされます。</li>
+    <li>プロジェクトが古いバージョンを参照していても、自動的に最新版へ切り替わりません（管理画面から手動更新）。</li>
+    <li>既存の <strong>custom</strong> モードプロジェクトはこのパッケージの影響を受けません。</li>
+  </ul>
+</div>
+
+<%- include("../../partials/footer") %>

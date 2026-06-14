@@ -32,6 +32,9 @@ import { dailySurveyService } from "../services/dailySurveyService";
 import { dailySurveyRepository } from "../repositories/dailySurveyRepository";
 import { userStreakService } from "../services/userStreakService";
 import { userBadgeService } from "../services/userBadgeService";
+import { userPointService } from "../services/userPointService";
+import { pointExchangeRepository } from "../repositories/pointExchangeRepository";
+import { pointExchangeService, ExchangeError, EXCHANGE_UNIT_POINTS } from "../services/pointExchangeService";
 
 type SupportedPostEntryKey = "rant" | "diary";
 
@@ -373,7 +376,9 @@ export const liffController = {
         );
       }
       if (content) {
-        aiReply = await aiService.generateRantCounselorReply(content, tagLabels).catch(() => null);
+        aiReply = await aiService
+          .generateRantCounselorReply(content, tagLabels, { project, sessionId: null })
+          .catch(() => null);
         if (aiReply) {
           void postRepository.saveRantReply(post.id, aiReply);
         }
@@ -423,6 +428,7 @@ export const liffController = {
         confirmMypageUrl: "/liff/session/confirm-mypage",
         historyUrl: "/liff/history-data",
         pointsUrl: "/liff/points-data",
+        exchangeRequestUrl: "/liff/exchange-requests",
         consentUrl: "/liff/consent-data",
         interactionsUrl: "/liff/interactions",
       }
@@ -1347,25 +1353,41 @@ export const liffController = {
     const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
     const lineUserId = verifiedUser.userId;
 
-    const respondents = await respondentRepository.listByLineUserId(lineUserId);
-    const primary = respondents.sort((a, b) => b.total_points - a.total_points)[0] ?? null;
-
-    if (!primary) {
-      res.json({ ok: true, total_points: 0, transactions: [] });
-      return;
-    }
-
-    const transactions = await pointTransactionRepository.listByRespondent(primary.id);
+    const [balance, histories, exchanges] = await Promise.all([
+      userPointService.getBalance(lineUserId),
+      userPointService.getHistory(lineUserId, 50),
+      pointExchangeRepository.listByUser(lineUserId, 20),
+    ]);
 
     res.json({
       ok: true,
-      total_points: primary.total_points,
-      transactions: transactions.map(t => ({
-        id: t.id,
-        type: t.transaction_type,
-        points: t.points,
-        reason: t.reason,
-        created_at: t.created_at,
+      balance: {
+        total_points:     balance.total_points,
+        available_points: balance.available_points,
+        pending_points:   balance.pending_points,
+        lifetime_points:  balance.lifetime_points,
+      },
+      histories: histories.map(h => ({
+        id:           h.id,
+        type:         h.transaction_type,
+        points:       h.points,
+        reason:       h.reason,
+        reference_type: h.reference_type,
+        created_at:   h.created_at,
+      })),
+      exchanges: exchanges.map(e => ({
+        id:              e.id,
+        requested_points: e.requested_points,
+        gift_amount_jpy:  e.gift_amount_jpy,
+        status:           e.status,
+        gift_url:         e.status === "fulfilled" ? e.gift_url : null,
+        notification_sent: e.notification_sent,
+        requested_at:    e.requested_at,
+        approved_at:     e.approved_at,
+        fulfilled_at:    e.fulfilled_at,
+        rejected_at:     e.rejected_at,
+        canceled_at:     e.canceled_at,
+        failed_reason:   e.status === "rejected" ? e.failed_reason : null,
       })),
     });
   },
@@ -2216,5 +2238,77 @@ export const liffController = {
         change_reason: version.change_reason,
       },
     });
+  },
+
+  // ─── ポイント交換申請 ─────────────────────────────────────────────
+
+  async requestExchange(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const lineUserId = verifiedUser.userId;
+
+    const body = req.body as Record<string, unknown>;
+    const requestedPoints = Number(body.requested_points);
+
+    if (!Number.isInteger(requestedPoints) || requestedPoints <= 0) {
+      res.status(400).json({ ok: false, error: "requested_points が不正です" });
+      return;
+    }
+    if (requestedPoints % EXCHANGE_UNIT_POINTS !== 0) {
+      res.status(400).json({
+        ok: false,
+        error: `交換ポイントは ${EXCHANGE_UNIT_POINTS}pt の倍数で指定してください`,
+      });
+      return;
+    }
+
+    try {
+      const request = await pointExchangeService.requestExchange(lineUserId, requestedPoints);
+      res.status(201).json({
+        ok: true,
+        exchange: {
+          id:              request.id,
+          requested_points: request.requested_points,
+          gift_amount_jpy:  request.gift_amount_jpy,
+          status:           request.status,
+          requested_at:    request.requested_at,
+        },
+      });
+    } catch (err) {
+      if (err instanceof ExchangeError) {
+        res.status(400).json({ ok: false, error: err.message, code: err.code });
+        return;
+      }
+      throw err;
+    }
+  },
+
+  async cancelExchange(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const lineUserId = verifiedUser.userId;
+    const requestId = String(req.params.id ?? "");
+
+    if (!requestId) {
+      res.status(400).json({ ok: false, error: "id が必要です" });
+      return;
+    }
+
+    try {
+      const canceled = await pointExchangeService.cancelExchange(requestId, lineUserId);
+      res.json({
+        ok: true,
+        exchange: {
+          id:         canceled.id,
+          status:     canceled.status,
+          canceled_at: canceled.canceled_at,
+        },
+      });
+    } catch (err) {
+      if (err instanceof ExchangeError) {
+        const status = err.code === "REQUEST_NOT_FOUND" ? 404 : 400;
+        res.status(status).json({ ok: false, error: err.message, code: err.code });
+        return;
+      }
+      throw err;
+    }
   },
 };

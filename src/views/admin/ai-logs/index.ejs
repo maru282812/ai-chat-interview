@@ -1,0 +1,127 @@
+<%- include("../../partials/header", { title }) %>
+
+<style>
+.ai-log-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ai-log-table th, .ai-log-table td {
+  text-align: left; padding: 8px 10px;
+  border-bottom: 1px solid #e8efed;
+  vertical-align: top;
+}
+.ai-log-table th { background: #f0f7f5; font-weight: 600; }
+.ai-log-table tr:hover td { background: #f8fbfa; }
+.badge {
+  display: inline-block; padding: 2px 7px; border-radius: 10px;
+  font-size: 11px; font-weight: 600;
+}
+.badge-custom  { background: #e8f4ff; color: #1a5ca8; }
+.badge-base    { background: #f0f7f5; color: #1a7a5a; }
+.badge-legacy  { background: #f5f0e8; color: #8a6400; }
+.badge-error   { background: #fff0f0; color: #c0392b; }
+.badge-ok      { background: #f0faf0; color: #1a8a3a; }
+.truncate { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+
+<div class="stack">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <h1 style="margin:0">AIログ</h1>
+    <span style="font-size:13px;color:#60726f">全 <%= total %> 件</span>
+  </div>
+
+  <!-- フィルター -->
+  <form method="GET" action="/admin/ai-logs" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+    <label style="font-size:13px">
+      プロジェクトID
+      <input type="text" name="project_id" value="<%= filters.projectId || '' %>"
+        style="width:200px;font-size:13px" placeholder="UUID" />
+    </label>
+    <label style="font-size:13px">
+      プロンプトキー
+      <select name="prompt_key" style="font-size:13px">
+        <option value="">（すべて）</option>
+        <% for (const k of promptKeyOptions) { %>
+          <option value="<%= k %>" <%= filters.promptKey === k ? 'selected' : '' %>><%= k %></option>
+        <% } %>
+      </select>
+    </label>
+    <button type="submit" style="padding:6px 14px;font-size:13px">絞り込み</button>
+    <a href="/admin/ai-logs" style="font-size:13px;color:#60726f">リセット</a>
+  </form>
+
+  <% if (logs.length === 0) { %>
+    <p style="color:#60726f">ログがありません。</p>
+  <% } else { %>
+    <div style="overflow-x:auto">
+      <table class="ai-log-table">
+        <thead>
+          <tr>
+            <th>実行日時</th>
+            <th>プロジェクト</th>
+            <th>prompt_key</th>
+            <th>template_mode</th>
+            <th>model</th>
+            <th>エラー</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% for (const log of logs) { %>
+          <tr>
+            <td style="white-space:nowrap;font-size:12px"><%= new Date(log.created_at).toLocaleString('ja-JP') %></td>
+            <td>
+              <% if (log.project_id) { %>
+                <a href="/admin/projects/<%= log.project_id %>/edit" style="font-size:12px">
+                  <%= log.project_name || log.project_id.slice(0,8) + '…' %>
+                </a>
+              <% } else { %>
+                <span style="color:#aaa;font-size:12px">—</span>
+              <% } %>
+            </td>
+            <td style="font-family:monospace;font-size:11px"><%= log.prompt_key || '—' %></td>
+            <td>
+              <% if (log.template_mode === 'custom_template') { %>
+                <span class="badge badge-custom">カスタム</span>
+              <% } else if (log.template_mode === 'base_template') { %>
+                <span class="badge badge-base">ベース</span>
+              <% } else if (log.template_mode === 'legacy') { %>
+                <span class="badge badge-legacy">レガシー</span>
+              <% } else { %>
+                <span style="color:#aaa;font-size:12px">—</span>
+              <% } %>
+            </td>
+            <td style="font-size:12px"><%= (log.token_usage && log.token_usage.model) ? log.token_usage.model : '—' %></td>
+            <td>
+              <% if (log.error_message) { %>
+                <span class="badge badge-error">エラー</span>
+              <% } else { %>
+                <span class="badge badge-ok">正常</span>
+              <% } %>
+            </td>
+            <td>
+              <a href="/admin/ai-logs/<%= log.id %>" style="font-size:12px">詳細</a>
+            </td>
+          </tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ページネーション -->
+    <% if (totalPages > 1) { %>
+      <div style="display:flex;gap:6px;align-items:center;font-size:13px">
+        <% if (page > 1) { %>
+          <a href="?page=<%= page - 1 %><%= filters.projectId ? '&project_id=' + filters.projectId : '' %><%= filters.promptKey ? '&prompt_key=' + filters.promptKey : '' %>">
+            ← 前へ
+          </a>
+        <% } %>
+        <span>ページ <%= page %> / <%= totalPages %></span>
+        <% if (page < totalPages) { %>
+          <a href="?page=<%= page + 1 %><%= filters.projectId ? '&project_id=' + filters.projectId : '' %><%= filters.promptKey ? '&prompt_key=' + filters.promptKey : '' %>">
+            次へ →
+          </a>
+        <% } %>
+      </div>
+    <% } %>
+  <% } %>
+</div>
+
+<%- include("../../partials/footer") %>

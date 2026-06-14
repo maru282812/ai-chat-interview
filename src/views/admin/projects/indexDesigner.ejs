@@ -21,6 +21,7 @@
       <th>Status</th>
       <th>Reward</th>
       <th>Design</th>
+      <th>AIプロンプト</th>
       <th>Actions</th>
     </tr>
   </thead>
@@ -37,6 +38,26 @@
         <td>
           <span class="tag"><%= row.project.research_mode %></span><br />
           <span class="muted">questions: <%= row.questionCount %> / branches: <%= row.branchCount %></span>
+        </td>
+        <td style="font-size:12px">
+          <% if (row.project.ai_prompt_mode === 'package' && row.packageInfo) { %>
+            <a href="/admin/prompt-packages/<%= row.packageInfo.packageId %>" title="<%= row.packageInfo.packageName %> の管理へ"><code style="font-size:11px"><%= row.packageInfo.packageSlug %></code></a><br />
+            <% if (row.packageInfo.isFallback) { %>
+              <span style="color:#999">v<%= row.packageInfo.versionNo %> archived</span>
+              <span style="color:#e65100">→ fallback</span>
+              <span style="color:#1a7a5a"> v<%= row.packageInfo.fallbackVersionNo %></span>
+            <% } else { %>
+              <span style="color:<%= row.packageInfo.versionStatus === 'published' ? '#1a7a5a' : '#999' %>">
+                v<%= row.packageInfo.versionNo %> <%= row.packageInfo.versionStatus %>
+              </span>
+            <% } %>
+          <% } else if (row.project.ai_prompt_mode === 'package') { %>
+            <span style="color:#c62828">package（バージョン未設定）</span>
+          <% } else { %>
+            <span style="color:#aaa">custom</span>
+            <span title="後方互換モードです。プロンプトパッケージへの移行を推奨します。"
+              style="font-size:10px;background:#fff3e0;color:#b36200;border:1px solid #f0c890;border-radius:3px;padding:0 4px;margin-left:4px">要移行</span>
+          <% } %>
         </td>
         <td>
           <div class="actions-row">

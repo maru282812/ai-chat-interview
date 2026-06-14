@@ -1,0 +1,269 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const isNew = !locals.pkg || !pkg?.id;
+
+const CATEGORY_OPTIONS = [
+  { key: "",          label: "未分類" },
+  { key: "interview", label: "インタビュー" },
+  { key: "survey",    label: "アンケート" },
+  { key: "diary",     label: "日記" },
+  { key: "analysis",  label: "分析" },
+  { key: "chat",      label: "AIチャット" },
+  { key: "other",     label: "その他" },
+];
+
+const safeExistingPackages = Array.isArray(locals.existingPackages) ? existingPackages : [];
+
+// パッケージの用途（内部キーは維持。利用者向けに分かりやすい名称・説明へ）
+const PRESET_OPTIONS = [
+  { key: "standard",        label: "標準（汎用）",      desc: "幅広い用途に使える標準設定です。まずはこちらでOKです。" },
+  { key: "business",        label: "営業・リード獲得",  desc: "ビジネス層向け。フォーマルなトーンで、判断・比較に役立つ回答を引き出します。" },
+  { key: "website_hunter",  label: "サイト制作",        desc: "Webサイト制作のヒアリング向け。利用シーンや理由をていねいに引き出します。" },
+  { key: "interview",       label: "インタビュー",      desc: "インタビュー向け。感情や背景までじっくり引き出します。" },
+  { key: "animal_hospital", label: "動物病院",          desc: "動物病院・飼い主向け。やさしいトーンで、負担をかけずに伺います。" },
+];
+
+// 初期表示モード（深いリンク: 一覧/詳細の「Version追加」から ?mode=version&package_id= で遷移）
+const initialMode = (locals.initialMode === "version") ? "version" : "package";
+const initialPackageId = locals.initialPackageId || "";
+
+// JS 用パッケージデータ（コピー方法の活性/ラベル切替に使用）
+const PKG_DATA = safeExistingPackages.map(function (ep) {
+  return {
+    id: ep.id,
+    name: ep.name,
+    hasPublished: !!ep.published_version,
+    publishedVersionNo: ep.published_version ? ep.published_version.version_no : null,
+    versionsCount: ep.versions_count || 0,
+  };
+});
+%>
+
+<a href="/admin/prompt-packages" style="color:#60726f;font-size:13px">← パッケージ一覧</a>
+<h2><%= isNew ? '作成' : `編集: ${pkg.name}` %></h2>
+
+<% if (locals.error) { %><p style="color:red"><%= error %></p><% } %>
+
+<% if (isNew) { %>
+<%# ───────────────────── 新規作成: 二択統合画面 ───────────────────── %>
+
+<form class="card" method="post" action="<%= action %>" id="create-form">
+
+  <!-- 何を作成しますか？（二択） -->
+  <div style="margin-bottom:1.2rem">
+    <label style="font-weight:600;display:block;margin-bottom:8px">何を作成しますか？</label>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <label style="display:flex;align-items:flex-start;gap:8px;font-weight:normal;cursor:pointer;padding:12px 14px;border:1px solid #d8e3e0;border-radius:8px;background:#fff">
+        <input type="radio" name="create_type" value="package" <%= initialMode === "package" ? "checked" : "" %> style="margin-top:2px" onchange="onCreateTypeChange()" />
+        <span>
+          <strong>新しいパッケージ</strong>
+          <span style="display:block;font-size:12px;color:#60726f;margin-top:2px">
+            新しいプロンプトパッケージを作成します。作成すると <strong>Version 1（ドラフト）</strong> が自動で用意されます。
+          </span>
+        </span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:8px;font-weight:normal;cursor:pointer;padding:12px 14px;border:1px solid #d8e3e0;border-radius:8px;background:#fff <%= safeExistingPackages.length === 0 ? ';opacity:.55' : '' %>">
+        <input type="radio" name="create_type" value="version" <%= initialMode === "version" ? "checked" : "" %> style="margin-top:2px" onchange="onCreateTypeChange()" <%= safeExistingPackages.length === 0 ? "disabled" : "" %> />
+        <span>
+          <strong>既存パッケージの新しいバージョン</strong>
+          <% if (safeExistingPackages.length === 0) { %>
+            <span style="display:block;font-size:12px;color:#999;margin-top:2px">（まだパッケージがありません。先に新しいパッケージを作成してください）</span>
+          <% } else { %>
+            <span style="display:block;font-size:12px;color:#60726f;margin-top:2px">
+              既存のパッケージに新しいバージョンを追加します。公開中・最新版をコピーするか、空から作成できます。
+            </span>
+          <% } %>
+        </span>
+      </label>
+    </div>
+  </div>
+
+  <!-- ① 新しいパッケージ -->
+  <div id="package-fields">
+    <label>
+      パッケージ名 <span style="color:red">*</span>
+      <input type="text" name="name" id="pkg_name" value="<%= pkg?.name || '' %>" placeholder="例: 美容室サイト制作（標準）" />
+      <small style="color:#60726f;font-size:12px;display:block;margin-top:4px">URL用の識別子（slug）は名前から自動生成されます。意識する必要はありません。</small>
+    </label>
+
+    <label>
+      用途
+      <select name="preset" id="preset_select" style="margin-top:4px">
+        <% for (const p of PRESET_OPTIONS) { %>
+          <option value="<%= p.key %>"><%= p.label %></option>
+        <% } %>
+      </select>
+      <span class="helper-text" id="preset-desc" style="display:block;margin:6px 0 0;font-size:12px;color:#2a6a5a"><%= PRESET_OPTIONS[0].desc %></span>
+    </label>
+
+    <label>
+      カテゴリ
+      <select name="category">
+        <% for (const opt of CATEGORY_OPTIONS) { %>
+          <option value="<%= opt.key %>" <%= (pkg?.category === opt.key) ? 'selected' : (!pkg?.category && opt.key === '' ? 'selected' : '') %>><%= opt.label %></option>
+        <% } %>
+      </select>
+    </label>
+
+    <label>
+      説明（管理画面内のメモ）
+      <input type="text" name="description" value="<%= pkg?.description || '' %>" placeholder="例: 美容室向けのサイト制作ヒアリング" />
+    </label>
+  </div>
+
+  <!-- ② 既存パッケージの新しいバージョン -->
+  <div id="version-fields" style="display:none">
+    <label>
+      対象パッケージ <span style="color:red">*</span>
+      <select name="target_package_id" id="target_package_id" style="margin-top:4px" onchange="onTargetPackageChange()">
+        <option value="">選択してください</option>
+        <% for (const ep of safeExistingPackages) { %>
+          <option value="<%= ep.id %>" <%= initialPackageId === ep.id ? 'selected' : '' %>>
+            <%= ep.name %><%= ep.published_version ? ` — v${ep.published_version.version_no} 公開中` : '（未公開）' %>
+          </option>
+        <% } %>
+      </select>
+      <small style="color:#60726f;font-size:12px;display:block;margin-top:4px">名前を入力すると絞り込めます。</small>
+    </label>
+
+    <div style="margin-top:14px">
+      <label style="font-weight:600;display:block;margin-bottom:8px">Version 作成方法</label>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <label style="display:flex;align-items:flex-start;gap:8px;font-weight:normal;cursor:pointer;padding:10px 14px;border:1px solid #d8e3e0;border-radius:8px;background:#fff">
+          <input type="radio" name="copy_method" value="copy_published" checked style="margin-top:2px" id="cm_published" />
+          <span>
+            <strong>公開中Versionをコピー</strong> <span id="cm_published_no" style="font-size:12px;color:#1a7a5a"></span>
+            <span style="display:block;font-size:12px;color:#60726f;margin-top:2px">現在利用中の安定版を引き継ぎます。</span>
+          </span>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:8px;font-weight:normal;cursor:pointer;padding:10px 14px;border:1px solid #d8e3e0;border-radius:8px;background:#fff">
+          <input type="radio" name="copy_method" value="copy_latest" style="margin-top:2px" id="cm_latest" />
+          <span>
+            <strong>最新Versionをコピー</strong>
+            <span style="display:block;font-size:12px;color:#60726f;margin-top:2px">ドラフトを含む最新版を引き継ぎます。</span>
+          </span>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:8px;font-weight:normal;cursor:pointer;padding:10px 14px;border:1px solid #d8e3e0;border-radius:8px;background:#fff">
+          <input type="radio" name="copy_method" value="empty" style="margin-top:2px" id="cm_empty" />
+          <span>
+            <strong>空で作成</strong>
+            <span style="display:block;font-size:12px;color:#60726f;margin-top:2px">すべて未設定の状態から開始します。</span>
+          </span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:1rem;display:flex;gap:12px">
+    <button type="submit" class="btn" id="submit-btn">作成する →</button>
+    <a href="/admin/prompt-packages" style="color:#60726f;align-self:center">キャンセル</a>
+  </div>
+</form>
+
+<script>
+var PRESET_DESCS = <%- JSON.stringify(PRESET_OPTIONS.reduce(function(acc, p){ acc[p.key]=p.desc; return acc; }, {})) %>;
+var PKG_DATA = <%- JSON.stringify(PKG_DATA) %>;
+var PKG_MAP = PKG_DATA.reduce(function(acc, p){ acc[p.id] = p; return acc; }, {});
+
+// 用途の説明文を切り替え
+var presetSel = document.getElementById('preset_select');
+if (presetSel) {
+  presetSel.addEventListener('change', function() {
+    var d = document.getElementById('preset-desc');
+    if (d) d.textContent = PRESET_DESCS[presetSel.value] || '';
+  });
+}
+
+// 二択の切替（フィールド表示・必須・ボタン文言・送信先）
+function onCreateTypeChange() {
+  var checked = document.querySelector('[name="create_type"]:checked');
+  var type = checked ? checked.value : 'package';
+  var isVersion = type === 'version';
+  document.getElementById('package-fields').style.display = isVersion ? 'none' : '';
+  document.getElementById('version-fields').style.display = isVersion ? '' : 'none';
+  document.getElementById('pkg_name').required = !isVersion;
+  document.getElementById('target_package_id').required = isVersion;
+  document.getElementById('submit-btn').textContent = isVersion ? 'バージョンを作成して編集 →' : '作成する →';
+  if (isVersion) onTargetPackageChange();
+}
+
+// 選択パッケージに応じてコピー方法の活性/ラベルを切替
+function onTargetPackageChange() {
+  var sel = document.getElementById('target_package_id');
+  var info = sel ? PKG_MAP[sel.value] : null;
+  var cmPublished = document.getElementById('cm_published');
+  var cmLatest = document.getElementById('cm_latest');
+  var cmPublishedNo = document.getElementById('cm_published_no');
+
+  var hasPublished = !!(info && info.hasPublished);
+  var hasAny = !!(info && info.versionsCount > 0);
+
+  cmPublished.disabled = !hasPublished;
+  cmLatest.disabled = !hasAny;
+  cmPublishedNo.textContent = hasPublished ? ('（v' + info.publishedVersionNo + '）') : '';
+
+  // 無効化された選択肢が選ばれていたら有効な方へ寄せる
+  var current = document.querySelector('[name="copy_method"]:checked');
+  if (current && current.disabled) {
+    if (hasPublished) { cmPublished.checked = true; }
+    else if (hasAny)  { cmLatest.checked = true; }
+    else { document.getElementById('cm_empty').checked = true; }
+  }
+}
+
+// 送信時に action を切替（version の場合は対象パッケージの /versions/copy へ）
+document.getElementById('create-form').addEventListener('submit', function(e) {
+  var checked = document.querySelector('[name="create_type"]:checked');
+  if (checked && checked.value === 'version') {
+    var pkgId = document.getElementById('target_package_id').value;
+    if (!pkgId) { e.preventDefault(); alert('対象パッケージを選択してください。'); return; }
+    this.action = '/admin/prompt-packages/' + encodeURIComponent(pkgId) + '/versions/copy';
+  } else {
+    this.action = '/admin/prompt-packages';
+  }
+});
+
+onCreateTypeChange();
+</script>
+
+<% } else { %>
+<%# ───────────────────── 既存パッケージの編集 ───────────────────── %>
+
+<form class="card" method="post" action="<%= action %>">
+  <label>
+    パッケージ名 <span style="color:red">*</span>
+    <input type="text" name="name" value="<%= pkg?.name || '' %>" required placeholder="例: 美容室サイト制作（標準）" />
+  </label>
+
+  <label>
+    slug（識別子・表示のみ）
+    <small style="color:#60726f;font-size:12px;display:block;margin-bottom:4px">
+      パッケージ名から自動生成された識別子です。記録との整合性のため変更できません。
+    </small>
+    <input type="text" value="<%= pkg?.slug || '' %>" readonly disabled style="background:#f5f5f5;cursor:not-allowed" />
+  </label>
+
+  <label>
+    カテゴリ
+    <select name="category">
+      <% for (const opt of CATEGORY_OPTIONS) { %>
+        <option value="<%= opt.key %>" <%= (pkg?.category === opt.key) ? 'selected' : (!pkg?.category && opt.key === '' ? 'selected' : '') %>><%= opt.label %></option>
+      <% } %>
+    </select>
+  </label>
+
+  <label>
+    説明（管理画面内のメモ）
+    <input type="text" name="description" value="<%= pkg?.description || '' %>" placeholder="例: 美容室向けのサイト制作ヒアリング" />
+  </label>
+
+  <div style="margin-top:1rem;display:flex;gap:12px">
+    <button type="submit" class="btn">保存</button>
+    <a href="/admin/prompt-packages" style="color:#60726f;align-self:center">キャンセル</a>
+  </div>
+</form>
+
+<% } %>
+
+<%- include("../../partials/footer") %>

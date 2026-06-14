@@ -59,6 +59,24 @@ import { deliveryTemplateRepository } from "../repositories/deliveryTemplateRepo
 import type { DeliveryTemplateMutationInput, DeliveryScheduleType } from "../repositories/deliveryTemplateRepository";
 import { projectDeliveryService } from "../services/projectDeliveryService";
 import type { DisplayTagsParsed, VisibilityCondition } from "../types/questionSchema";
+import { normalizeAIPromptPolicy, resolveAIPromptPolicy, renderPromptPolicySections } from "../prompts/promptPolicies";
+import { BASE_PROMPT_TEMPLATES, describePlaceholder, describePolicyAxis, buildInitialTemplatesForPreset, PROMPT_PRESETS, summarizeTemplateDefinitions, type BasePromptKey, type PromptPresetKey } from "../prompts/basePromptTemplates";
+import { validatePromptTemplatePlaceholders, extractTemplatePlaceholders, resolveBasePromptTemplate, renderPromptTemplate } from "../prompts/promptTemplateRenderer";
+import { aiLogRepository } from "../repositories/aiLogRepository";
+import type { AIPromptPolicy, AIPromptTemplateMap } from "../types/domain";
+import {
+  validatePromptPackageVersionConfig,
+  validatePromptPackageVersionForPublish,
+  validatePromptPackageVersionForApply,
+  type PromptPackageValidationResult,
+} from "../services/promptPackageValidationService";
+import { buildPackageVersionPreview } from "../services/promptPackagePreviewService";
+import { runAdminToolPrompt } from "../services/aiService";
+import {
+  buildSurveyOptionsPrompt,
+  buildAdjustQuestionsPrompt,
+  buildGenerateFlowPrompt,
+} from "../prompts/adminPrompts";
 
 // USERプロファイル管理の簡易認証設定
 const UP_ADMIN_ID = "admin";
@@ -189,6 +207,8 @@ function resolveNoticeMessage(value: unknown): string | null {
       return "プロジェクトを削除しました。";
     case "project_archived":
       return "回答履歴があるため、プロジェクトを archived に変更しました。";
+    case "prompt_package_unset":
+      return "プロジェクトを作成しました。プロンプトパッケージが未選択のため、公開済みパッケージ・バージョンを選択してください（未選択のままだと既定プロンプトで動作します）。";
     default:
       return null;
   }
@@ -608,9 +628,13 @@ function renderProjectResearchForm(
     projectFormOverrides?: ProjectFormOverrides;
     errorMessage?: string | null;
     successMessage?: string | null;
+    templateErrors?: string[];
+    templateWarnings?: string[];
     statusCode?: number;
     screeningConditions?: import("../types/domain").ScreeningCondition[];
     screeningQuestions?: import("../types/domain").Question[];
+    promptPackages?: import("../repositories/promptPackageRepository").PromptPackage[];
+    packageFallbackWarning?: import("../repositories/promptPackageRepository").PromptPackageVersion | null;
   }
 ): void {
   const projectForm = buildProjectForm(input.project, input.projectFormOverrides ?? {});
@@ -625,12 +649,17 @@ function renderProjectResearchForm(
     action: input.action,
     errorMessage: input.errorMessage ?? null,
     successMessage: input.successMessage ?? null,
+    templateErrors: input.templateErrors ?? [],
+    templateWarnings: input.templateWarnings ?? [],
+    promptKeyDefs: buildPromptKeyDefs(),
     projectAiStateTemplates: getProjectAiStateTemplates(),
     projectForm,
     aiStateDisplay: projectForm.ai_state_summary,
     screeningConditions: allConditions,
     screeningQuestions: input.screeningQuestions ?? [],
-    profileConditionsState: parseProfileConditionsForRender(allConditions)
+    profileConditionsState: parseProfileConditionsForRender(allConditions),
+    promptPackages: input.promptPackages ?? [],
+    packageFallbackWarning: input.packageFallbackWarning ?? null,
   });
 }
 
@@ -646,6 +675,409 @@ function getProjectRenderErrorMessage(error: unknown, fallbackMessage: string): 
 
 function getProjectRenderStatusCode(error: unknown): number {
   return error instanceof HttpError ? error.statusCode : 500;
+}
+
+function parseAIPromptPolicyFromRequest(req: Request): AIPromptPolicy | null {
+  const raw = bodyString(req.body.ai_prompt_policy_json).trim();
+  if (!raw) return null;
+  try {
+    return normalizeAIPromptPolicy(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * フォームから ai_prompt_mode を読み取る。
+ * Phase G: フィールド未指定時は fallback を返す。新規作成は 'package'（Package First）、
+ * 更新は既存 mode を渡して維持する。
+ * Phase B: 既定 fallback を 'package' に（Package First。プロジェクト編集UIはラジオ撤去し hidden 送信）。
+ */
+function parseAIPromptModeFromRequest(
+  req: Request,
+  fallback: 'custom' | 'package' = 'package'
+): 'custom' | 'package' {
+  const val = bodyString(req.body.ai_prompt_mode);
+  if (val === 'package') return 'package';
+  if (val === 'custom') return 'custom';
+  return fallback;
+}
+
+/** Basic 認証ヘッダーから操作者（ユーザー名）を取得する。取得できない場合は null */
+function resolveAdminOperator(req: Request): string | null {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith("Basic ")) return null;
+  try {
+    const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+    const separator = decoded.indexOf(":");
+    return separator > 0 ? decoded.slice(0, separator) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * パッケージモード時に ai_prompt_package_version_id を検証して返す。
+ * - draft・不正 ID はエラー（適用不可）
+ * - archived は適用可能だが警告を返す（実行時に published へ fallback。fallback 先なしは強い警告）
+ * Phase C: blockIfUnselected=true（新規作成）かつ適用可能なパッケージが存在する場合、
+ *   未選択をエラーにして作成をブロックする（package 中心導線。選択可能パッケージが無い場合のみ許容）。
+ */
+async function resolvePackageVersionIdFromRequest(
+  req: Request,
+  mode: 'custom' | 'package',
+  options: { blockIfUnselected?: boolean } = {}
+): Promise<{ versionId: string | null; errorMessage: string | null; warnings: string[] }> {
+  if (mode !== 'package') {
+    return { versionId: null, errorMessage: null, warnings: [] };
+  }
+  const versionId = bodyString(req.body.ai_prompt_package_version_id).trim() || null;
+  if (!versionId) {
+    // Phase C: 適用可能（公開/アーカイブ）バージョンを持つパッケージが1つでもあれば、
+    // 新規作成時は選択必須にしてブロックする。
+    if (options.blockIfUnselected) {
+      try {
+        const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+        const pkgs = await promptPackageRepository.list().catch(() => []);
+        const hasSelectable = pkgs.some(
+          (p) => Array.isArray(p.selectable_versions) && p.selectable_versions.length > 0
+        );
+        if (hasSelectable) {
+          return {
+            versionId: null,
+            errorMessage: 'プロンプトパッケージ（公開バージョン）を選択してください。',
+            warnings: [],
+          };
+        }
+      } catch {
+        // 一覧取得に失敗した場合はブロックせず、従来の警告フローにフォールバックする
+      }
+    }
+    // 適用可能パッケージが無い場合は作成を妨げない（実行時は BASE/legacy にフォールバック）。
+    return {
+      versionId: null,
+      errorMessage: null,
+      warnings: ['プロンプトパッケージが未選択です。公開済みパッケージを割り当てるまでは既定プロンプトで動作します。'],
+    };
+  }
+  try {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const version = await promptPackageRepository.getVersionById(versionId);
+    const publishedVersion = version && version.status === 'archived'
+      ? await promptPackageRepository.getPublishedVersionByPackageId(version.package_id)
+      : null;
+    const validation = validatePromptPackageVersionForApply(version, publishedVersion);
+    if (validation.errors.length > 0) {
+      return { versionId: null, errorMessage: validation.errors[0] ?? null, warnings: validation.warnings };
+    }
+    return { versionId, errorMessage: null, warnings: validation.warnings };
+  } catch {
+    return { versionId: null, errorMessage: 'パッケージバージョンの検証に失敗しました。', warnings: [] };
+  }
+}
+
+/**
+ * プロジェクトのパッケージ適用が変わった際に変更ログ（FKなしスナップショット）を保存する。
+ * slug / version_no はその時点の値を逆引きして記録する。失敗してもメイン処理は止めない。
+ * updateProject（プロジェクト編集）と applyPackageToProject（パッケージ画面からの適用）で共用。
+ */
+async function recordPackageChangeLog(input: {
+  projectId: string;
+  oldVersionId: string | null;
+  newVersionId: string | null;
+  oldMode: string | null;
+  newMode: 'custom' | 'package';
+  changeReason: string | null;
+  changedBy: string | null;
+}): Promise<void> {
+  try {
+    const { projectPromptPackageChangeLogRepository } = await import("../repositories/projectPromptPackageChangeLogRepository");
+    const { promptPackageRepository: pkgRepo } = await import("../repositories/promptPackageRepository");
+    let oldSlug: string | null = null;
+    let oldVersionNo: number | null = null;
+    let newSlug: string | null = null;
+    let newVersionNo: number | null = null;
+    if (input.oldVersionId) {
+      const oldVer = await pkgRepo.getVersionById(input.oldVersionId).catch(() => null);
+      if (oldVer) {
+        const oldPkg = await pkgRepo.getById(oldVer.package_id).catch(() => null);
+        oldSlug = oldPkg?.slug ?? null;
+        oldVersionNo = oldVer.version_no;
+      }
+    }
+    if (input.newVersionId) {
+      const newVer = await pkgRepo.getVersionById(input.newVersionId).catch(() => null);
+      if (newVer) {
+        const newPkg = await pkgRepo.getById(newVer.package_id).catch(() => null);
+        newSlug = newPkg?.slug ?? null;
+        newVersionNo = newVer.version_no;
+      }
+    }
+    await projectPromptPackageChangeLogRepository.create({
+      projectId: input.projectId,
+      oldVersionId: input.oldVersionId,
+      newVersionId: input.newVersionId,
+      oldPackageSlug: oldSlug,
+      newPackageSlug: newSlug,
+      oldVersionNo,
+      newVersionNo,
+      oldMode: input.oldMode,
+      newMode: input.newMode,
+      changeReason: input.changeReason,
+      changedBy: input.changedBy,
+    });
+  } catch (logErr) {
+    logger.error("recordPackageChangeLog: failed", {
+      projectId: input.projectId,
+      error: logErr instanceof Error ? logErr.message : String(logErr),
+    });
+  }
+}
+
+/**
+ * パッケージ名から slug を自動生成する。利用者は slug を意識しない（Package First）。
+ * 英小文字・数字以外をハイフンに畳み、前後のハイフン/アンダースコアを除去。
+ * 日本語のみ等で生成できない場合は安定したフォールバック slug を返す。
+ */
+export function generatePackageSlug(name: string): string {
+  const base = (name || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "");
+  if (base) return base;
+  return `package-${Date.now().toString(36)}`;
+}
+
+/**
+ * 既存 slug 集合に対して衝突しない slug を返す（利用者は slug を意識しない）。
+ * base が未使用ならそのまま、衝突する場合は base-2, base-3, ... と連番を付ける。
+ */
+export function resolveUniquePackageSlug(base: string, existingSlugs: Iterable<string>): string {
+  const used = new Set(existingSlugs);
+  if (!used.has(base)) return base;
+  let n = 2;
+  while (used.has(`${base}-${n}`)) n += 1;
+  return `${base}-${n}`;
+}
+
+/**
+ * 「既存パッケージへの Version 追加」のコピー元バージョンを解決する純関数。
+ * - copy_published: status === 'published' のバージョン
+ * - copy_latest: version_no 降順の先頭（draft を含む最新）
+ * - empty（その他）: null（空で作成）
+ * versions は version_no 降順で渡される前提（promptPackageRepository.listVersions）。
+ */
+export function resolveVersionCopySource<T extends { status: string; version_no: number }>(
+  versions: T[],
+  copyMethod: string,
+): T | null {
+  if (copyMethod === "copy_published") return versions.find((v) => v.status === "published") ?? null;
+  if (copyMethod === "copy_latest") return versions[0] ?? null;
+  return null;
+}
+
+/**
+ * プロンプト移行レポートに必要なデータをまとめて取得する。
+ * promptMigrationReportPage（表示）と executePromptMigration（実行）で共用。
+ */
+async function loadPromptMigrationData(): Promise<{
+  report: import("../services/promptMigrationService").PromptMigrationReport;
+  projects: Awaited<ReturnType<typeof projectRepository.list>>;
+}> {
+  const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+  const { buildPromptMigrationReport } = await import("../services/promptMigrationService");
+  const projects = await projectRepository.list();
+
+  // package モードで参照されているバージョンのメタ情報を取得
+  const referencedVersionIds = [
+    ...new Set(
+      projects
+        .filter((p) => p.ai_prompt_mode === "package" && p.ai_prompt_package_version_id)
+        .map((p) => p.ai_prompt_package_version_id as string)
+    ),
+  ];
+  const versionMetaById = new Map<string, import("../services/promptMigrationService").ReferencedVersionMeta>();
+  const versions = await Promise.all(
+    referencedVersionIds.map((vid) => promptPackageRepository.getVersionById(vid).catch(() => null))
+  );
+  for (const v of versions) {
+    if (v) versionMetaById.set(v.id, { status: v.status, version_no: v.version_no, package_id: v.package_id });
+  }
+
+  // archived 参照の fallback 先（公開中バージョン番号）を取得
+  const archivedPackageIds = [
+    ...new Set(
+      Array.from(versionMetaById.values())
+        .filter((m) => m.status === "archived")
+        .map((m) => m.package_id)
+    ),
+  ];
+  const publishedVersionNoByPackage = new Map<string, number>();
+  const publishedVersions = await Promise.all(
+    archivedPackageIds.map((pid) => promptPackageRepository.getPublishedVersionByPackageId(pid).catch(() => null))
+  );
+  archivedPackageIds.forEach((pid, i) => {
+    const pv = publishedVersions[i];
+    if (pv) publishedVersionNoByPackage.set(pid, pv.version_no);
+  });
+
+  const report = buildPromptMigrationReport({
+    projects: projects.map((p) => ({
+      id: p.id,
+      name: p.name,
+      status: p.status,
+      ai_prompt_mode: p.ai_prompt_mode,
+      ai_prompt_package_version_id: p.ai_prompt_package_version_id,
+      ai_prompt_policy_json: p.ai_prompt_policy_json,
+      ai_prompt_templates_json: p.ai_prompt_templates_json,
+    })),
+    versionMetaById,
+    publishedVersionNoByPackage,
+  });
+
+  return { report, projects };
+}
+
+/** body の JSON 文字列をオブジェクトとしてパース（配列・非オブジェクト・パース失敗は null） */
+function parseOptionalJsonObject(raw: string): Record<string, unknown> | null {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function parseAIPromptTemplatesFromRequest(req: Request): AIPromptTemplateMap | null {
+  const raw = bodyString(req.body.ai_prompt_templates_json).trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    return parsed as AIPromptTemplateMap;
+  } catch {
+    return null;
+  }
+}
+
+interface PromptValidationResult {
+  errors: string[];
+  warnings: string[];
+}
+
+/** 保存済み ai_prompt_templates_json を検証してエラー・警告を返す */
+function validateAIPromptTemplates(templates: AIPromptTemplateMap | null | undefined): PromptValidationResult {
+  if (!templates) return { errors: [], warnings: [] };
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  for (const [key, entry] of Object.entries(templates)) {
+    if (!entry) continue;
+    const def = BASE_PROMPT_TEMPLATES[key as keyof typeof BASE_PROMPT_TEMPLATES];
+
+    // 未知のキー
+    if (!def) {
+      warnings.push(`[${key}] 未定義のプロンプトキーです（無視されます）`);
+      continue;
+    }
+
+    const isEnabled = entry.enabled !== false;
+    const hasTemplate = typeof entry.template === "string" && entry.template.trim().length > 0;
+
+    // enabled=true なのにテンプレートが空（空文字のみ）
+    if (isEnabled && typeof entry.template === "string" && !entry.template.trim() && entry.template.length > 0) {
+      errors.push(`[${key}] 有効にされていますがテンプレートが空白のみです`);
+    }
+
+    if (!hasTemplate) continue;
+
+    const template = entry.template as string;
+    const used = extractTemplatePlaceholders(template);
+    const allowed = new Set(def.allowedPlaceholders);
+
+    // 不正プレースホルダー → エラー
+    const unknownKeys = used.filter(k => !allowed.has(k));
+    if (unknownKeys.length > 0) {
+      errors.push(`[${key}] 使用できないプレースホルダー: ${unknownKeys.map(k => `{{${k}}}`).join(", ")}`);
+    }
+
+    // 空テンプレート（enabled=true で template キーはあるが内容が空）はスキップ済み
+  }
+
+  return { errors, warnings };
+}
+
+/** 管理画面表示用: プロンプトキーごとの許可プレースホルダー情報 */
+function buildPromptKeyDefs() {
+  return Object.entries(BASE_PROMPT_TEMPLATES).map(([key, def]) => ({
+    key,
+    label: def.label,
+    description: def.description,
+    callTiming: def.callTiming,
+    impactScope: def.impactScope,
+    outputFormat: def.outputFormat,
+    baseTemplate: def.template,
+    usedPolicies: def.usedPolicies.map(describePolicyAxis),
+    allowedPlaceholders: def.allowedPlaceholders.map(ph => ({
+      key: ph,
+      description: describePlaceholder(ph)
+    }))
+  }));
+}
+
+/**
+ * Phase D: パッケージバージョンの設定（templates_json / policy_json）から
+ * 1キーのプロンプトをレンダリングする。プロジェクトを経由しない。
+ * - templateOverride を渡すと該当キーの本文を上書き（version-form の未保存ドラフト用）
+ * - sampleValues でプレースホルダーを埋める（未指定はラベル付きサンプル）
+ */
+function renderPromptForPackageConfig(input: {
+  promptKey: BasePromptKey;
+  templates: AIPromptTemplateMap | null;
+  policy: AIPromptPolicy | null;
+  templateOverride?: string | null;
+  sampleValues?: Record<string, string>;
+}): { template: string; rendered: string; isCustom: boolean; policy: AIPromptPolicy } {
+  const def = BASE_PROMPT_TEMPLATES[input.promptKey];
+  const sampleValues = input.sampleValues ?? {};
+
+  // 実効テンプレート: override > version の該当キー > BASE フォールバック
+  const override = (input.templateOverride ?? "").trim();
+  const effectiveTemplates: AIPromptTemplateMap = { ...(input.templates ?? {}) };
+  if (override) {
+    effectiveTemplates[input.promptKey] = { enabled: true, template: override };
+  }
+
+  // pseudo-project（解決関数は ai_prompt_*_json のみ参照する）
+  const pseudoProject = {
+    ai_prompt_templates_json: effectiveTemplates,
+    ai_prompt_policy_json: input.policy ?? null,
+  } as unknown as Project;
+
+  const template = resolveBasePromptTemplate(pseudoProject, input.promptKey);
+  const isCustom = template !== def.template;
+
+  const context: Record<string, string> = {};
+  for (const ph of def.allowedPlaceholders) {
+    context[ph] = sampleValues[ph] ?? `【${describePlaceholder(ph)}】`;
+  }
+  if (def.allowedPlaceholders.includes("sharedSections")) {
+    const purpose = input.promptKey.includes("Probe") ? "probe"
+      : input.promptKey.includes("Analysis") || input.promptKey.includes("Summary") ? "analysis"
+      : "general";
+    context["sharedSections"] = renderPromptPolicySections(pseudoProject, purpose) ?? "";
+  }
+
+  return {
+    template,
+    rendered: renderPromptTemplate(template, context),
+    isCustom,
+    policy: resolveAIPromptPolicy(pseudoProject),
+  };
 }
 
 function buildProjectAiStateFromRequest(input: {
@@ -1860,6 +2292,12 @@ export const adminController = {
       const maxProbeDepth = Math.max(0, parseOptionalInteger(req.body.max_probe_depth) ?? (deepProbeEnabled ? 1 : 0));
       const displayStyle = parseProjectDisplayStyle(bodyString(req.body.display_style));
       const aiStateTemplateKey = null;
+      // Phase G: 新規プロジェクトの既定モードは package（Package First）
+      const aiPromptMode = parseAIPromptModeFromRequest(req, 'package');
+      // Phase C: 新規作成は package 中心導線。選択可能パッケージがあるのに未選択ならブロック。
+      const { versionId: packageVersionId, errorMessage: pkgError, warnings: pkgWarnings } =
+        await resolvePackageVersionIdFromRequest(req, aiPromptMode, { blockIfUnselected: true });
+      if (pkgError) throw new HttpError(400, pkgError);
 
       const created = await projectRepository.create({
         name,
@@ -1892,7 +2330,14 @@ export const adminController = {
         }),
         ai_state_generated_at: new Date().toISOString(),
         screening_config: buildScreeningConfig(req),
-        screening_last_question_order: null
+        screening_last_question_order: null,
+        // Phase B: プロジェクト個別の policy / override 編集UIは撤去。プロンプトの真実はパッケージ側。
+        ai_prompt_policy_json: null,
+        // Phase 6-A: テンプレート編集はパッケージ画面に集約（プロジェクト編集UIから撤去）
+        ai_prompt_templates_json: null,
+        ai_prompt_mode: aiPromptMode,
+        ai_prompt_package_version_id: packageVersionId,
+        ai_prompt_overrides_json: null,
       });
       try {
         const { screeningConditionRepository: scRepo } = await import("../repositories/screeningConditionRepository");
@@ -1903,15 +2348,24 @@ export const adminController = {
           error: screeningError instanceof Error ? screeningError.message : String(screeningError)
         });
       }
+      // Phase G: package モードでバージョン未選択のまま作成された場合は、
+      // 編集画面（警告パネル＋パッケージ選択あり）へ誘導して明確に警告する
+      if (aiPromptMode === 'package' && !packageVersionId && pkgWarnings.length > 0) {
+        res.redirect(`/admin/projects/${created.id}/edit?notice=prompt_package_unset#ai-prompt-section`);
+        return;
+      }
       res.redirect(`/admin/projects/${created.id}/questions`);
     } catch (error) {
+      const { promptPackageRepository } = await import("../repositories/promptPackageRepository").catch(() => ({ promptPackageRepository: { list: async () => [] } }));
+      const promptPackages = await promptPackageRepository.list().catch(() => []);
       renderProjectResearchForm(res, {
         title: "新規プロジェクト作成",
         project: null,
         action: "/admin/projects",
         projectFormOverrides: buildProjectFormOverridesFromRequest(req),
         errorMessage: getProjectRenderErrorMessage(error, "プロジェクトの作成に失敗しました。"),
-        statusCode: getProjectRenderStatusCode(error)
+        statusCode: getProjectRenderStatusCode(error),
+        promptPackages,
       });
     }
   },
@@ -1919,18 +2373,37 @@ export const adminController = {
   async editProject(req: Request, res: Response): Promise<void> {
     const project = await projectRepository.getById(routeParam(req, "projectId"));
     const { screeningConditionRepository } = await import("../repositories/screeningConditionRepository");
-    const [conditions, allQuestions] = await Promise.all([
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const [conditions, allQuestions, promptPackages] = await Promise.all([
       screeningConditionRepository.listByProject(project.id),
-      questionRepository.listByProject(project.id, { includeHidden: false })
+      questionRepository.listByProject(project.id, { includeHidden: false }),
+      promptPackageRepository.list(),
     ]);
     const screeningQuestions = allQuestions.filter(q => q.question_role === "screening");
+    const validation = validateAIPromptTemplates(
+      project.ai_prompt_templates_json as import("../types/domain").AIPromptTemplateMap | null
+    );
+
+    // archived バージョンを使用中かチェック → fallback 先バージョンを警告として渡す
+    let packageFallbackWarning: import("../repositories/promptPackageRepository").PromptPackageVersion | null = null;
+    if (project.ai_prompt_mode === "package" && project.ai_prompt_package_version_id) {
+      const currentVersion = await promptPackageRepository.getVersionById(project.ai_prompt_package_version_id);
+      if (currentVersion?.status === "archived") {
+        packageFallbackWarning = await promptPackageRepository.getPublishedVersionByPackageId(currentVersion.package_id);
+      }
+    }
+
     renderProjectResearchForm(res, {
       title: "プロジェクト編集",
       project,
       action: `/admin/projects/${project.id}`,
       successMessage: resolveNoticeMessage(req.query.notice),
+      templateErrors: validation.errors,
+      templateWarnings: validation.warnings,
       screeningConditions: conditions,
-      screeningQuestions
+      screeningQuestions,
+      promptPackages,
+      packageFallbackWarning,
     });
   },
 
@@ -1946,6 +2419,11 @@ export const adminController = {
       const maxProbeDepth = Math.max(0, parseOptionalInteger(req.body.max_probe_depth) ?? (deepProbeEnabled ? 1 : 0));
       const displayStyle = parseProjectDisplayStyle(bodyString(req.body.display_style));
       const aiStateTemplateKey = existing.ai_state_template_key ?? null;
+      // Phase G: 更新時はフィールド未指定なら既存モードを維持
+      const aiPromptMode = parseAIPromptModeFromRequest(req, existing.ai_prompt_mode);
+      const { versionId: packageVersionId, errorMessage: pkgError } =
+        await resolvePackageVersionIdFromRequest(req, aiPromptMode);
+      if (pkgError) throw new HttpError(400, pkgError);
       const aiStateJson = buildProjectAiStateFromRequest({
         req,
         fallbackProject: {
@@ -1988,7 +2466,33 @@ export const adminController = {
         max_respondents: parseOptionalInteger(req.body.max_respondents) ?? null,
         delivery_enabled: req.body.delivery_enabled === "true" || req.body.delivery_enabled === "on",
         delivery_type: (bodyString(req.body.delivery_type) || null) as import("../types/domain").DeliveryType | null,
+        // Phase B: プロジェクト個別の policy / override 編集UIは撤去。編集はせず既存値を保全する
+        // （legacy custom プロジェクトのデータ保護。真実はパッケージバージョン側へ寄せる）。
+        ai_prompt_policy_json: existing.ai_prompt_policy_json ?? null,
+        // Phase 6-A: テンプレート編集UIは撤去済み。custom モード継続プロジェクトの
+        // 既存テンプレート設定を壊さないよう、保存済みの値をそのまま保持する
+        ai_prompt_templates_json: existing.ai_prompt_templates_json ?? null,
+        ai_prompt_mode: aiPromptMode,
+        ai_prompt_package_version_id: packageVersionId,
+        ai_prompt_overrides_json: existing.ai_prompt_overrides_json ?? null,
       });
+
+      // パッケージ設定が変更された場合に変更ログを保存
+      const packageChanged =
+        existing.ai_prompt_mode !== aiPromptMode ||
+        existing.ai_prompt_package_version_id !== packageVersionId;
+      if (packageChanged) {
+        await recordPackageChangeLog({
+          projectId,
+          oldVersionId: existing.ai_prompt_package_version_id ?? null,
+          newVersionId: packageVersionId,
+          oldMode: existing.ai_prompt_mode ?? null,
+          newMode: aiPromptMode,
+          changeReason: bodyString(req.body.package_change_reason) || null,
+          changedBy: resolveAdminOperator(req),
+        });
+      }
+
       try {
         const { screeningConditionRepository: scRepo } = await import("../repositories/screeningConditionRepository");
         await scRepo.replaceProfileConditions(projectId, buildProfileConditionsFromRequest(req));
@@ -2002,14 +2506,18 @@ export const adminController = {
     } catch (error) {
       let updateErrorConditions: import("../types/domain").ScreeningCondition[] = [];
       let updateErrorScreeningQuestions: import("../types/domain").Question[] = [];
+      let updateErrorPromptPackages: import("../repositories/promptPackageRepository").PromptPackage[] = [];
       try {
         const { screeningConditionRepository } = await import("../repositories/screeningConditionRepository");
-        const [conds, allQs] = await Promise.all([
+        const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+        const [conds, allQs, pkgs] = await Promise.all([
           screeningConditionRepository.listByProject(projectId),
-          questionRepository.listByProject(projectId, { includeHidden: false })
+          questionRepository.listByProject(projectId, { includeHidden: false }),
+          promptPackageRepository.list(),
         ]);
         updateErrorConditions = conds;
         updateErrorScreeningQuestions = allQs.filter(q => q.question_role === "screening");
+        updateErrorPromptPackages = pkgs;
       } catch {
         // DB 未準備の場合は空配列のまま
       }
@@ -2021,7 +2529,8 @@ export const adminController = {
         errorMessage: getProjectRenderErrorMessage(error, "プロジェクトの更新に失敗しました。"),
         statusCode: getProjectRenderStatusCode(error),
         screeningConditions: updateErrorConditions,
-        screeningQuestions: updateErrorScreeningQuestions
+        screeningQuestions: updateErrorScreeningQuestions,
+        promptPackages: updateErrorPromptPackages,
       });
     }
   },
@@ -2146,6 +2655,40 @@ export const adminController = {
       successMessage: resolveNoticeMessage(req.query.notice),
       prevQuestion,
       nextQuestion,
+    });
+  },
+
+  async projectPromptPackageHistoryPage(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const { projectPromptPackageChangeLogRepository } = await import("../repositories/projectPromptPackageChangeLogRepository");
+    const [project, logs] = await Promise.all([
+      projectRepository.getById(projectId),
+      projectPromptPackageChangeLogRepository.listByProject(projectId),
+    ]);
+
+    // Phase 5-C: 各ログのバージョンの現在ステータスを付与（ログはスナップショットのため status は現時点の値）
+    const versionStatusById = new Map<string, string>();
+    const versionIds = [...new Set(
+      logs.flatMap((l) => [l.old_prompt_package_version_id, l.new_prompt_package_version_id])
+        .filter((id): id is string => !!id)
+    )];
+    if (versionIds.length > 0) {
+      try {
+        const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+        await Promise.all(versionIds.map(async (id) => {
+          const v = await promptPackageRepository.getVersionById(id).catch(() => null);
+          if (v) versionStatusById.set(id, v.status);
+        }));
+      } catch {
+        // ステータスが取得できなくても履歴自体は表示する
+      }
+    }
+
+    res.render("admin/projects/prompt-package-history", {
+      title: `AIプロンプト変更履歴: ${project.name}`,
+      project,
+      logs,
+      versionStatusById,
     });
   },
 
@@ -2917,12 +3460,6 @@ export const adminController = {
     const MATRIX_TYPES_SET = new Set(["matrix_single", "matrix_multi", "matrix_mixed"]);
     const MULTI_CHOICE_SET = new Set(["multi_choice"]);
 
-    const systemPrompt = [
-      "あなたはアンケート設計の専門家です。",
-      "必ず日本語で出力してください。",
-      "JSONを求められた場合はJSON以外を一切出力しないでください。",
-    ].join("\n");
-
     // 回答形式に応じたプロンプトとレスポンス形式を構築
     let typeInstruction: string;
     let responseFormat: string;
@@ -2987,34 +3524,28 @@ export const adminController = {
       }, null, 2);
     }
 
-    const userPrompt = `以下のアンケート設問に対して、回答設定の候補を提案してください。
+    // プロジェクトを取得してテンプレート解決に使用する
+    const projectForTemplate = existing.project_id
+      ? await projectRepository.getById(existing.project_id).catch(() => null)
+      : null;
 
-設問文: 「${questionText}」
-現在の回答形式: ${currentQuestionType}
-
-${typeInstruction}
-
-注意:
-- 選択肢・行・列は実用的で一般的なアンケートで使われる粒度にしてください
-- warnings は注意点がある場合のみ記述してください（通常は空配列）
-
-以下のJSON形式のみで回答してください（前後に余分な文字を入れないこと）:
-${responseFormat}`;
+    const built = buildSurveyOptionsPrompt(
+      { questionText, currentQuestionType, typeInstruction, responseFormat },
+      projectForTemplate
+    );
 
     try {
-      const { openai } = await import("../config/openai");
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
+      const raw = await runAdminToolPrompt({
+        purpose: "survey_options_suggestion",
+        systemPrompt: built.systemPrompt,
+        userPrompt: built.userPrompt,
+        maxTokens: 600,
         temperature: 0.3,
-        max_tokens: 600,
-        response_format: { type: "json_object" },
+        promptKey: built.promptKey,
+        templateMode: built.templateMode,
+        renderedPrompt: built.renderedPrompt,
       });
 
-      const raw = response.choices[0]?.message?.content ?? "{}";
       let suggestions: Record<string, unknown>;
       try {
         suggestions = JSON.parse(raw);
@@ -3167,40 +3698,27 @@ ${responseFormat}`;
     > = {};
 
     try {
-      const { openai } = await import("../config/openai");
-      const systemPrompt = [
-        "あなたはアンケート設計専門家です。",
-        "参照元案件の設問テキストを、新規案件の「プロジェクト名」と「調査目的」に合わせて自然に書き換えてください。",
-        "設問の構造・順番・回答形式・分岐設定は変更しないこと。",
-        "必ずJSON形式のみで回答すること。日本語で出力すること。",
-      ].join("\n");
+      const built = buildAdjustQuestionsPrompt(
+        {
+          targetProjectName: targetProject.name,
+          targetProjectObjective: targetProject.objective ?? "未設定",
+          sourceProjectName: sourceProject.name,
+          sourceProjectObjective: sourceProject.objective ?? "未設定",
+          questionsJson: JSON.stringify(questionsForAI, null, 2),
+        },
+        targetProject
+      );
 
-      const userPrompt = `新規案件:
-- プロジェクト名: ${targetProject.name}
-- 調査目的: ${targetProject.objective ?? "未設定"}
-
-参照元案件:
-- プロジェクト名: ${sourceProject.name}
-- 調査目的: ${sourceProject.objective ?? "未設定"}
-
-以下の設問リストを新規案件向けに修正し、同じindex配列で返してください:
-${JSON.stringify(questionsForAI, null, 2)}
-
-以下のJSON形式のみで回答:
-{"adjusted_questions":[{"index":0,"question_text":"修正後の設問文","options":["選択肢1"],"research_goal":"修正後のgoal"}]}`;
-
-      const aiResp = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
+      const raw = await runAdminToolPrompt({
+        purpose: "flow_import_adjust",
+        systemPrompt: built.systemPrompt,
+        userPrompt: built.userPrompt,
+        maxTokens: 4000,
         temperature: 0.3,
-        max_tokens: 4000,
-        response_format: { type: "json_object" },
+        promptKey: built.promptKey,
+        templateMode: built.templateMode,
+        renderedPrompt: built.renderedPrompt,
       });
-
-      const raw = aiResp.choices[0]?.message?.content ?? "{}";
       const parsed = JSON.parse(raw) as Record<string, unknown>;
       const list = (parsed.adjusted_questions ?? []) as Array<Record<string, unknown>>;
       for (const item of list) {
@@ -3363,56 +3881,24 @@ ${JSON.stringify(questionsForAI, null, 2)}
       return;
     }
 
-    const systemPrompt = [
-      "あなたはアンケート・インタビュー設計専門家です。",
-      "プロジェクト名と調査目的に沿った実用的な設問フローをJSON形式で生成してください。",
-      "設問は調査として成立する自然な流れで構成し、8〜15問程度にしてください。",
-      "日本語で出力し、必ずJSON形式のみで回答してください。",
-    ].join("\n");
-
-    const userPrompt = `プロジェクト名: ${project.name}
-調査目的: ${project.objective ?? ""}
-
-以下のJSON形式でフロー設計を生成してください:
-{
-  "questions": [
-    {
-      "question_text": "設問文",
-      "question_type": "single_choice|multi_choice|free_text_short|free_text_long|numeric",
-      "question_role": "screening|main|attribute|free_comment",
-      "is_required": true,
-      "ai_probe_enabled": false,
-      "research_goal": "この設問で知りたいこと（必須）",
-      "options": ["選択肢1", "選択肢2"]
-    }
-  ]
-}
-
-回答形式:
-- single_choice: 単一選択（options必須）
-- multi_choice: 複数選択（options必須）
-- free_text_short: 短文自由記述
-- free_text_long: 長文自由記述
-- numeric: 数値入力
-
-注意: options は選択型のみ設定。research_goal は全設問に設定すること。`;
+    const built = buildGenerateFlowPrompt(
+      { projectName: project.name, objective: project.objective ?? "" },
+      project
+    );
 
     let generatedList: Array<Record<string, unknown>> = [];
 
     try {
-      const { openai } = await import("../config/openai");
-      const aiResp = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
+      const raw = await runAdminToolPrompt({
+        purpose: "flow_generation",
+        systemPrompt: built.systemPrompt,
+        userPrompt: built.userPrompt,
+        maxTokens: 4000,
         temperature: 0.7,
-        max_tokens: 4000,
-        response_format: { type: "json_object" },
+        promptKey: built.promptKey,
+        templateMode: built.templateMode,
+        renderedPrompt: built.renderedPrompt,
       });
-
-      const raw = aiResp.choices[0]?.message?.content ?? "{}";
       const parsed = JSON.parse(raw) as Record<string, unknown>;
       generatedList = (parsed.questions ?? []) as Array<Record<string, unknown>>;
     } catch (e: unknown) {
@@ -5334,6 +5820,294 @@ ${JSON.stringify(questionsForAI, null, 2)}
     });
   },
 
+  // ── 交換申請管理 ────────────────────────────────────────────────
+
+  async exchangeRequestsPage(req: Request, res: Response): Promise<void> {
+    const { pointExchangeRepository } = await import("../repositories/pointExchangeRepository");
+    const statusFilter = typeof req.query.status === "string" ? req.query.status : "all";
+    const page  = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
+    const limit = 50;
+
+    const [allRequests, monthlyStats, flaggedUsers] = await Promise.all([
+      pointExchangeRepository.listAll(500, 0),
+      pointExchangeRepository.getMonthlyStats(),
+      pointExchangeRepository.getFlaggedUsers(30, 3),
+    ]);
+
+    const filtered = statusFilter === "all"
+      ? allRequests
+      : allRequests.filter(r => r.status === statusFilter);
+    const total   = filtered.length;
+    const requests = filtered.slice((page - 1) * limit, page * limit);
+
+    const counts = {
+      all:       allRequests.length,
+      pending:   allRequests.filter(r => r.status === "pending").length,
+      approved:  allRequests.filter(r => r.status === "approved").length,
+      fulfilled: allRequests.filter(r => r.status === "fulfilled").length,
+      rejected:  allRequests.filter(r => r.status === "rejected").length,
+      canceled:  allRequests.filter(r => r.status === "canceled").length,
+    };
+
+    const flaggedUserIds = new Set(flaggedUsers.map(u => u.line_user_id));
+
+    res.render("admin/exchange-requests/index", {
+      title: "交換申請管理",
+      requests,
+      counts,
+      statusFilter,
+      total,
+      page,
+      limit,
+      monthlyStats,
+      flaggedUsers,
+      flaggedUserIds: [...flaggedUserIds],
+    });
+  },
+
+  async approveExchange(req: Request, res: Response): Promise<void> {
+    const { pointExchangeRepository } = await import("../repositories/pointExchangeRepository");
+    const { pointExchangeAuditLogRepository } = await import("../repositories/pointExchangeAuditLogRepository");
+    const { pointExchangeService } = await import("../services/pointExchangeService");
+    const id = routeParam(req, "id");
+    await pointExchangeRepository.approve(id, "admin");
+    void pointExchangeAuditLogRepository.create({ requestId: id, action: "approved", adminId: "admin" });
+    void pointExchangeService.sendApprovedNotification(id);
+    res.redirect("/admin/exchange-requests?status=approved");
+  },
+
+  async rejectExchange(req: Request, res: Response): Promise<void> {
+    const { pointExchangeService } = await import("../services/pointExchangeService");
+    const { pointExchangeAuditLogRepository } = await import("../repositories/pointExchangeAuditLogRepository");
+    const id     = routeParam(req, "id");
+    const reason = typeof req.body.reason === "string" ? req.body.reason.trim() : "管理者による却下";
+    await pointExchangeService.rejectExchange(id, "admin", reason);
+    void pointExchangeAuditLogRepository.create({ requestId: id, action: "rejected", adminId: "admin", detail: { reason } });
+    res.redirect("/admin/exchange-requests?status=rejected");
+  },
+
+  async fulfillExchange(req: Request, res: Response): Promise<void> {
+    const { pointExchangeRepository } = await import("../repositories/pointExchangeRepository");
+    const id      = routeParam(req, "id");
+    const adminId = (req as Request & { user?: { id?: string } }).user?.id ?? "admin";
+    const giftUrl      = typeof req.body.gift_url      === "string" ? req.body.gift_url.trim()      : "";
+    const giftProvider = typeof req.body.gift_provider === "string" ? req.body.gift_provider.trim() : "manual";
+    const giftCode     = typeof req.body.gift_code     === "string" ? req.body.gift_code.trim()     : undefined;
+    const expiresAt    = typeof req.body.expires_at    === "string" ? req.body.expires_at.trim()    : undefined;
+    const adminMemo    = typeof req.body.admin_memo    === "string" ? req.body.admin_memo.trim()     : undefined;
+
+    if (!giftUrl) throw new HttpError(400, "gift_url は必須です");
+
+    const { pointExchangeService } = await import("../services/pointExchangeService");
+    const { pointExchangeAuditLogRepository } = await import("../repositories/pointExchangeAuditLogRepository");
+    await pointExchangeRepository.fulfill(id, adminId, {
+      giftProvider,
+      giftCode:    giftCode    || undefined,
+      giftUrl,
+      expiresAt:   expiresAt   || undefined,
+      adminMemo:   adminMemo   || undefined,
+    });
+    void pointExchangeAuditLogRepository.create({
+      requestId: id,
+      action:    "fulfilled",
+      adminId:   "admin",
+      detail:    { gift_provider: giftProvider, expires_at: expiresAt || null },
+    });
+    void pointExchangeService.sendFulfilledNotification(id);
+
+    res.redirect("/admin/exchange-requests?status=fulfilled");
+  },
+
+  async resendExchangeNotification(req: Request, res: Response): Promise<void> {
+    const { pointExchangeRepository } = await import("../repositories/pointExchangeRepository");
+    const { pointExchangeService } = await import("../services/pointExchangeService");
+    const id = routeParam(req, "id");
+    const request = await pointExchangeRepository.getById(id);
+    if (!request) throw new HttpError(404, "申請が見つかりません");
+
+    if (request.status === "approved") {
+      await pointExchangeService.sendApprovedNotification(id);
+    } else if (request.status === "fulfilled") {
+      await pointExchangeService.sendFulfilledNotification(id);
+    } else {
+      throw new HttpError(400, `通知再送できないステータスです（現在: ${request.status}）`);
+    }
+
+    res.redirect("/admin/exchange-requests");
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // プロンプトプレビュー API
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async apiPreviewPrompt(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const rawProject = await projectRepository.getById(projectId);
+    const promptKey = bodyString(req.body.prompt_key) as BasePromptKey;
+
+    if (!BASE_PROMPT_TEMPLATES[promptKey]) {
+      res.status(400).json({ error: `不正なpromptKey: ${promptKey}` });
+      return;
+    }
+
+    // Phase 6: パッケージ + 個別オーバーライド適用後の実効設定でプレビューする
+    const { resolveEffectiveProjectConfig } = await import("../services/aiService");
+    const { effectiveProject: project } = await resolveEffectiveProjectConfig(rawProject);
+
+    const def = BASE_PROMPT_TEMPLATES[promptKey];
+    const template = resolveBasePromptTemplate(project, promptKey);
+    const isCustom = template !== def.template;
+
+    // 各プレースホルダーをラベル付きサンプル値で埋める
+    const context: Record<string, string> = {};
+    for (const ph of def.allowedPlaceholders) {
+      context[ph] = `【${describePlaceholder(ph)}】`;
+    }
+
+    // sharedSections は実際のポリシーを適用する
+    if (def.allowedPlaceholders.includes("sharedSections")) {
+      const purpose = promptKey.includes("Probe") ? "probe"
+        : promptKey.includes("Analysis") || promptKey.includes("Summary") ? "analysis"
+        : "general";
+      context["sharedSections"] = renderPromptPolicySections(project, purpose) ?? "";
+    }
+
+    const rendered = renderPromptTemplate(template, context);
+    const policy = resolveAIPromptPolicy(project);
+
+    res.json({
+      promptKey,
+      label: def.label,
+      templateMode: isCustom ? "custom_template" : "base_template",
+      template,
+      rendered,
+      policy,
+      allowedPlaceholders: def.allowedPlaceholders.map(ph => ({
+        key: ph,
+        description: describePlaceholder(ph)
+      }))
+    });
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // プロンプトテスト実行 API
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async apiTestRunPrompt(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const rawProject = await projectRepository.getById(projectId);
+    const promptKey = bodyString(req.body.prompt_key) as BasePromptKey;
+
+    if (!BASE_PROMPT_TEMPLATES[promptKey]) {
+      res.status(400).json({ error: `不正なpromptKey: ${promptKey}` });
+      return;
+    }
+
+    // Phase 6: パッケージ + 個別オーバーライド適用後の実効設定でテストする
+    const { resolveEffectiveProjectConfig } = await import("../services/aiService");
+    const { effectiveProject: project } = await resolveEffectiveProjectConfig(rawProject);
+
+    const def = BASE_PROMPT_TEMPLATES[promptKey];
+    const template = resolveBasePromptTemplate(project, promptKey);
+    const isCustom = template !== def.template;
+
+    // リクエストから提供されたサンプル値を取得
+    const sampleValues: Record<string, string> = {};
+    try {
+      const raw = bodyString(req.body.sample_values);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === "string") sampleValues[k] = v;
+          }
+        }
+      }
+    } catch {
+      // 無視: サンプル値が無効でもデフォルトで続行
+    }
+
+    // プレースホルダーを埋める（提供値 > ラベル付きサンプル値）
+    const context: Record<string, string> = {};
+    for (const ph of def.allowedPlaceholders) {
+      context[ph] = sampleValues[ph] ?? `【${describePlaceholder(ph)}】`;
+    }
+
+    // sharedSections は実際のポリシーを適用
+    if (def.allowedPlaceholders.includes("sharedSections")) {
+      const purpose = promptKey.includes("Probe") ? "probe"
+        : promptKey.includes("Analysis") || promptKey.includes("Summary") ? "analysis"
+        : "general";
+      context["sharedSections"] = renderPromptPolicySections(project, purpose) ?? "";
+    }
+
+    const rendered = renderPromptTemplate(template, context);
+    const policy = resolveAIPromptPolicy(project);
+
+    // AI呼び出しが要求されている場合
+    const callAI = req.body.call_ai === "1" || req.body.call_ai === "true";
+    let aiResponse: string | null = null;
+    let aiError: string | null = null;
+    let tokenUsage: Record<string, unknown> | null = null;
+
+    if (callAI) {
+      try {
+        const { aiService } = await import("../services/aiService");
+        const result = await aiService.callRaw({ prompt: rendered });
+        aiResponse = result.content ?? null;
+        tokenUsage = result.tokenUsage ?? null;
+      } catch (err) {
+        aiError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    res.json({
+      promptKey,
+      label: def.label,
+      templateMode: isCustom ? "custom_template" : "base_template",
+      template,
+      rendered,
+      policy,
+      sampleValues: context,
+      aiResponse,
+      aiError,
+      tokenUsage
+    });
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // AIログ閲覧
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async aiLogsPage(req: Request, res: Response): Promise<void> {
+    const projectId = typeof req.query.project_id === "string" ? req.query.project_id : undefined;
+    const promptKey = typeof req.query.prompt_key === "string" ? req.query.prompt_key : undefined;
+    const page = Math.max(1, parseInt(typeof req.query.page === "string" ? req.query.page : "1", 10) || 1);
+    const limit = 50;
+    const offset = (page - 1) * limit;
+
+    const { logs, total } = await aiLogRepository.listWithProject({ projectId, promptKey, limit, offset });
+    const promptKeyOptions = Object.keys(BASE_PROMPT_TEMPLATES);
+
+    res.render("admin/ai-logs/index", {
+      title: "AIログ",
+      logs,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      filters: { projectId, promptKey },
+      promptKeyOptions
+    });
+  },
+
+  async aiLogDetailPage(req: Request, res: Response): Promise<void> {
+    const logId = routeParam(req, "logId");
+    const log = await aiLogRepository.getByIdWithProject(logId);
+    if (!log) throw new HttpError(404, "ログが見つかりません");
+    res.render("admin/ai-logs/show", { title: "AIログ詳細", log });
+  },
+
   async exportDocumentConsents(req: Request, res: Response): Promise<void> {
     const { userConsentRecordRepository } = await import("../repositories/userConsentRecordRepository");
     const filters = {
@@ -5366,5 +6140,802 @@ ${JSON.stringify(questionsForAI, null, 2)}
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", "attachment; filename=consents.csv");
     res.send("﻿" + header + rows.join("\n"));
+  },
+
+  // ============================================================
+  // プロンプトパッケージ管理
+  // ============================================================
+
+  async promptPackagesPage(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const packages = await promptPackageRepository.list();
+    res.render("admin/prompt-packages/index", {
+      title: "プロンプトパッケージ管理",
+      packages,
+      summarizeTemplateDefinitions,
+      created: req.query.created === "1",
+      saved: req.query.saved === "1",
+      cloned: req.query.cloned === "1",
+    });
+  },
+
+  /**
+   * Phase G: custom モード整理のための移行レポート。
+   * - custom プロジェクト一覧と移行候補
+   * - package モードだがバージョン未設定
+   * - archived バージョン参照（実行時 fallback）
+   * - orphan 参照（draft / 削除済みバージョン）
+   */
+  async promptMigrationReportPage(_req: Request, res: Response): Promise<void> {
+    const { report } = await loadPromptMigrationData();
+    res.render("admin/prompt-packages/migration", {
+      title: "プロンプト移行レポート（custom 整理）",
+      report,
+    });
+  },
+
+  /**
+   * Phase D: custom→package 実データ移行を実行する。
+   * confirm=1 で確定実行、それ以外は dry-run（プラン提示のみ・書込みなし）。
+   * 失敗アイテムはそのプロジェクトを custom 維持（可逆）。legacy 経路・列は温存する。
+   */
+  async executePromptMigration(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const { buildMigrationPlan, executeMigrationPlan } = await import("../services/promptMigrationService");
+
+    const dryRun = bodyString(req.body.confirm) !== "1";
+    const changedBy = resolveAdminOperator(req);
+
+    const { projects } = await loadPromptMigrationData();
+    const plan = buildMigrationPlan(
+      projects.map((p) => ({
+        id: p.id,
+        name: p.name,
+        status: p.status,
+        ai_prompt_mode: p.ai_prompt_mode,
+        ai_prompt_package_version_id: p.ai_prompt_package_version_id,
+        ai_prompt_policy_json: p.ai_prompt_policy_json,
+        ai_prompt_templates_json: p.ai_prompt_templates_json,
+      }))
+    );
+
+    const migrationResult = await executeMigrationPlan(
+      plan,
+      {
+        createPackage: (input) => promptPackageRepository.create(input),
+        createVersion: (input) =>
+          promptPackageRepository.createVersion({
+            package_id: input.package_id,
+            policy_json: input.policy_json as AIPromptPolicy | null,
+            templates_json: input.templates_json as AIPromptTemplateMap | null,
+            change_note: input.change_note,
+          }),
+        publishVersion: (versionId) => promptPackageRepository.publishVersion(versionId),
+        repointProject: async (projectId, versionId) => {
+          await projectRepository.update(projectId, {
+            ai_prompt_mode: "package",
+            ai_prompt_package_version_id: versionId,
+            ai_prompt_policy_json: null,
+            ai_prompt_templates_json: null,
+            ai_prompt_overrides_json: null,
+          });
+        },
+        recordChangeLog: (input) => recordPackageChangeLog(input),
+      },
+      { dryRun, changedBy }
+    );
+
+    // 実行後は最新状態でレポートを再生成（dry-run でも害なし）
+    const { report } = await loadPromptMigrationData();
+    res.render("admin/prompt-packages/migration", {
+      title: "プロンプト移行レポート（custom 整理）",
+      report,
+      migrationResult,
+    });
+  },
+
+  async newPromptPackagePage(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const existingPackages = await promptPackageRepository.list().catch(() => []);
+    // 深いリンク（一覧/詳細の「Version追加」）: ?mode=version&package_id=<id> で初期選択する
+    const initialMode = queryString(req.query.mode) === "version" ? "version" : "package";
+    const initialPackageId = queryString(req.query.package_id) || "";
+    res.render("admin/prompt-packages/form", {
+      title: "パッケージを新規作成",
+      action: "/admin/prompt-packages",
+      pkg: null,
+      existingPackages,
+      initialMode,
+      initialPackageId,
+    });
+  },
+
+  async createPromptPackage(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const name = bodyString(req.body.name).trim();
+    const description = bodyString(req.body.description).trim() || null;
+    const category = bodyString(req.body.category).trim() || null;
+    const presetRaw = bodyString(req.body.preset).trim();
+    const preset: PromptPresetKey = (presetRaw in PROMPT_PRESETS ? presetRaw : "standard") as PromptPresetKey;
+
+    if (!name) {
+      const existingPackages = await promptPackageRepository.list().catch(() => []);
+      res.render("admin/prompt-packages/form", {
+        title: "パッケージを新規作成",
+        action: "/admin/prompt-packages",
+        pkg: req.body,
+        existingPackages,
+        initialMode: "package",
+        initialPackageId: "",
+        error: "パッケージ名は必須です。",
+      });
+      return;
+    }
+
+    // slug はパッケージ名から自動生成（利用者は slug を意識しない）。
+    // 既存 slug と衝突する場合は base-2, base-3, ... と連番を付ける。
+    // 採番〜挿入の間に他リクエストが同じ slug を奪うレースに備え、最大2回試行する。
+    const baseSlug = generatePackageSlug(name);
+    let pkg;
+    for (let attempt = 0; attempt < 2 && !pkg; attempt++) {
+      try {
+        const existingSlugs = await promptPackageRepository.listSlugs();
+        const slug = resolveUniquePackageSlug(baseSlug, existingSlugs);
+        pkg = await promptPackageRepository.create({ slug, name, description, category });
+      } catch {
+        if (attempt === 1) {
+          logger.error("createPromptPackage: failed", { name });
+          const existingPackages = await promptPackageRepository.list().catch(() => []);
+          res.render("admin/prompt-packages/form", {
+            title: "パッケージを新規作成",
+            action: "/admin/prompt-packages",
+            pkg: req.body,
+            existingPackages,
+            initialMode: "package",
+            initialPackageId: "",
+            error: "識別子の自動生成に失敗しました。もう一度お試しください。",
+          });
+          return;
+        }
+      }
+    }
+    if (!pkg) return;
+
+    // Version 1 を用途プリセットから自動生成（全21キーを実体化＝空Version撲滅）。
+    const v1TemplatesJson: AIPromptTemplateMap = buildInitialTemplatesForPreset(preset);
+    const presetPolicy = PROMPT_PRESETS[preset]?.policy ?? {};
+    const v1PolicyJson: AIPromptPolicy | null = Object.keys(presetPolicy).length > 0 ? presetPolicy : null;
+    const v1 = await promptPackageRepository.createVersion({
+      package_id: pkg.id,
+      policy_json: v1PolicyJson,
+      templates_json: v1TemplatesJson,
+      change_note: `標準テンプレートから作成（用途: ${PROMPT_PRESETS[preset]?.label ?? preset}）`,
+    });
+
+    res.redirect(`/admin/prompt-packages/${pkg.id}/versions/${v1.id}/edit?init=1`);
+  },
+
+  async showPromptPackage(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const packageId = routeParam(req, "packageId");
+    const [pkg, versions, usingProjects] = await Promise.all([
+      promptPackageRepository.getById(packageId),
+      promptPackageRepository.listVersions(packageId),
+      promptPackageRepository.getProjectsUsingPackage(packageId),
+    ]);
+    if (!pkg) throw new HttpError(404, "パッケージが見つかりません");
+
+    // Phase 5-B: 各バージョンの検証結果（警告は保存後も画面に表示し続ける）
+    const versionValidations: Record<string, PromptPackageValidationResult> = {};
+    for (const v of versions) {
+      versionValidations[v.id] = validatePromptPackageVersionForPublish(v);
+    }
+
+    // Phase C: パッケージ画面から「公開版を適用」できるよう、現在の公開バージョンを渡す
+    const publishedVersion = versions.find((v) => v.status === "published") ?? null;
+
+    res.render("admin/prompt-packages/show", {
+      title: pkg.name,
+      pkg,
+      versions,
+      usingProjects,
+      publishedVersion,
+      versionValidations,
+      summarizeTemplateDefinitions,
+      created: req.query.created === "1",
+      saved: req.query.saved === "1",
+      versionSaved: req.query.version_saved === "1",
+      publishBlocked: req.query.publish_blocked === "1",
+      applied: req.query.applied === "1",
+      applyError: req.query.apply_error === "1",
+    });
+  },
+
+  /**
+   * Phase C: パッケージ画面から、利用中プロジェクトへ指定バージョン（通常は公開版）を適用する。
+   * package 中心導線。draft は適用不可、archived は実行時 published へ fallback。
+   */
+  async applyPackageToProject(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const packageId = routeParam(req, "packageId");
+    const projectId = bodyString(req.body.project_id).trim();
+    const versionId = bodyString(req.body.version_id).trim();
+    const fail = (reason: string) =>
+      res.redirect(`/admin/prompt-packages/${packageId}?apply_error=1&reason=${reason}#using-projects`);
+
+    if (!projectId || !versionId) {
+      fail("missing");
+      return;
+    }
+    // 指定バージョンがこのパッケージのものか検証
+    const version = await promptPackageRepository.getVersionById(versionId).catch(() => null);
+    if (!version || version.package_id !== packageId) {
+      fail("invalid_version");
+      return;
+    }
+    // 適用可否（draft はエラー、archived は published fallback の有無で警告）
+    const publishedVersion = version.status === "archived"
+      ? await promptPackageRepository.getPublishedVersionByPackageId(version.package_id).catch(() => null)
+      : null;
+    const validation = validatePromptPackageVersionForApply(version, publishedVersion);
+    if (validation.errors.length > 0) {
+      fail("not_applicable");
+      return;
+    }
+
+    const existing = await projectRepository.getById(projectId).catch(() => null);
+    if (!existing) {
+      fail("project_not_found");
+      return;
+    }
+
+    await projectRepository.update(projectId, {
+      ai_prompt_mode: "package",
+      ai_prompt_package_version_id: versionId,
+    });
+
+    if (existing.ai_prompt_mode !== "package" || existing.ai_prompt_package_version_id !== versionId) {
+      await recordPackageChangeLog({
+        projectId,
+        oldVersionId: existing.ai_prompt_package_version_id ?? null,
+        newVersionId: versionId,
+        oldMode: existing.ai_prompt_mode ?? null,
+        newMode: "package",
+        changeReason: bodyString(req.body.change_reason) || "パッケージ画面から適用",
+        changedBy: resolveAdminOperator(req),
+      });
+    }
+    res.redirect(`/admin/prompt-packages/${packageId}?applied=1#using-projects`);
+  },
+
+  async editPromptPackagePage(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const packageId = routeParam(req, "packageId");
+    const pkg = await promptPackageRepository.getById(packageId);
+    if (!pkg) throw new HttpError(404, "パッケージが見つかりません");
+    res.render("admin/prompt-packages/form", {
+      title: `編集: ${pkg.name}`,
+      action: `/admin/prompt-packages/${packageId}`,
+      pkg,
+    });
+  },
+
+  async updatePromptPackage(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const packageId = routeParam(req, "packageId");
+    const name = bodyString(req.body.name).trim();
+    const description = bodyString(req.body.description).trim() || null;
+    const category = bodyString(req.body.category).trim() || null;
+
+    if (!name) {
+      const pkg = await promptPackageRepository.getById(packageId).catch(() => null);
+      res.render("admin/prompt-packages/form", {
+        title: `編集: ${pkg?.name ?? packageId}`,
+        action: `/admin/prompt-packages/${packageId}`,
+        pkg: { ...req.body, id: packageId },
+        error: "名前は必須です。",
+      });
+      return;
+    }
+
+    try {
+      await promptPackageRepository.update(packageId, { name, description, category });
+    } catch {
+      logger.error("updatePromptPackage: failed", { packageId });
+      const pkg = await promptPackageRepository.getById(packageId).catch(() => null);
+      res.status(500).render("admin/prompt-packages/form", {
+        title: `編集: ${pkg?.name ?? packageId}`,
+        action: `/admin/prompt-packages/${packageId}`,
+        pkg: { ...req.body, id: packageId },
+        error: "更新に失敗しました。",
+      });
+      return;
+    }
+    res.redirect(`/admin/prompt-packages/${packageId}?saved=1`);
+  },
+
+  async clonePromptPackage(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const sourceId = routeParam(req, "packageId");
+    const newName = bodyString(req.body.new_name).trim();
+    // slug は複製後の名前から自動生成する（利用者は slug を意識しない）。
+    const baseSlug = generatePackageSlug(newName);
+
+    if (!newName) {
+      const pkg = await promptPackageRepository.getById(sourceId).catch(() => null);
+      const versions = await promptPackageRepository.listVersions(sourceId).catch(() => []);
+      res.render("admin/prompt-packages/show", {
+        title: pkg?.name ?? sourceId,
+        pkg,
+        versions,
+        cloneError: "複製後のパッケージ名は必須です。",
+      });
+      return;
+    }
+
+    // 既存 slug と衝突する場合は base-2, base-3, ... と連番を付ける（レースに備え最大2回試行）。
+    let newPkg;
+    for (let attempt = 0; attempt < 2 && !newPkg; attempt++) {
+      try {
+        const existingSlugs = await promptPackageRepository.listSlugs();
+        const newSlug = resolveUniquePackageSlug(baseSlug, existingSlugs);
+        newPkg = await promptPackageRepository.clone(sourceId, newSlug, newName);
+      } catch {
+        if (attempt === 1) {
+          logger.error("clonePromptPackage: failed", { sourceId, baseSlug });
+          const pkg = await promptPackageRepository.getById(sourceId).catch(() => null);
+          const versions = await promptPackageRepository.listVersions(sourceId).catch(() => []);
+          res.render("admin/prompt-packages/show", {
+            title: pkg?.name ?? sourceId,
+            pkg,
+            versions,
+            cloneError: "複製に失敗しました。もう一度お試しください。",
+          });
+          return;
+        }
+      }
+    }
+    if (!newPkg) return;
+    res.redirect(`/admin/prompt-packages/${newPkg.id}?cloned=1`);
+  },
+
+  // ── バージョン操作 ──────────────────────────────────────────────
+
+  /**
+   * 旧「新バージョン追加（空エディタ）」ページ。
+   * 統合作成画面（Version作成方法を選べる）へ寄せたため、パッケージ選択済みで /new へリダイレクトする。
+   * 旧ブックマーク・既存リンクの後方互換のために維持。
+   */
+  async newPromptPackageVersionPage(req: Request, res: Response): Promise<void> {
+    const packageId = routeParam(req, "packageId");
+    res.redirect(`/admin/prompt-packages/new?mode=version&package_id=${encodeURIComponent(packageId)}`);
+  },
+
+  /**
+   * 統合作成画面の「既存パッケージへの Version 追加」送信先。
+   * copy_method（公開中をコピー / 最新をコピー / 空）で draft を即生成し、編集エディタへ遷移する。
+   */
+  async createPromptPackageVersionFromCopy(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const packageId = routeParam(req, "packageId");
+    const pkg = await promptPackageRepository.getById(packageId);
+    if (!pkg) throw new HttpError(404, "パッケージが見つかりません");
+
+    const copyMethod = bodyString(req.body.copy_method).trim() || "copy_published";
+    const versions = await promptPackageRepository.listVersions(packageId).catch(() => []);
+    const source = resolveVersionCopySource(versions, copyMethod);
+
+    let changeNote = "空のバージョンを作成";
+    if (source && copyMethod === "copy_published") {
+      changeNote = `公開中バージョン（v${source.version_no}）をコピーして作成`;
+    } else if (source && copyMethod === "copy_latest") {
+      changeNote = `最新バージョン（v${source.version_no}）をコピーして作成`;
+    } else if (copyMethod !== "empty") {
+      changeNote = "新バージョンを作成";
+    }
+
+    const created = await promptPackageRepository.createVersion({
+      package_id: packageId,
+      policy_json: source?.policy_json ?? null,
+      templates_json: source?.templates_json ?? null,
+      change_note: changeNote,
+    });
+
+    res.redirect(`/admin/prompt-packages/${packageId}/versions/${created.id}/edit?init=1`);
+  },
+
+  async createPromptPackageVersion(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const packageId = routeParam(req, "packageId");
+    const pkg = await promptPackageRepository.getById(packageId);
+    if (!pkg) throw new HttpError(404, "パッケージが見つかりません");
+
+    const policyJson = parseAIPromptPolicyFromRequest(req);
+    const templatesJson = parseAIPromptTemplatesFromRequest(req);
+    const changeNote = bodyString(req.body.change_note).trim() || null;
+
+    // Phase 5-B: 保存前バリデーション（エラーは保存不可・警告は保存可能）
+    const validation = validatePromptPackageVersionConfig({
+      rawPolicyJson: bodyString(req.body.ai_prompt_policy_json),
+      rawTemplatesJson: bodyString(req.body.ai_prompt_templates_json),
+    });
+    if (validation.errors.length > 0) {
+      res.status(400).render("admin/prompt-packages/version-form", {
+        title: `新バージョン追加: ${pkg.name}`,
+        pkg,
+        version: { policy_json: policyJson, templates_json: templatesJson, change_note: changeNote },
+        action: `/admin/prompt-packages/${packageId}/versions`,
+        promptKeyDefs: buildPromptKeyDefs(),
+        validationErrors: validation.errors,
+        validationWarnings: validation.warnings,
+        error: "バリデーションエラーがあるため保存できません。",
+      });
+      return;
+    }
+
+    try {
+      await promptPackageRepository.createVersion({
+        package_id: packageId,
+        policy_json: policyJson,
+        templates_json: templatesJson,
+        change_note: changeNote,
+      });
+    } catch {
+      logger.error("createPromptPackageVersion: failed", { packageId });
+      res.render("admin/prompt-packages/version-form", {
+        title: `新バージョン追加: ${pkg.name}`,
+        pkg,
+        version: null,
+        action: `/admin/prompt-packages/${packageId}/versions`,
+        promptKeyDefs: buildPromptKeyDefs(),
+        error: "バージョンの作成に失敗しました。",
+      });
+      return;
+    }
+    res.redirect(`/admin/prompt-packages/${packageId}?version_saved=1`);
+  },
+
+  async editPromptPackageVersionPage(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const packageId = routeParam(req, "packageId");
+    const versionId = routeParam(req, "versionId");
+    const [pkg, version] = await Promise.all([
+      promptPackageRepository.getById(packageId),
+      promptPackageRepository.getVersionById(versionId),
+    ]);
+    if (!pkg) throw new HttpError(404, "パッケージが見つかりません");
+    if (!version) throw new HttpError(404, "バージョンが見つかりません");
+    if (version.status !== "draft") throw new HttpError(400, "公開済み・アーカイブ済みバージョンは編集できません");
+
+    res.render("admin/prompt-packages/version-form", {
+      title: `バージョン編集: ${pkg.name} v${version.version_no}`,
+      pkg,
+      version,
+      action: `/admin/prompt-packages/${packageId}/versions/${versionId}`,
+      promptKeyDefs: buildPromptKeyDefs(),
+      isInit: req.query.init === "1",
+    });
+  },
+
+  async updatePromptPackageVersion(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const packageId = routeParam(req, "packageId");
+    const versionId = routeParam(req, "versionId");
+
+    const policyJson = parseAIPromptPolicyFromRequest(req);
+    const templatesJson = parseAIPromptTemplatesFromRequest(req);
+    const changeNote = bodyString(req.body.change_note).trim() || null;
+
+    // Phase 5-B: 保存前バリデーション（エラーは保存不可・警告は保存可能）
+    const validation = validatePromptPackageVersionConfig({
+      rawPolicyJson: bodyString(req.body.ai_prompt_policy_json),
+      rawTemplatesJson: bodyString(req.body.ai_prompt_templates_json),
+    });
+    if (validation.errors.length > 0) {
+      const [pkg, version] = await Promise.all([
+        promptPackageRepository.getById(packageId).catch(() => null),
+        promptPackageRepository.getVersionById(versionId).catch(() => null),
+      ]);
+      res.status(400).render("admin/prompt-packages/version-form", {
+        title: `バージョン編集`,
+        pkg,
+        version: version
+          ? { ...version, policy_json: policyJson, templates_json: templatesJson, change_note: changeNote }
+          : version,
+        action: `/admin/prompt-packages/${packageId}/versions/${versionId}`,
+        promptKeyDefs: buildPromptKeyDefs(),
+        validationErrors: validation.errors,
+        validationWarnings: validation.warnings,
+        error: "バリデーションエラーがあるため保存できません。",
+      });
+      return;
+    }
+
+    try {
+      await promptPackageRepository.updateVersion(versionId, {
+        policy_json: policyJson,
+        templates_json: templatesJson,
+        change_note: changeNote,
+      });
+    } catch {
+      logger.error("updatePromptPackageVersion: failed", { versionId });
+      const [pkg, version] = await Promise.all([
+        promptPackageRepository.getById(packageId).catch(() => null),
+        promptPackageRepository.getVersionById(versionId).catch(() => null),
+      ]);
+      res.status(500).render("admin/prompt-packages/version-form", {
+        title: `バージョン編集`,
+        pkg,
+        version,
+        action: `/admin/prompt-packages/${packageId}/versions/${versionId}`,
+        promptKeyDefs: buildPromptKeyDefs(),
+        error: "更新に失敗しました。",
+      });
+      return;
+    }
+    res.redirect(`/admin/prompt-packages/${packageId}?version_saved=1`);
+  },
+
+  /** Phase 5-D: 公開バージョン切り替え前の影響確認画面 */
+  async publishConfirmPromptPackageVersion(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const packageId = routeParam(req, "packageId");
+    const versionId = routeParam(req, "versionId");
+    const [pkg, version, usingProjects] = await Promise.all([
+      promptPackageRepository.getById(packageId),
+      promptPackageRepository.getVersionById(versionId),
+      promptPackageRepository.getProjectsUsingPackage(packageId),
+    ]);
+    if (!pkg) throw new HttpError(404, "パッケージが見つかりません");
+    if (!version) throw new HttpError(404, "バージョンが見つかりません");
+    if (version.status !== "draft") throw new HttpError(400, "draft バージョンのみ公開できます");
+
+    // 現在の公開バージョン（公開すると archived になり、利用中プロジェクトは新バージョンへ fallback する）
+    const currentPublished = await promptPackageRepository.getPublishedVersionByPackageId(packageId).catch(() => null);
+    const versions = await promptPackageRepository.listVersions(packageId);
+    const versionById = new Map(versions.map((v) => [v.id, v]));
+
+    // 影響プロジェクト: このパッケージのいずれかのバージョンを使用中の全プロジェクト
+    const affectedProjects = usingProjects.map((p) => {
+      const used = p.ai_prompt_package_version_id ? versionById.get(p.ai_prompt_package_version_id) ?? null : null;
+      return {
+        project: p,
+        usedVersionNo: used?.version_no ?? null,
+        usedStatus: used?.status ?? null,
+        // 公開後: 選択中バージョンが published のままでなくなるプロジェクトは新バージョンへ fallback
+        willFallback: !!used && used.id !== versionId,
+      };
+    });
+
+    const validation = validatePromptPackageVersionForPublish(version);
+
+    res.render("admin/prompt-packages/publish-confirm", {
+      title: `公開確認: ${pkg.name} v${version.version_no}`,
+      pkg,
+      version,
+      currentPublished,
+      affectedProjects,
+      validationErrors: validation.errors,
+      validationWarnings: validation.warnings,
+    });
+  },
+
+  async publishPromptPackageVersion(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const packageId = routeParam(req, "packageId");
+    const versionId = routeParam(req, "versionId");
+
+    // Phase 5-B: 公開前バリデーション。エラーがある場合は公開不可
+    const version = await promptPackageRepository.getVersionById(versionId).catch(() => null);
+    if (!version) {
+      res.redirect(`/admin/prompt-packages/${packageId}?publish_blocked=1`);
+      return;
+    }
+    const validation = validatePromptPackageVersionForPublish(version);
+    if (validation.errors.length > 0) {
+      logger.warn("publishPromptPackageVersion: blocked by validation", { versionId, errors: validation.errors });
+      res.redirect(`/admin/prompt-packages/${packageId}?publish_blocked=1`);
+      return;
+    }
+
+    try {
+      await promptPackageRepository.publishVersion(versionId);
+    } catch {
+      logger.error("publishPromptPackageVersion: failed", { versionId });
+    }
+    res.redirect(`/admin/prompt-packages/${packageId}`);
+  },
+
+  async archiveConfirmPromptPackageVersion(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const packageId = routeParam(req, "packageId");
+    const versionId = routeParam(req, "versionId");
+    const [pkg, version, usingProjects] = await Promise.all([
+      promptPackageRepository.getById(packageId),
+      promptPackageRepository.getVersionById(versionId),
+      promptPackageRepository.getProjectsUsingVersion(versionId),
+    ]);
+    if (!pkg) throw new HttpError(404, "パッケージが見つかりません");
+    if (!version) throw new HttpError(404, "バージョンが見つかりません");
+
+    // fallback 先が存在するか確認
+    const fallbackVersion = await promptPackageRepository.getPublishedVersionByPackageId(packageId)
+      .then((v) => (v && v.id !== versionId ? v : null))
+      .catch(() => null);
+
+    res.render("admin/prompt-packages/archive-confirm", {
+      title: `アーカイブ確認: ${pkg.name} v${version.version_no}`,
+      pkg,
+      version,
+      usingProjects,
+      fallbackVersion,
+    });
+  },
+
+  async archivePromptPackageVersion(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const packageId = routeParam(req, "packageId");
+    const versionId = routeParam(req, "versionId");
+    try {
+      await promptPackageRepository.archiveVersion(versionId);
+    } catch {
+      logger.error("archivePromptPackageVersion: failed", { versionId });
+    }
+    res.redirect(`/admin/prompt-packages/${packageId}`);
+  },
+
+  /** Phase 6-E: 同一パッケージ内のバージョン差分比較画面 */
+  async comparePromptPackageVersionsPage(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const { buildVersionDiff } = await import("../services/promptPackageDiffService");
+    const packageId = routeParam(req, "packageId");
+    const [pkg, versions] = await Promise.all([
+      promptPackageRepository.getById(packageId),
+      promptPackageRepository.listVersions(packageId),
+    ]);
+    if (!pkg) throw new HttpError(404, "パッケージが見つかりません");
+
+    // デフォルト: to = 公開中（なければ最新）, from = その1つ前のバージョン
+    const queryFrom = typeof req.query.from === "string" ? req.query.from : "";
+    const queryTo = typeof req.query.to === "string" ? req.query.to : "";
+    const defaultTo = versions.find((v) => v.status === "published") ?? versions[0] ?? null;
+    const toVersion = versions.find((v) => v.id === queryTo) ?? defaultTo;
+    const defaultFrom = toVersion
+      ? versions.find((v) => v.version_no < toVersion.version_no) ?? null
+      : null;
+    const fromVersion = versions.find((v) => v.id === queryFrom) ?? defaultFrom;
+
+    const diff = fromVersion && toVersion && fromVersion.id !== toVersion.id
+      ? buildVersionDiff(fromVersion, toVersion)
+      : null;
+
+    res.render("admin/prompt-packages/compare", {
+      title: `バージョン比較: ${pkg.name}`,
+      pkg,
+      versions,
+      fromVersion: fromVersion ?? null,
+      toVersion: toVersion ?? null,
+      diff,
+    });
+  },
+
+  /** Phase 5-A: パッケージバージョンの適用プレビュー（JSON API。プロジェクト編集画面から fetch される） */
+  async promptPackageVersionPreview(req: Request, res: Response): Promise<void> {
+    const versionId = routeParam(req, "versionId");
+    try {
+      const preview = await buildPackageVersionPreview(versionId);
+      if (!preview) {
+        res.status(404).json({ error: "バージョンが見つかりません" });
+        return;
+      }
+      res.json(preview);
+    } catch (error) {
+      logger.error("promptPackageVersionPreview: failed", {
+        versionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: "プレビューの取得に失敗しました" });
+    }
+  },
+
+  /**
+   * Phase D: パッケージバージョン単位のプロンプトプレビュー（JSON API）。
+   * プロジェクトを経由せず version の templates_json / policy_json（または未保存の override）でレンダリングする。
+   */
+  async promptPackageVersionPromptPreview(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const versionId = routeParam(req, "versionId");
+    const promptKey = bodyString(req.body.prompt_key) as BasePromptKey;
+    if (!BASE_PROMPT_TEMPLATES[promptKey]) {
+      res.status(400).json({ error: `不正なpromptKey: ${promptKey}` });
+      return;
+    }
+    const version = await promptPackageRepository.getVersionById(versionId);
+    if (!version) {
+      res.status(404).json({ error: "バージョンが見つかりません" });
+      return;
+    }
+    const policyOverride = parseOptionalJsonObject(bodyString(req.body.policy_override));
+    const result = renderPromptForPackageConfig({
+      promptKey,
+      templates: version.templates_json,
+      policy: (policyOverride as AIPromptPolicy | null) ?? version.policy_json,
+      templateOverride: bodyString(req.body.template_override),
+    });
+    res.json({
+      promptKey,
+      label: BASE_PROMPT_TEMPLATES[promptKey].label,
+      templateMode: result.isCustom ? "package_template" : "base_template",
+      template: result.template,
+      rendered: result.rendered,
+      policy: result.policy,
+      allowedPlaceholders: BASE_PROMPT_TEMPLATES[promptKey].allowedPlaceholders.map(ph => ({
+        key: ph,
+        description: describePlaceholder(ph),
+      })),
+    });
+  },
+
+  /**
+   * Phase D: パッケージバージョン単位のテスト実行（JSON API）。
+   * call_ai=1 で実 AI 呼び出し。プロジェクト非依存。
+   */
+  async promptPackageVersionPromptTest(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const versionId = routeParam(req, "versionId");
+    const promptKey = bodyString(req.body.prompt_key) as BasePromptKey;
+    if (!BASE_PROMPT_TEMPLATES[promptKey]) {
+      res.status(400).json({ error: `不正なpromptKey: ${promptKey}` });
+      return;
+    }
+    const version = await promptPackageRepository.getVersionById(versionId);
+    if (!version) {
+      res.status(404).json({ error: "バージョンが見つかりません" });
+      return;
+    }
+
+    const sampleValues: Record<string, string> = {};
+    const parsedSamples = parseOptionalJsonObject(bodyString(req.body.sample_values));
+    if (parsedSamples) {
+      for (const [k, v] of Object.entries(parsedSamples)) {
+        if (typeof v === "string") sampleValues[k] = v;
+      }
+    }
+    const policyOverride = parseOptionalJsonObject(bodyString(req.body.policy_override));
+
+    const result = renderPromptForPackageConfig({
+      promptKey,
+      templates: version.templates_json,
+      policy: (policyOverride as AIPromptPolicy | null) ?? version.policy_json,
+      templateOverride: bodyString(req.body.template_override),
+      sampleValues,
+    });
+
+    const callAI = req.body.call_ai === "1" || req.body.call_ai === "true";
+    let aiResponse: string | null = null;
+    let aiError: string | null = null;
+    let tokenUsage: Record<string, unknown> | null = null;
+    if (callAI) {
+      try {
+        const { aiService } = await import("../services/aiService");
+        const ai = await aiService.callRaw({ prompt: result.rendered });
+        aiResponse = ai.content ?? null;
+        tokenUsage = ai.tokenUsage ?? null;
+      } catch (err) {
+        aiError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    res.json({
+      promptKey,
+      label: BASE_PROMPT_TEMPLATES[promptKey].label,
+      templateMode: result.isCustom ? "package_template" : "base_template",
+      template: result.template,
+      rendered: result.rendered,
+      policy: result.policy,
+      aiResponse,
+      aiError,
+      tokenUsage,
+    });
   },
 };

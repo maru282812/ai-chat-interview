@@ -1,0 +1,80 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const statusById = (locals.versionStatusById instanceof Map) ? versionStatusById : new Map();
+const STATUS_COLORS = { draft: '#60726f', published: '#1a7a5a', archived: '#e65100' };
+%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <div>
+    <a href="/admin/projects/<%= project.id %>/edit" style="color:#60726f;font-size:13px">← プロジェクト編集に戻る</a>
+    <h2 style="margin:4px 0 0">AIプロンプト変更履歴</h2>
+    <span style="font-size:13px;color:#60726f"><%= project.name %></span>
+  </div>
+</div>
+
+<% if (logs.length === 0) { %>
+  <p style="color:#60726f;margin-top:2rem">パッケージ設定の変更履歴はまだありません。</p>
+<% } else { %>
+<p style="font-size:12px;color:#60726f;margin:0 0 8px">
+  ※ バージョンの「現在の状態」は表示時点のステータスです（変更時点のものではありません）。
+</p>
+<table style="margin-top:0.5rem">
+  <thead>
+    <tr>
+      <th>変更日時</th>
+      <th>プロジェクト</th>
+      <th>変更前</th>
+      <th>変更後</th>
+      <th>変更理由</th>
+      <th>操作者</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const log of logs) { %>
+    <%
+      const oldStatus = log.old_prompt_package_version_id ? statusById.get(log.old_prompt_package_version_id) : null;
+      const newStatus = log.new_prompt_package_version_id ? statusById.get(log.new_prompt_package_version_id) : null;
+    %>
+    <tr>
+      <td style="font-size:12px;white-space:nowrap">
+        <%= new Date(log.changed_at).toLocaleString('ja-JP') %>
+      </td>
+      <td style="font-size:13px"><strong><%= project.name %></strong></td>
+      <td style="font-size:13px">
+        <% if (log.old_mode === 'package' && log.old_package_slug) { %>
+          <span class="tag" style="background:#f0f4f3">package</span>
+          <code style="font-size:12px"><%= log.old_package_slug %></code>
+          <% if (log.old_version_no) { %><span style="color:#60726f"> v<%= log.old_version_no %></span><% } %>
+          <% if (oldStatus) { %>
+            <span style="font-size:11px;color:<%= STATUS_COLORS[oldStatus] || '#60726f' %>">（現在: <%= oldStatus %>）</span>
+          <% } %>
+        <% } else if (log.old_mode === 'custom') { %>
+          <span class="tag" style="background:#f0f4f3">custom</span>
+        <% } else { %>
+          <span style="color:#999">—</span>
+        <% } %>
+      </td>
+      <td style="font-size:13px">
+        <% if (log.new_mode === 'package' && log.new_package_slug) { %>
+          <span class="tag" style="background:#e8f5ef;color:#1a7a5a">package</span>
+          <code style="font-size:12px"><%= log.new_package_slug %></code>
+          <% if (log.new_version_no) { %><span style="color:#1a7a5a"> v<%= log.new_version_no %></span><% } %>
+          <% if (newStatus) { %>
+            <span style="font-size:11px;color:<%= STATUS_COLORS[newStatus] || '#60726f' %>">（現在: <%= newStatus %>）</span>
+          <% } %>
+        <% } else if (log.new_mode === 'custom') { %>
+          <span class="tag" style="background:#f0f4f3">custom</span>
+        <% } else { %>
+          <span style="color:#999">—</span>
+        <% } %>
+      </td>
+      <td style="font-size:13px;color:#60726f"><%= log.change_reason || '—' %></td>
+      <td style="font-size:13px;color:#60726f"><%= log.changed_by || '—' %></td>
+    </tr>
+    <% } %>
+  </tbody>
+</table>
+<% } %>
+
+<%- include("../../partials/footer") %>

@@ -12,6 +12,8 @@ export type NotificationCategory =
   | "attribute_update_request"
   | "birthday"
   | "dormancy_recovery"
+  | "exchange_approved"
+  | "exchange_fulfilled"
   | "system";
 
 export interface NotificationTemplate {

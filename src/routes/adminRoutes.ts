@@ -11,6 +11,7 @@ adminRoutes.get("/projects/new", asyncHandler(adminController.newProject));
 adminRoutes.post("/projects", asyncHandler(adminController.createProject));
 adminRoutes.get("/projects/:projectId/edit", asyncHandler(adminController.editProject));
 adminRoutes.post("/projects/:projectId", asyncHandler(adminController.updateProject));
+adminRoutes.get("/projects/:projectId/prompt-package-history", asyncHandler(adminController.projectPromptPackageHistoryPage));
 adminRoutes.post("/projects/:projectId/copy", asyncHandler(adminController.copyProject));
 adminRoutes.post("/projects/:projectId/delete", asyncHandler(adminController.deleteProject));
 
@@ -230,3 +231,44 @@ adminRoutes.post("/documents/:documentId",                        asyncHandler(a
 adminRoutes.get("/documents/:documentId/versions/new",            asyncHandler(adminController.newDocumentVersionPage));
 adminRoutes.post("/documents/:documentId/versions",               asyncHandler(adminController.createDocumentVersion));
 adminRoutes.get("/documents/:documentId/consent-audit",           asyncHandler(adminController.documentConsentAudit));
+
+// 交換申請管理
+adminRoutes.get("/exchange-requests",                             asyncHandler(adminController.exchangeRequestsPage));
+adminRoutes.post("/exchange-requests/:id/approve",                asyncHandler(adminController.approveExchange));
+adminRoutes.post("/exchange-requests/:id/reject",                 asyncHandler(adminController.rejectExchange));
+adminRoutes.post("/exchange-requests/:id/fulfill",                asyncHandler(adminController.fulfillExchange));
+adminRoutes.post("/exchange-requests/:id/notify",                 asyncHandler(adminController.resendExchangeNotification));
+
+// AIプロンプト管理 API
+adminRoutes.post("/api/projects/:projectId/prompt-preview", asyncHandler(adminController.apiPreviewPrompt));
+adminRoutes.post("/api/projects/:projectId/prompt-test",    asyncHandler(adminController.apiTestRunPrompt));
+
+// AIログ閲覧
+adminRoutes.get("/ai-logs",        asyncHandler(adminController.aiLogsPage));
+adminRoutes.get("/ai-logs/:logId", asyncHandler(adminController.aiLogDetailPage));
+
+// プロンプトパッケージ管理
+adminRoutes.get("/prompt-packages",                                                            asyncHandler(adminController.promptPackagesPage));
+adminRoutes.get("/prompt-packages/new",                                                        asyncHandler(adminController.newPromptPackagePage));
+// Phase G: 移行レポート（:packageId より前に登録する必要あり）
+adminRoutes.get("/prompt-packages/migration",                                                  asyncHandler(adminController.promptMigrationReportPage));
+adminRoutes.post("/prompt-packages/migration/execute",                                         asyncHandler(adminController.executePromptMigration));
+adminRoutes.post("/prompt-packages",                                                           asyncHandler(adminController.createPromptPackage));
+adminRoutes.get("/prompt-packages/:packageId/compare",                                         asyncHandler(adminController.comparePromptPackageVersionsPage));
+adminRoutes.get("/prompt-packages/:packageId",                                                 asyncHandler(adminController.showPromptPackage));
+adminRoutes.get("/prompt-packages/:packageId/edit",                                            asyncHandler(adminController.editPromptPackagePage));
+adminRoutes.post("/prompt-packages/:packageId",                                                asyncHandler(adminController.updatePromptPackage));
+adminRoutes.post("/prompt-packages/:packageId/clone",                                          asyncHandler(adminController.clonePromptPackage));
+adminRoutes.post("/prompt-packages/:packageId/apply",                                          asyncHandler(adminController.applyPackageToProject));
+adminRoutes.get("/prompt-packages/:packageId/versions/new",                                    asyncHandler(adminController.newPromptPackageVersionPage));
+adminRoutes.post("/prompt-packages/:packageId/versions/copy",                                  asyncHandler(adminController.createPromptPackageVersionFromCopy));
+adminRoutes.post("/prompt-packages/:packageId/versions",                                       asyncHandler(adminController.createPromptPackageVersion));
+adminRoutes.get("/prompt-packages/:packageId/versions/:versionId/edit",                        asyncHandler(adminController.editPromptPackageVersionPage));
+adminRoutes.post("/prompt-packages/:packageId/versions/:versionId",                            asyncHandler(adminController.updatePromptPackageVersion));
+adminRoutes.get("/prompt-packages/:packageId/versions/:versionId/publish-confirm",             asyncHandler(adminController.publishConfirmPromptPackageVersion));
+adminRoutes.post("/prompt-packages/:packageId/versions/:versionId/publish",                    asyncHandler(adminController.publishPromptPackageVersion));
+adminRoutes.get("/prompt-packages/:packageId/versions/:versionId/archive-confirm",             asyncHandler(adminController.archiveConfirmPromptPackageVersion));
+adminRoutes.post("/prompt-packages/:packageId/versions/:versionId/archive",                    asyncHandler(adminController.archivePromptPackageVersion));
+adminRoutes.get("/api/prompt-package-versions/:versionId/preview",                             asyncHandler(adminController.promptPackageVersionPreview));
+adminRoutes.post("/prompt-packages/:packageId/versions/:versionId/prompt-preview",             asyncHandler(adminController.promptPackageVersionPromptPreview));
+adminRoutes.post("/prompt-packages/:packageId/versions/:versionId/prompt-test",                asyncHandler(adminController.promptPackageVersionPromptTest));

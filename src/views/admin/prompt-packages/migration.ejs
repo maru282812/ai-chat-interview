@@ -1,0 +1,189 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>プロンプト移行レポート（custom 整理）</h2>
+  <a href="/admin/prompt-packages" class="btn secondary">← パッケージ管理へ戻る</a>
+</div>
+
+<p style="color:#60726f;margin-bottom:1rem">
+  「Package First」方針への移行状況です。custom モード（後方互換・非推奨）のプロジェクト、
+  パッケージ未設定、archived バージョン参照、参照先不正（draft / 削除済み）を一覧化します。<br>
+  既存プロジェクトは動作を維持しますが、下記は段階的に package モードへの移行を推奨します。
+</p>
+
+<!-- サマリー -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:1.5rem">
+  <% function summaryCard(label, value, color) { %>
+    <div style="border:1px solid #d8e3e0;border-radius:8px;padding:10px 12px;background:#fff">
+      <div style="font-size:12px;color:#60726f"><%= label %></div>
+      <div style="font-size:22px;font-weight:700;color:<%= color %>"><%= value %></div>
+    </div>
+  <% } %>
+  <% summaryCard("全プロジェクト", report.counts.total, "#2a3a37"); %>
+  <% summaryCard("package", report.counts.package, "#1a7a5a"); %>
+  <% summaryCard("custom（要移行）", report.counts.custom, report.counts.custom > 0 ? "#b36200" : "#90a39e"); %>
+  <% summaryCard("package未設定", report.counts.packageUnset, report.counts.packageUnset > 0 ? "#c62828" : "#90a39e"); %>
+  <% summaryCard("archived参照", report.counts.archivedRef, report.counts.archivedRef > 0 ? "#b36200" : "#90a39e"); %>
+  <% summaryCard("参照不正", report.counts.orphanRef, report.counts.orphanRef > 0 ? "#c62828" : "#90a39e"); %>
+  <% summaryCard("要対応 合計", report.counts.needsAttention, report.counts.needsAttention > 0 ? "#b36200" : "#1a7a5a"); %>
+</div>
+
+<% if (report.counts.needsAttention === 0) { %>
+  <p style="background:#e8f5ef;border:1px solid #1a7a5a;border-radius:8px;padding:12px 16px;color:#1a7a5a">
+    ✅ 対応が必要なプロジェクトはありません。すべて package モードかつ健全なバージョン参照です。
+  </p>
+<% } %>
+
+<!-- Phase D: custom → package 自動移行（実行系） -->
+<% if (report.counts.custom > 0) { %>
+  <div id="migration-exec" style="border:1px solid #c8dcd6;border-radius:10px;padding:16px;background:#f7fbf9;margin:1.5rem 0">
+    <h3 style="margin:0 0 8px">custom → package 自動移行（Phase D）</h3>
+    <p style="font-size:13px;color:#60726f;margin:0 0 8px">
+      custom モードで <strong>policy / プロンプト本文を直持ち</strong>しているプロジェクトを対象に、
+      プロジェクトごとの<strong>専用パッケージ＋公開 v1</strong> を生成し、プロジェクトを package モードへ張り替えます
+      （project 側の個別設定は null 化）。設定内容はそのまま移送するため<strong>実行時のプロンプト挙動は変わりません</strong>。
+      個別設定の無い custom はスキップ（手動でパッケージ割当）。
+    </p>
+    <p style="font-size:12px;color:#b36200;margin:0 0 12px">
+      ⚠ まず「ドライラン」で対象と内容を確認してください。失敗したプロジェクトは custom のまま維持されます（可逆）。
+      レガシー経路・DB列はこのフェーズでは削除しません。
+    </p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <form method="post" action="/admin/prompt-packages/migration/execute" style="display:inline">
+        <button type="submit" style="font-size:13px;padding:6px 16px;background:#fff;color:#1a7a5a;border:1px solid #1a7a5a;border-radius:6px;cursor:pointer">
+          ドライラン（プレビュー）
+        </button>
+      </form>
+      <form method="post" action="/admin/prompt-packages/migration/execute" style="display:inline"
+        onsubmit="return confirm('custom プロジェクトを package へ自動移行します。\n専用パッケージを生成し、プロジェクトの個別設定を null 化します。\n\n実行してよろしいですか？');">
+        <input type="hidden" name="confirm" value="1" />
+        <button type="submit" style="font-size:13px;padding:6px 16px;background:#1a7a5a;color:#fff;border:none;border-radius:6px;cursor:pointer">
+          移行を実行（確定）
+        </button>
+      </form>
+    </div>
+  </div>
+<% } %>
+
+<!-- 移行結果（ドライラン / 実行後） -->
+<% if (locals.migrationResult) { %>
+  <%
+    const OUTCOME_LABELS = { migrated: "✅ 移行済", planned: "📝 予定", skipped: "— スキップ", failed: "✗ 失敗" };
+    const OUTCOME_COLORS = { migrated: "#1a7a5a", planned: "#2a6a8a", skipped: "#90a39e", failed: "#c62828" };
+  %>
+  <div style="border:1px solid <%= migrationResult.dryRun ? '#c8dcd6' : '#1a7a5a' %>;border-radius:10px;padding:16px;margin:1.5rem 0;background:#fff">
+    <h3 style="margin:0 0 8px"><%= migrationResult.dryRun ? 'ドライラン結果（未実行）' : '移行実行結果' %></h3>
+    <p style="font-size:13px;margin:0 0 10px;color:#2a3a37">
+      予定 <%= migrationResult.counts.planned %> / 実移行 <%= migrationResult.counts.migrated %> /
+      スキップ <%= migrationResult.counts.skipped %> /
+      <span style="color:<%= migrationResult.counts.failed > 0 ? '#c62828' : '#60726f' %>">失敗 <%= migrationResult.counts.failed %></span>
+      <% if (migrationResult.changedBy) { %><span style="color:#60726f">（操作者: <%= migrationResult.changedBy %>）</span><% } %>
+    </p>
+    <% if (migrationResult.results.length > 0) { %>
+      <table>
+        <thead><tr><th>プロジェクト</th><th>結果</th><th>パッケージ/バージョン</th><th>備考</th></tr></thead>
+        <tbody>
+          <% for (const r of migrationResult.results) { %>
+            <tr>
+              <td><strong><%= r.projectName %></strong></td>
+              <td style="color:<%= OUTCOME_COLORS[r.outcome] %>;font-weight:600"><%= OUTCOME_LABELS[r.outcome] || r.outcome %></td>
+              <td>
+                <% if (r.versionId && r.packageId) { %>
+                  <a href="/admin/prompt-packages/<%= r.packageId %>" style="font-size:12px">v<%= r.versionNo %> を表示</a>
+                <% } else { %>—<% } %>
+              </td>
+              <td style="font-size:12px;color:#60726f"><%= r.message || '' %></td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    <% } else { %>
+      <p style="font-size:13px;color:#60726f">対象の custom プロジェクトはありませんでした。</p>
+    <% } %>
+  </div>
+<% } %>
+
+<!-- ① 参照不正（最優先） -->
+<% if (report.orphanRefProjects.length > 0) { %>
+  <h3 style="margin-top:1.5rem;color:#c62828">① 参照不正（draft / 削除済みバージョンを参照）— 最優先</h3>
+  <p style="font-size:13px;color:#60726f">参照先が公開されていない/存在しないため、実行時は custom 相当（BASE/legacy）にフォールバックします。</p>
+  <table>
+    <thead><tr><th>プロジェクト</th><th>状態</th><th>参照バージョンID</th><th>理由</th><th>操作</th></tr></thead>
+    <tbody>
+      <% for (const r of report.orphanRefProjects) { %>
+        <tr>
+          <td><strong><%= r.name %></strong></td>
+          <td><%= r.status %></td>
+          <td><code style="font-size:11px"><%= r.versionId %></code></td>
+          <td><%= r.reason === "missing" ? "参照先バージョンが存在しません" : "参照先が draft（未公開）です" %></td>
+          <td><a href="/admin/projects/<%= r.id %>/edit#ai-prompt-section">修正</a></td>
+        </tr>
+      <% } %>
+    </tbody>
+  </table>
+<% } %>
+
+<!-- ② package 未設定 -->
+<% if (report.packageUnsetProjects.length > 0) { %>
+  <h3 style="margin-top:1.5rem;color:#c62828">② package モードだがバージョン未設定</h3>
+  <p style="font-size:13px;color:#60726f">package モードですが公開バージョンが割り当てられていません。既定プロンプトで動作します。</p>
+  <table>
+    <thead><tr><th>プロジェクト</th><th>状態</th><th>操作</th></tr></thead>
+    <tbody>
+      <% for (const r of report.packageUnsetProjects) { %>
+        <tr>
+          <td><strong><%= r.name %></strong></td>
+          <td><%= r.status %></td>
+          <td><a href="/admin/projects/<%= r.id %>/edit#ai-prompt-section">パッケージを割り当て</a></td>
+        </tr>
+      <% } %>
+    </tbody>
+  </table>
+<% } %>
+
+<!-- ③ archived 参照 -->
+<% if (report.archivedRefProjects.length > 0) { %>
+  <h3 style="margin-top:1.5rem;color:#b36200">③ archived バージョン参照（実行時 fallback）</h3>
+  <p style="font-size:13px;color:#60726f">参照中のバージョンが archived です。公開中バージョンがあればそちらへ fallback します。最新の公開版へ再選択を推奨します。</p>
+  <table>
+    <thead><tr><th>プロジェクト</th><th>状態</th><th>参照バージョン</th><th>fallback先</th><th>操作</th></tr></thead>
+    <tbody>
+      <% for (const r of report.archivedRefProjects) { %>
+        <tr>
+          <td><strong><%= r.name %></strong></td>
+          <td><%= r.status %></td>
+          <td>v<%= r.archivedVersionNo %> <span style="color:#999">archived</span></td>
+          <td>
+            <% if (r.hasFallback) { %>
+              <span style="color:#1a7a5a">v<%= r.fallbackVersionNo %>（公開中）</span>
+            <% } else { %>
+              <span style="color:#c62828">公開版なし（custom 相当で動作）</span>
+            <% } %>
+          </td>
+          <td><a href="/admin/projects/<%= r.id %>/edit#ai-prompt-section">再選択</a></td>
+        </tr>
+      <% } %>
+    </tbody>
+  </table>
+<% } %>
+
+<!-- ④ custom 一覧 -->
+<% if (report.customProjects.length > 0) { %>
+  <h3 style="margin-top:1.5rem;color:#b36200">④ custom モード（後方互換・非推奨）— 移行候補</h3>
+  <p style="font-size:13px;color:#60726f">プロジェクト個別設定で動作中です。下記の推奨アクションに従って package モードへ移行してください。</p>
+  <table>
+    <thead><tr><th>プロジェクト</th><th>状態</th><th>本文直持ち</th><th>方針(policy)</th><th>推奨アクション</th><th>操作</th></tr></thead>
+    <tbody>
+      <% for (const r of report.customProjects) { %>
+        <tr>
+          <td><strong><%= r.name %></strong></td>
+          <td><%= r.status %></td>
+          <td><%= r.hasTemplates ? "あり" : "—" %></td>
+          <td><%= r.hasPolicy ? "あり" : "—" %></td>
+          <td style="font-size:12px"><%= r.suggestion %></td>
+          <td><a href="/admin/projects/<%= r.id %>/edit#ai-prompt-section">移行</a></td>
+        </tr>
+      <% } %>
+    </tbody>
+  </table>
+<% } %>

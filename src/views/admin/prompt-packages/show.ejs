@@ -1,0 +1,222 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const STATUS_LABELS = { draft: 'ドラフト', published: '公開中', archived: 'アーカイブ' };
+const STATUS_COLORS = { draft: '#60726f', published: '#1a7a5a', archived: '#999' };
+const STATUS_BG    = { draft: '#f0f4f3', published: '#e8f5ef', archived: '#f5f5f5' };
+const CATEGORY_LABELS = {
+  interview: 'インタビュー', survey: 'アンケート', diary: '日記',
+  analysis: '分析', chat: 'AIチャット', other: 'その他'
+};
+%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+  <div>
+    <a href="/admin/prompt-packages" style="color:#60726f;font-size:13px">← パッケージ一覧</a>
+    <h2 style="margin:4px 0 0"><%= pkg.name %></h2>
+    <code style="font-size:12px;color:#60726f"><%= pkg.slug %></code>
+    <% if (pkg.category) { %>
+      <span style="font-size:11px;background:#eef4f2;border:1px solid #c8dcd8;border-radius:4px;padding:1px 7px;margin-left:8px;color:#2a6a5a"><%= CATEGORY_LABELS[pkg.category] || pkg.category %></span>
+    <% } %>
+    <% if (pkg.description) { %>
+      <span style="font-size:13px;color:#60726f;margin-left:8px"><%= pkg.description %></span>
+    <% } %>
+  </div>
+  <div style="display:flex;gap:8px">
+    <a href="/admin/prompt-packages/<%= pkg.id %>/edit" class="button-link">✏️ 編集</a>
+    <% if (versions.length >= 2) { %>
+      <a href="/admin/prompt-packages/<%= pkg.id %>/compare" class="button-link">⇆ バージョン比較</a>
+    <% } %>
+    <a href="/admin/prompt-packages/new?mode=version&package_id=<%= pkg.id %>" class="button-link" style="background:#1a7a5a;color:#fff">＋ 新バージョン</a>
+  </div>
+</div>
+
+<% if (locals.created) { %><p style="color:green">パッケージを作成しました。</p><% } %>
+<% if (locals.saved) { %><p style="color:green">保存しました。</p><% } %>
+<% if (locals.versionSaved) { %><p style="color:green">バージョンを保存しました。</p><% } %>
+<% if (locals.cloneError) { %><p style="color:red"><%= cloneError %></p><% } %>
+<% if (locals.applied) { %><p style="color:green">プロジェクトにパッケージを適用しました。</p><% } %>
+<% if (locals.applyError) { %><p style="color:red">パッケージの適用に失敗しました（バージョンが適用不可、またはプロジェクトが見つかりません）。</p><% } %>
+<% if (locals.publishBlocked) { %>
+<div style="background:#fdecea;border:1px solid #e57373;border-radius:8px;padding:10px 14px;margin-bottom:1rem;font-size:13px;color:#c62828">
+  ✗ バリデーションエラーがあるため公開できませんでした。下のバージョン一覧のエラー内容を確認してください。
+</div>
+<% } %>
+
+<!-- バージョン一覧 -->
+<h3 id="versions" style="margin-top:1.5rem">バージョン一覧</h3>
+<table>
+  <thead>
+    <tr>
+      <th>バージョン</th>
+      <th>ステータス</th>
+      <th>定義率</th>
+      <th>変更メモ</th>
+      <th>公開日時</th>
+      <th>作成日時</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const v of versions) { %>
+    <tr style="<%= v.status === 'published' ? 'background:#f0faf5' : '' %>">
+      <td><code>v<%= v.version_no %></code></td>
+      <td>
+        <span style="font-size:12px;background:<%= STATUS_BG[v.status] %>;color:<%= STATUS_COLORS[v.status] %>;padding:2px 8px;border-radius:4px">
+          <%= STATUS_LABELS[v.status] || v.status %>
+        </span>
+      </td>
+      <td style="font-size:12px;white-space:nowrap">
+        <% const vSum = summarizeTemplateDefinitions(v.templates_json); %>
+        <strong><%= vSum.defined %>/<%= vSum.total %></strong>
+        <span style="color:#60726f">（<%= vSum.custom %>ｶｽﾀﾑ / <%= vSum.base %>BASE<% if (vSum.disabled > 0) { %> / <%= vSum.disabled %>無効<% } %>）</span>
+      </td>
+      <td style="font-size:13px;color:#60726f"><%= v.change_note || '—' %></td>
+      <td style="font-size:12px">
+        <% if (v.published_at) { %>
+          <%= new Date(v.published_at).toLocaleString('ja-JP') %>
+        <% } else { %>—<% } %>
+      </td>
+      <td style="font-size:12px"><%= new Date(v.created_at).toLocaleString('ja-JP') %></td>
+      <td style="white-space:nowrap">
+        <button type="button" onclick="toggleVersionDetail('<%= v.id %>')" style="font-size:12px">設定を確認</button>
+        <% if (v.status === 'draft') { %>
+          <a href="/admin/prompt-packages/<%= pkg.id %>/versions/<%= v.id %>/edit" style="margin-left:6px;font-size:12px">編集</a>
+          <a href="/admin/prompt-packages/<%= pkg.id %>/versions/<%= v.id %>/publish-confirm"
+            style="margin-left:6px;font-size:12px;background:#1a7a5a;color:#fff;padding:2px 8px;border-radius:4px;text-decoration:none">
+            公開（影響確認へ）
+          </a>
+        <% } %>
+        <% if (v.status === 'published') { %>
+          <a href="/admin/prompt-packages/<%= pkg.id %>/versions/<%= v.id %>/archive-confirm"
+            style="margin-left:6px;font-size:12px;background:#888;color:#fff;padding:2px 8px;border-radius:4px;text-decoration:none">
+            アーカイブ（影響確認へ）
+          </a>
+        <% } %>
+      </td>
+    </tr>
+    <%
+      const vValidation = (locals.versionValidations && versionValidations[v.id]) || { errors: [], warnings: [] };
+    %>
+    <% if (vValidation.errors.length > 0 || vValidation.warnings.length > 0) { %>
+    <tr>
+      <td colspan="7" style="padding:4px 12px;background:#fffdf7">
+        <% for (const e of vValidation.errors) { %>
+          <div style="font-size:12px;color:#c62828">✗ <%= e %></div>
+        <% } %>
+        <% for (const w of vValidation.warnings) { %>
+          <div style="font-size:12px;color:#b36200">⚠ <%= w %></div>
+        <% } %>
+      </td>
+    </tr>
+    <% } %>
+    <!-- 設定詳細行 -->
+    <tr id="vd-<%= v.id %>" style="display:none">
+      <td colspan="7" style="padding:0">
+        <div style="background:#f8faf9;padding:12px 16px;border-top:1px solid #e0ebe8">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div>
+              <strong style="font-size:13px">policy_json</strong>
+              <pre style="font-size:12px;margin:4px 0 0;background:#fff;border:1px solid #e0e8e4;border-radius:6px;padding:8px;white-space:pre-wrap;max-height:200px;overflow-y:auto"><%= v.policy_json ? JSON.stringify(v.policy_json, null, 2) : '（未設定）' %></pre>
+            </div>
+            <div>
+              <strong style="font-size:13px">templates_json</strong>
+              <pre style="font-size:12px;margin:4px 0 0;background:#fff;border:1px solid #e0e8e4;border-radius:6px;padding:8px;white-space:pre-wrap;max-height:200px;overflow-y:auto"><%= v.templates_json ? JSON.stringify(v.templates_json, null, 2) : '（未設定 — BASE_PROMPT_TEMPLATES を使用）' %></pre>
+            </div>
+          </div>
+        </div>
+      </td>
+    </tr>
+    <% } %>
+    <% if (versions.length === 0) { %>
+    <tr><td colspan="7" style="text-align:center;color:#999">バージョンがまだありません</td></tr>
+    <% } %>
+  </tbody>
+</table>
+
+<!-- 利用中プロジェクト一覧 -->
+<div style="margin-top:2rem" id="using-projects">
+  <h3 style="margin:0 0 8px">このパッケージを使用中のプロジェクト</h3>
+  <% if (locals.usingProjects && usingProjects.length > 0) { %>
+    <table>
+      <thead>
+        <tr>
+          <th>プロジェクト名</th>
+          <th>ステータス</th>
+          <th>使用バージョン</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const p of usingProjects) { %>
+        <%
+          const usedVersion = versions.find(v => v.id === p.ai_prompt_package_version_id);
+          const isArchived = usedVersion && usedVersion.status === 'archived';
+        %>
+        <tr style="<%= isArchived ? 'background:#fff8e1' : '' %>">
+          <td><strong><%= p.name %></strong></td>
+          <td><span class="tag"><%= p.status %></span></td>
+          <td>
+            <% if (usedVersion) { %>
+              <code>v<%= usedVersion.version_no %></code>
+              <span style="font-size:11px;margin-left:4px;color:<%= usedVersion.status === 'published' ? '#1a7a5a' : usedVersion.status === 'archived' ? '#e65100' : '#60726f' %>">
+                <%= usedVersion.status %>
+              </span>
+              <% if (isArchived) { %>
+                <span style="font-size:11px;color:#e65100;margin-left:4px">⚠ archived</span>
+              <% } %>
+            <% } else { %>
+              <span style="color:#999;font-size:12px">バージョン不明</span>
+            <% } %>
+          </td>
+          <td>
+            <a href="/admin/projects/<%= p.id %>/edit" style="font-size:12px">プロジェクト編集</a>
+            <%
+              // Phase C: 公開版があり、かつこのプロジェクトが公開版以外（archived/旧版）を参照している場合、
+              // パッケージ画面から公開版へ再適用できるようにする。
+              const onPublished = locals.publishedVersion && p.ai_prompt_package_version_id === publishedVersion.id;
+            %>
+            <% if (locals.publishedVersion && !onPublished) { %>
+              <form method="post" action="/admin/prompt-packages/<%= pkg.id %>/apply" style="display:inline;margin-left:8px"
+                onsubmit="return confirm('このプロジェクトに公開版 v<%= publishedVersion.version_no %> を適用します。よろしいですか？');">
+                <input type="hidden" name="project_id" value="<%= p.id %>" />
+                <input type="hidden" name="version_id" value="<%= publishedVersion.id %>" />
+                <button type="submit" style="font-size:12px;padding:2px 10px;background:#1a7a5a;color:#fff;border:none;border-radius:5px;cursor:pointer">
+                  公開版 v<%= publishedVersion.version_no %> を適用
+                </button>
+              </form>
+            <% } %>
+          </td>
+        </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } else { %>
+    <p style="color:#60726f;font-size:13px">このパッケージを使用中のプロジェクトはありません。</p>
+  <% } %>
+</div>
+
+<!-- 複製フォーム -->
+<div style="margin-top:2rem;padding:16px;background:#f8faf9;border-radius:8px;border:1px solid #d8e3e0">
+  <h4 style="margin:0 0 12px">このパッケージを複製</h4>
+  <p style="font-size:13px;color:#60726f;margin:0 0 12px">
+    公開済みバージョンの設定を引き継いだ新しいパッケージを作成します（新パッケージの v1 として draft 作成）。
+  </p>
+  <form method="post" action="/admin/prompt-packages/<%= pkg.id %>/clone" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+    <label style="flex:2;min-width:200px">
+      新しいパッケージ名 <span style="color:red">*</span>
+      <input type="text" name="new_name" placeholder="例: 女性向けインタビュー" required style="margin-top:4px" />
+      <small style="color:#60726f;font-size:12px;display:block;margin-top:4px">識別子（slug）は名前から自動生成されます。</small>
+    </label>
+    <button type="submit" class="btn" style="height:38px">複製して作成</button>
+  </form>
+</div>
+
+<script>
+function toggleVersionDetail(id) {
+  const row = document.getElementById('vd-' + id);
+  row.style.display = row.style.display === 'none' ? '' : 'none';
+}
+</script>
+
+<%- include("../../partials/footer") %>

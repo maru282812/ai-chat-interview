@@ -186,6 +186,92 @@
       .monthly-value { font-size: 22px; font-weight: 700; color: #1a2f2a; }
       .monthly-unit  { font-size: 12px; color: #2ca87a; margin-left: 2px; }
       .monthly-label { font-size: 11px; color: #60726f; margin-top: 3px; }
+
+      /* ---- ポイント交換 ---- */
+      .balance-card {
+        background: linear-gradient(135deg, #1a7a5a, #2ca87a);
+        border-radius: 16px;
+        padding: 22px 20px 18px;
+        margin-bottom: 12px;
+        color: #fff;
+        box-shadow: 0 4px 12px rgba(44,168,122,.35);
+      }
+      .balance-label { font-size: 12px; opacity: .85; margin-bottom: 4px; }
+      .balance-main { font-size: 42px; font-weight: 700; line-height: 1; letter-spacing: -1px; }
+      .balance-unit  { font-size: 18px; font-weight: 600; margin-left: 3px; opacity: .9; }
+      .balance-sub-row {
+        display: flex; gap: 16px; margin-top: 14px;
+        border-top: 1px solid rgba(255,255,255,.25); padding-top: 12px;
+      }
+      .balance-sub-item { flex: 1; text-align: center; }
+      .balance-sub-val { font-size: 18px; font-weight: 700; }
+      .balance-sub-lbl { font-size: 10px; opacity: .8; margin-top: 2px; }
+
+      .exchange-progress-wrap {
+        background: rgba(255,255,255,.25); border-radius: 6px; height: 6px; margin-top: 14px;
+      }
+      .exchange-progress-bar {
+        background: #fff; height: 100%; border-radius: 6px; transition: width .4s;
+      }
+      .exchange-progress-label {
+        font-size: 11px; opacity: .85; margin-top: 5px; text-align: right;
+      }
+
+      .btn-exchange {
+        background: #fff; color: #1a7a5a; font-weight: 700; font-size: 16px;
+        border: none; border-radius: 12px; padding: 15px; width: 100%; cursor: pointer;
+        box-shadow: 0 2px 8px rgba(0,0,0,.12); transition: opacity .15s;
+      }
+      .btn-exchange:active { opacity: .8; }
+      .btn-exchange:disabled {
+        background: rgba(255,255,255,.4); color: rgba(26,122,90,.6); cursor: not-allowed;
+      }
+      .btn-exchange-pending {
+        background: rgba(255,255,255,.2); color: #fff;
+        font-size: 14px; font-weight: 600; border-radius: 12px; padding: 13px; width: 100%;
+        border: 1.5px solid rgba(255,255,255,.5); cursor: default; text-align: center;
+      }
+
+      .exchange-status-badge {
+        display: inline-block; font-size: 11px; font-weight: 700;
+        padding: 3px 9px; border-radius: 20px; white-space: nowrap;
+      }
+      .badge-pending   { background: #fff3cd; color: #856404; }
+      .badge-approved  { background: #cce5ff; color: #004085; }
+      .badge-fulfilled { background: #d4edda; color: #155724; }
+      .badge-rejected  { background: #f8d7da; color: #721c24; }
+      .badge-canceled  { background: #e9ecef; color: #495057; }
+
+      .gift-url-box {
+        background: #f0faf6; border: 1.5px solid #2ca87a; border-radius: 10px;
+        padding: 12px 14px; margin-top: 8px;
+      }
+      .gift-url-box a {
+        color: #1a7a5a; font-weight: 700; font-size: 14px; word-break: break-all;
+      }
+      .gift-url-label { font-size: 11px; color: #60726f; margin-bottom: 4px; }
+
+      .tab-bar {
+        display: flex; border-bottom: 2px solid #e0ede9; margin-bottom: 14px;
+      }
+      .tab-btn {
+        flex: 1; padding: 10px; font-size: 13px; font-weight: 600;
+        border: none; background: none; color: #60726f; cursor: pointer;
+        border-bottom: 3px solid transparent; margin-bottom: -2px; transition: color .15s;
+      }
+      .tab-btn.active { color: #1a7a5a; border-bottom-color: #2ca87a; }
+
+      .confirm-overlay {
+        position: fixed; inset: 0; background: rgba(0,0,0,.5);
+        display: flex; align-items: flex-end; z-index: 100;
+      }
+      .confirm-sheet {
+        background: #fff; border-radius: 20px 20px 0 0;
+        padding: 24px 20px 32px; width: 100%; max-width: 480px; margin: 0 auto;
+      }
+      .confirm-title { font-size: 17px; font-weight: 700; color: #1a2f2a; margin-bottom: 6px; }
+      .confirm-body  { font-size: 14px; color: #60726f; line-height: 1.7; margin-bottom: 20px; }
+      .confirm-btns  { display: flex; gap: 10px; }
     </style>
   </head>
   <body>
@@ -204,7 +290,7 @@
     <script>
     (() => {
       const initialData = JSON.parse(document.getElementById("initial-data").dataset.json || "{}");
-      const { liffId, mode, next, sessionId, profileUrl, updateUrl, confirmMypageUrl, historyUrl, pointsUrl, consentUrl, interactionsUrl } = initialData;
+      const { liffId, mode, next, sessionId, profileUrl, updateUrl, confirmMypageUrl, historyUrl, pointsUrl, exchangeRequestUrl, consentUrl, interactionsUrl } = initialData;
       const appView   = document.getElementById("app-view");
       const loadingView = document.getElementById("loading-view");
       let idToken = null;
@@ -587,47 +673,259 @@
         }
       }
 
-      // ---- ポイント明細描画 ----
+      // ---- ポイント画面 ----
       async function renderPointsDetail() {
         show(`<div style="text-align:center;padding:40px;color:#60726f">読み込み中...</div>`);
         try {
           const res = await fetch(pointsUrl, { headers: { Authorization: `Bearer ${idToken}` } });
           if (!res.ok) throw new Error("取得に失敗しました");
           const data = await res.json();
-          const transactions = data.transactions || [];
+          renderPointsView(data);
+        } catch (err) {
+          showError(err.message || "読み込みに失敗しました");
+        }
+      }
 
-          const typeLabel = {
-            project_completion: "案件完了", manual_grant: "手動付与",
-            bonus: "ボーナス", redemption: "交換", adjustment: "調整", other: "その他"
-          };
+      function renderPointsView(data, activeTab = "exchange") {
+        const bal      = data.balance  || {};
+        const histories = data.histories || [];
+        const exchanges = data.exchanges || [];
 
-          const rows = transactions.length === 0
-            ? `<li class="tx-item"><span class="tx-reason" style="color:#999">ポイント履歴がありません</span></li>`
-            : transactions.map(t => `
-              <li class="tx-item">
-                <span class="tx-reason">
-                  ${esc(t.reason || typeLabel[t.type] || t.type)}
-                </span>
-                <span class="tx-date">${fmtDate(t.created_at)}</span>
-                <span class="tx-points" style="color:${t.points >= 0 ? '#2ca87a' : '#c0392b'}">
-                  ${t.points >= 0 ? '+' : ''}${t.points}pt
-                </span>
-              </li>`).join("");
+        const available = bal.available_points ?? 0;
+        const pending   = bal.pending_points   ?? 0;
+        const lifetime  = bal.lifetime_points  ?? 0;
 
-          show(`
-            <div class="card" style="display:flex;align-items:center;gap:12px;padding:14px 20px;">
-              <button id="btn-back" style="background:none;border:none;font-size:20px;cursor:pointer;padding:0;">←</button>
-              <span style="font-weight:600;font-size:16px;">ポイント明細</span>
+        // 交換進捗
+        const UNIT = 500;
+        const remainder    = available % UNIT;
+        const shortfall    = remainder === 0 && available > 0 ? 0 : UNIT - remainder;
+        const progressPct  = Math.min(100, Math.round((remainder === 0 && available >= UNIT ? UNIT : remainder) / UNIT * 100));
+        const canExchange  = available >= UNIT;
+        const hasPending   = exchanges.some(e => e.status === "pending");
+        const exchangeCount = Math.floor(available / UNIT);
+
+        // バランスカード
+        const progressHtml = `
+          <div class="exchange-progress-wrap">
+            <div class="exchange-progress-bar" style="width:${canExchange ? 100 : progressPct}%"></div>
+          </div>
+          <div class="exchange-progress-label">
+            ${canExchange
+              ? `${exchangeCount}口（${available}pt）交換可能`
+              : `次の交換まであと ${shortfall}pt`}
+          </div>`;
+
+        const exchangeBtnHtml = hasPending
+          ? `<div class="btn-exchange-pending">申請中（承認をお待ちください）</div>`
+          : canExchange
+            ? `<button id="btn-do-exchange" class="btn-exchange">500pt を交換申請する</button>`
+            : `<button class="btn-exchange" disabled>500pt に達したら交換できます</button>`;
+
+        // 交換履歴
+        const exchangeStatusLabel = {
+          pending: "申請中", approved: "承認済", fulfilled: "送付済", rejected: "却下", canceled: "キャンセル"
+        };
+        const exchangeStatusClass = {
+          pending: "badge-pending", approved: "badge-approved", fulfilled: "badge-fulfilled",
+          rejected: "badge-rejected", canceled: "badge-canceled"
+        };
+
+        const exchangeRows = exchanges.length === 0
+          ? `<div style="text-align:center;color:#999;padding:16px;font-size:13px">交換申請はまだありません</div>`
+          : exchanges.map(e => {
+            const giftHtml = e.status === "fulfilled" && e.gift_url
+              ? `<div class="gift-url-box">
+                   <div class="gift-url-label">ギフトURL（有効期限内にご使用ください）</div>
+                   <a href="${esc(e.gift_url)}" target="_blank">${esc(e.gift_url)}</a>
+                 </div>`
+              : "";
+            const cancelBtn = e.status === "pending"
+              ? `<button class="btn-cancel-exchange btn btn-secondary btn-sm" data-id="${esc(e.id)}"
+                   style="margin-top:8px;font-size:12px;padding:7px 12px;width:auto">申請をキャンセル</button>`
+              : "";
+            const failedNote = e.status === "rejected" && e.failed_reason
+              ? `<div style="font-size:12px;color:#c0392b;margin-top:4px">却下理由: ${esc(e.failed_reason)}</div>`
+              : "";
+            return `
+              <div style="padding:14px 0;border-bottom:1px solid #f0f4f3">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="font-size:15px;font-weight:700;color:#1a2f2a">${e.requested_points}pt</span>
+                  <span class="exchange-status-badge ${exchangeStatusClass[e.status] || ''}">${exchangeStatusLabel[e.status] || e.status}</span>
+                </div>
+                <div style="font-size:12px;color:#60726f;margin-top:3px">${fmtDate(e.requested_at)} 申請</div>
+                ${failedNote}
+                ${giftHtml}
+                ${cancelBtn}
+              </div>`;
+          }).join("");
+
+        // ポイント履歴
+        const typeLabel = {
+          project_completion: "案件完了", first_bonus: "初回ボーナス",
+          continuity_bonus: "継続ボーナス", project_bonus: "案件ボーナス",
+          daily_survey: "デイリー回答", interview_complete: "インタビュー完了",
+          streak_bonus: "ストリークボーナス", birthday_bonus: "誕生日ボーナス",
+          campaign_bonus: "キャンペーン", attribute_update: "プロフィール更新",
+          manual_adjustment: "手動調整", redemption: "交換",
+          exchange_request: "交換申請（仮押さえ）", exchange_cancel: "申請キャンセル（返還）",
+          exchange_refund: "申請却下（返還）"
+        };
+
+        const historyRows = histories.length === 0
+          ? `<li class="tx-item"><span class="tx-reason" style="color:#999">ポイント履歴がありません</span></li>`
+          : histories.map(t => `
+            <li class="tx-item">
+              <span class="tx-reason">${esc(t.reason || typeLabel[t.type] || t.type)}</span>
+              <span class="tx-date">${fmtDate(t.created_at)}</span>
+              <span class="tx-points" style="color:${t.points >= 0 ? '#2ca87a' : '#c0392b'}">
+                ${t.points >= 0 ? '+' : ''}${t.points}pt
+              </span>
+            </li>`).join("");
+
+        show(`
+          <div class="card" style="display:flex;align-items:center;gap:12px;padding:14px 20px;">
+            <button id="btn-back" style="background:none;border:none;font-size:20px;cursor:pointer;padding:0;">←</button>
+            <span style="font-weight:600;font-size:16px;">ポイント</span>
+          </div>
+
+          <div class="balance-card">
+            <div class="balance-label">保有ポイント</div>
+            <div>
+              <span class="balance-main">${available}</span>
+              <span class="balance-unit">pt</span>
             </div>
-            <div class="card">
-              <div style="text-align:center;margin-bottom:12px">
-                <div style="font-size:28px;font-weight:700;color:#1a2f2a">${data.total_points ?? 0}<span style="font-size:16px;color:#2ca87a;margin-left:4px">pt</span></div>
-                <div style="font-size:12px;color:#60726f">現在の保有ポイント</div>
+            <div class="balance-sub-row">
+              <div class="balance-sub-item">
+                <div class="balance-sub-val">${pending}<span style="font-size:12px;margin-left:2px">pt</span></div>
+                <div class="balance-sub-lbl">申請中</div>
               </div>
-              <ul class="tx-list">${rows}</ul>
+              <div class="balance-sub-item">
+                <div class="balance-sub-val">${lifetime - available - pending}<span style="font-size:12px;margin-left:2px">pt</span></div>
+                <div class="balance-sub-lbl">累計交換</div>
+              </div>
+              <div class="balance-sub-item">
+                <div class="balance-sub-val">${lifetime}<span style="font-size:12px;margin-left:2px">pt</span></div>
+                <div class="balance-sub-lbl">累計獲得</div>
+              </div>
             </div>
-          `);
-          document.getElementById("btn-back")?.addEventListener("click", () => load());
+            ${progressHtml}
+            <div style="margin-top:14px">${exchangeBtnHtml}</div>
+          </div>
+
+          <div class="card">
+            <div class="tab-bar">
+              <button class="tab-btn ${activeTab === 'exchange' ? 'active' : ''}" id="tab-exchange">交換申請履歴</button>
+              <button class="tab-btn ${activeTab === 'history'  ? 'active' : ''}" id="tab-history">ポイント履歴</button>
+            </div>
+            <div id="pane-exchange" style="display:${activeTab === 'exchange' ? '' : 'none'}">
+              ${exchangeRows}
+            </div>
+            <div id="pane-history" style="display:${activeTab === 'history' ? '' : 'none'}">
+              <ul class="tx-list">${historyRows}</ul>
+            </div>
+          </div>
+        `);
+
+        // ---- イベント ----
+        document.getElementById("btn-back")?.addEventListener("click", () => load());
+
+        // タブ切替
+        document.getElementById("tab-exchange")?.addEventListener("click", () => {
+          document.getElementById("pane-exchange").style.display = "";
+          document.getElementById("pane-history").style.display  = "none";
+          document.getElementById("tab-exchange").classList.add("active");
+          document.getElementById("tab-history").classList.remove("active");
+        });
+        document.getElementById("tab-history")?.addEventListener("click", () => {
+          document.getElementById("pane-history").style.display  = "";
+          document.getElementById("pane-exchange").style.display = "none";
+          document.getElementById("tab-history").classList.add("active");
+          document.getElementById("tab-exchange").classList.remove("active");
+        });
+
+        // 交換申請
+        document.getElementById("btn-do-exchange")?.addEventListener("click", () => {
+          showExchangeConfirm(available, data);
+        });
+
+        // 申請キャンセル
+        document.querySelectorAll(".btn-cancel-exchange").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            const requestId = btn.dataset.id;
+            if (!requestId) return;
+            if (!confirm("交換申請をキャンセルしますか？ポイントは返還されます。")) return;
+            btn.disabled = true;
+            try {
+              const r = await fetch(`${exchangeRequestUrl}/${requestId}/cancel`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${idToken}` }
+              });
+              const j = await r.json();
+              if (!r.ok) throw new Error(j.error || "キャンセルに失敗しました");
+              await reloadPointsView();
+            } catch (e) {
+              alert(e.message || "エラーが発生しました");
+              btn.disabled = false;
+            }
+          });
+        });
+      }
+
+      function showExchangeConfirm(available, cachedData) {
+        const UNIT = 500;
+        const count = Math.floor(available / UNIT);
+        // 申請口数は常に1口（1度に500ptのみ）
+        const pts = UNIT;
+        const overlay = document.createElement("div");
+        overlay.className = "confirm-overlay";
+        overlay.innerHTML = `
+          <div class="confirm-sheet">
+            <div class="confirm-title">500pt を交換申請する</div>
+            <div class="confirm-body">
+              500pt を <strong>Amazonギフト等</strong> と交換申請します。<br>
+              申請後、管理者が確認・承認後にギフトURLをLINEでお送りします。<br><br>
+              <strong>申請後はキャンセル可能</strong>ですが、承認後はキャンセルできません。
+            </div>
+            <p id="confirm-status" class="status-msg"></p>
+            <div class="confirm-btns">
+              <button id="confirm-cancel" class="btn btn-secondary" style="flex:1">閉じる</button>
+              <button id="confirm-ok"     class="btn btn-primary"   style="flex:2">申請する（500pt）</button>
+            </div>
+          </div>`;
+        document.body.appendChild(overlay);
+
+        overlay.querySelector("#confirm-cancel").addEventListener("click", () => overlay.remove());
+        overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+
+        overlay.querySelector("#confirm-ok").addEventListener("click", async () => {
+          const okBtn  = overlay.querySelector("#confirm-ok");
+          const stEl   = overlay.querySelector("#confirm-status");
+          okBtn.disabled = true;
+          stEl.textContent = "申請中...";
+          stEl.className = "status-msg";
+          try {
+            const r = await fetch(exchangeRequestUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+              body: JSON.stringify({ requested_points: pts })
+            });
+            const j = await r.json();
+            if (!r.ok) throw new Error(j.error || "申請に失敗しました");
+            overlay.remove();
+            await reloadPointsView();
+          } catch (e) {
+            stEl.textContent = e.message || "エラーが発生しました";
+            stEl.className = "status-msg error";
+            okBtn.disabled = false;
+          }
+        });
+      }
+
+      async function reloadPointsView() {
+        try {
+          const res = await fetch(pointsUrl, { headers: { Authorization: `Bearer ${idToken}` } });
+          if (!res.ok) throw new Error("再取得に失敗しました");
+          renderPointsView(await res.json());
         } catch (err) {
           showError(err.message || "読み込みに失敗しました");
         }

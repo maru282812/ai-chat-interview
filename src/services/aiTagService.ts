@@ -1,9 +1,30 @@
 import { logger } from "../lib/logger";
 import { postAnalysisRepository } from "../repositories/postAnalysisRepository";
 import { postRepository } from "../repositories/postRepository";
+import { projectRepository } from "../repositories/projectRepository";
 import { userAttributeRepository } from "../repositories/userAttributeRepository";
 import { userProfileRepository } from "../repositories/userProfileRepository";
+import type { Project } from "../types/domain";
 import { aiService } from "./aiService";
+
+/** Phase 7-A: 投稿に紐づくプロジェクト/セッションを解決する（テンプレート解決・ai_logs記録用）。失敗時は legacy 動作 */
+async function resolvePostContext(postId: string): Promise<{
+  project: Project | null;
+  sessionId: string | null;
+}> {
+  try {
+    const post = await postRepository.getById(postId);
+    if (!post) {
+      return { project: null, sessionId: null };
+    }
+    const project = post.project_id
+      ? await projectRepository.getById(post.project_id).catch(() => null)
+      : null;
+    return { project, sessionId: post.session_id ?? null };
+  } catch {
+    return { project: null, sessionId: null };
+  }
+}
 
 export const aiTagService = {
   async generateTagsForUser(lineUserId: string): Promise<{
@@ -62,7 +83,8 @@ export const aiTagService = {
   },
 
   async analyzeRantPost(postId: string, content: string): Promise<Record<string, unknown> | null> {
-    const result = await aiService.analyzeRantExtended(content);
+    const { project, sessionId } = await resolvePostContext(postId);
+    const result = await aiService.analyzeRantExtended(content, { project, sessionId });
     if (!result) {
       return null;
     }
@@ -87,7 +109,8 @@ export const aiTagService = {
   },
 
   async analyzeDiaryPost(postId: string, content: string): Promise<Record<string, unknown> | null> {
-    const result = await aiService.analyzeDiaryExtended(content);
+    const { project, sessionId } = await resolvePostContext(postId);
+    const result = await aiService.analyzeDiaryExtended(content, { project, sessionId });
     if (!result) {
       return null;
     }

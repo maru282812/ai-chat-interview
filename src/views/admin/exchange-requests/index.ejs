@@ -1,0 +1,280 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>交換申請管理</h2>
+</div>
+
+<!-- ステータス別カウント -->
+<section class="grid" style="margin-bottom:1.25rem">
+  <% const tabDefs = [
+    { key: 'all',       label: '全て',    color: '#6c757d' },
+    { key: 'pending',   label: '申請中',   color: '#f5a623' },
+    { key: 'approved',  label: '承認済み', color: '#2196f3' },
+    { key: 'fulfilled', label: '送付済み', color: '#2ca87a' },
+    { key: 'rejected',  label: '却下',    color: '#e53935' },
+    { key: 'canceled',  label: 'キャンセル', color: '#9e9e9e' },
+  ]; %>
+  <% for (const tab of tabDefs) { %>
+  <a href="/admin/exchange-requests?status=<%= tab.key %>"
+     style="text-decoration:none;color:inherit">
+    <div class="card" style="border-top:3px solid <%= tab.color %>;cursor:pointer<%= statusFilter === tab.key ? ';background:#f0f7f4' : '' %>">
+      <div class="muted" style="font-size:12px"><%= tab.label %></div>
+      <h2 style="color:<%= tab.color %>"><%= counts[tab.key] %></h2>
+    </div>
+  </a>
+  <% } %>
+</section>
+
+<!-- 月次サマリー -->
+<% if (monthlyStats && monthlyStats.length > 0) { %>
+<section class="card" style="margin-bottom:1.5rem">
+  <h3 style="margin-bottom:.75rem">月次集計（送付済み）</h3>
+  <div style="overflow-x:auto">
+    <table style="min-width:500px">
+      <thead>
+        <tr>
+          <th>月</th>
+          <th style="text-align:right">件数</th>
+          <th style="text-align:right">合計pt</th>
+          <th style="text-align:right">合計金額</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const s of [...monthlyStats].reverse()) { %>
+        <tr>
+          <td><%= s.month %></td>
+          <td style="text-align:right"><%= s.count %>件</td>
+          <td style="text-align:right;font-weight:600"><%= s.total_points.toLocaleString() %> pt</td>
+          <td style="text-align:right"><%= s.total_jpy.toLocaleString() %> 円</td>
+        </tr>
+        <% } %>
+        <tr style="font-weight:700;border-top:2px solid #ddd">
+          <td>合計</td>
+          <td style="text-align:right"><%= monthlyStats.reduce((s, r) => s + r.count, 0) %>件</td>
+          <td style="text-align:right;color:#2ca87a"><%= monthlyStats.reduce((s, r) => s + r.total_points, 0).toLocaleString() %> pt</td>
+          <td style="text-align:right;color:#2ca87a"><%= monthlyStats.reduce((s, r) => s + r.total_jpy, 0).toLocaleString() %> 円</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+<% } %>
+
+<!-- 不正検知フラグ -->
+<% if (flaggedUsers && flaggedUsers.length > 0) { %>
+<section style="margin-bottom:1.5rem;background:#fff8e1;border:1px solid #f9a825;border-radius:8px;padding:16px">
+  <h3 style="margin-bottom:.5rem;color:#e65100">⚠ 申請頻度の高いユーザー（過去30日 / 3件以上）</h3>
+  <p class="muted" style="font-size:12px;margin-bottom:.75rem">
+    短期間に多数の申請を行っているユーザーです。手動で確認してください。
+  </p>
+  <div style="display:flex;flex-wrap:wrap;gap:8px">
+    <% for (const u of flaggedUsers) { %>
+    <div style="background:#fff;border:1px solid #f9a825;border-radius:6px;padding:6px 12px;font-size:13px">
+      <span style="font-weight:600;color:#e65100"><%= u.request_count %>件</span>
+      <span class="muted" style="margin-left:6px;font-size:11px"><%= u.line_user_id %></span>
+      <a href="/admin/exchange-requests?status=all&q=<%= u.line_user_id %>"
+         style="margin-left:8px;color:#2196f3;font-size:11px">絞り込む</a>
+    </div>
+    <% } %>
+  </div>
+</section>
+<% } %>
+
+<!-- 申請一覧テーブル -->
+<section>
+  <h3 style="margin-bottom:.5rem">
+    <%= statusFilter === 'all' ? '全申請' : tabDefs.find(t => t.key === statusFilter)?.label + '一覧' %>
+    <span class="muted" style="font-size:13px;font-weight:400">（<%= total %>件）</span>
+  </h3>
+
+  <table>
+    <thead>
+      <tr>
+        <th>申請日時</th>
+        <th>LINE USER ID</th>
+        <th style="text-align:right">申請pt</th>
+        <th style="text-align:right">金額</th>
+        <th>ステータス</th>
+        <th>ギフトURL</th>
+        <th>管理メモ</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% for (const r of requests) { %>
+      <% const isFlagged = flaggedUserIds && flaggedUserIds.includes(r.line_user_id); %>
+      <tr<%= isFlagged ? ' style="background:#fff8e1"' : '' %>>
+        <td style="white-space:nowrap;font-size:12px">
+          <%= new Date(r.requested_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) %>
+        </td>
+        <td style="font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          <% if (isFlagged) { %>
+            <span title="過去30日に3件以上の申請" style="color:#e65100;font-size:10px;margin-right:3px">⚠</span>
+          <% } %>
+          <%= r.line_user_id %>
+        </td>
+        <td style="text-align:right;font-weight:600"><%= r.requested_points.toLocaleString() %> pt</td>
+        <td style="text-align:right"><%= r.gift_amount_jpy.toLocaleString() %> 円</td>
+        <td>
+          <% const statusConfig = {
+            pending:   { label: '申請中',   bg: '#fff3e0', color: '#e65100' },
+            approved:  { label: '承認済み', bg: '#e3f2fd', color: '#1565c0' },
+            fulfilled: { label: '送付済み', bg: '#e8f5e9', color: '#2e7d32' },
+            rejected:  { label: '却下',    bg: '#ffebee', color: '#c62828' },
+            canceled:  { label: 'キャンセル', bg: '#f5f5f5', color: '#616161' },
+          }; %>
+          <% const sc = statusConfig[r.status] || { label: r.status, bg: '#eee', color: '#333' }; %>
+          <span style="padding:2px 8px;border-radius:12px;font-size:12px;background:<%= sc.bg %>;color:<%= sc.color %>">
+            <%= sc.label %>
+          </span>
+        </td>
+        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">
+          <% if (r.gift_url) { %>
+            <a href="<%= r.gift_url %>" target="_blank" rel="noopener noreferrer"
+               style="color:#2ca87a" title="<%= r.gift_url %>">
+              <%= r.gift_provider || 'リンク' %>
+            </a>
+          <% } else { %>
+            <span class="muted">-</span>
+          <% } %>
+        </td>
+        <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">
+          <%= r.admin_memo || '' %>
+        </td>
+        <td style="white-space:nowrap">
+          <% if (r.status === 'pending') { %>
+            <button type="button" class="btn" style="padding:2px 8px;font-size:12px;margin-right:4px"
+                    onclick="openApproveModal('<%= r.id %>')">承認</button>
+            <button type="button" class="btn-secondary" style="padding:2px 8px;font-size:12px;background:#ffebee;border-color:#e53935;color:#c62828"
+                    onclick="openRejectModal('<%= r.id %>')">却下</button>
+          <% } else if (r.status === 'approved') { %>
+            <button type="button" class="btn" style="padding:2px 8px;font-size:12px;background:#2ca87a"
+                    onclick="openFulfillModal('<%= r.id %>')">送付済みに</button>
+            <button type="button" class="btn-secondary" style="padding:2px 8px;font-size:12px;background:#ffebee;border-color:#e53935;color:#c62828"
+                    onclick="openRejectModal('<%= r.id %>')">却下</button>
+          <% } else if ((r.status === 'approved' || r.status === 'fulfilled') && (!r.notification_sent || r.notification_error)) { %>
+            <form method="post" action="/admin/exchange-requests/<%= r.id %>/notify" style="display:inline">
+              <button type="submit" class="btn-secondary" style="padding:2px 8px;font-size:12px"
+                      title="<%= r.notification_error ? '通知エラー: ' + r.notification_error : '未送信' %>">
+                通知<%= r.notification_error ? '再' : '' %>送信
+              </button>
+            </form>
+          <% } else { %>
+            <span class="muted" style="font-size:12px">-</span>
+          <% } %>
+        </td>
+      </tr>
+      <% } %>
+      <% if (requests.length === 0) { %>
+        <tr><td colspan="8" class="muted" style="text-align:center">申請データがありません</td></tr>
+      <% } %>
+    </tbody>
+  </table>
+
+  <!-- ページネーション -->
+  <% if (total > limit) { %>
+  <div style="display:flex;gap:8px;margin-top:1rem;justify-content:center">
+    <% for (let p = 1; p <= Math.ceil(total / limit); p++) { %>
+      <a href="/admin/exchange-requests?status=<%= statusFilter %>&page=<%= p %>"
+         style="padding:4px 10px;border:1px solid #ddd;border-radius:4px;text-decoration:none;
+                background:<%= p === page ? '#2ca87a' : '#fff' %>;
+                color:<%= p === page ? '#fff' : '#333' %>">
+        <%= p %>
+      </a>
+    <% } %>
+  </div>
+  <% } %>
+</section>
+
+<!-- 承認モーダル -->
+<div id="approveModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:1000">
+  <div style="background:#fff;max-width:380px;margin:120px auto;padding:24px;border-radius:8px;position:relative">
+    <button onclick="closeModal('approveModal')" style="position:absolute;top:12px;right:12px;background:none;border:none;font-size:20px;cursor:pointer">✕</button>
+    <h4 style="margin-bottom:1rem">交換申請を承認しますか？</h4>
+    <p class="muted" style="font-size:13px;margin-bottom:1.25rem">
+      承認後、ギフトURLを登録して「送付済み」に変更してください。
+    </p>
+    <form id="approveForm" method="post" action="">
+      <div style="display:flex;gap:12px">
+        <button type="submit" class="btn">承認する</button>
+        <button type="button" onclick="closeModal('approveModal')" class="btn-secondary">キャンセル</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 却下モーダル -->
+<div id="rejectModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:1000">
+  <div style="background:#fff;max-width:400px;margin:120px auto;padding:24px;border-radius:8px;position:relative">
+    <button onclick="closeModal('rejectModal')" style="position:absolute;top:12px;right:12px;background:none;border:none;font-size:20px;cursor:pointer">✕</button>
+    <h4 style="margin-bottom:1rem">交換申請を却下する</h4>
+    <form id="rejectForm" method="post" action="">
+      <div class="form-group">
+        <label>却下理由（ユーザーには表示しません）</label>
+        <textarea name="reason" rows="3" style="width:100%" placeholder="例：申請内容に不備があります"></textarea>
+      </div>
+      <div style="display:flex;gap:12px">
+        <button type="submit" class="btn" style="background:#e53935">却下する</button>
+        <button type="button" onclick="closeModal('rejectModal')" class="btn-secondary">キャンセル</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 送付済みモーダル -->
+<div id="fulfillModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:1000">
+  <div style="background:#fff;max-width:480px;margin:80px auto;padding:24px;border-radius:8px;position:relative;max-height:80vh;overflow-y:auto">
+    <button onclick="closeModal('fulfillModal')" style="position:absolute;top:12px;right:12px;background:none;border:none;font-size:20px;cursor:pointer">✕</button>
+    <h4 style="margin-bottom:1rem">ギフト送付情報を入力</h4>
+    <form id="fulfillForm" method="post" action="">
+      <div class="form-group">
+        <label>ギフトURL <span style="color:#e53935">*</span></label>
+        <input type="url" name="gift_url" required style="width:100%" placeholder="https://...">
+      </div>
+      <div class="form-group">
+        <label>ギフトプロバイダー</label>
+        <input type="text" name="gift_provider" style="width:100%" placeholder="例：amazon, quocard" value="manual">
+      </div>
+      <div class="form-group">
+        <label>ギフトコード（任意）</label>
+        <input type="text" name="gift_code" style="width:100%" placeholder="例：XXXX-YYYY-ZZZZ">
+      </div>
+      <div class="form-group">
+        <label>有効期限（任意）</label>
+        <input type="date" name="expires_at" style="width:100%">
+      </div>
+      <div class="form-group">
+        <label>管理メモ（任意）</label>
+        <textarea name="admin_memo" rows="2" style="width:100%"></textarea>
+      </div>
+      <div style="display:flex;gap:12px">
+        <button type="submit" class="btn" style="background:#2ca87a">送付済みにする</button>
+        <button type="button" onclick="closeModal('fulfillModal')" class="btn-secondary">キャンセル</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openApproveModal(id) {
+  document.getElementById('approveForm').action = '/admin/exchange-requests/' + id + '/approve';
+  document.getElementById('approveModal').style.display = '';
+}
+function openRejectModal(id) {
+  document.getElementById('rejectForm').action = '/admin/exchange-requests/' + id + '/reject';
+  document.getElementById('rejectModal').style.display = '';
+}
+function openFulfillModal(id) {
+  document.getElementById('fulfillForm').action = '/admin/exchange-requests/' + id + '/fulfill';
+  document.getElementById('fulfillModal').style.display = '';
+}
+function closeModal(id) {
+  document.getElementById(id).style.display = 'none';
+}
+// ESCキーで全モーダルを閉じる
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') ['approveModal','rejectModal','fulfillModal'].forEach(closeModal);
+});
+</script>
+
+<%- include("../../partials/footer") %>

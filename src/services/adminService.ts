@@ -33,11 +33,23 @@ export interface AdminTagSummaryRow {
   count: number;
 }
 
+export interface ProjectPackageInfo {
+  /** Phase C: 一覧からパッケージ詳細へ遷移するためのID（package 中心導線） */
+  packageId: string;
+  packageName: string;
+  packageSlug: string;
+  versionNo: number;
+  versionStatus: string;
+  isFallback: boolean;
+  fallbackVersionNo?: number;
+}
+
 export interface AdminProjectListRow {
   project: Awaited<ReturnType<typeof projectRepository.getById>>;
   questionCount: number;
   branchCount: number;
   hasBranches: boolean;
+  packageInfo: ProjectPackageInfo | null;
 }
 
 export interface AdminQuestionListRow {
@@ -79,8 +91,57 @@ export const adminService = {
     return researchOpsService.getRespondentDetail(respondentId);
   },
 
-  async listProjects() {
+  async listProjects(): Promise<AdminProjectListRow[]> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
     const projects = await projectRepository.list();
+
+    // パッケージモードのプロジェクトに必要なバージョン・パッケージ情報を一括取得
+    const packageModeProjects = projects.filter(
+      (p) => p.ai_prompt_mode === "package" && p.ai_prompt_package_version_id
+    );
+    let versionMap = new Map<string, import("../repositories/promptPackageRepository").PromptPackageVersion>();
+    let packageMap = new Map<string, import("../repositories/promptPackageRepository").PromptPackage>();
+    let publishedVersionByPackage = new Map<string, import("../repositories/promptPackageRepository").PromptPackageVersion>();
+
+    if (packageModeProjects.length > 0) {
+      const versionIds = [...new Set(
+        packageModeProjects.map((p) => p.ai_prompt_package_version_id as string)
+      )];
+      // 必要なバージョンを個別フェッチ（件数が少ないため並列）
+      const versionResults = await Promise.all(
+        versionIds.map((vid) => promptPackageRepository.getVersionById(vid).catch(() => null))
+      );
+      for (const v of versionResults) {
+        if (v) versionMap.set(v.id, v);
+      }
+
+      // 必要なパッケージを取得
+      const packageIds = [...new Set(
+        Array.from(versionMap.values()).map((v) => v.package_id)
+      )];
+      const packageResults = await Promise.all(
+        packageIds.map((pid) => promptPackageRepository.getById(pid).catch(() => null))
+      );
+      for (const pkg of packageResults) {
+        if (pkg) packageMap.set(pkg.id, pkg);
+      }
+
+      // archived バージョンについて fallback 先（published）を取得
+      const archivedPackageIds = Array.from(versionMap.values())
+        .filter((v) => v.status === "archived")
+        .map((v) => v.package_id);
+      const uniqueArchivedPkgIds = [...new Set(archivedPackageIds)];
+      const publishedResults = await Promise.all(
+        uniqueArchivedPkgIds.map((pid) =>
+          promptPackageRepository.getPublishedVersionByPackageId(pid).catch(() => null)
+        )
+      );
+      uniqueArchivedPkgIds.forEach((pid, i) => {
+        const pv = publishedResults[i];
+        if (pv) publishedVersionByPackage.set(pid, pv);
+      });
+    }
+
     const rows = await Promise.all(
       projects.map(async (project) => {
         const questions = await questionRepository.listByProject(project.id);
@@ -88,11 +149,41 @@ export const adminService = {
           return total + describeBranchRule(question.branch_rule).branchCount;
         }, 0);
 
+        let packageInfo: ProjectPackageInfo | null = null;
+        if (project.ai_prompt_mode === "package" && project.ai_prompt_package_version_id) {
+          const version = versionMap.get(project.ai_prompt_package_version_id);
+          if (version) {
+            const pkg = packageMap.get(version.package_id);
+            if (version.status === "archived") {
+              const fallback = publishedVersionByPackage.get(version.package_id);
+              packageInfo = {
+                packageId: version.package_id,
+                packageName: pkg?.name ?? version.package_id,
+                packageSlug: pkg?.slug ?? "",
+                versionNo: version.version_no,
+                versionStatus: version.status,
+                isFallback: !!fallback,
+                fallbackVersionNo: fallback?.version_no,
+              };
+            } else {
+              packageInfo = {
+                packageId: version.package_id,
+                packageName: pkg?.name ?? version.package_id,
+                packageSlug: pkg?.slug ?? "",
+                versionNo: version.version_no,
+                versionStatus: version.status,
+                isFallback: false,
+              };
+            }
+          }
+        }
+
         return {
           project,
           questionCount: questions.length,
           branchCount,
-          hasBranches: branchCount > 0
+          hasBranches: branchCount > 0,
+          packageInfo,
         };
       })
     );

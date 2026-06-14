@@ -25,6 +25,9 @@ const envSchema = z.object({
   ADMIN_NOTIFICATION_EMAIL: z.string().email().optional(),
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_MODEL: z.string().default("gpt-5-mini"),
+  // 管理ツール系 AI 呼び出し（設問生成・フロー流用・属性提案）に使うモデル。
+  // 将来は管理画面から変更可能にする予定。既存挙動を維持するため gpt-4o-mini をデフォルトとする。
+  OPENAI_TOOL_MODEL: z.string().default("gpt-4o-mini"),
   DEFAULT_PROJECT_ID: z.string().uuid(),
   SESSION_SUMMARY_INTERVAL: z.coerce.number().int().positive().default(5),
   MAX_AI_PROBES_PER_ANSWER: z.coerce.number().int().nonnegative().default(1),

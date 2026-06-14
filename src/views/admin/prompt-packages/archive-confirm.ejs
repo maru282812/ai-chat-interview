@@ -1,0 +1,56 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="margin-bottom:1rem">
+  <a href="/admin/prompt-packages/<%= pkg.id %>" style="color:#60726f;font-size:13px">← パッケージ詳細に戻る</a>
+  <h2 style="margin:4px 0 0">アーカイブ確認</h2>
+  <p style="color:#60726f;font-size:13px"><%= pkg.name %> — v<%= version.version_no %></p>
+</div>
+
+<!-- 影響プロジェクト一覧 -->
+<%
+  // fallback 先なし + 利用中プロジェクトあり → 赤警告 / fallback 発生 → 黄色警告
+  const isDanger = usingProjects.length > 0 && !fallbackVersion;
+%>
+<div style="background:<%= isDanger ? '#fdecea' : '#fff8e1' %>;border:1px solid <%= isDanger ? '#e57373' : '#f9a825' %>;border-radius:10px;padding:16px;margin-bottom:1.5rem">
+  <% if (usingProjects.length > 0) { %>
+    <p style="margin:0 0 10px;font-weight:700;color:<%= isDanger ? '#c62828' : '#b36200' %>">
+      ⚠ このバージョンは以下の <%= usingProjects.length %> プロジェクトで使用中です
+    </p>
+    <ul style="margin:0 0 12px;padding-left:20px">
+      <% for (const p of usingProjects) { %>
+        <li style="margin-bottom:4px">
+          <a href="/admin/projects/<%= p.id %>/edit" style="color:#1a7a5a"><strong><%= p.name %></strong></a>
+          <span class="tag" style="margin-left:6px;font-size:11px"><%= p.status %></span>
+        </li>
+      <% } %>
+    </ul>
+    <% if (fallbackVersion) { %>
+      <p style="margin:0;font-size:13px;color:#b36200">
+        ⚠ アーカイブ後、これらのプロジェクトは v<%= fallbackVersion.version_no %>（公開中）に自動 fallback されます。
+      </p>
+    <% } else { %>
+      <p style="margin:0;font-size:13px;font-weight:700;color:#c62828">
+        ✗ このパッケージに公開中バージョンがありません。アーカイブすると、これらのプロジェクトはプロジェクト個別設定（custom 相当）で動作します。
+      </p>
+    <% } %>
+  <% } else { %>
+    <p style="margin:0;color:#60726f">このバージョンを使用中のプロジェクトはありません。安全にアーカイブできます。</p>
+  <% } %>
+</div>
+
+<!-- アクション -->
+<div style="display:flex;gap:12px;align-items:flex-end">
+  <form method="post" action="/admin/prompt-packages/<%= pkg.id %>/versions/<%= version.id %>/archive">
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:10px;cursor:pointer">
+      <input type="checkbox" id="archive-confirm-check" onchange="document.getElementById('archive-btn').disabled = !this.checked">
+      上記の影響を確認しました
+    </label>
+    <button type="submit" id="archive-btn" disabled
+      style="background:<%= isDanger ? '#c62828' : '#888' %>;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:14px">
+      影響を確認した上で、このバージョン（v<%= version.version_no %>）をアーカイブする
+    </button>
+  </form>
+  <a href="/admin/prompt-packages/<%= pkg.id %>" style="font-size:14px;color:#60726f;margin-bottom:8px">キャンセル</a>
+</div>
+
+<%- include("../../partials/footer") %>

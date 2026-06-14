@@ -12,8 +12,9 @@ export interface AwardPointsInput {
   transactionType: UserPointTransactionType;
   points: number;
   reason: string;
-  referenceType?: "daily_survey_answer" | "project_assignment" | "campaign" | "session" | "manual";
+  referenceType?: "daily_survey_answer" | "project_assignment" | "campaign" | "session" | "manual" | "exchange_request";
   referenceId?: string;
+  idempotencyKey?: string;
 }
 
 export interface AwardPointsResult {
@@ -23,18 +24,34 @@ export interface AwardPointsResult {
 
 export const userPointService = {
   async awardPoints(input: AwardPointsInput): Promise<AwardPointsResult> {
+    const row: Record<string, unknown> = {
+      line_user_id:     input.lineUserId,
+      transaction_type: input.transactionType,
+      points:           input.points,
+      reason:           input.reason,
+      reference_type:   input.referenceType ?? "manual",
+      reference_id:     input.referenceId ?? null,
+    };
+    if (input.idempotencyKey) {
+      row.idempotency_key = input.idempotencyKey;
+    }
+
     const { data: historyData, error: histErr } = await supabase
       .from("point_histories")
-      .insert({
-        line_user_id:     input.lineUserId,
-        transaction_type: input.transactionType,
-        points:           input.points,
-        reason:           input.reason,
-        reference_type:   input.referenceType ?? "manual",
-        reference_id:     input.referenceId ?? null
-      })
+      .insert(row)
       .select("*")
       .single();
+
+    // 冪等性: 同一 idempotency_key で既に付与済みの場合はスキップ
+    if (histErr?.code === "23505" && input.idempotencyKey) {
+      const { data: existing } = await supabase
+        .from("point_histories")
+        .select("*")
+        .eq("idempotency_key", input.idempotencyKey)
+        .single();
+      const balance = await this.getBalance(input.lineUserId);
+      return { history: existing as PointHistory, balance };
+    }
     throwIfError(histErr);
 
     // トリガーが user_points を自動更新するが最新値を取得する
@@ -49,11 +66,11 @@ export const userPointService = {
       .eq("line_user_id", lineUserId)
       .single();
     if (error?.code === "PGRST116") {
-      // 行がない場合はゼロで返す
       return {
         line_user_id:     lineUserId,
         total_points:     0,
         available_points: 0,
+        pending_points:   0,
         lifetime_points:  0,
         updated_at:       new Date().toISOString()
       };

@@ -11,6 +11,12 @@ import type {
   StructuredAnswerSlotValue,
   StructuredProbeType
 } from "../types/domain";
+import { renderPromptPolicySections, resolveAIPromptPolicy } from "./promptPolicies";
+import {
+  renderPromptTemplate,
+  resolveBasePromptTemplate,
+  type PromptTemplateContext
+} from "./promptTemplateRenderer";
 
 type PromptPurpose =
   | "question_render"
@@ -365,9 +371,32 @@ export function buildProjectInitialStatePrompt(input: {
     | "secondary_objectives"
     | "comparison_constraints"
     | "prompt_rules"
-  >;
+  > &
+    Partial<Pick<Project, "ai_prompt_templates_json">>;
   template: ProjectAIStateTemplateDefinition;
 }): string {
+  if (input.project.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(
+      { ai_prompt_templates_json: input.project.ai_prompt_templates_json ?? null },
+      "buildProjectInitialStatePrompt"
+    );
+    const tmplCtx: PromptTemplateContext = {
+      projectName: input.project.name,
+      clientName: input.project.client_name ?? "not set",
+      objective: input.project.objective ?? "not set",
+      researchMode: input.project.research_mode,
+      primaryObjectives: renderList("Primary objectives", input.project.primary_objectives ?? [], "not set"),
+      secondaryObjectives: renderList("Secondary objectives", input.project.secondary_objectives ?? [], "not set"),
+      comparisonConstraints: renderList("Comparison constraints", input.project.comparison_constraints ?? [], "not set"),
+      promptRules: renderList("Prompt rules", input.project.prompt_rules ?? [], "not set"),
+      templateKey: input.template.key,
+      templateLabel: input.template.label,
+      templateDescription: input.template.description,
+      templateStateExample: JSON.stringify(input.template.state)
+    };
+    return renderPromptTemplate(tmpl, tmplCtx);
+  }
+
   return [
     "Return JSON only.",
     "The output language must be Japanese.",
@@ -414,6 +443,31 @@ export function buildQuestionRenderingPrompt(input: {
     input.question.question_role === "free_comment" ? "free_comment" : input.project.research_mode,
     { projectAiState: input.project.ai_state_json }
   );
+  const policySection = renderPromptPolicySections(input.project, "general");
+
+  if (input.project.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(input.project, "buildQuestionRenderingPrompt");
+    const tmplCtx: PromptTemplateContext = {
+      sharedSections: buildSharedSections(input.project, "question_render").join("\n\n"),
+      questionCode: input.question.question_code,
+      questionType: input.question.question_type,
+      questionText: input.question.question_text,
+      questionRole: input.question.question_role ?? "",
+      renderStyle: JSON.stringify(meta.render_style),
+      questionObjectiveGuide: renderQuestionObjectiveGuide({
+        researchGoal: meta.research_goal,
+        questionGoal: meta.question_goal,
+        strictTopicLock: meta.probe_config.strict_topic_lock,
+        allowFollowupExpansion: meta.probe_config.allow_followup_expansion
+      }),
+      slotGuide: renderSlotGuide(meta.expected_slots),
+      previousQuestion: input.previousQuestionText ?? "none",
+      previousAnswer: input.previousAnswerText ?? "none",
+      questionConfig: JSON.stringify(input.question.question_config ?? {})
+    };
+    const rendered = renderPromptTemplate(tmpl, tmplCtx);
+    return policySection ? `${rendered}\n\n${policySection}` : rendered;
+  }
 
   return [
     ...buildSharedSections(input.project, "question_render"),
@@ -438,8 +492,9 @@ export function buildQuestionRenderingPrompt(input: {
     renderSlotGuide(meta.expected_slots),
     `Previous question text: ${input.previousQuestionText ?? "none"}`,
     `Previous answer text: ${input.previousAnswerText ?? "none"}`,
-    `Question config: ${JSON.stringify(input.question.question_config ?? {})}`
-  ].join("\n\n");
+    `Question config: ${JSON.stringify(input.question.question_config ?? {})}`,
+    policySection
+  ].filter((s): s is string => s !== null && s !== undefined && s !== "").join("\n\n");
 }
 
 export function buildProbeGenerationPrompt(input: {
@@ -459,6 +514,39 @@ export function buildProbeGenerationPrompt(input: {
     projectAiState: input.project.ai_state_json
   });
   const answerOptionsContext = renderAnswerOptionsForPrompt(input.question);
+
+  const policySection = renderPromptPolicySections(input.project, "probe", {
+    questionRole: input.question.question_role
+  });
+
+  if (input.project.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(input.project, "buildProbeGenerationPrompt");
+    const tmplCtx: PromptTemplateContext = {
+      sharedSections: buildSharedSections(input.project, "probe_generation").join("\n\n"),
+      questionCode: input.question.question_code,
+      questionType: input.question.question_type,
+      questionText: input.question.question_text,
+      answerOptions: answerOptionsContext ? `Available answer options:\n${answerOptionsContext}` : "",
+      probeType: input.probeType,
+      answer: input.answer,
+      previousAnswer: input.previousAnswerText ?? "none",
+      extractedSlots: JSON.stringify(input.extractedSlots),
+      completion: JSON.stringify(input.completion),
+      missingSlots: JSON.stringify(input.missingSlots),
+      questionObjectiveGuide: renderQuestionObjectiveGuide({
+        researchGoal: meta.research_goal,
+        questionGoal: meta.question_goal,
+        strictTopicLock: meta.probe_config.strict_topic_lock,
+        allowFollowupExpansion: meta.probe_config.allow_followup_expansion
+      }),
+      probeGoal: meta.probe_goal ?? "none",
+      probeConfig: JSON.stringify(meta.probe_config),
+      sessionSummary: input.sessionSummary || "none",
+      probeTypeGuidance: buildProbeTypeGuidance(input.question.question_type, true)
+    };
+    const rendered = renderPromptTemplate(tmpl, tmplCtx);
+    return policySection ? `${rendered}\n\n${policySection}` : rendered;
+  }
 
   return [
     ...buildSharedSections(input.project, "probe_generation"),
@@ -492,9 +580,10 @@ export function buildProbeGenerationPrompt(input: {
     `Probe goal: ${meta.probe_goal ?? "none"}`,
     `Probe config: ${JSON.stringify(meta.probe_config)}`,
     `Session summary: ${input.sessionSummary || "none"}`,
-    buildProbeTypeGuidance(input.question.question_type, true)
+    buildProbeTypeGuidance(input.question.question_type, true),
+    policySection
   ]
-    .filter((line): line is string => line !== null)
+    .filter((line): line is string => line !== null && line !== undefined && line !== "")
     .join("\n\n");
 }
 
@@ -522,6 +611,14 @@ export function buildAnalyzeAnswerPrompt(input: {
   const projectAiState = getProjectAIState(input.project);
   const probeGuideline = (input.project.ai_state_json as ProjectAIState)?.probe_guideline;
   const answerOptionsContext = renderAnswerOptionsForPrompt(input.question);
+  const policy = resolveAIPromptPolicy(input.project);
+  const probeStyleNote =
+    probeGuideline && policy.probeStyle && policy.probeStyle !== "standard"
+      ? `- (probe_guideline が存在するため、probeStyle「${policy.probeStyle}」は補助方針として扱います。probe_guideline を優先してください。)`
+      : null;
+  const policySection = renderPromptPolicySections(input.project, "probe", {
+    questionRole: input.question.question_role
+  });
   const freeCommentPolicy =
     input.question.question_role === "free_comment" &&
     (!input.aiProbeEnabled || context.required_slots.length === 0) &&
@@ -552,6 +649,60 @@ export function buildAnalyzeAnswerPrompt(input: {
         ].join("\n");
     }
   })();
+
+  if (input.project.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(input.project, "buildAnalyzeAnswerPrompt");
+    const tmplCtx: PromptTemplateContext = {
+      projectGoal: context.project_goal || "not set",
+      userUnderstandingGoal: context.user_understanding_goal || "not set",
+      projectLanguage: projectAiState.language,
+      strictTopicLock: String(context.strict_topic_lock),
+      projectRequiredSlots: renderJapaneseSlotList(
+        "Project required slots",
+        projectAiState.required_slots,
+        "project level required slots are not set"
+      ),
+      currentRequiredSlots: renderJapaneseSlotList(
+        "Current question required slots",
+        context.required_slots,
+        "current question required slots are not set"
+      ),
+      currentOptionalSlots: renderJapaneseSlotList(
+        "Current question optional slots",
+        context.optional_slots,
+        "current question optional slots are not set"
+      ),
+      nextRequiredSlots: renderJapaneseSlotList(
+        "Next question required slots",
+        context.next_question_required_slots,
+        "next question required slots are not set"
+      ),
+      questionCode: input.question.question_code,
+      questionType: input.question.question_type,
+      questionText: input.question.question_text,
+      probeGoal: meta.probe_goal ?? "none",
+      answer: input.answer,
+      answerOptions: answerOptionsContext
+        ? `- answer_options:\n${answerOptionsContext}`
+        : "- answer_options: none",
+      existingSlots: JSON.stringify(input.existingSlots),
+      aiProbeEnabled: String(input.aiProbeEnabled),
+      currentProbeCount: String(input.currentProbeCount),
+      maxProbes: String(input.maxProbes),
+      projectRequiredSlotKeys: JSON.stringify(context.project_required_slot_keys),
+      probeGuideline: [
+        probeGuideline ? `- Custom probe guideline: ${probeGuideline}` : null,
+        probeStyleNote
+      ]
+        .filter(Boolean)
+        .join("\n") || "",
+      probeTypeGuidance: buildProbeTypeGuidance(input.question.question_type, input.aiProbeEnabled),
+      freeCommentPolicy: freeCommentPolicy ?? "",
+      modeStyleGuide: modeStyleGuide
+    };
+    const rendered = renderPromptTemplate(tmpl, tmplCtx);
+    return policySection ? `${rendered}\n\n${policySection}` : rendered;
+  }
 
   return [
     "Return JSON only.",
@@ -615,6 +766,7 @@ export function buildAnalyzeAnswerPrompt(input: {
     "- Do not expose internal slot keys such as snake_case names to the respondent.",
     "- If ai_probe_enabled is false, action MUST be ask_next regardless of answer quality.",
     probeGuideline ? `- Custom probe guideline: ${probeGuideline}` : null,
+    probeStyleNote,
     "",
     buildProbeTypeGuidance(input.question.question_type, input.aiProbeEnabled),
     "",
@@ -625,6 +777,8 @@ export function buildAnalyzeAnswerPrompt(input: {
     freeCommentPolicy ? "" : null,
     modeStyleGuide,
     "",
+    policySection,
+    policySection ? "" : null,
     "Output schema",
     "{",
     '  "action": "probe | ask_next | skip | finish",',
@@ -654,6 +808,27 @@ export function buildSlotFillingPrompt(input: {
     input.question.question_role === "free_comment" ? "free_comment" : input.project.research_mode,
     { projectAiState: input.project.ai_state_json }
   );
+  const policySection = renderPromptPolicySections(input.project, "general");
+
+  if (input.project.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(input.project, "buildSlotFillingPrompt");
+    const tmplCtx: PromptTemplateContext = {
+      sharedSections: buildSharedSections(input.project, "slot_filling").join("\n\n"),
+      questionCode: input.question.question_code,
+      questionText: input.question.question_text,
+      questionObjectiveGuide: renderQuestionObjectiveGuide({
+        researchGoal: meta.research_goal,
+        questionGoal: meta.question_goal,
+        strictTopicLock: meta.probe_config.strict_topic_lock,
+        allowFollowupExpansion: meta.probe_config.allow_followup_expansion
+      }),
+      slotGuide: renderSlotGuide(meta.expected_slots),
+      answer: input.answer,
+      probeAnswer: input.probeAnswer ?? "none"
+    };
+    const rendered = renderPromptTemplate(tmpl, tmplCtx);
+    return policySection ? `${rendered}\n\n${policySection}` : rendered;
+  }
 
   return [
     ...buildSharedSections(input.project, "slot_filling"),
@@ -672,8 +847,9 @@ export function buildSlotFillingPrompt(input: {
     }),
     renderSlotGuide(meta.expected_slots),
     `Primary answer: ${input.answer}`,
-    `Probe answer: ${input.probeAnswer ?? "none"}`
-  ].join("\n\n");
+    `Probe answer: ${input.probeAnswer ?? "none"}`,
+    policySection
+  ].filter((s): s is string => s !== null && s !== undefined && s !== "").join("\n\n");
 }
 
 export function buildCompletionCheckPrompt(input: {
@@ -687,6 +863,29 @@ export function buildCompletionCheckPrompt(input: {
     input.question.question_role === "free_comment" ? "free_comment" : input.project.research_mode,
     { projectAiState: input.project.ai_state_json }
   );
+  const policySection = renderPromptPolicySections(input.project, "general");
+
+  if (input.project.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(input.project, "buildCompletionCheckPrompt");
+    const tmplCtx: PromptTemplateContext = {
+      sharedSections: buildSharedSections(input.project, "completion_check").join("\n\n"),
+      questionCode: input.question.question_code,
+      questionText: input.question.question_text,
+      completionConditions: JSON.stringify(meta.completion_conditions),
+      badAnswerPatterns: JSON.stringify(meta.bad_answer_patterns),
+      questionObjectiveGuide: renderQuestionObjectiveGuide({
+        researchGoal: meta.research_goal,
+        questionGoal: meta.question_goal,
+        strictTopicLock: meta.probe_config.strict_topic_lock,
+        allowFollowupExpansion: meta.probe_config.allow_followup_expansion
+      }),
+      slotGuide: renderSlotGuide(meta.expected_slots),
+      answer: input.answer,
+      extractedSlots: JSON.stringify(input.extractedSlots)
+    };
+    const rendered = renderPromptTemplate(tmpl, tmplCtx);
+    return policySection ? `${rendered}\n\n${policySection}` : rendered;
+  }
 
   return [
     ...buildSharedSections(input.project, "completion_check"),
@@ -708,8 +907,9 @@ export function buildCompletionCheckPrompt(input: {
     }),
     renderSlotGuide(meta.expected_slots),
     `Answer: ${input.answer}`,
-    `Extracted slots: ${JSON.stringify(input.extractedSlots)}`
-  ].join("\n\n");
+    `Extracted slots: ${JSON.stringify(input.extractedSlots)}`,
+    policySection
+  ].filter((s): s is string => s !== null && s !== undefined && s !== "").join("\n\n");
 }
 
 export function buildSessionSummaryPrompt(input: {
@@ -717,6 +917,19 @@ export function buildSessionSummaryPrompt(input: {
   previousSummary: string;
   recentTranscript: string;
 }): string {
+  const policySection = renderPromptPolicySections(input.project, "summary");
+
+  if (input.project.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(input.project, "buildSessionSummaryPrompt");
+    const tmplCtx: PromptTemplateContext = {
+      sharedSections: buildSharedSections(input.project, "summary").join("\n\n"),
+      previousSummary: input.previousSummary || "none",
+      recentTranscript: input.recentTranscript
+    };
+    const rendered = renderPromptTemplate(tmpl, tmplCtx);
+    return policySection ? `${rendered}\n\n${policySection}` : rendered;
+  }
+
   return [
     ...buildSharedSections(input.project, "summary"),
     "Update the session summary using the recent transcript.",
@@ -724,8 +937,9 @@ export function buildSessionSummaryPrompt(input: {
     "Maximum length: 200 Japanese characters or equivalent brevity.",
     `Previous summary: ${input.previousSummary || "none"}`,
     `Recent transcript: ${input.recentTranscript}`,
-    "Output summary text only."
-  ].join("\n\n");
+    "Output summary text only.",
+    policySection
+  ].filter((s): s is string => s !== null && s !== undefined && s !== "").join("\n\n");
 }
 
 export function buildFinalStructuredSummaryPrompt(input: {
@@ -738,6 +952,19 @@ export function buildFinalStructuredSummaryPrompt(input: {
     normalized_answer: Record<string, unknown> | null;
   }>;
 }): string {
+  const policySection = renderPromptPolicySections(input.project, "analysis");
+
+  if (input.project.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(input.project, "buildFinalStructuredSummaryPrompt");
+    const tmplCtx: PromptTemplateContext = {
+      sharedSections: buildSharedSections(input.project, "analysis").join("\n\n"),
+      sessionSummary: input.sessionSummary || "none",
+      answers: JSON.stringify(input.answers)
+    };
+    const rendered = renderPromptTemplate(tmpl, tmplCtx);
+    return policySection ? `${rendered}\n\n${policySection}` : rendered;
+  }
+
   return [
     ...buildSharedSections(input.project, "analysis"),
     "Return JSON only.",
@@ -749,8 +976,9 @@ export function buildFinalStructuredSummaryPrompt(input: {
     "Use extracted slots to build comparable qualitative structure.",
     "Do not exaggerate. Prefer patterns supported by the answers.",
     `Session summary: ${input.sessionSummary || "none"}`,
-    `Answers: ${JSON.stringify(input.answers)}`
-  ].join("\n\n");
+    `Answers: ${JSON.stringify(input.answers)}`,
+    policySection
+  ].filter((s): s is string => s !== null && s !== undefined && s !== "").join("\n\n");
 }
 
 export function buildProjectAnalysisPrompt(input: {
@@ -780,6 +1008,17 @@ export function buildProjectAnalysisPrompt(input: {
     target_question_codes: string[];
   };
 }): string {
+  if (input.project.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(input.project, "buildProjectAnalysisPrompt");
+    const tmplCtx: PromptTemplateContext = {
+      sharedSections: buildSharedSections(input.project, "analysis").join("\n\n"),
+      respondentSummaries: JSON.stringify(input.respondentSummaries),
+      comparisonUnits: JSON.stringify(input.comparisonUnits),
+      freeAnswerPolicy: JSON.stringify(input.freeAnswerPolicy)
+    };
+    return renderPromptTemplate(tmpl, tmplCtx);
+  }
+
   return [
     ...buildSharedSections(input.project, "analysis"),
     "Return JSON only.",
@@ -814,7 +1053,19 @@ export function buildPostAnalysisPrompt(input: {
   postType: string;
   sourceMode: string | null;
   content: string;
+  /** Phase 7-A: テンプレート解決用。投稿がプロジェクトに紐づかない場合は null（legacy 動作） */
+  project?: Pick<Project, "ai_prompt_templates_json"> | null;
 }): string {
+  if (input.project?.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(input.project, "buildPostAnalysisPrompt");
+    const tmplCtx: PromptTemplateContext = {
+      postType: input.postType,
+      sourceMode: input.sourceMode ?? "none",
+      content: input.content
+    };
+    return renderPromptTemplate(tmpl, tmplCtx);
+  }
+
   return [
     "You analyze a single user post from a LINE-based research product.",
     "Return JSON only.",
@@ -838,6 +1089,20 @@ export function buildProbePrompt(input: {
   answer: string;
   sessionSummary: string;
 }): string {
+  const policySection = renderPromptPolicySections(input.project, "probe");
+
+  if (input.project.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(input.project, "buildProbePrompt");
+    const tmplCtx: PromptTemplateContext = {
+      sharedSections: buildSharedSections(input.project, "probe_generation").join("\n\n"),
+      question: input.question,
+      answer: input.answer,
+      sessionSummary: input.sessionSummary || "none"
+    };
+    const rendered = renderPromptTemplate(tmpl, tmplCtx);
+    return policySection ? `${rendered}\n\n${policySection}` : rendered;
+  }
+
   return [
     ...buildSharedSections(input.project, "probe_generation"),
     "Write exactly one short follow-up question.",
@@ -848,8 +1113,9 @@ export function buildProbePrompt(input: {
     `Current question: ${input.question}`,
     `Answer: ${input.answer}`,
     `Session summary: ${input.sessionSummary || "none"}`,
-    "Output only the follow-up question text."
-  ].join("\n\n");
+    "Output only the follow-up question text.",
+    policySection
+  ].filter((s): s is string => s !== null && s !== undefined && s !== "").join("\n\n");
 }
 
 export function buildFinalAnalysisPrompt(input: {
@@ -857,14 +1123,28 @@ export function buildFinalAnalysisPrompt(input: {
   sessionSummary: string;
   answers: string;
 }): string {
+  const policySection = renderPromptPolicySections(input.project, "analysis");
+
+  if (input.project.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(input.project, "buildFinalAnalysisPrompt");
+    const tmplCtx: PromptTemplateContext = {
+      sharedSections: buildSharedSections(input.project, "analysis").join("\n\n"),
+      sessionSummary: input.sessionSummary || "none",
+      answers: input.answers
+    };
+    const rendered = renderPromptTemplate(tmpl, tmplCtx);
+    return policySection ? `${rendered}\n\n${policySection}` : rendered;
+  }
+
   return [
     ...buildSharedSections(input.project, "analysis"),
     "Return JSON only.",
     "Required keys: summary, usage_scene, motive, pain_points, alternatives, insight_candidates",
     "Do not exaggerate. Prefer patterns that are supported by the answers.",
     `Session summary: ${input.sessionSummary || "none"}`,
-    `Answers: ${input.answers}`
-  ].join("\n\n");
+    `Answers: ${input.answers}`,
+    policySection
+  ].filter((s): s is string => s !== null && s !== undefined && s !== "").join("\n\n");
 }
 
 export function buildInterviewTurnPrompt(input: {
@@ -887,6 +1167,52 @@ export function buildInterviewTurnPrompt(input: {
   const probeGuideline = (input.project.ai_state_json as ProjectAIState)?.probe_guideline;
   const canProbe = input.aiProbeEnabled && input.currentProbeCount < input.maxProbes && input.maxProbes > 0;
   const answerOptionsContext = renderAnswerOptionsForPrompt(input.question);
+  const itPolicy = resolveAIPromptPolicy(input.project);
+  const itProbeStyleNote =
+    probeGuideline && itPolicy.probeStyle && itPolicy.probeStyle !== "standard"
+      ? `- (probe_guideline が存在するため、probeStyle「${itPolicy.probeStyle}」は補助方針として扱います。probe_guideline を優先してください。)`
+      : null;
+  const itPolicySection = renderPromptPolicySections(input.project, "probe", {
+    questionRole: input.question.question_role
+  });
+
+  if (input.project.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(input.project, "buildInterviewTurnPrompt");
+    const tmplCtx: PromptTemplateContext = {
+      projectGoal: aiState.project_goal || "not set",
+      userUnderstandingGoal: aiState.user_understanding_goal || "not set",
+      requiredInformation: renderJapaneseSlotList(
+        "Required information to collect",
+        aiState.required_slots,
+        "none"
+      ),
+      question: input.question.question_text,
+      questionType: input.question.question_type,
+      probeGoal: meta.probe_goal ?? "none",
+      answer: input.answer,
+      answerOptions: answerOptionsContext
+        ? `- answer_options:\n${answerOptionsContext}`
+        : "- answer_options: none",
+      collectedSoFar: JSON.stringify(input.existingSlots),
+      probeCount: `${input.currentProbeCount} / ${input.maxProbes}`,
+      maxProbes: String(input.maxProbes),
+      nextQuestion: input.nextQuestion
+        ? `${input.nextQuestion.question_text} (code: ${input.nextQuestion.question_code})`
+        : "none (this is the last question)",
+      canProbe: canProbe
+        ? "- Probing is allowed this turn"
+        : "- Probing is NOT allowed this turn (budget exceeded or disabled)",
+      probeGuideline: [
+        probeGuideline ? `- Custom probe guideline: ${probeGuideline}` : null,
+        itProbeStyleNote
+      ]
+        .filter(Boolean)
+        .join("\n") || "",
+      probeTypeGuidance: buildProbeTypeGuidance(input.question.question_type, input.aiProbeEnabled)
+    };
+    const rendered = renderPromptTemplate(tmpl, tmplCtx);
+    return itPolicySection ? `${rendered}\n\n${itPolicySection}` : rendered;
+  }
 
   return [
     "Return JSON only.",
@@ -914,6 +1240,7 @@ export function buildInterviewTurnPrompt(input: {
     "Probe rules",
     canProbe ? "- Probing is allowed this turn" : "- Probing is NOT allowed this turn (budget exceeded or disabled)",
     probeGuideline ? `- Custom probe guideline: ${probeGuideline}` : null,
+    itProbeStyleNote,
     "",
     buildProbeTypeGuidance(input.question.question_type, input.aiProbeEnabled),
     "",
@@ -943,9 +1270,10 @@ export function buildInterviewTurnPrompt(input: {
     "Output constraints",
     "- JSON only, no markdown fences",
     "- response_text must be Japanese",
-    "- collected_slots must be grounded in the answer"
+    "- collected_slots must be grounded in the answer",
+    itPolicySection
   ]
-    .filter((line): line is string => line !== null)
+    .filter((line): line is string => line !== null && line !== undefined && line !== "")
     .join("\n");
 }
 
@@ -953,7 +1281,15 @@ export function buildInterviewTurnPrompt(input: {
 // Phase 2-C: 愚痴・日記拡張分析 / AIタグ生成
 // ============================================================
 
-export function buildRantExtendedPrompt(content: string): string {
+export function buildRantExtendedPrompt(
+  content: string,
+  project?: Pick<Project, "ai_prompt_templates_json"> | null
+): string {
+  if (project?.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(project, "buildRantExtendedPrompt");
+    return renderPromptTemplate(tmpl, { content });
+  }
+
   return [
     "あなたはユーザーの愚痴投稿を分析するAIです。",
     "以下の愚痴テキストを分析し、JSON形式のみで返してください。",
@@ -967,7 +1303,15 @@ export function buildRantExtendedPrompt(content: string): string {
   ].join("\n");
 }
 
-export function buildDiaryExtendedPrompt(content: string): string {
+export function buildDiaryExtendedPrompt(
+  content: string,
+  project?: Pick<Project, "ai_prompt_templates_json"> | null
+): string {
+  if (project?.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(project, "buildDiaryExtendedPrompt");
+    return renderPromptTemplate(tmpl, { content });
+  }
+
   return [
     "あなたはユーザーの日記を分析するAIです。",
     "以下の日記テキストを分析し、JSON形式のみで返してください。",
@@ -980,8 +1324,18 @@ export function buildDiaryExtendedPrompt(content: string): string {
   ].join("\n");
 }
 
-export function buildRantCounselorReplyPrompt(postText: string, selectedTags: string[]): string {
+export function buildRantCounselorReplyPrompt(
+  postText: string,
+  selectedTags: string[],
+  project?: Pick<Project, "ai_prompt_templates_json"> | null
+): string {
   const tagsLine = selectedTags.length > 0 ? selectedTags.join("、") : "（タグなし）";
+
+  if (project?.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(project, "buildRantCounselorReplyPrompt");
+    return renderPromptTemplate(tmpl, { postText, selectedTags: tagsLine });
+  }
+
   return [
     "あなたは匿名の本音・悩み投稿に対して、やさしく一言だけ返すカウンセラー風AIです。",
     "目的は、投稿者を評価したり、解決策を押しつけたりすることではありません。",
@@ -1010,7 +1364,8 @@ export function buildRantCounselorReplyPrompt(postText: string, selectedTags: st
 }
 
 export function buildPersonaTagsPrompt(
-  analyses: { summary: string | null; tags: unknown[]; sentiment: string }[]
+  analyses: { summary: string | null; tags: unknown[]; sentiment: string }[],
+  project?: Pick<Project, "ai_prompt_templates_json"> | null
 ): string {
   const lines = analyses
     .slice(0, 20)
@@ -1019,6 +1374,11 @@ export function buildPersonaTagsPrompt(
         `投稿${i + 1}: ${a.summary ?? ""} [感情: ${a.sentiment}] [タグ: ${(a.tags ?? []).join(", ")}]`
     )
     .join("\n");
+
+  if (project?.ai_prompt_templates_json != null) {
+    const tmpl = resolveBasePromptTemplate(project, "buildPersonaTagsPrompt");
+    return renderPromptTemplate(tmpl, { postAnalyses: lines });
+  }
 
   return [
     "あなたはリサーチプラットフォームのユーザー属性推定AIです。",
