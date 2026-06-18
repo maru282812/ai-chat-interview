@@ -62,28 +62,60 @@ function versionLabel(v) {
   <% } %>
 
   <!-- テンプレートの差分 -->
+  <%
+    // 配置メタで深掘り影響キーを先頭に寄せ、系統順に並べる（深掘りをバージョンで磨くため、
+    // 「このバージョン差分が深掘りのどこを変えたか」を最優先で見せる）。
+    const safePlacement = (typeof placement !== 'undefined') ? placement : {};
+    const FAM_ORDER = { conversation: 0, research_infra: 1, post: 2, admin_tool: 3 };
+    const changedTpls = diff.templateChanges
+      .filter(function(t){ return t.changeType !== 'unchanged'; })
+      .map(function(t){ return Object.assign({}, t, { _pl: safePlacement[t.key] || {} }); })
+      .sort(function(a, b){
+        var pa = a._pl.probeImpact ? 0 : 1, pb = b._pl.probeImpact ? 0 : 1;
+        if (pa !== pb) return pa - pb;
+        var fa = FAM_ORDER[a._pl.family] ?? 9, fb = FAM_ORDER[b._pl.family] ?? 9;
+        if (fa !== fb) return fa - fb;
+        return 0;
+      });
+    const probeChangedCount = changedTpls.filter(function(t){ return t._pl.probeImpact; }).length;
+  %>
   <h3 style="margin:0 0 8px">
     変更されたプロンプト（templates_json）
     <span style="font-size:13px;font-weight:normal;color:#60726f">— <%= diff.changedTemplateCount %> / <%= diff.templateChanges.length %> 件に変更あり</span>
   </h3>
   <% if (diff.changedTemplateCount === 0) { %>
     <p style="color:#60726f;font-size:13px">プロンプト本文の変更はありません。</p>
+  <% } else { %>
+    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:#f8faf9;border:1px solid #e0e8e4;border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:12px">
+      <% if (probeChangedCount > 0) { %>
+        <span style="background:#fff3e0;color:#b25a00;border:1px solid #f0c98a;border-radius:4px;padding:1px 8px">🔍 深掘り影響キー <%= probeChangedCount %> 件が変更</span>
+      <% } else { %>
+        <span style="color:#60726f">深掘り影響キーの変更はありません</span>
+      <% } %>
+      <label style="cursor:pointer;color:#48635c;margin-left:auto"><input type="checkbox" id="cmp-probe-only" /> 🔍 深掘り関連のみ表示</label>
+    </div>
   <% } %>
 
-  <% for (const t of diff.templateChanges) { %>
-    <% if (t.changeType === 'unchanged') continue; %>
+  <% for (const t of changedTpls) { %>
     <%
       const typeBadge = t.changeType === 'added'
         ? { label: 'カスタム化（デフォルト→カスタム）', bg: '#e8f5ef', color: '#1a7a5a' }
         : t.changeType === 'removed'
           ? { label: 'デフォルトに戻った（カスタム→デフォルト）', bg: '#fdecea', color: '#c62828' }
           : { label: '本文変更', bg: '#fff8e1', color: '#b36200' };
+      const famLabel = (typeof familyLabels !== 'undefined' && t._pl.family) ? familyLabels[t._pl.family] : '';
     %>
-    <details style="border:1px solid #d8e3e0;border-radius:10px;padding:10px 14px;margin-bottom:10px" open>
+    <details data-cmp-card data-probe="<%= t._pl.probeImpact ? '1' : '0' %>" style="border:1px solid <%= t._pl.probeImpact ? '#f0c98a' : '#d8e3e0' %>;border-radius:10px;padding:10px 14px;margin-bottom:10px" open>
       <summary style="cursor:pointer;font-weight:600">
         <%= t.label %>
         <code style="font-size:11px;font-weight:normal;color:#60726f"><%= t.key %></code>
         <span style="font-size:11px;background:<%= typeBadge.bg %>;color:<%= typeBadge.color %>;padding:1px 8px;border-radius:4px;margin-left:6px"><%= typeBadge.label %></span>
+        <% if (t._pl.probeImpact) { %>
+          <span title="深掘りの判定・生成を内包するキー。このバージョン間で深掘り挙動が変わっています。" style="font-size:11px;background:#fff3e0;color:#b25a00;border:1px solid #f0c98a;padding:1px 6px;border-radius:4px;margin-left:4px">🔍 深掘り影響</span>
+        <% } %>
+        <% if (famLabel) { %>
+          <span style="font-size:11px;background:#eef4ff;color:#3a5a9a;border:1px solid #cdd9f0;padding:1px 6px;border-radius:4px;margin-left:4px"><%= famLabel %></span>
+        <% } %>
       </summary>
       <div style="margin-top:10px">
         <% if (t.addedPlaceholders.length > 0 || t.removedPlaceholders.length > 0) { %>
@@ -119,5 +151,17 @@ function versionLabel(v) {
 
 <% } %>
 <% } %>
+
+<script>
+(function(){
+  var cb = document.getElementById('cmp-probe-only');
+  if (!cb) return;
+  cb.addEventListener('change', function(){
+    document.querySelectorAll('details[data-cmp-card]').forEach(function(c){
+      c.style.display = (cb.checked && c.getAttribute('data-probe') !== '1') ? 'none' : '';
+    });
+  });
+})();
+</script>
 
 <%- include("../../partials/footer") %>

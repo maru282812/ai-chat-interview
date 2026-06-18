@@ -60,10 +60,13 @@ import type { DeliveryTemplateMutationInput, DeliveryScheduleType } from "../rep
 import { projectDeliveryService } from "../services/projectDeliveryService";
 import type { DisplayTagsParsed, VisibilityCondition } from "../types/questionSchema";
 import { normalizeAIPromptPolicy, resolveAIPromptPolicy, renderPromptPolicySections } from "../prompts/promptPolicies";
-import { BASE_PROMPT_TEMPLATES, describePlaceholder, describePolicyAxis, buildInitialTemplatesForPreset, PROMPT_PRESETS, summarizeTemplateDefinitions, type BasePromptKey, type PromptPresetKey } from "../prompts/basePromptTemplates";
+import { BASE_PROMPT_TEMPLATES, BUILDER_GENERATION_KEYS, describePlaceholder, describePolicyAxis, buildInitialTemplatesForPreset, PROMPT_PRESETS, PROMPT_KEY_PLACEMENT, PROMPT_FAMILY_LABEL, summarizeTemplateDefinitions, summarizeTemplateDefinitionsByFamily, type BasePromptKey, type PromptPresetKey } from "../prompts/basePromptTemplates";
+import { normalizePromptBuilderSpec, buildGenerationMetaPrompt, parseGenerationResult, PROMPT_BUILDER_FIELDS } from "../services/promptBuilderService";
+import { diffLines } from "../services/promptPackageDiffService";
 import { validatePromptTemplatePlaceholders, extractTemplatePlaceholders, resolveBasePromptTemplate, renderPromptTemplate } from "../prompts/promptTemplateRenderer";
 import { aiLogRepository } from "../repositories/aiLogRepository";
-import type { AIPromptPolicy, AIPromptTemplateMap } from "../types/domain";
+import type { AIPromptPolicy, AIPromptTemplateMap, PromptBuilderSpec } from "../types/domain";
+import type { ProbePlaygroundMode } from "../services/probePlaygroundService";
 import {
   validatePromptPackageVersionConfig,
   validatePromptPackageVersionForPublish,
@@ -964,6 +967,21 @@ function parseAIPromptTemplatesFromRequest(req: Request): AIPromptTemplateMap | 
   }
 }
 
+/**
+ * Phase F: hidden builder_spec_json（プロンプトビルダー方針）をリクエストから取り出して正規化する。
+ * 空・不正は null。
+ */
+function parseBuilderSpecFromRequest(req: Request): PromptBuilderSpec | null {
+  const raw = bodyString(req.body.builder_spec_json).trim();
+  if (!raw) return null;
+  try {
+    const spec = normalizePromptBuilderSpec(JSON.parse(raw));
+    return Object.keys(spec).length > 0 ? spec : null;
+  } catch {
+    return null;
+  }
+}
+
 interface PromptValidationResult {
   errors: string[];
   warnings: string[];
@@ -1011,22 +1029,32 @@ function validateAIPromptTemplates(templates: AIPromptTemplateMap | null | undef
   return { errors, warnings };
 }
 
-/** 管理画面表示用: プロンプトキーごとの許可プレースホルダー情報 */
+/** 管理画面表示用: プロンプトキーごとの許可プレースホルダー情報＋配置メタ */
 function buildPromptKeyDefs() {
-  return Object.entries(BASE_PROMPT_TEMPLATES).map(([key, def]) => ({
-    key,
-    label: def.label,
-    description: def.description,
-    callTiming: def.callTiming,
-    impactScope: def.impactScope,
-    outputFormat: def.outputFormat,
-    baseTemplate: def.template,
-    usedPolicies: def.usedPolicies.map(describePolicyAxis),
-    allowedPlaceholders: def.allowedPlaceholders.map(ph => ({
-      key: ph,
-      description: describePlaceholder(ph)
-    }))
-  }));
+  return Object.entries(BASE_PROMPT_TEMPLATES).map(([key, def]) => {
+    const placement = PROMPT_KEY_PLACEMENT[key as BasePromptKey];
+    return {
+      key,
+      label: def.label,
+      description: def.description,
+      callTiming: def.callTiming,
+      impactScope: def.impactScope,
+      outputFormat: def.outputFormat,
+      baseTemplate: def.template,
+      usedPolicies: def.usedPolicies.map(describePolicyAxis),
+      // 配置メタ（可視化用）: どの系統で・どの文脈で発火し・深掘りに影響するか
+      family: placement.family,
+      familyLabel: PROMPT_FAMILY_LABEL[placement.family],
+      contexts: placement.contexts,
+      dormant: placement.dormant,
+      probeImpact: placement.probeImpact,
+      managedBy: placement.managedBy,
+      allowedPlaceholders: def.allowedPlaceholders.map(ph => ({
+        key: ph,
+        description: describePlaceholder(ph)
+      }))
+    };
+  });
 }
 
 /**
@@ -6153,6 +6181,7 @@ export const adminController = {
       title: "プロンプトパッケージ管理",
       packages,
       summarizeTemplateDefinitions,
+      summarizeTemplateDefinitionsByFamily,
       created: req.query.created === "1",
       saved: req.query.saved === "1",
       cloned: req.query.cloned === "1",
@@ -6342,6 +6371,7 @@ export const adminController = {
       publishedVersion,
       versionValidations,
       summarizeTemplateDefinitions,
+      summarizeTemplateDefinitionsByFamily,
       created: req.query.created === "1",
       saved: req.query.saved === "1",
       versionSaved: req.query.version_saved === "1",
@@ -6538,6 +6568,7 @@ export const adminController = {
       package_id: packageId,
       policy_json: source?.policy_json ?? null,
       templates_json: source?.templates_json ?? null,
+      builder_spec_json: source?.builder_spec_json ?? null,
       change_note: changeNote,
     });
 
@@ -6552,6 +6583,7 @@ export const adminController = {
 
     const policyJson = parseAIPromptPolicyFromRequest(req);
     const templatesJson = parseAIPromptTemplatesFromRequest(req);
+    const builderSpec = parseBuilderSpecFromRequest(req);
     const changeNote = bodyString(req.body.change_note).trim() || null;
 
     // Phase 5-B: 保存前バリデーション（エラーは保存不可・警告は保存可能）
@@ -6563,9 +6595,10 @@ export const adminController = {
       res.status(400).render("admin/prompt-packages/version-form", {
         title: `新バージョン追加: ${pkg.name}`,
         pkg,
-        version: { policy_json: policyJson, templates_json: templatesJson, change_note: changeNote },
+        version: { policy_json: policyJson, templates_json: templatesJson, builder_spec_json: builderSpec, change_note: changeNote },
         action: `/admin/prompt-packages/${packageId}/versions`,
         promptKeyDefs: buildPromptKeyDefs(),
+        builderFields: PROMPT_BUILDER_FIELDS,
         validationErrors: validation.errors,
         validationWarnings: validation.warnings,
         error: "バリデーションエラーがあるため保存できません。",
@@ -6578,6 +6611,7 @@ export const adminController = {
         package_id: packageId,
         policy_json: policyJson,
         templates_json: templatesJson,
+        builder_spec_json: builderSpec,
         change_note: changeNote,
       });
     } catch {
@@ -6588,6 +6622,7 @@ export const adminController = {
         version: null,
         action: `/admin/prompt-packages/${packageId}/versions`,
         promptKeyDefs: buildPromptKeyDefs(),
+        builderFields: PROMPT_BUILDER_FIELDS,
         error: "バージョンの作成に失敗しました。",
       });
       return;
@@ -6613,6 +6648,7 @@ export const adminController = {
       version,
       action: `/admin/prompt-packages/${packageId}/versions/${versionId}`,
       promptKeyDefs: buildPromptKeyDefs(),
+      builderFields: PROMPT_BUILDER_FIELDS,
       isInit: req.query.init === "1",
     });
   },
@@ -6624,6 +6660,7 @@ export const adminController = {
 
     const policyJson = parseAIPromptPolicyFromRequest(req);
     const templatesJson = parseAIPromptTemplatesFromRequest(req);
+    const builderSpec = parseBuilderSpecFromRequest(req);
     const changeNote = bodyString(req.body.change_note).trim() || null;
 
     // Phase 5-B: 保存前バリデーション（エラーは保存不可・警告は保存可能）
@@ -6640,10 +6677,11 @@ export const adminController = {
         title: `バージョン編集`,
         pkg,
         version: version
-          ? { ...version, policy_json: policyJson, templates_json: templatesJson, change_note: changeNote }
+          ? { ...version, policy_json: policyJson, templates_json: templatesJson, builder_spec_json: builderSpec, change_note: changeNote }
           : version,
         action: `/admin/prompt-packages/${packageId}/versions/${versionId}`,
         promptKeyDefs: buildPromptKeyDefs(),
+        builderFields: PROMPT_BUILDER_FIELDS,
         validationErrors: validation.errors,
         validationWarnings: validation.warnings,
         error: "バリデーションエラーがあるため保存できません。",
@@ -6655,6 +6693,7 @@ export const adminController = {
       await promptPackageRepository.updateVersion(versionId, {
         policy_json: policyJson,
         templates_json: templatesJson,
+        builder_spec_json: builderSpec,
         change_note: changeNote,
       });
     } catch {
@@ -6669,6 +6708,7 @@ export const adminController = {
         version,
         action: `/admin/prompt-packages/${packageId}/versions/${versionId}`,
         promptKeyDefs: buildPromptKeyDefs(),
+        builderFields: PROMPT_BUILDER_FIELDS,
         error: "更新に失敗しました。",
       });
       return;
@@ -6816,6 +6856,8 @@ export const adminController = {
       fromVersion: fromVersion ?? null,
       toVersion: toVersion ?? null,
       diff,
+      placement: PROMPT_KEY_PLACEMENT,
+      familyLabels: PROMPT_FAMILY_LABEL,
     });
   },
 
@@ -6936,6 +6978,208 @@ export const adminController = {
       aiResponse,
       aiError,
       tokenUsage,
+    });
+  },
+
+  /**
+   * Phase F: プロンプトビルダー方針から会話系テンプレート本文をAI生成する（JSON API）。
+   * - 生成対象は BUILDER_GENERATION_KEYS（会話系10キー）のみ。
+   * - DBには書き込まない（ステートレス）。返却した本文を画面側で詳細モードの textarea に
+   *   読み込み、運用者が確認してから通常の保存で確定する。
+   * - 実行時には一切呼ばれない（管理画面のボタン押下時のみ）。
+   */
+  async generatePromptPackageVersionTemplates(req: Request, res: Response): Promise<void> {
+    const spec = normalizePromptBuilderSpec(parseOptionalJsonObject(bodyString(req.body.builder_spec_json)) ?? {});
+    if (Object.keys(spec).length === 0) {
+      res.status(400).json({ error: "方針が入力されていません。基本モードで方針を入力してください。" });
+      return;
+    }
+
+    const prompt = buildGenerationMetaPrompt(spec, BUILDER_GENERATION_KEYS);
+
+    let aiContent: string | null = null;
+    try {
+      const { aiService } = await import("../services/aiService");
+      const ai = await aiService.callRaw({ prompt });
+      aiContent = ai.content ?? null;
+    } catch (err) {
+      res.status(502).json({ error: `AI生成に失敗しました: ${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
+
+    const parsed = parseGenerationResult(aiContent, BUILDER_GENERATION_KEYS);
+    res.json({
+      templates: parsed.templates,
+      generatedKeys: parsed.generatedKeys,
+      warnings: parsed.warnings,
+      targetKeys: BUILDER_GENERATION_KEYS,
+    });
+  },
+
+  /**
+   * Phase I (A part2): 深掘りプレイグラウンド（JSON API・ステートレス）。
+   * 設問＋回答を、選択中バージョンの本文＋コード側 buildProbeTypeGuidance＋policy を含む
+   * 実パイプラインのプロンプトで実行し、そのバージョンが出す深掘り文を返す。
+   * - DB には書き込まない。ai_logs にも残さない（テスト用途）。
+   * - template_overrides（未保存の編集中本文）を渡すと該当キーを差し替えて評価する。
+   */
+  async promptPackageVersionProbePlayground(req: Request, res: Response): Promise<void> {
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const {
+      buildProbePlaygroundPrompt,
+      parseProbePlaygroundResult,
+      PROBE_PLAYGROUND_KEY,
+    } = await import("../services/probePlaygroundService");
+
+    const versionId = routeParam(req, "versionId");
+    const version = await promptPackageRepository.getVersionById(versionId);
+    if (!version) {
+      res.status(404).json({ error: "バージョンが見つかりません" });
+      return;
+    }
+
+    const rawMode = bodyString(req.body.mode);
+    const mode: ProbePlaygroundMode =
+      rawMode === "interview" || rawMode === "probe" ? rawMode : "analyze";
+    const questionText = bodyString(req.body.question_text).trim();
+    const answer = bodyString(req.body.answer).trim();
+    if (!questionText || !answer) {
+      res.status(400).json({ error: "設問文と回答を入力してください。" });
+      return;
+    }
+
+    const questionType = bodyString(req.body.question_type).trim() || undefined;
+    const projectGoal = bodyString(req.body.project_goal).trim() || undefined;
+    const parsedMax = Number.parseInt(bodyString(req.body.max_probes), 10);
+    const maxProbes = Number.isFinite(parsedMax) && parsedMax >= 0 ? parsedMax : 1;
+
+    // 選択肢（[{value,label}]）
+    let options: { value: string; label: string }[] | undefined;
+    const optionsRaw = bodyString(req.body.options_json).trim();
+    if (optionsRaw) {
+      try {
+        const arr = JSON.parse(optionsRaw);
+        if (Array.isArray(arr)) {
+          options = arr
+            .filter((o) => o && typeof o === "object")
+            .map((o) => ({ value: String(o.value ?? ""), label: String(o.label ?? o.value ?? "") }))
+            .filter((o) => o.value || o.label);
+        }
+      } catch {
+        // 不正な選択肢JSONは無視（選択肢なしで実行）
+      }
+    }
+
+    // 未保存の編集中本文を反映（template_overrides: {key: body}）
+    let templates = version.templates_json;
+    const overrides = parseOptionalJsonObject(bodyString(req.body.template_overrides));
+    if (overrides) {
+      const merged: AIPromptTemplateMap = { ...(version.templates_json ?? {}) };
+      for (const [k, v] of Object.entries(overrides)) {
+        if (typeof v === "string" && v.trim() && BASE_PROMPT_TEMPLATES[k as BasePromptKey]) {
+          merged[k as BasePromptKey] = { enabled: true, template: v };
+        }
+      }
+      templates = merged;
+    }
+
+    const prompt = buildProbePlaygroundPrompt({
+      mode,
+      templates,
+      policy: version.policy_json,
+      questionText,
+      answer,
+      questionType: questionType as never,
+      options,
+      projectGoal,
+      maxProbes,
+    });
+
+    let raw: string | null = null;
+    let aiError: string | null = null;
+    let tokenUsage: Record<string, unknown> | null = null;
+    try {
+      const { aiService } = await import("../services/aiService");
+      const ai = await aiService.callRaw({ prompt });
+      raw = ai.content ?? null;
+      tokenUsage = ai.tokenUsage ?? null;
+    } catch (err) {
+      aiError = err instanceof Error ? err.message : String(err);
+    }
+
+    const parsed = parseProbePlaygroundResult(mode, raw);
+    res.json({
+      mode,
+      promptKey: PROBE_PLAYGROUND_KEY[mode],
+      prompt,
+      raw,
+      probe: parsed.probe,
+      action: parsed.action,
+      reason: parsed.reason,
+      parsedJson: parsed.parsedJson,
+      aiError,
+      tokenUsage,
+    });
+  },
+
+  /**
+   * 改修案1+2: 振る舞い方針から会話系テンプレートをAI生成し、影響範囲・生成本文・
+   * 現在値との行差分を返す（確認パネル用 JSON API）。DBには書き込まない（ステートレス）。
+   * 画面側は「振る舞いを確認」で本APIを呼び、プレビュー/差分を確認してから
+   * 「この内容を反映」で詳細モードの textarea に流し込み、通常保存で確定する。
+   */
+  async previewPromptPackageBehavior(req: Request, res: Response): Promise<void> {
+    const spec = normalizePromptBuilderSpec(parseOptionalJsonObject(bodyString(req.body.builder_spec_json)) ?? {});
+    if (Object.keys(spec).length === 0) {
+      res.status(400).json({ error: "方針が入力されていません。振る舞い方針または詳細な方針を入力してください。" });
+      return;
+    }
+
+    // フォームの現在の各キー本文（差分の before 基準）。未指定キーは BASE 本文を基準にする。
+    const currentTemplates: Record<string, string> = {};
+    const parsedCurrent = parseOptionalJsonObject(bodyString(req.body.current_templates_json));
+    if (parsedCurrent) {
+      for (const [k, v] of Object.entries(parsedCurrent)) {
+        if (typeof v === "string") currentTemplates[k] = v;
+      }
+    }
+
+    const prompt = buildGenerationMetaPrompt(spec, BUILDER_GENERATION_KEYS);
+    let aiContent: string | null = null;
+    try {
+      const { aiService } = await import("../services/aiService");
+      const ai = await aiService.callRaw({ prompt });
+      aiContent = ai.content ?? null;
+    } catch (err) {
+      res.status(502).json({ error: `AI生成に失敗しました: ${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
+
+    const parsed = parseGenerationResult(aiContent, BUILDER_GENERATION_KEYS);
+
+    // 採用された生成キーごとに「現在値（before）→ 生成本文（after）」の行差分を計算
+    const affected = parsed.generatedKeys.map((key) => {
+      const generated = parsed.templates[key] ?? "";
+      const currentBody = currentTemplates[key];
+      const before = currentBody && currentBody.trim() ? currentBody : BASE_PROMPT_TEMPLATES[key].template;
+      return {
+        key,
+        label: BASE_PROMPT_TEMPLATES[key].label,
+        generated,
+        diffRows: diffLines(before.trim(), generated.trim()),
+      };
+    });
+
+    // 影響しない（生成対象外＝usedPolicies 空）キー一覧
+    const notAffected = (Object.keys(BASE_PROMPT_TEMPLATES) as BasePromptKey[])
+      .filter((key) => !BUILDER_GENERATION_KEYS.includes(key))
+      .map((key) => ({ key, label: BASE_PROMPT_TEMPLATES[key].label }));
+
+    res.json({
+      affected,
+      notAffected,
+      generatedKeys: parsed.generatedKeys,
+      warnings: parsed.warnings,
     });
   },
 };

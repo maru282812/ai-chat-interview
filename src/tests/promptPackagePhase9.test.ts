@@ -34,7 +34,7 @@ import {
 import { resolvePromptMeta } from "../services/aiService";
 import type { Project } from "../types/domain";
 
-const TOTAL_KEYS = 21;
+const TOTAL_KEYS = 26;
 
 // ---------------------------------------------------------------------------
 // Test 1: BASE標準セット生成（空Version撲滅）

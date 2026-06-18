@@ -231,85 +231,39 @@ function renderAnswerOptionsForPrompt(question: Question): string | null {
 /**
  * 質問タイプに応じた汎用深掘りガイダンスを返す。
  * 特定設問・特定選択肢・特定の回答例に依存したハードコードは含まない。
+ *
+ * Phase I-B: 散文ブロックは BASE_PROMPT_TEMPLATES の管理キー（probeGuidance*）から解決する
+ * （= バージョンの templates_json で編集可能）。制御分岐（ai_probe_enabled / 対象外型）は
+ * ここに残す。project の templates が無い／未上書きなら BASE 本文＝従来挙動と同一。
  */
-function buildProbeTypeGuidance(questionType: string, aiProbeEnabled: boolean): string {
+function buildProbeTypeGuidance(
+  questionType: string,
+  aiProbeEnabled: boolean,
+  project: Pick<Project, "ai_prompt_templates_json">
+): string {
   const TEXT_TYPES = new Set(["free_text_short", "free_text_long"]);
   const CHOICE_TYPES = new Set(["single_choice", "multi_choice", "text_with_image"]);
   const NUMERIC_TYPES = new Set(["numeric", "sd"]);
 
-  const commonRules = [
-    "深掘り判定の共通ルール（この順序で判断する）:",
-    "1. 不足スロット優先: expected_slots に未取得の情報がある場合、そのスロットを埋める質問を最優先する。",
-    "2. 「特になし」「ない」「わからない」などの辞退回答: そのまま受け入れず、「強いて言うなら」「少しでも気になる点は」「他と比べてどうか」等で一度だけ再確認する。それでも出ない場合のみ次へ進む。",
-    "3. 抽象回答（「便利」「よくない」「なんとなく」等）: 具体化する質問を行う。",
-    "4. 十分具体的かつ必要スロットが埋まっている場合: 深掘りせず次の質問へ進む。",
-    "深掘り禁止条件: 必須スロットが全て埋まっている / max_probes に到達 / 同一論点で既に深掘り済み / ユーザーが明確に拒否している。"
-  ].join("\n");
+  const common = resolveBasePromptTemplate(project, "probeGuidanceCommon");
 
   if (TEXT_TYPES.has(questionType)) {
-    return [
-      commonRules,
-      "",
-      "テキスト回答の深掘りルール:",
-      "- 回答に具体的な理由・事例・状況・判断軸が不足している場合にのみ深掘りする。",
-      "- 回答で言及された内容に紐づいた1点だけを問う（why / example / scene / impact / comparison のいずれか1つ）。",
-      "- 抽象的な問い（「詳しく教えてください」「なぜですか」のみ）は禁止。",
-      "- 回答に書かれていない情報を勝手に補って問うことは禁止。"
-    ].join("\n");
+    return [common, "", resolveBasePromptTemplate(project, "probeGuidanceText")].join("\n");
   }
 
   if (CHOICE_TYPES.has(questionType)) {
     if (!aiProbeEnabled) {
       return "選択肢回答: ai_probe_enabled が false のため深掘りしない。action は必ず ask_next にする。";
     }
-    const isMulti = questionType === "multi_choice";
-    return [
-      commonRules,
-      "",
-      "【深掘りの目的】",
-      "深掘りは「不足情報を埋める」ためではなく、「回答の解像度を上げる」ために行う。",
-      "回答が十分に具体的な場合は深掘りしない選択も許可する。",
-      "",
-      isMulti ? "複数選択回答の深掘りルール:" : "単数選択回答の深掘りルール:",
-      "- 回答者が選択した選択肢を必ず取得し、深掘りの起点にする。",
-      isMulti
-        ? "- 複数選択された場合: 最も重要そうな1つを深掘り対象にする。判断できない場合は最初の選択肢を対象にする。全項目を一気に聞くことは禁止（「それぞれ教えてください」はNG）。"
-        : "- 単数選択された場合: その選択肢を深掘り対象にする。",
-      "",
-      "深掘り内容の方針:",
-      "- 選択理由を必ず聞く。抽象回答にならないよう、具体化を促す。",
-      "- 以下のいずれか1つの観点を選んで深掘りする（複数観点を同時に聞くことは禁止）:",
-      "  * 理由（なぜその選択肢を選んだか）",
-      "  * 具体的な体験・場面（その選択肢を感じた具体的な状況）",
-      "  * 他との違い・比較（他の選択肢と比べてどう違うか）",
-      "  * 判断基準（何を重視してその選択をしたか）",
-      "",
-      "深掘り文面生成ルール:",
-      "- 選択された内容を必ず文中に含める（例：「〇〇を選ばれたとのことですが...」）。",
-      "- 「詳しく教えてください」などの抽象的な質問は禁止。",
-      "- 1質問で1テーマのみ聞く。回答しやすい自然な会話文にする。",
-      "",
-      "NGパターン（以下は必ず避ける）:",
-      "- 選択内容に触れない深掘り",
-      "- 汎用的すぎる質問（例：「詳しく教えてください」「なぜですか」のみ）",
-      "- 複数の観点を一度に聞く質問",
-      "- 誘導的な質問",
-      "- 選択肢を選び直させる質問や、選択結果そのものを再確認する質問"
-    ].join("\n");
+    const key = questionType === "multi_choice" ? "probeGuidanceChoiceMulti" : "probeGuidanceChoiceSingle";
+    return [common, "", resolveBasePromptTemplate(project, key)].join("\n");
   }
 
   if (NUMERIC_TYPES.has(questionType)) {
     if (!aiProbeEnabled) {
       return "数値回答: ai_probe_enabled が false のため深掘りしない。action は必ず ask_next にする。";
     }
-    return [
-      commonRules,
-      "",
-      "数値回答の深掘りルール:",
-      "- 回答者が入力した数値を踏まえて、その値になった理由・背景・判断軸を1点だけ問う。",
-      "- 数値を再入力させる質問や数値の妥当性を問う質問は禁止。",
-      "- 回答者が入力した値を必ず参照し、その内容に紐づいた追質問を生成する。"
-    ].join("\n");
+    return [common, "", resolveBasePromptTemplate(project, "probeGuidanceNumeric")].join("\n");
   }
 
   return "このタイプは深掘り対象外。action は必ず ask_next にする。";
@@ -542,7 +496,7 @@ export function buildProbeGenerationPrompt(input: {
       probeGoal: meta.probe_goal ?? "none",
       probeConfig: JSON.stringify(meta.probe_config),
       sessionSummary: input.sessionSummary || "none",
-      probeTypeGuidance: buildProbeTypeGuidance(input.question.question_type, true)
+      probeTypeGuidance: buildProbeTypeGuidance(input.question.question_type, true, input.project)
     };
     const rendered = renderPromptTemplate(tmpl, tmplCtx);
     return policySection ? `${rendered}\n\n${policySection}` : rendered;
@@ -580,7 +534,7 @@ export function buildProbeGenerationPrompt(input: {
     `Probe goal: ${meta.probe_goal ?? "none"}`,
     `Probe config: ${JSON.stringify(meta.probe_config)}`,
     `Session summary: ${input.sessionSummary || "none"}`,
-    buildProbeTypeGuidance(input.question.question_type, true),
+    buildProbeTypeGuidance(input.question.question_type, true, input.project),
     policySection
   ]
     .filter((line): line is string => line !== null && line !== undefined && line !== "")
@@ -696,7 +650,7 @@ export function buildAnalyzeAnswerPrompt(input: {
       ]
         .filter(Boolean)
         .join("\n") || "",
-      probeTypeGuidance: buildProbeTypeGuidance(input.question.question_type, input.aiProbeEnabled),
+      probeTypeGuidance: buildProbeTypeGuidance(input.question.question_type, input.aiProbeEnabled, input.project),
       freeCommentPolicy: freeCommentPolicy ?? "",
       modeStyleGuide: modeStyleGuide
     };
@@ -768,7 +722,7 @@ export function buildAnalyzeAnswerPrompt(input: {
     probeGuideline ? `- Custom probe guideline: ${probeGuideline}` : null,
     probeStyleNote,
     "",
-    buildProbeTypeGuidance(input.question.question_type, input.aiProbeEnabled),
+    buildProbeTypeGuidance(input.question.question_type, input.aiProbeEnabled, input.project),
     "",
     "CRITICAL: When action is probe, the question field MUST reference the actual content of the answer above.",
     "Do not generate a generic probe that ignores what the respondent said.",
@@ -1208,7 +1162,7 @@ export function buildInterviewTurnPrompt(input: {
       ]
         .filter(Boolean)
         .join("\n") || "",
-      probeTypeGuidance: buildProbeTypeGuidance(input.question.question_type, input.aiProbeEnabled)
+      probeTypeGuidance: buildProbeTypeGuidance(input.question.question_type, input.aiProbeEnabled, input.project)
     };
     const rendered = renderPromptTemplate(tmpl, tmplCtx);
     return itPolicySection ? `${rendered}\n\n${itPolicySection}` : rendered;
@@ -1242,7 +1196,7 @@ export function buildInterviewTurnPrompt(input: {
     probeGuideline ? `- Custom probe guideline: ${probeGuideline}` : null,
     itProbeStyleNote,
     "",
-    buildProbeTypeGuidance(input.question.question_type, input.aiProbeEnabled),
+    buildProbeTypeGuidance(input.question.question_type, input.aiProbeEnabled, input.project),
     "",
     "CRITICAL: When action is probe, response_text MUST reference the actual content of the answer above.",
     "Do not generate a generic probe that ignores what the respondent said.",

@@ -40,6 +40,7 @@ function makeVersion(overrides: Partial<PromptPackageVersion>): PromptPackageVer
     status: "published",
     policy_json: null,
     templates_json: null,
+    builder_spec_json: null,
     change_note: null,
     published_at: "2026-06-14T00:00:00.000Z",
     created_at: "2026-06-14T00:00:00.000Z",

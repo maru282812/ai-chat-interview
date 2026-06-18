@@ -24,6 +24,12 @@ export type BasePromptKey =
   | "buildFinalStructuredSummaryPrompt"
   | "buildFinalAnalysisPrompt"
   | "buildProbePrompt"
+  // Phase I-B: 型別深掘りガイダンス（buildProbeTypeGuidance の散文ブロックをバージョン管理対象に）
+  | "probeGuidanceCommon"
+  | "probeGuidanceText"
+  | "probeGuidanceChoiceSingle"
+  | "probeGuidanceChoiceMulti"
+  | "probeGuidanceNumeric"
   // Phase 7-A: researchPrompts.ts 内の旧未管理プロンプト（B1〜B7）
   | "buildProjectInitialStatePrompt"
   | "buildProjectAnalysisPrompt"
@@ -451,6 +457,132 @@ Output only the follow-up question text.`
   },
 
   // ============================================================
+  // Phase I-B: 型別深掘りガイダンス（buildProbeTypeGuidance の散文ブロック）
+  // 制御分岐（ai_probe_enabled / 対象外型）はコード側に残し、ここでは「散文ルール」だけを
+  // バージョン管理対象にする。usedPolicies は空＝builder のAI一括生成対象には含めない
+  // （手編集＋深掘りプレイグラウンドで磨く）。本文は従来 buildProbeTypeGuidance と同一＝挙動保存。
+  // ============================================================
+
+  probeGuidanceCommon: {
+    label: "深掘りガイダンス（共通ルール）",
+    description: "全質問タイプ共通の深掘り判定ルール（順序・辞退/抽象回答対応・禁止条件）",
+    callTiming: "深掘り判定時に組み立て（buildProbeTypeGuidance → {{probeTypeGuidance}}）",
+    impactScope: "analyzeAnswer / interviewTurn / probeGeneration に注入される深掘り共通ルール",
+    outputFormat: "テキスト（深掘りガイダンス断片）",
+    usedPolicies: [],
+    allowedPlaceholders: [],
+    template: `深掘り判定の共通ルール（この順序で判断する）:
+1. 不足スロット優先: expected_slots に未取得の情報がある場合、そのスロットを埋める質問を最優先する。
+2. 「特になし」「ない」「わからない」などの辞退回答: そのまま受け入れず、「強いて言うなら」「少しでも気になる点は」「他と比べてどうか」等で一度だけ再確認する。それでも出ない場合のみ次へ進む。
+3. 抽象回答（「便利」「よくない」「なんとなく」等）: 具体化する質問を行う。
+4. 十分具体的かつ必要スロットが埋まっている場合: 深掘りせず次の質問へ進む。
+深掘り禁止条件: 必須スロットが全て埋まっている / max_probes に到達 / 同一論点で既に深掘り済み / ユーザーが明確に拒否している。`
+  },
+
+  probeGuidanceText: {
+    label: "深掘りガイダンス（テキスト回答）",
+    description: "自由記述（テキスト）回答に対する型別深掘りルール",
+    callTiming: "テキスト型の深掘り判定時（buildProbeTypeGuidance）",
+    impactScope: "free_text_short / free_text_long の深掘り挙動",
+    outputFormat: "テキスト（深掘りガイダンス断片）",
+    usedPolicies: [],
+    allowedPlaceholders: [],
+    template: `テキスト回答の深掘りルール:
+- 回答に具体的な理由・事例・状況・判断軸が不足している場合にのみ深掘りする。
+- 回答で言及された内容に紐づいた1点だけを問う（why / example / scene / impact / comparison のいずれか1つ）。
+- 抽象的な問い（「詳しく教えてください」「なぜですか」のみ）は禁止。
+- 回答に書かれていない情報を勝手に補って問うことは禁止。`
+  },
+
+  probeGuidanceChoiceSingle: {
+    label: "深掘りガイダンス（単一選択）",
+    description: "単数選択回答に対する型別深掘りルール（目的・起点・観点・NGパターン）",
+    callTiming: "単一選択型の深掘り判定時（buildProbeTypeGuidance・ai_probe_enabled=true 時）",
+    impactScope: "single_choice / text_with_image の深掘り挙動",
+    outputFormat: "テキスト（深掘りガイダンス断片）",
+    usedPolicies: [],
+    allowedPlaceholders: [],
+    template: `【深掘りの目的】
+深掘りは「不足情報を埋める」ためではなく、「回答の解像度を上げる」ために行う。
+回答が十分に具体的な場合は深掘りしない選択も許可する。
+
+単数選択回答の深掘りルール:
+- 回答者が選択した選択肢を必ず取得し、深掘りの起点にする。
+- 単数選択された場合: その選択肢を深掘り対象にする。
+
+深掘り内容の方針:
+- 選択理由を必ず聞く。抽象回答にならないよう、具体化を促す。
+- 以下のいずれか1つの観点を選んで深掘りする（複数観点を同時に聞くことは禁止）:
+  * 理由（なぜその選択肢を選んだか）
+  * 具体的な体験・場面（その選択肢を感じた具体的な状況）
+  * 他との違い・比較（他の選択肢と比べてどう違うか）
+  * 判断基準（何を重視してその選択をしたか）
+
+深掘り文面生成ルール:
+- 選択された内容を必ず文中に含める（例：「〇〇を選ばれたとのことですが...」）。
+- 「詳しく教えてください」などの抽象的な質問は禁止。
+- 1質問で1テーマのみ聞く。回答しやすい自然な会話文にする。
+
+NGパターン（以下は必ず避ける）:
+- 選択内容に触れない深掘り
+- 汎用的すぎる質問（例：「詳しく教えてください」「なぜですか」のみ）
+- 複数の観点を一度に聞く質問
+- 誘導的な質問
+- 選択肢を選び直させる質問や、選択結果そのものを再確認する質問`
+  },
+
+  probeGuidanceChoiceMulti: {
+    label: "深掘りガイダンス（複数選択）",
+    description: "複数選択回答に対する型別深掘りルール（目的・起点・観点・NGパターン）",
+    callTiming: "複数選択型の深掘り判定時（buildProbeTypeGuidance・ai_probe_enabled=true 時）",
+    impactScope: "multi_choice の深掘り挙動",
+    outputFormat: "テキスト（深掘りガイダンス断片）",
+    usedPolicies: [],
+    allowedPlaceholders: [],
+    template: `【深掘りの目的】
+深掘りは「不足情報を埋める」ためではなく、「回答の解像度を上げる」ために行う。
+回答が十分に具体的な場合は深掘りしない選択も許可する。
+
+複数選択回答の深掘りルール:
+- 回答者が選択した選択肢を必ず取得し、深掘りの起点にする。
+- 複数選択された場合: 最も重要そうな1つを深掘り対象にする。判断できない場合は最初の選択肢を対象にする。全項目を一気に聞くことは禁止（「それぞれ教えてください」はNG）。
+
+深掘り内容の方針:
+- 選択理由を必ず聞く。抽象回答にならないよう、具体化を促す。
+- 以下のいずれか1つの観点を選んで深掘りする（複数観点を同時に聞くことは禁止）:
+  * 理由（なぜその選択肢を選んだか）
+  * 具体的な体験・場面（その選択肢を感じた具体的な状況）
+  * 他との違い・比較（他の選択肢と比べてどう違うか）
+  * 判断基準（何を重視してその選択をしたか）
+
+深掘り文面生成ルール:
+- 選択された内容を必ず文中に含める（例：「〇〇を選ばれたとのことですが...」）。
+- 「詳しく教えてください」などの抽象的な質問は禁止。
+- 1質問で1テーマのみ聞く。回答しやすい自然な会話文にする。
+
+NGパターン（以下は必ず避ける）:
+- 選択内容に触れない深掘り
+- 汎用的すぎる質問（例：「詳しく教えてください」「なぜですか」のみ）
+- 複数の観点を一度に聞く質問
+- 誘導的な質問
+- 選択肢を選び直させる質問や、選択結果そのものを再確認する質問`
+  },
+
+  probeGuidanceNumeric: {
+    label: "深掘りガイダンス（数値回答）",
+    description: "数値・SD法回答に対する型別深掘りルール",
+    callTiming: "数値型の深掘り判定時（buildProbeTypeGuidance・ai_probe_enabled=true 時）",
+    impactScope: "numeric / sd の深掘り挙動",
+    outputFormat: "テキスト（深掘りガイダンス断片）",
+    usedPolicies: [],
+    allowedPlaceholders: [],
+    template: `数値回答の深掘りルール:
+- 回答者が入力した数値を踏まえて、その値になった理由・背景・判断軸を1点だけ問う。
+- 数値を再入力させる質問や数値の妥当性を問う質問は禁止。
+- 回答者が入力した値を必ず参照し、その内容に紐づいた追質問を生成する。`
+  },
+
+  // ============================================================
   // Phase 7-A: B1〜B7（旧未管理プロンプト）
   // ポリシー軸は適用しない（従来挙動を保持するため usedPolicies は空）
   // ============================================================
@@ -784,6 +916,169 @@ JSON配列で返してください。各要素:
 /** 全プロンプトキー一覧（21キー） */
 export const ALL_PROMPT_KEYS = Object.keys(BASE_PROMPT_TEMPLATES) as BasePromptKey[];
 
+/**
+ * Phase F: プロンプトビルダーの AI 生成対象キー（会話系＝A群10キー）。
+ *
+ * usedPolicies が非空のキーのみを対象とする。これは回答者と対話する／対話結果を
+ * 分析する系統（回答分析・深掘り・質問レンダリング・スロット抽出・完了チェック・
+ * 各種サマリー）に一致する。タグ系（愚痴/日記/ペルソナ等）・管理ツール系
+ * （フロー生成/設問候補等）は usedPolicies が空で、方針を当てると破綻するため
+ * 生成対象から除外し BASE を維持する。
+ */
+export const BUILDER_GENERATION_KEYS = ALL_PROMPT_KEYS.filter(
+  (key) => BASE_PROMPT_TEMPLATES[key].usedPolicies.length > 0
+);
+
+// ============================================================
+// プロンプト配置メタ（管理画面での可視化用）
+//
+// 各プロンプトキーが「どの系統に属し・どの文脈で発火し・深掘りに影響するか・
+// どこで管理されるか」を1か所に集約する。文面は一切変えず、運用者が
+// 「どのキーを触ると何に効くか／触っても無意味・危険か」を判別できるようにする。
+// （callTiming / impactScope と整合。runtime には影響しない純メタ）
+// ============================================================
+
+export type PromptKeyFamily = "conversation" | "research_infra" | "post" | "admin_tool";
+
+export interface PromptKeyPlacement {
+  family: PromptKeyFamily;
+  /** 実行時に発火する文脈の表示ラベル（空配列＝休眠） */
+  contexts: string[];
+  /** 現在呼び出し元がない休眠コードパス（テンプレ管理対象として温存中） */
+  dormant: boolean;
+  /** 深掘り判定・生成を内包する（編集すると深掘り挙動に影響しうる） */
+  probeImpact: boolean;
+  /** 管理元: package=ビルダー生成対象 / base=コード同梱BASEを通常維持 */
+  managedBy: "package" | "base";
+}
+
+export const PROMPT_FAMILY_LABEL: Record<PromptKeyFamily, string> = {
+  conversation: "会話系（回答者との対話・分析）",
+  research_infra: "調査基盤系（AI状態生成・横断分析）",
+  post: "投稿系（日記・愚痴・ペルソナ）",
+  admin_tool: "管理ツール系（フロー生成・設問候補）",
+};
+
+export const PROMPT_FAMILY_ORDER: PromptKeyFamily[] = [
+  "conversation",
+  "research_infra",
+  "post",
+  "admin_tool",
+];
+
+/** キーごとの配置メタ（21キー固定・callTiming と整合） */
+export const PROMPT_KEY_PLACEMENT: Record<BasePromptKey, PromptKeyPlacement> = {
+  // ── 会話系（ビルダー生成対象 = usedPolicies 非空の10キー） ──
+  buildAnalyzeAnswerPrompt: {
+    family: "conversation", contexts: ["アンケート（survey_interview）"],
+    dormant: false, probeImpact: true, managedBy: "package",
+  },
+  buildInterviewTurnPrompt: {
+    family: "conversation", contexts: ["インタビュー（interview）"],
+    dormant: false, probeImpact: true, managedBy: "package",
+  },
+  buildProbeGenerationPrompt: {
+    family: "conversation", contexts: [],
+    dormant: true, probeImpact: true, managedBy: "package",
+  },
+  buildQuestionRenderingPrompt: {
+    family: "conversation", contexts: ["アンケート", "インタビュー"],
+    dormant: false, probeImpact: false, managedBy: "package",
+  },
+  buildSlotFillingPrompt: {
+    family: "conversation", contexts: [],
+    dormant: true, probeImpact: false, managedBy: "package",
+  },
+  buildCompletionCheckPrompt: {
+    family: "conversation", contexts: [],
+    dormant: true, probeImpact: false, managedBy: "package",
+  },
+  buildSessionSummaryPrompt: {
+    family: "conversation", contexts: ["アンケート", "インタビュー"],
+    dormant: false, probeImpact: false, managedBy: "package",
+  },
+  buildFinalStructuredSummaryPrompt: {
+    family: "conversation", contexts: ["分析実行時"],
+    dormant: false, probeImpact: false, managedBy: "package",
+  },
+  buildFinalAnalysisPrompt: {
+    family: "conversation", contexts: ["分析実行時（フォールバック）"],
+    dormant: false, probeImpact: false, managedBy: "package",
+  },
+  buildProbePrompt: {
+    family: "conversation", contexts: ["深掘り発火時"],
+    dormant: false, probeImpact: true, managedBy: "package",
+  },
+  // ── 型別深掘りガイダンス（会話系・バージョン管理対象だが builder 一括生成対象外） ──
+  probeGuidanceCommon: {
+    family: "conversation", contexts: ["深掘り判定（共通）"],
+    dormant: false, probeImpact: true, managedBy: "package",
+  },
+  probeGuidanceText: {
+    family: "conversation", contexts: ["深掘り判定（テキスト）"],
+    dormant: false, probeImpact: true, managedBy: "package",
+  },
+  probeGuidanceChoiceSingle: {
+    family: "conversation", contexts: ["深掘り判定（単一選択）"],
+    dormant: false, probeImpact: true, managedBy: "package",
+  },
+  probeGuidanceChoiceMulti: {
+    family: "conversation", contexts: ["深掘り判定（複数選択）"],
+    dormant: false, probeImpact: true, managedBy: "package",
+  },
+  probeGuidanceNumeric: {
+    family: "conversation", contexts: ["深掘り判定（数値）"],
+    dormant: false, probeImpact: true, managedBy: "package",
+  },
+  // ── 調査基盤系（BASE固定・research project で発火） ──
+  buildProjectInitialStatePrompt: {
+    family: "research_infra", contexts: ["プロジェクトAI状態の初期生成"],
+    dormant: false, probeImpact: false, managedBy: "base",
+  },
+  buildProjectAnalysisPrompt: {
+    family: "research_infra", contexts: ["分析レポート生成"],
+    dormant: false, probeImpact: false, managedBy: "base",
+  },
+  // ── 投稿系（BASE固定・日記/愚痴パイプライン） ──
+  buildPostAnalysisPrompt: {
+    family: "post", contexts: ["投稿受信ごと（全モード）"],
+    dormant: false, probeImpact: false, managedBy: "base",
+  },
+  buildRantExtendedPrompt: {
+    family: "post", contexts: ["愚痴投稿の拡張分析"],
+    dormant: false, probeImpact: false, managedBy: "base",
+  },
+  buildDiaryExtendedPrompt: {
+    family: "post", contexts: ["日記投稿の拡張分析"],
+    dormant: false, probeImpact: false, managedBy: "base",
+  },
+  buildRantCounselorReplyPrompt: {
+    family: "post", contexts: ["愚痴投稿への返信"],
+    dormant: false, probeImpact: false, managedBy: "base",
+  },
+  buildPersonaTagsPrompt: {
+    family: "post", contexts: ["ユーザー属性タグ生成"],
+    dormant: false, probeImpact: false, managedBy: "base",
+  },
+  // ── 管理ツール系（BASE固定・管理画面操作で発火） ──
+  buildSurveyOptionsPrompt: {
+    family: "admin_tool", contexts: ["設問回答候補の提案"],
+    dormant: false, probeImpact: false, managedBy: "base",
+  },
+  buildAdjustQuestionsPrompt: {
+    family: "admin_tool", contexts: ["フロー流用時の調整"],
+    dormant: false, probeImpact: false, managedBy: "base",
+  },
+  buildGenerateFlowPrompt: {
+    family: "admin_tool", contexts: ["AIフロー自動生成"],
+    dormant: false, probeImpact: false, managedBy: "base",
+  },
+  buildMissingAttributeSuggestionsPrompt: {
+    family: "admin_tool", contexts: ["属性不足設問の提案"],
+    dormant: false, probeImpact: false, managedBy: "base",
+  },
+};
+
 // ============================================================
 // Phase A/B: 用途プリセット（パッケージ Version 1 の初期テンプレ生成器）
 // ============================================================
@@ -919,6 +1214,51 @@ export function summarizeTemplateDefinitions(
     }
   }
   return { total, defined: custom + base, custom, base, disabled };
+}
+
+export interface FamilyTemplateSummary extends TemplateDefinitionSummary {
+  family: PromptKeyFamily;
+  familyLabel: string;
+  managedBy: "package" | "base";
+}
+
+/**
+ * templates_json の定義率を系統（PROMPT_KEY_PLACEMENT.family）別に集計する。
+ * show.ejs の系統サマリー表示用。families は PROMPT_FAMILY_ORDER 順・該当キーが
+ * 存在する系統のみ返す（合計は summarizeTemplateDefinitions と一致する）。
+ */
+export function summarizeTemplateDefinitionsByFamily(
+  templates: AIPromptTemplateMap | null | undefined
+): FamilyTemplateSummary[] {
+  const acc: Record<string, { custom: number; base: number; disabled: number }> = {};
+  for (const key of ALL_PROMPT_KEYS) {
+    const family = PROMPT_KEY_PLACEMENT[key].family;
+    const bucket = (acc[family] ??= { custom: 0, base: 0, disabled: 0 });
+    const entry = templates?.[key];
+    if (entry && entry.enabled === false) {
+      bucket.disabled += 1;
+    } else if (entry && typeof entry.template === "string" && entry.template.trim() !== "") {
+      bucket.custom += 1;
+    } else {
+      bucket.base += 1;
+    }
+  }
+  const result: FamilyTemplateSummary[] = [];
+  for (const fam of PROMPT_FAMILY_ORDER) {
+    const b = acc[fam];
+    if (!b) continue;
+    result.push({
+      family: fam,
+      familyLabel: PROMPT_FAMILY_LABEL[fam],
+      managedBy: fam === "conversation" ? "package" : "base",
+      total: b.custom + b.base + b.disabled,
+      defined: b.custom + b.base,
+      custom: b.custom,
+      base: b.base,
+      disabled: b.disabled,
+    });
+  }
+  return result;
 }
 
 /** 管理画面表示用に許可プレースホルダーの説明を返す */

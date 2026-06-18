@@ -1,6 +1,6 @@
 import { supabase } from "../config/supabase";
 import { throwIfError } from "./baseRepository";
-import type { AIPromptPolicy, AIPromptTemplateMap } from "../types/domain";
+import type { AIPromptPolicy, AIPromptTemplateMap, PromptBuilderSpec } from "../types/domain";
 
 export interface PromptPackage {
   id: string;
@@ -34,6 +34,8 @@ export interface PromptPackageVersion {
   status: "draft" | "published" | "archived";
   policy_json: AIPromptPolicy | null;
   templates_json: AIPromptTemplateMap | null;
+  /** プロンプトビルダー方針（AI生成の入力／再編集用ソース）。Phase F / Migration 062 */
+  builder_spec_json: PromptBuilderSpec | null;
   change_note: string | null;
   published_at: string | null;
   created_at: string;
@@ -57,12 +59,14 @@ export interface PromptPackageVersionCreateInput {
   package_id: string;
   policy_json?: AIPromptPolicy | null;
   templates_json?: AIPromptTemplateMap | null;
+  builder_spec_json?: PromptBuilderSpec | null;
   change_note?: string | null;
 }
 
 export interface PromptPackageVersionUpdateInput {
   policy_json?: AIPromptPolicy | null;
   templates_json?: AIPromptTemplateMap | null;
+  builder_spec_json?: PromptBuilderSpec | null;
   change_note?: string | null;
 }
 
@@ -251,6 +255,7 @@ export const promptPackageRepository = {
         status: "draft",
         policy_json: input.policy_json ?? null,
         templates_json: input.templates_json ?? null,
+        builder_spec_json: input.builder_spec_json ?? null,
         change_note: input.change_note ?? null,
       })
       .select("*")

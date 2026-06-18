@@ -443,9 +443,19 @@ test("P3-1b: 許可外プレースホルダーなしなら valid=true", async ()
 test("P3-2: BASE_PROMPT_TEMPLATES の全エントリに allowedPlaceholders が存在する", async () => {
   const { BASE_PROMPT_TEMPLATES } = await import("../prompts/basePromptTemplates");
 
+  // Phase I-B: 型別深掘りガイダンス5キーは純散文（{{placeholder}} なし）＝ allowedPlaceholders は空配列
+  const GUIDANCE_KEYS = new Set([
+    "probeGuidanceCommon",
+    "probeGuidanceText",
+    "probeGuidanceChoiceSingle",
+    "probeGuidanceChoiceMulti",
+    "probeGuidanceNumeric",
+  ]);
   for (const [key, def] of Object.entries(BASE_PROMPT_TEMPLATES)) {
-    assert.ok(Array.isArray(def.allowedPlaceholders) && def.allowedPlaceholders.length > 0,
-      `${key} に allowedPlaceholders が定義されている`);
+    assert.ok(Array.isArray(def.allowedPlaceholders), `${key} の allowedPlaceholders が配列`);
+    if (!GUIDANCE_KEYS.has(key)) {
+      assert.ok(def.allowedPlaceholders.length > 0, `${key} に allowedPlaceholders が定義されている`);
+    }
     assert.ok(typeof def.label === "string" && def.label.length > 0,
       `${key} に label が定義されている`);
   }

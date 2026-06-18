@@ -210,6 +210,36 @@ export type AIPromptTemplateMap = {
 }
 
 /**
+ * プロンプトビルダー方針 (Migration 062 / Phase F)。
+ * パッケージ Version に保持する「AIの振る舞い方針」。Version 作成/編集時の
+ * テンプレート AI 生成の入力 兼 再編集用ソース。実行時には参照しない。
+ */
+export interface PromptBuilderSpec {
+  /**
+   * 振る舞い方針（自由記述・主役）。このパッケージが何を目的に・どう振る舞うかを散文で記す。
+   * Version 編集画面の最上部に常時表示し、テンプレート AI 生成の主入力になる。
+   */
+  behaviorPolicy?: string;
+  /** 用途プリセット（粗い識別ラベル。例: インタビュー / Website Hunter / カスタム） */
+  usagePreset?: string;
+  /** 深掘り強度（粗い。例: 最小限 / 標準 / 積極的 / 徹底深掘り） */
+  probeIntensity?: string;
+  /** 出力品質方針（粗い。例: 速度優先 / バランス / 精度優先） */
+  outputQuality?: string;
+  purpose?: string;
+  goal?: string;
+  targetUser?: string;
+  aiPersona?: string;
+  questionStyle?: string;
+  probePolicy?: string;
+  completionCondition?: string;
+  ambiguousAnswer?: string;
+  noneAnswer?: string;
+  outputFormatNote?: string;
+  prohibitions?: string[];
+}
+
+/**
  * プロジェクト個別オーバーライド (Migration 057 / Phase 6-B)。
  * package モード時にパッケージ設定へ部分的に上書きする。
  * 初期実装では policy のみ対応（テンプレート本文の上書きはパッケージ中心管理を崩すため未対応）。

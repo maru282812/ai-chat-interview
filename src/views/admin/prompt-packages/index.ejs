@@ -30,6 +30,7 @@ const CATEGORY_LABELS = {
       <th>パッケージ名</th>
       <th>slug</th>
       <th>公開バージョン</th>
+      <th title="会話系（回答者との対話・分析）のカスタム定義数">会話系カスタム</th>
       <th>総バージョン数</th>
       <th>利用プロジェクト数</th>
       <th>最終更新</th>
@@ -62,6 +63,22 @@ const CATEGORY_LABELS = {
           <span style="color:#999;font-size:12px">未公開</span>
         <% } %>
       </td>
+      <td style="text-align:center">
+        <%
+          let convFam = null;
+          if (pkg.published_version && typeof summarizeTemplateDefinitionsByFamily === 'function') {
+            const fams = summarizeTemplateDefinitionsByFamily(pkg.published_version.templates_json);
+            convFam = (fams || []).find(f => f.family === 'conversation') || null;
+          }
+        %>
+        <% if (convFam) { %>
+          <span style="font-size:12px;color:#2a6a5a" title="会話系のカスタム定義 <%= convFam.custom %> / 全 <%= convFam.total %> キー（BASE利用 <%= convFam.base %> / 無効 <%= convFam.disabled %>）">
+            会話系 <strong><%= convFam.custom %></strong> カスタム / <%= convFam.total %>
+          </span>
+        <% } else { %>
+          <span style="color:#999;font-size:12px">—</span>
+        <% } %>
+      </td>
       <td style="text-align:center"><%= pkg.versions_count ?? 0 %></td>
       <td style="text-align:center">
         <% if ((pkg.using_projects_count ?? 0) > 0) { %>
@@ -82,7 +99,7 @@ const CATEGORY_LABELS = {
     </tr>
     <% } %>
     <% if (packages.length === 0) { %>
-    <tr><td colspan="7" style="text-align:center;color:#999">パッケージがまだありません</td></tr>
+    <tr><td colspan="8" style="text-align:center;color:#999">パッケージがまだありません</td></tr>
     <% } %>
   </tbody>
 </table>

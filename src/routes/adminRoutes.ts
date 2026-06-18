@@ -272,3 +272,6 @@ adminRoutes.post("/prompt-packages/:packageId/versions/:versionId/archive",     
 adminRoutes.get("/api/prompt-package-versions/:versionId/preview",                             asyncHandler(adminController.promptPackageVersionPreview));
 adminRoutes.post("/prompt-packages/:packageId/versions/:versionId/prompt-preview",             asyncHandler(adminController.promptPackageVersionPromptPreview));
 adminRoutes.post("/prompt-packages/:packageId/versions/:versionId/prompt-test",                asyncHandler(adminController.promptPackageVersionPromptTest));
+adminRoutes.post("/prompt-packages/:packageId/versions/:versionId/probe-playground",          asyncHandler(adminController.promptPackageVersionProbePlayground));
+adminRoutes.post("/prompt-packages/:packageId/generate-templates",                            asyncHandler(adminController.generatePromptPackageVersionTemplates));
+adminRoutes.post("/prompt-packages/:packageId/preview-behavior",                              asyncHandler(adminController.previewPromptPackageBehavior));

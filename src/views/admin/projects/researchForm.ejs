@@ -783,11 +783,57 @@
               現在の設定（パッケージ / 個別設定）で実際に使われるプロンプトを確認できます。本文の編集は
               <a href="/admin/prompt-packages" target="_blank">プロンプトパッケージ画面</a>で行ってください。
             </p>
-            <% for (const pkDef of safePromptKeyDefs) { %>
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid #eef4f2;font-size:12px">
+
+            <!-- 用途フィルタ＋凡例（version-form と同方式の配置可視化） -->
+            <div style="background:#f8faf9;border:1px solid #e0e8e4;border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:12px">
+              <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+                <label style="font-weight:600;color:#1a4d3a">用途で絞り込み
+                  <select id="rf-family-filter" style="margin-left:6px;font-size:12px;padding:2px 6px">
+                    <option value="all">すべて表示</option>
+                    <option value="conversation">会話系（アンケート・インタビュー）</option>
+                    <option value="research_infra">調査基盤系（AI状態・横断分析）</option>
+                    <option value="post">投稿系（日記・愚痴・ペルソナ）</option>
+                    <option value="admin_tool">管理ツール系（フロー生成・設問候補）</option>
+                  </select>
+                </label>
+                <label style="cursor:pointer;color:#48635c"><input type="checkbox" id="rf-hide-dormant" /> 休眠キーを隠す</label>
+                <label style="cursor:pointer;color:#48635c"><input type="checkbox" id="rf-probe-only" /> 🔍 深掘り関連のみ</label>
+                <span id="rf-filter-count" style="margin-left:auto;color:#8a9a96"></span>
+              </div>
+              <div style="margin-top:6px;display:flex;gap:12px;flex-wrap:wrap;color:#60726f">
+                <span>凡例:</span>
+                <span><span style="background:#fff3e0;color:#b25a00;border:1px solid #f0c98a;border-radius:4px;padding:0 5px">🔍 深掘り影響</span></span>
+                <span><span style="background:#eceff1;color:#78909c;border:1px solid #cfd8dc;border-radius:4px;padding:0 5px">💤 休眠</span></span>
+                <span><span style="background:#eef4ff;color:#3a5a9a;border:1px solid #cdd9f0;border-radius:4px;padding:0 5px">発火文脈</span></span>
+              </div>
+            </div>
+
+            <%
+              // version-form と同じ系統グルーピング（PROMPT_FAMILY_ORDER 順）。プレビュー/テスト挙動は変えない。
+              const RF_FAMILY_ORDER = ['conversation','research_infra','post','admin_tool'];
+              const rfGrouped = {};
+              for (const d of safePromptKeyDefs) { (rfGrouped[d.family] = rfGrouped[d.family] || []).push(d); }
+            %>
+            <% for (const fam of RF_FAMILY_ORDER) { if (!rfGrouped[fam] || !rfGrouped[fam].length) continue; %>
+              <div data-rf-fam-group="<%= fam %>" style="margin:12px 0 4px;padding:6px 10px;background:#eef4f2;border-left:4px solid #1a7a5a;border-radius:0 6px 6px 0;font-weight:700;font-size:12px;color:#1a4d3a">
+                <%= rfGrouped[fam][0].familyLabel %>
+                <span style="font-weight:normal;font-size:11px;color:#5a6b80">（<%= rfGrouped[fam].length %>キー）</span>
+              </div>
+              <% for (const pkDef of rfGrouped[fam]) { %>
+              <div data-rf-pk-card data-fam="<%= pkDef.family %>" data-dormant="<%= pkDef.dormant ? '1' : '0' %>" data-probe="<%= pkDef.probeImpact ? '1' : '0' %>"
+                style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid #eef4f2;font-size:12px">
                 <span style="flex:1;min-width:220px">
                   <strong><%= pkDef.label %></strong>
                   <span class="muted" style="font-weight:normal">(<%= pkDef.key %>)</span>
+                  <% if (pkDef.probeImpact) { %>
+                    <span title="このプロンプトは深掘りの判定・生成を内包します。編集すると深掘り挙動に影響しうるので注意。" style="font-size:11px;background:#fff3e0;color:#b25a00;border:1px solid #f0c98a;padding:1px 6px;border-radius:4px;margin-left:4px">🔍 深掘り影響</span>
+                  <% } %>
+                  <% if (pkDef.dormant) { %>
+                    <span title="現在このプロンプトを呼び出すコードパスはありません（休眠）。実行時には反映されません。" style="font-size:11px;background:#eceff1;color:#78909c;border:1px solid #cfd8dc;padding:1px 6px;border-radius:4px;margin-left:4px">💤 休眠</span>
+                  <% } %>
+                  <% for (const ctx of (pkDef.contexts || [])) { %>
+                    <span style="font-size:11px;background:#eef4ff;color:#3a5a9a;border:1px solid #cdd9f0;padding:1px 6px;border-radius:4px;margin-left:4px"><%= ctx %></span>
+                  <% } %>
                 </span>
                 <button type="button"
                   onclick="openPromptPreview('<%= project.id %>', '<%= pkDef.key %>')"
@@ -800,6 +846,7 @@
                   テスト実行
                 </button>
               </div>
+              <% } %>
             <% } %>
           </div>
         </details>
@@ -892,6 +939,44 @@ function syncPromptMode() {
   if (!form) return;
   form.addEventListener('submit', syncPromptMode);
 })();
+
+// プロンプト動作確認の用途フィルタ: 系統/休眠/深掘りでカードを畳む（クライアントのみ・送信に影響しない）
+function setupResearchPromptFilter() {
+  var famSel    = document.getElementById('rf-family-filter');
+  var hideDorm  = document.getElementById('rf-hide-dormant');
+  var probeOnly = document.getElementById('rf-probe-only');
+  var countEl   = document.getElementById('rf-filter-count');
+  if (!famSel) return;
+
+  function apply() {
+    var fam = famSel.value;
+    var cards = document.querySelectorAll('[data-rf-pk-card]');
+    var shown = 0;
+    cards.forEach(function(c) {
+      var ok = true;
+      if (fam !== 'all' && c.getAttribute('data-fam') !== fam) ok = false;
+      if (hideDorm && hideDorm.checked && c.getAttribute('data-dormant') === '1') ok = false;
+      if (probeOnly && probeOnly.checked && c.getAttribute('data-probe') !== '1') ok = false;
+      c.style.display = ok ? '' : 'none';
+      if (ok) shown++;
+    });
+    document.querySelectorAll('[data-rf-fam-group]').forEach(function(h) {
+      var g = h.getAttribute('data-rf-fam-group');
+      var any = Array.prototype.some.call(
+        document.querySelectorAll('[data-rf-pk-card][data-fam="' + g + '"]'),
+        function(c) { return c.style.display !== 'none'; }
+      );
+      h.style.display = any ? '' : 'none';
+    });
+    if (countEl) countEl.textContent = '表示中 ' + shown + ' / ' + cards.length + ' キー';
+  }
+
+  famSel.addEventListener('change', apply);
+  if (hideDorm)  hideDorm.addEventListener('change', apply);
+  if (probeOnly) probeOnly.addEventListener('change', apply);
+  apply();
+}
+setupResearchPromptFilter();
 
 // Phase G/B: package モードでバージョン未選択のまま送信しようとした場合に明確に警告する
 function confirmPromptPackageSelection() {

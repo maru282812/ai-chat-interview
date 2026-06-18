@@ -4,7 +4,12 @@
 const isNew = !locals.version || !version?.id;
 const currentPolicy    = version?.policy_json    ?? {};
 const currentTemplates = version?.templates_json ?? {};
+const currentBuilderSpec = version?.builder_spec_json ?? {};
 const safePromptKeyDefs = Array.isArray(locals.promptKeyDefs) ? promptKeyDefs : [];
+// Phase F: プロンプトビルダー方針フィールド
+const safeBuilderFields = Array.isArray(locals.builderFields) ? builderFields : [];
+// 既存の方針が入力済みなら初期表示を基本モードにする（未入力でも既定は基本モード）
+const builderHasValues = currentBuilderSpec && Object.keys(currentBuilderSpec).length > 0;
 
 const RESEARCH_TYPE_OPTIONS = [
   { key: "standard_research",    label: "標準リサーチ" },
@@ -57,6 +62,10 @@ const PRIORITY_OPTIONS = [
   { key: "comparability_first",      label: "比較可能性優先" }
 ];
 const currentRestrictions = Array.isArray(currentPolicy.restrictions) ? currentPolicy.restrictions : [];
+// 振る舞い方針セクション（最上部・常時表示）の粗い選択肢
+const USAGE_PRESET_OPTIONS    = ["インタビュー", "アンケート", "Website Hunter", "動物病院", "営業支援", "カスタム"];
+const PROBE_INTENSITY_OPTIONS = ["最小限", "標準", "積極的", "徹底深掘り"];
+const OUTPUT_QUALITY_OPTIONS  = ["速度優先", "バランス", "精度優先"];
 %>
 
 <style>
@@ -109,7 +118,130 @@ const currentRestrictions = Array.isArray(currentPolicy.restrictions) ? currentP
       placeholder="例: 女性向けトーン調整、probe スタイル変更" style="margin-top:4px" />
   </label>
 
+  <!-- ============ 振る舞い方針（このパッケージの役割）・常時表示 ============ -->
+  <div style="background:#f4f9f7;border:1px solid #cfe6dd;border-radius:10px;padding:14px 16px;margin-bottom:14px">
+    <h3 style="margin:0 0 6px">振る舞い方針（このパッケージの役割）</h3>
+    <p class="helper-text" style="margin-bottom:10px">
+      このパッケージが<strong>何を目的に・どう振る舞うか</strong>を記述します。ここを読めばパッケージの役割・期待する振る舞い・回答方針が分かる状態にしてください。<br>
+      下の「テンプレート生成」を押すと、この方針が<strong>主入力</strong>として会話系テンプレートに反映されます。
+    </p>
+    <label style="display:block;margin-bottom:10px">
+      振る舞い方針（自由記述）
+      <textarea id="bld-behaviorPolicy" data-bld="behaviorPolicy" data-bld-type="text" rows="6"
+        style="margin-top:4px"
+        placeholder="例: このパッケージはLINEインタビュー用。&#10;回答者が話しやすい雰囲気を優先する。質問攻めにしない。&#10;1回の深掘りは最大2回。自由回答を重視。曖昧な回答は確認する。"><%= currentBuilderSpec.behaviorPolicy || '' %></textarea>
+    </label>
+    <div class="form-grid" style="margin-bottom:0">
+      <label>
+        用途
+        <select id="bld-usagePreset" data-bld="usagePreset" data-bld-type="text" style="margin-top:4px">
+          <option value="">未設定</option>
+          <% for (const opt of USAGE_PRESET_OPTIONS) { %>
+            <option value="<%= opt %>" <%= currentBuilderSpec.usagePreset === opt ? 'selected' : '' %>><%= opt %></option>
+          <% } %>
+        </select>
+      </label>
+      <label>
+        深掘り方針
+        <select id="bld-probeIntensity" data-bld="probeIntensity" data-bld-type="text" style="margin-top:4px">
+          <option value="">未設定</option>
+          <% for (const opt of PROBE_INTENSITY_OPTIONS) { %>
+            <option value="<%= opt %>" <%= currentBuilderSpec.probeIntensity === opt ? 'selected' : '' %>><%= opt %></option>
+          <% } %>
+        </select>
+      </label>
+      <label>
+        出力品質
+        <select id="bld-outputQuality" data-bld="outputQuality" data-bld-type="text" style="margin-top:4px">
+          <option value="">未設定</option>
+          <% for (const opt of OUTPUT_QUALITY_OPTIONS) { %>
+            <option value="<%= opt %>" <%= currentBuilderSpec.outputQuality === opt ? 'selected' : '' %>><%= opt %></option>
+          <% } %>
+        </select>
+      </label>
+    </div>
+
+    <!-- 改修案3: 影響範囲（この方針が効くプロンプト / 効かないプロンプト）・常時表示 -->
+    <%
+      const affectedDefs    = safePromptKeyDefs.filter(function(d){ return (d.usedPolicies || []).length > 0; });
+      const notAffectedDefs = safePromptKeyDefs.filter(function(d){ return (d.usedPolicies || []).length === 0; });
+    %>
+    <div style="margin-top:12px;background:#fff;border:1px solid #cfe6dd;border-radius:8px;padding:10px 14px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:6px">この方針が影響するプロンプト</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px">
+        <% for (const d of affectedDefs) { %>
+          <span style="color:#1a7a5a">✓ <%= d.label %></span>
+        <% } %>
+      </div>
+      <% if (notAffectedDefs.length > 0) { %>
+      <div style="font-weight:600;font-size:13px;margin:10px 0 6px;color:#60726f">影響しないプロンプト（BASEを維持）</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:#9aa7a3">
+        <% for (const d of notAffectedDefs) { %>
+          <span>－ <%= d.label %></span>
+        <% } %>
+      </div>
+      <% } %>
+    </div>
+  </div>
+
   <hr style="margin:16px 0" />
+
+  <!-- Phase F: 編集モード切替 -->
+  <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+    <strong style="font-size:13px">編集モード</strong>
+    <label style="display:flex;align-items:center;gap:6px;margin:0;font-weight:normal">
+      <input type="radio" name="edit_mode" value="basic" <%= builderHasValues || isNew ? 'checked' : '' %> onchange="setEditMode('basic')" />
+      基本モード（プロンプトビルダー）
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;margin:0;font-weight:normal">
+      <input type="radio" name="edit_mode" value="advanced" <%= (!builderHasValues && !isNew) ? 'checked' : '' %> onchange="setEditMode('advanced')" />
+      詳細モード（テンプレート直接編集）
+    </label>
+  </div>
+
+  <!-- ============ 基本モード（プロンプトビルダー） ============ -->
+  <div id="basic-mode-section">
+    <h3 style="margin:0 0 6px">詳細な方針（任意の内訳）</h3>
+    <p class="helper-text" style="margin-bottom:12px">
+      上の「振る舞い方針」を軸に、必要なら用途・目的・深掘り方針・禁止事項などを項目ごとに補足できます（すべて任意）。<br>
+      「テンプレート生成」を押すと、上の振る舞い方針とここでの内訳をまとめて、会話系テンプレート（回答分析・深掘り・質問レンダリング等）をAIが書き換えます。<br>
+      生成結果は<strong>詳細モードのテンプレート欄に読み込まれます</strong>。内容を確認してから下部の「<%= isNew ? 'ドラフトとして作成' : '保存' %>」で確定してください。タグ系・管理ツール系プロンプトは対象外（BASEを維持）です。
+    </p>
+
+    <div class="form-grid">
+      <% for (const f of safeBuilderFields.filter(function(x){ return x.type === 'text'; })) { %>
+        <label>
+          <%= f.label %>
+          <input type="text" id="bld-<%= f.key %>" data-bld="<%= f.key %>" data-bld-type="text"
+            value="<%= currentBuilderSpec[f.key] || '' %>" placeholder="<%= f.placeholder %>" style="margin-top:4px" />
+          <% if (f.hint) { %><small class="helper-text"><%= f.hint %></small><% } %>
+        </label>
+      <% } %>
+    </div>
+
+    <% for (const f of safeBuilderFields.filter(function(x){ return x.type === 'textarea' || x.type === 'list'; })) { %>
+      <label style="display:block;margin-bottom:10px">
+        <%= f.label %>
+        <% if (f.hint) { %><small class="helper-text"><%= f.hint %></small><% } %>
+        <textarea id="bld-<%= f.key %>" data-bld="<%= f.key %>" data-bld-type="<%= f.type %>" rows="<%= f.type === 'list' ? 3 : 2 %>"
+          style="margin-top:4px" placeholder="<%= f.placeholder %>"><%= f.type === 'list' ? ((currentBuilderSpec[f.key] || []).join('\n')) : (currentBuilderSpec[f.key] || '') %></textarea>
+      </label>
+    <% } %>
+
+    <div style="margin-top:10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <button type="button" class="btn" id="preview-behavior-btn" style="font-size:13px">振る舞いを確認</button>
+      <span id="generate-status" style="font-size:12px;color:#60726f"></span>
+    </div>
+    <p class="helper-text" style="margin-top:6px">
+      この方針から生成される会話系プロンプトを<strong>保存前にプレビュー・差分で確認</strong>できます。内容を確認してから「この内容を反映」を押すと詳細モードに読み込まれ、下部の「<%= isNew ? 'ドラフトとして作成' : '保存' %>」で確定します。
+    </p>
+    <div id="behavior-confirm-panel" style="margin-top:10px;font-size:12px"></div>
+  </div>
+
+  <input type="hidden" name="builder_spec_json" id="builder_spec_json_hidden" value="" />
+
+  <!-- ============ 詳細モード（テンプレート直接編集） ============ -->
+  <div id="advanced-mode-section">
 
   <!-- A. ポリシー設定 -->
   <h3 style="margin:0 0 8px">A. AIプロンプト補助方針（policy_json）</h3>
@@ -202,26 +334,137 @@ const currentRestrictions = Array.isArray(currentPolicy.restrictions) ? currentP
     変数は <code>{{placeholder}}</code> 形式で記述してください。
   </p>
 
-  <% for (const pkDef of safePromptKeyDefs) { %>
+  <!-- 用途フィルタ＋凡例（配置可視化）: 無関係なキーを畳んで目的の系統だけ編集する -->
+  <div style="background:#f8faf9;border:1px solid #e0e8e4;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px">
+    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+      <label style="font-weight:600;color:#1a4d3a">用途で絞り込み
+        <select id="pk-family-filter" style="margin-left:6px;font-size:12px;padding:2px 6px">
+          <option value="all">すべて表示</option>
+          <option value="conversation">会話系（アンケート・インタビュー）</option>
+          <option value="research_infra">調査基盤系（AI状態・横断分析）</option>
+          <option value="post">投稿系（日記・愚痴・ペルソナ）</option>
+          <option value="admin_tool">管理ツール系（フロー生成・設問候補）</option>
+        </select>
+      </label>
+      <label style="cursor:pointer;color:#48635c"><input type="checkbox" id="pk-hide-dormant" /> 休眠キーを隠す</label>
+      <label style="cursor:pointer;color:#48635c"><input type="checkbox" id="pk-probe-only" /> 🔍 深掘り関連のみ</label>
+      <span id="pk-filter-count" style="margin-left:auto;color:#8a9a96"></span>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:12px;flex-wrap:wrap;color:#60726f">
+      <span>凡例:</span>
+      <span><span style="background:#fff3e0;color:#b25a00;border:1px solid #f0c98a;border-radius:4px;padding:0 5px">🔍 深掘り影響</span> 編集すると深掘り挙動が変わりうる</span>
+      <span><span style="background:#eceff1;color:#78909c;border:1px solid #cfd8dc;border-radius:4px;padding:0 5px">💤 休眠</span> 実行時に呼ばれない（編集は反映されない）</span>
+      <span><span style="background:#eef4ff;color:#3a5a9a;border:1px solid #cdd9f0;border-radius:4px;padding:0 5px">発火文脈</span> 実行されるモード/タイミング</span>
+    </div>
+  </div>
+
+  <!-- 🔍 深掘りプレイグラウンド: このバージョンが出す深掘りを設問＋回答で実行確認（保存後のみ・実パイプライン・DB書込みなし） -->
+  <% if (!isNew) { %>
+  <details style="border:1px solid #f0c98a;background:#fffaf3;border-radius:10px;padding:10px 14px;margin-bottom:14px">
+    <summary style="cursor:pointer;font-weight:700;color:#b25a00">🔍 深掘りプレイグラウンド（このバージョンの深掘りを試す）</summary>
+    <div style="margin-top:10px;font-size:13px">
+      <p class="helper-text" style="margin:0 0 10px">
+        設問＋回答を入れると、<strong>このバージョンの本文＋コード側の型別ガイダンス＋方針</strong>を含む実プロンプトで深掘りを生成します。
+        深掘り影響キー（analyze/interview/probe）の編集中の本文も反映されます。AIを実呼び出しします（DBには保存されません）。
+      </p>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+        <label style="font-size:12px">モード
+          <select id="pg-mode" style="display:block;margin-top:3px;font-size:12px;padding:3px 6px">
+            <option value="analyze">アンケート（buildAnalyzeAnswerPrompt）</option>
+            <option value="interview">インタビュー（buildInterviewTurnPrompt）</option>
+            <option value="probe">簡易深掘り（buildProbePrompt）</option>
+          </select>
+        </label>
+        <label style="font-size:12px">質問タイプ
+          <select id="pg-qtype" style="display:block;margin-top:3px;font-size:12px;padding:3px 6px">
+            <option value="free_text_long">自由記述（長）</option>
+            <option value="free_text_short">自由記述（短）</option>
+            <option value="single_choice">単一選択</option>
+            <option value="multi_choice">複数選択</option>
+            <option value="numeric">数値</option>
+          </select>
+        </label>
+        <label style="font-size:12px">最大深掘り回数
+          <input id="pg-maxprobes" type="number" min="0" value="1" style="display:block;margin-top:3px;width:70px;font-size:12px;padding:3px 6px" />
+        </label>
+      </div>
+      <label style="font-size:12px;display:block;margin-top:8px">設問文
+        <textarea id="pg-question" rows="2" style="font-size:12px;margin-top:3px" placeholder="例: 最近の通勤で不便に感じることはありますか？"></textarea>
+      </label>
+      <label style="font-size:12px;display:block;margin-top:8px">回答（回答者の発話）
+        <textarea id="pg-answer" rows="2" style="font-size:12px;margin-top:3px" placeholder="例: まあ普通です"></textarea>
+      </label>
+      <details style="margin-top:8px;font-size:12px">
+        <summary style="cursor:pointer;color:#60726f">任意: 収集ゴール・選択肢</summary>
+        <label style="font-size:12px;display:block;margin-top:6px">収集ゴール（project_goal）
+          <input id="pg-goal" type="text" style="display:block;margin-top:3px;font-size:12px;padding:3px 6px;width:100%" placeholder="例: 通勤時の不便の具体と背景を理解する" />
+        </label>
+        <label style="font-size:12px;display:block;margin-top:6px">選択肢（選択型のとき・1行1つ）
+          <textarea id="pg-options" rows="2" style="font-size:12px;margin-top:3px" placeholder="例:\nとても満足\nやや満足\n不満"></textarea>
+        </label>
+      </details>
+      <div style="margin-top:10px">
+        <button type="button" id="pg-run" style="font-size:13px;padding:5px 16px;background:#b25a00;color:#fff;border:none;border-radius:6px;cursor:pointer">深掘りを生成して確認</button>
+      </div>
+      <div id="pg-result" style="margin-top:12px"></div>
+    </div>
+  </details>
+  <% } %>
+
+  <%
+    // 配置メタによる系統グルーピング（可視化）。文面は変えず、どのキーが
+    // どの系統で・どこで発火し・深掘りに影響するかを一覧で見えるようにする。
+    const FAMILY_ORDER = ['conversation','research_infra','post','admin_tool'];
+    const FAMILY_INTRO = {
+      conversation:   '回答者との対話・分析。<strong>深掘りの中核はここ。</strong>ビルダー（方針→生成）で編集する想定の系統です。',
+      research_infra: 'プロジェクトAI状態の生成・横断分析。通常は BASE 維持で問題ありません。',
+      post:           '日記・愚痴・ペルソナ等の投稿パイプライン。会話モードとは独立。通常は BASE 維持。',
+      admin_tool:     '管理画面操作（フロー生成・設問候補等）。本番の会話には影響しません。通常は BASE 維持。'
+    };
+    const grouped = {};
+    for (const d of safePromptKeyDefs) { (grouped[d.family] = grouped[d.family] || []).push(d); }
+  %>
+  <% for (const fam of FAMILY_ORDER) { if (!grouped[fam] || !grouped[fam].length) continue; %>
+    <div data-fam-group="<%= fam %>" style="margin:18px 0 8px;padding:8px 12px;background:#eef4f2;border-left:4px solid #1a7a5a;border-radius:0 6px 6px 0">
+      <div style="font-weight:700;font-size:13px;color:#1a4d3a">
+        <%= grouped[fam][0].familyLabel %>
+        <span style="font-weight:normal;font-size:11px;color:#5a6b80">（<%= grouped[fam].length %>キー / 管理元: <%= fam === 'conversation' ? 'パッケージ（ビルダー対象）' : 'BASE固定（通常編集不要）' %>）</span>
+      </div>
+      <div style="font-size:11px;color:#48635c;margin-top:2px"><%- FAMILY_INTRO[fam] %></div>
+    </div>
+    <% for (const pkDef of grouped[fam]) { %>
     <%
       const tmplEntry = currentTemplates[pkDef.key];
       const isEnabled = !tmplEntry || tmplEntry.enabled !== false;
       const tmplText  = (tmplEntry && tmplEntry.template) ? tmplEntry.template : '';
+      const isCustom  = !!tmplText;
+      // 問題1対応: カスタム未設定でも編集欄には現在の実効値（BASE本文）をプリフィルする。
+      // 「未編集のプリフィル」は submit 時に base-body と一致するため保存されず、疎フォールバックを維持する。
+      const displayText = isCustom ? tmplText : pkDef.baseTemplate;
       // 3状態バッジ: 無効 / カスタム済み / BASE使用中
       let stateBadge;
       if (!isEnabled) {
         stateBadge = { label: '無効', bg: '#fdecea', fg: '#c62828' };
-      } else if (tmplText) {
+      } else if (isCustom) {
         stateBadge = { label: 'カスタム済み', bg: '#e8f5ef', fg: '#1a7a5a' };
       } else {
         stateBadge = { label: 'BASE使用中', bg: '#eef2f7', fg: '#5a6b80' };
       }
     %>
-    <details style="border:1px solid #d8e3e0;border-radius:10px;padding:10px 14px;margin-bottom:8px">
+    <details data-pk-card data-fam="<%= pkDef.family %>" data-dormant="<%= pkDef.dormant ? '1' : '0' %>" data-probe="<%= pkDef.probeImpact ? '1' : '0' %>" style="border:1px solid #d8e3e0;border-radius:10px;padding:10px 14px;margin-bottom:8px">
       <summary style="cursor:pointer;font-weight:600">
         <%= pkDef.label %>
         <span style="font-weight:normal;font-size:12px;color:#60726f">(<%= pkDef.key %>)</span>
-        <span style="font-size:11px;background:<%= stateBadge.bg %>;color:<%= stateBadge.fg %>;padding:1px 6px;border-radius:4px;margin-left:6px"><%= stateBadge.label %></span>
+        <span id="badge-<%= pkDef.key %>" data-base-badge="<%= pkDef.key %>" style="font-size:11px;background:<%= stateBadge.bg %>;color:<%= stateBadge.fg %>;padding:1px 6px;border-radius:4px;margin-left:6px"><%= stateBadge.label %></span>
+        <% if (pkDef.probeImpact) { %>
+          <span title="このプロンプトは深掘りの判定・生成を内包します。編集すると深掘り挙動に影響しうるので注意してください。" style="font-size:11px;background:#fff3e0;color:#b25a00;border:1px solid #f0c98a;padding:1px 6px;border-radius:4px;margin-left:4px">🔍 深掘り影響</span>
+        <% } %>
+        <% if (pkDef.dormant) { %>
+          <span title="現在このプロンプトを呼び出すコードパスはありません（休眠）。編集しても実行時には反映されません。" style="font-size:11px;background:#eceff1;color:#78909c;border:1px solid #cfd8dc;padding:1px 6px;border-radius:4px;margin-left:4px">💤 休眠（未使用）</span>
+        <% } %>
+        <% for (const ctx of (pkDef.contexts || [])) { %>
+          <span style="font-size:11px;background:#eef4ff;color:#3a5a9a;border:1px solid #cdd9f0;padding:1px 6px;border-radius:4px;margin-left:4px"><%= ctx %></span>
+        <% } %>
       </summary>
       <div style="margin-top:10px">
         <!-- Phase 6-C: プロンプト可視化メタ情報 -->
@@ -277,15 +520,17 @@ const currentRestrictions = Array.isArray(currentPolicy.restrictions) ? currentP
           このテンプレートを有効にする（未チェック＝無効化）
         </label>
         <label style="font-size:12px;color:#60726f">
-          カスタムテンプレート（空のままにするとデフォルトを使用）
+          テンプレート本文（現在の実効値を表示中）
+          <small class="helper-text">これは現在この Version で使われる本文です。BASE 使用中のキーはデフォルト本文をプリフィルしています。<strong>編集するとそのキーだけカスタム保存</strong>され、無編集なら BASE のまま（疎フォールバック）です。</small>
           <textarea name="ai_tmpl_template[<%= pkDef.key %>]" id="tmpl-<%= pkDef.key %>" rows="6"
+            data-tmpl-key="<%= pkDef.key %>"
             style="font-family:monospace;font-size:12px;margin-top:4px"
-            placeholder="空のままにするとソースコードのデフォルトが使用されます"><%= tmplText %></textarea>
+            placeholder="空のままにするとソースコードのデフォルトが使用されます"><%= displayText %></textarea>
         </label>
         <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
           <button type="button" class="btn-ghost" onclick="loadBaseBody('<%= pkDef.key %>')"
             style="font-size:12px;padding:4px 10px;border:1px solid #c8dcd8;border-radius:6px;background:#fff;cursor:pointer;color:#1a7a5a">
-            この本文を編集用に読み込む
+            BASE 本文に戻す
           </button>
           <button type="button" class="btn-ghost" onclick="pkgPromptPreview('<%= pkDef.key %>')"
             style="font-size:12px;padding:4px 10px;border:1px solid #c8dcd8;border-radius:6px;background:#fff;cursor:pointer;color:#2a6a5a">
@@ -298,9 +543,12 @@ const currentRestrictions = Array.isArray(currentPolicy.restrictions) ? currentP
         </div>
       </div>
     </details>
+    <% } %>
   <% } %>
 
   <input type="hidden" name="ai_prompt_templates_json" id="ai_prompt_templates_json_hidden" value="" />
+
+  </div><!-- /#advanced-mode-section -->
 
   <div style="margin-top:1.5rem;display:flex;gap:12px">
     <button type="submit" class="btn"><%= isNew ? 'ドラフトとして作成' : '保存' %></button>
@@ -309,16 +557,89 @@ const currentRestrictions = Array.isArray(currentPolicy.restrictions) ? currentP
 </form>
 
 <script>
-// Phase C: BASE 本文を編集用テキストエリアへ読み込む
+// 問題1対応: 各キーの BASE 本文（差分・カスタム判定の基準）を base-body-<key> pre から取得
+function getBaseDefault(key) {
+  var pre = document.getElementById('base-body-' + key);
+  return pre ? pre.textContent.trim() : '';
+}
+
+// バッジ（BASE使用中 / カスタム済み）を textarea の現在値からライブ更新する
+function refreshTmplBadge(key) {
+  var ta = document.getElementById('tmpl-' + key);
+  var badge = document.getElementById('badge-' + key);
+  var enabledEl = document.querySelector('[name="ai_tmpl_enabled[' + key + ']"]');
+  if (!ta || !badge) return;
+  if (enabledEl && !enabledEl.checked) {
+    badge.textContent = '無効'; badge.style.background = '#fdecea'; badge.style.color = '#c62828'; return;
+  }
+  var isCustom = ta.value.trim() !== '' && ta.value.trim() !== getBaseDefault(key);
+  if (isCustom) {
+    badge.textContent = 'カスタム済み'; badge.style.background = '#e8f5ef'; badge.style.color = '#1a7a5a';
+  } else {
+    badge.textContent = 'BASE使用中'; badge.style.background = '#eef2f7'; badge.style.color = '#5a6b80';
+  }
+}
+
+// Phase C: BASE 本文を編集用テキストエリアへ読み込む（カスタムを破棄して BASE に戻す）
 function loadBaseBody(key) {
   var pre = document.getElementById('base-body-' + key);
   var ta  = document.getElementById('tmpl-' + key);
   if (!pre || !ta) return;
-  if (ta.value.trim() && !confirm('現在の入力内容を BASE 本文で上書きします。よろしいですか？')) return;
+  if (ta.value.trim() && ta.value.trim() !== getBaseDefault(key)
+      && !confirm('このキーのカスタム内容を破棄して BASE 本文に戻します。よろしいですか？')) return;
   ta.value = pre.textContent;
-  // 有効チェックボックスもオンに
   var enabledEl = document.querySelector('[name="ai_tmpl_enabled[' + key + ']"]');
   if (enabledEl) enabledEl.checked = true;
+  refreshTmplBadge(key);
+}
+
+// textarea 編集・有効チェック変更でバッジを更新
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('textarea[data-tmpl-key]').forEach(function(ta) {
+    var key = ta.getAttribute('data-tmpl-key');
+    ta.addEventListener('input', function() { refreshTmplBadge(key); });
+    var enabledEl = document.querySelector('[name="ai_tmpl_enabled[' + key + ']"]');
+    if (enabledEl) enabledEl.addEventListener('change', function() { refreshTmplBadge(key); });
+  });
+  setupPromptFilter();
+});
+
+// 用途フィルタ: 系統/休眠/深掘りでテンプレカードを畳む（クライアントのみ・保存に影響しない）
+function setupPromptFilter() {
+  var famSel   = document.getElementById('pk-family-filter');
+  var hideDorm = document.getElementById('pk-hide-dormant');
+  var probeOnly= document.getElementById('pk-probe-only');
+  var countEl  = document.getElementById('pk-filter-count');
+  if (!famSel) return;
+
+  function apply() {
+    var fam = famSel.value;
+    var cards = document.querySelectorAll('details[data-pk-card]');
+    var shown = 0;
+    cards.forEach(function(c) {
+      var ok = true;
+      if (fam !== 'all' && c.getAttribute('data-fam') !== fam) ok = false;
+      if (hideDorm && hideDorm.checked && c.getAttribute('data-dormant') === '1') ok = false;
+      if (probeOnly && probeOnly.checked && c.getAttribute('data-probe') !== '1') ok = false;
+      c.style.display = ok ? '' : 'none';
+      if (ok) shown++;
+    });
+    // 系統ヘッダは、配下に表示カードが無ければ隠す
+    document.querySelectorAll('[data-fam-group]').forEach(function(h) {
+      var g = h.getAttribute('data-fam-group');
+      var any = Array.prototype.some.call(
+        document.querySelectorAll('details[data-pk-card][data-fam="' + g + '"]'),
+        function(c) { return c.style.display !== 'none'; }
+      );
+      h.style.display = any ? '' : 'none';
+    });
+    if (countEl) countEl.textContent = '表示中 ' + shown + ' / ' + cards.length + ' キー';
+  }
+
+  famSel.addEventListener('change', apply);
+  if (hideDorm)  hideDorm.addEventListener('change', apply);
+  if (probeOnly) probeOnly.addEventListener('change', apply);
+  apply();
 }
 
 (function() {
@@ -345,7 +666,10 @@ function loadBaseBody(key) {
       var enabledEl  = form.querySelector('[name="ai_tmpl_enabled[' + pk + ']"]');
       var templateEl = form.querySelector('[name="ai_tmpl_template[' + pk + ']"]');
       var enabled = enabledEl ? enabledEl.checked : true;
-      var tmpl    = templateEl ? templateEl.value.trim() : '';
+      var raw     = templateEl ? templateEl.value.trim() : '';
+      // 問題1対応: textarea には BASE 本文をプリフィルしているため、未編集（BASEと一致）は
+      // カスタム扱いにせず保存しない（疎フォールバックを維持）。編集された場合のみカスタム化。
+      var tmpl    = (raw && raw !== getBaseDefault(pk)) ? raw : '';
       if (!enabled || tmpl) {
         templates[pk] = { enabled: enabled };
         if (tmpl) templates[pk].template = tmpl;
@@ -353,7 +677,199 @@ function loadBaseBody(key) {
     });
     document.getElementById('ai_prompt_templates_json_hidden').value =
       Object.keys(templates).length > 0 ? JSON.stringify(templates) : '';
+
+    // Phase F: プロンプトビルダー方針を JSON に組み立てる
+    if (window.collectBuilderSpec) {
+      var spec = window.collectBuilderSpec();
+      document.getElementById('builder_spec_json_hidden').value =
+        Object.keys(spec).length > 0 ? JSON.stringify(spec) : '';
+    }
   });
+})();
+</script>
+
+<!-- Phase F: 編集モード切替 + プロンプトビルダー生成 -->
+<script>
+// 基本/詳細モードの表示切替（両セクションはDOMに残し submit で両方収集）
+function setEditMode(mode) {
+  var basic = document.getElementById('basic-mode-section');
+  var adv   = document.getElementById('advanced-mode-section');
+  if (basic) basic.style.display = (mode === 'advanced') ? 'none' : 'block';
+  if (adv)   adv.style.display   = (mode === 'advanced') ? 'block' : 'none';
+}
+
+(function() {
+  // ビルダーフィールドの値を spec オブジェクトに集約
+  window.collectBuilderSpec = function() {
+    var spec = {};
+    document.querySelectorAll('[data-bld]').forEach(function(el) {
+      var key = el.getAttribute('data-bld');
+      var type = el.getAttribute('data-bld-type');
+      if (type === 'list') {
+        var items = el.value.split(/\r?\n/).map(function(s){ return s.trim(); }).filter(function(s){ return s; });
+        if (items.length > 0) spec[key] = items;
+      } else {
+        var v = (el.value || '').trim();
+        if (v) spec[key] = v;
+      }
+    });
+    return spec;
+  };
+
+  function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
+
+  var PACKAGE_ID = <%- JSON.stringify(pkg.id) %>;
+  var VERSION_ID = <%- version && version.id ? JSON.stringify(version.id) : 'null' %>;
+
+  // 現在の各キーの実効本文（差分 before の基準）を収集
+  function collectCurrentTemplates() {
+    var map = {};
+    document.querySelectorAll('textarea[data-tmpl-key]').forEach(function(ta) {
+      var k = ta.getAttribute('data-tmpl-key');
+      if (ta.value && ta.value.trim()) map[k] = ta.value;
+    });
+    return map;
+  }
+
+  // 差分行を色付きで描画（改修案2）
+  function renderDiff(rows) {
+    if (!rows || rows.length === 0) return '<div style="color:#60726f">差分なし（現在値と同一）</div>';
+    var html = '<pre style="margin:0;padding:10px 12px;background:#0f1b18;border-radius:6px;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto">';
+    rows.forEach(function(r) {
+      var color = r.type === 'added' ? '#7ee0b0' : (r.type === 'removed' ? '#ff9b9b' : '#c8d3d0');
+      var sign  = r.type === 'added' ? '+' : (r.type === 'removed' ? '-' : ' ');
+      html += '<span style="color:' + color + '">' + sign + ' ' + esc(r.text) + '</span>\n';
+    });
+    return html + '</pre>';
+  }
+
+  // 反映: 確認済み生成本文を詳細モード textarea に流し込み、有効化＋バッジ更新
+  window.applyGeneratedTemplates = function(map) {
+    Object.keys(map).forEach(function(k) {
+      var ta = document.getElementById('tmpl-' + k);
+      if (ta) ta.value = map[k];
+      var enabledEl = document.querySelector('[name="ai_tmpl_enabled[' + k + ']"]');
+      if (enabledEl) enabledEl.checked = true;
+      if (window.refreshTmplBadge) refreshTmplBadge(k);
+    });
+    setEditMode('advanced');
+    var advRadio = document.querySelector('[name=edit_mode][value=advanced]');
+    if (advRadio) advRadio.checked = true;
+    var statusEl = document.getElementById('generate-status');
+    if (statusEl) statusEl.textContent = Object.keys(map).length + ' 件を詳細モードに反映しました。内容を確認して保存してください。';
+  };
+
+  // テスト実行（改修案4・生成本文を template_override で実 AI 呼び出し）
+  window.runBehaviorTest = function(key) {
+    var resultEl = document.getElementById('bhv-test-result-' + key);
+    var inputEl  = document.getElementById('bhv-test-input-' + key);
+    if (!resultEl) return;
+    if (!VERSION_ID) { resultEl.innerHTML = '<p style="color:#b36200">テストはバージョンを保存してから利用できます。</p>'; return; }
+    var override = (window.__bhvGenerated && window.__bhvGenerated[key]) || '';
+    var answer = inputEl && inputEl.value ? inputEl.value : '';
+    var samples = answer ? { lastUserMessage: answer, content: answer, postText: answer } : {};
+    resultEl.innerHTML = '<p style="color:#60726f">実行中…</p>';
+    fetch('/admin/prompt-packages/' + PACKAGE_ID + '/versions/' + VERSION_ID + '/prompt-test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'prompt_key=' + encodeURIComponent(key)
+        + '&template_override=' + encodeURIComponent(override)
+        + '&sample_values=' + encodeURIComponent(JSON.stringify(samples))
+        + '&call_ai=1'
+    }).then(function(r){ return r.json(); }).then(function(d) {
+      if (d.error) { resultEl.innerHTML = '<p style="color:#c62828">' + esc(d.error) + '</p>'; return; }
+      var out = '<div style="font-weight:600;color:#60726f;margin:6px 0 2px">最終プロンプト</div><pre style="margin:0;padding:8px 10px;background:#f6f8f7;border:1px solid #e0e8e4;border-radius:6px;font-size:11px;white-space:pre-wrap;max-height:200px;overflow:auto">' + esc(d.rendered) + '</pre>';
+      if (d.aiError) out += '<div style="font-weight:600;color:#c62828;margin:6px 0 2px">AIエラー</div><pre style="margin:0;padding:8px 10px;background:#fdecea;border-radius:6px;font-size:11px;white-space:pre-wrap">' + esc(d.aiError) + '</pre>';
+      else if (d.aiResponse != null) out += '<div style="font-weight:600;color:#1a7a5a;margin:6px 0 2px">AIレスポンス</div><pre style="margin:0;padding:8px 10px;background:#f0f7f5;border:1px solid #c8dcd8;border-radius:6px;font-size:11px;white-space:pre-wrap;max-height:240px;overflow:auto">' + esc(d.aiResponse) + '</pre>';
+      resultEl.innerHTML = out;
+    }).catch(function(e){ resultEl.innerHTML = '<p style="color:#c62828">' + esc(e) + '</p>'; });
+  };
+
+  var btn = document.getElementById('preview-behavior-btn');
+  if (btn) {
+    btn.addEventListener('click', function() {
+      var spec = window.collectBuilderSpec();
+      var statusEl = document.getElementById('generate-status');
+      var panelEl  = document.getElementById('behavior-confirm-panel');
+      panelEl.innerHTML = '';
+      if (Object.keys(spec).length === 0) {
+        statusEl.textContent = '方針を1つ以上入力してください。';
+        return;
+      }
+      btn.disabled = true;
+      statusEl.textContent = 'AI生成中… (数十秒かかる場合があります)';
+
+      fetch('/admin/prompt-packages/' + PACKAGE_ID + '/preview-behavior', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'builder_spec_json=' + encodeURIComponent(JSON.stringify(spec))
+          + '&current_templates_json=' + encodeURIComponent(JSON.stringify(collectCurrentTemplates()))
+      }).then(function(r){ return r.json(); }).then(function(d) {
+        btn.disabled = false;
+        statusEl.textContent = '';
+        if (d.error) { panelEl.innerHTML = '<p style="color:#c62828">' + esc(d.error) + '</p>'; return; }
+        var affected = d.affected || [];
+        // 反映・テスト用に生成本文を保持
+        window.__bhvGenerated = {};
+        affected.forEach(function(a){ window.__bhvGenerated[a.key] = a.generated; });
+
+        if (affected.length === 0) {
+          panelEl.innerHTML = '<div style="background:#fff8e1;border:1px solid #f9a825;border-radius:8px;padding:10px 14px;color:#b36200">採用できる生成結果がありませんでした。'
+            + (d.warnings && d.warnings.length ? '<ul style="margin:4px 0 0;padding-left:18px">' + d.warnings.map(function(w){ return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>' : '')
+            + '</div>';
+          return;
+        }
+
+        var html = '<div style="border:1px solid #cfe6dd;border-radius:10px;padding:12px 14px;background:#fafdfc">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">';
+        html += '<strong style="color:#1a5a45">生成プレビュー: ' + affected.length + ' 件のプロンプト</strong>';
+        html += '<button type="button" class="btn" id="bhv-apply-btn" style="font-size:12px">この内容を反映</button>';
+        html += '</div>';
+
+        // 影響範囲（改修案3）
+        html += '<div style="margin-top:8px;font-size:12px"><span style="color:#1a7a5a;font-weight:600">影響する:</span> '
+          + affected.map(function(a){ return esc(a.label); }).join(' / ') + '</div>';
+        if (d.notAffected && d.notAffected.length > 0) {
+          html += '<div style="font-size:12px;color:#9aa7a3">影響しない: ' + d.notAffected.map(function(n){ return esc(n.label); }).join(' / ') + '</div>';
+        }
+
+        if (d.warnings && d.warnings.length > 0) {
+          html += '<div style="background:#fff8e1;border:1px solid #f9a825;border-radius:8px;padding:8px 12px;margin-top:8px;color:#b36200"><strong>注意</strong><ul style="margin:4px 0 0;padding-left:18px">'
+            + d.warnings.map(function(w){ return '<li>' + esc(w) + '</li>'; }).join('') + '</ul></div>';
+        }
+
+        // 各キー: 差分（改修案2）＋ 生成プレビュー全文（改修案1）＋ テスト実行（改修案4）
+        affected.forEach(function(a) {
+          html += '<details style="border:1px solid #d8e3e0;border-radius:8px;padding:8px 12px;margin-top:8px" open>'
+            + '<summary style="cursor:pointer;font-weight:600">' + esc(a.label) + ' <span style="font-weight:normal;color:#60726f;font-size:11px">(' + esc(a.key) + ')</span></summary>'
+            + '<div style="margin-top:8px"><div style="font-weight:600;color:#60726f;margin-bottom:3px">差分（現在値 → 生成結果）</div>' + renderDiff(a.diffRows) + '</div>'
+            + '<details style="margin-top:8px"><summary style="cursor:pointer;color:#60726f">生成プレビュー全文</summary>'
+            + '<pre style="margin:6px 0 0;padding:10px 12px;background:#f6f8f7;border:1px solid #e0e8e4;border-radius:6px;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:280px;overflow:auto">' + esc(a.generated) + '</pre></details>'
+            + '<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #d8e3e0"><div style="font-weight:600;color:#60726f;margin-bottom:3px">テスト実行</div>'
+            + '<input type="text" id="bhv-test-input-' + a.key + '" placeholder="テスト回答（例: 私は美容師です）" style="width:100%;font-size:12px;margin-bottom:4px" />'
+            + '<button type="button" class="btn-ghost" onclick="runBehaviorTest(\'' + a.key + '\')" style="font-size:12px;padding:4px 10px;border:1px solid #c8dcd8;border-radius:6px;background:#fff;cursor:pointer;color:#2a6a5a">この生成本文でテスト実行</button>'
+            + '<div id="bhv-test-result-' + a.key + '" style="margin-top:6px"></div></div>'
+            + '</details>';
+        });
+        html += '</div>';
+        panelEl.innerHTML = html;
+
+        var applyBtn = document.getElementById('bhv-apply-btn');
+        if (applyBtn) applyBtn.addEventListener('click', function() {
+          if (!confirm('生成した ' + affected.length + ' 件を詳細モードのテンプレート欄に反映します（既存の入力は上書きされます）。よろしいですか？')) return;
+          window.applyGeneratedTemplates(window.__bhvGenerated);
+        });
+      }).catch(function(e) {
+        btn.disabled = false;
+        statusEl.textContent = '';
+        panelEl.innerHTML = '<p style="color:#c62828">' + esc(e) + '</p>';
+      });
+    });
+  }
+
+  // 初期表示モードを反映
+  var checked = document.querySelector('[name="edit_mode"]:checked');
+  setEditMode(checked ? checked.value : 'basic');
 })();
 </script>
 
@@ -459,6 +975,78 @@ function loadBaseBody(key) {
       }).catch(function(e){ document.getElementById('pkg-test-result').innerHTML = '<p style="color:red">' + esc(e) + '</p>'; });
     });
   };
+})();
+</script>
+
+<!-- 🔍 深掘りプレイグラウンド -->
+<script>
+(function() {
+  var btn = document.getElementById('pg-run');
+  if (!btn) return;
+  var PACKAGE_ID = <%- JSON.stringify(pkg.id) %>;
+  var VERSION_ID = <%- version && version.id ? JSON.stringify(version.id) : 'null' %>;
+  var KEY_BY_MODE = { analyze: 'buildAnalyzeAnswerPrompt', interview: 'buildInterviewTurnPrompt', probe: 'buildProbePrompt' };
+
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  btn.addEventListener('click', function() {
+    var resultEl = document.getElementById('pg-result');
+    if (!VERSION_ID) { resultEl.innerHTML = '<p style="color:#b36200">バージョンを保存してから利用できます。</p>'; return; }
+    var mode = document.getElementById('pg-mode').value;
+    var question = document.getElementById('pg-question').value.trim();
+    var answer = document.getElementById('pg-answer').value.trim();
+    if (!question || !answer) { resultEl.innerHTML = '<p style="color:#b36200">設問文と回答を入力してください。</p>'; return; }
+
+    // 選択肢（1行1つ）を [{value,label}] に
+    var optLines = document.getElementById('pg-options').value.split(/\r?\n/).map(function(s){return s.trim();}).filter(Boolean);
+    var options = optLines.map(function(l){ return { value: l, label: l }; });
+
+    // 編集中の該当キー本文を override として送る（保存前でも編集を反映）
+    var overrides = {};
+    var key = KEY_BY_MODE[mode];
+    var ta = document.getElementById('tmpl-' + key);
+    if (ta && ta.value.trim()) overrides[key] = ta.value;
+
+    resultEl.innerHTML = '<p style="color:#60726f">生成中…</p>';
+    btn.disabled = true;
+    fetch('/admin/prompt-packages/' + PACKAGE_ID + '/versions/' + VERSION_ID + '/probe-playground', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        mode: mode,
+        question_text: question,
+        answer: answer,
+        question_type: document.getElementById('pg-qtype').value,
+        max_probes: document.getElementById('pg-maxprobes').value || '1',
+        project_goal: document.getElementById('pg-goal').value.trim(),
+        options_json: options.length ? JSON.stringify(options) : '',
+        template_overrides: Object.keys(overrides).length ? JSON.stringify(overrides) : ''
+      })
+    })
+    .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }); })
+    .then(function(res){
+      var j = res.j;
+      if (!res.ok) { resultEl.innerHTML = '<p style="color:red">' + esc(j.error || 'エラー') + '</p>'; return; }
+      var html = '';
+      if (j.aiError) {
+        html += '<p style="color:red">AI実行エラー: ' + esc(j.aiError) + '</p>';
+      } else {
+        var actionColor = j.action === 'probe' ? '#1a7a5a' : '#60726f';
+        if (j.action) html += '<div style="font-size:12px;margin-bottom:6px">判定(action): <strong style="color:' + actionColor + '">' + esc(j.action) + '</strong></div>';
+        if (j.probe) {
+          html += '<div style="background:#e8f5ef;border:1px solid #bfe3d3;border-radius:8px;padding:10px 12px;font-size:14px;color:#0d5c40"><strong>深掘り文:</strong><br>' + esc(j.probe) + '</div>';
+        } else {
+          html += '<p style="color:#b36200;font-size:12px">深掘り文は生成されませんでした（action が probe 以外、または抽出不可）。下の生レスポンスを確認してください。</p>';
+        }
+        if (j.reason) html += '<div style="font-size:11px;color:#8a9a96;margin-top:6px">理由: ' + esc(j.reason) + '</div>';
+      }
+      html += '<details style="margin-top:8px;font-size:11px"><summary style="cursor:pointer;color:#60726f">AI生レスポンス</summary><pre style="white-space:pre-wrap;background:#f6f8f7;border:1px solid #e0e8e4;border-radius:6px;padding:8px;max-height:220px;overflow:auto">' + esc(j.raw || '（空）') + '</pre></details>';
+      html += '<details style="margin-top:6px;font-size:11px"><summary style="cursor:pointer;color:#60726f">送信したプロンプト全文（' + esc(j.promptKey) + '）</summary><pre style="white-space:pre-wrap;background:#f6f8f7;border:1px solid #e0e8e4;border-radius:6px;padding:8px;max-height:280px;overflow:auto">' + esc(j.prompt) + '</pre></details>';
+      resultEl.innerHTML = html;
+    })
+    .catch(function(e){ resultEl.innerHTML = '<p style="color:red">' + esc(e) + '</p>'; })
+    .finally(function(){ btn.disabled = false; });
+  });
 })();
 </script>
 

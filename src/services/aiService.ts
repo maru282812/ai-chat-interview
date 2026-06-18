@@ -483,6 +483,57 @@ async function runTextPrompt(
   };
 }
 
+/**
+ * OpenAI 呼び出しで投げられた例外を、管理画面で原因が分かる日本語メッセージに整形する。
+ * 元の API メッセージも末尾に残す（API キー等の秘匿情報は OpenAI のエラー本文には含まれない）。
+ * カテゴリ: [認証] / [モデル] / [API設定] / [レート制限] / [サーバー] / [ネットワーク] / [不明]
+ */
+export function describeOpenAIError(err: unknown): string {
+  const e = (err ?? {}) as {
+    status?: number;
+    code?: string | null;
+    type?: string | null;
+    message?: string;
+    name?: string;
+  };
+  const status = typeof e.status === "number" ? e.status : undefined;
+  const code = e.code ?? undefined;
+  const original = e.message || (typeof err === "string" ? err : String(err));
+  const model = env.OPENAI_MODEL;
+  const tail = ` 元のエラー: ${original}`;
+
+  // ステータスを持たない＝接続/タイムアウト系（ネットワーク）
+  if (status === undefined) {
+    if (e.name === "APIConnectionTimeoutError" || /timeout/i.test(original)) {
+      return `[ネットワーク] OpenAI への接続がタイムアウトしました。回線状況やプロキシ設定を確認してください。${tail}`;
+    }
+    return `[ネットワーク] OpenAI へ接続できませんでした。回線・DNS・プロキシ設定を確認してください。${tail}`;
+  }
+
+  if (status === 401) {
+    return `[認証] OpenAI API キーが無効か失効しています（401 ${code ?? "invalid_api_key"}）。.env の OPENAI_API_KEY を確認してください。${tail}`;
+  }
+  if (status === 403) {
+    return `[認証] この API キーでは許可されていない操作です（403 ${code ?? ""}）。組織・地域・モデルへのアクセス権限を確認してください。${tail}`;
+  }
+  if (status === 404 || code === "model_not_found") {
+    return `[モデル] 指定モデル「${model}」が見つからない／このキーで利用できません（${status} ${code ?? ""}）。.env の OPENAI_MODEL を有効なモデル名に設定してください。${tail}`;
+  }
+  if (status === 429) {
+    if (code === "insufficient_quota") {
+      return `[API設定] OpenAI の利用枠（クォータ/残高）が不足しています（429 insufficient_quota）。請求設定を確認してください。${tail}`;
+    }
+    return `[レート制限] OpenAI のレート制限に達しました（429 ${code ?? ""}）。少し待って再実行してください。${tail}`;
+  }
+  if (status === 400 || status === 422) {
+    return `[API設定] リクエストが不正としてモデル「${model}」に拒否されました（${status} ${code ?? ""}）。モデル名・パラメータ・プロンプト形式を確認してください。${tail}`;
+  }
+  if (status >= 500) {
+    return `[サーバー] OpenAI 側で一時的なエラーが発生しました（${status} ${code ?? ""}）。時間をおいて再実行してください。${tail}`;
+  }
+  return `[不明] OpenAI 呼び出しに失敗しました（${status}${code ? ` ${code}` : ""}）。${tail}`;
+}
+
 function stripCodeFence(text: string): string {
   return text.replace(/^```(?:json)?\s*/u, "").replace(/\s*```$/u, "").trim();
 }
@@ -1506,13 +1557,48 @@ export const aiService = {
     }
   },
 
+  /**
+   * 管理画面の生 AI 実行ヘルパー（プロンプトプレビュー / 深掘りプレイグラウンド /
+   * 振る舞いプレビュー）。本番会話と同じ Responses API + env.OPENAI_MODEL を使い、
+   * 「そのモデルが実際に返す生応答」をそのまま見せるのが用途。
+   *
+   * Chat Completions ではなく Responses API を使う理由:
+   * - OPENAI_MODEL は gpt-5 系（reasoning モデル）想定で、本番の会話パイプライン
+   *   （runTextPrompt）も Responses API を使う。管理画面で本番同等の挙動を再現したい。
+   * - 管理ツール系の JSON 強制呼び出し（runAdminToolPrompt）とは用途が別。あちらは
+   *   response_format:json_object が必要なため Chat Completions + OPENAI_TOOL_MODEL を使う。
+   *
+   * エラーは握りつぶさず、原因カテゴリ（認証 / モデル / API設定 / レート制限 /
+   * レスポンス形式 / ネットワーク）が分かる日本語メッセージに整形して throw する。
+   */
   async callRaw(input: { prompt: string }): Promise<{ content: string | null; tokenUsage: Record<string, unknown> | null }> {
-    const response = await openai.responses.create({
-      model: env.OPENAI_MODEL,
-      input: input.prompt
-    });
+    let response: Awaited<ReturnType<typeof openai.responses.create>>;
+    try {
+      response = await openai.responses.create({
+        model: env.OPENAI_MODEL,
+        input: input.prompt
+      });
+    } catch (err) {
+      throw new Error(describeOpenAIError(err));
+    }
+
+    const content = response.output_text?.trim() ?? null;
+    if (!content) {
+      // 応答は返ったが本文が空 = レスポンス形式の問題。gpt-5 系では reasoning が
+      // 出力上限を食い尽くして status:incomplete になるケースがあるため理由も添える。
+      const status = (response as { status?: string }).status;
+      const reason = (response as { incomplete_details?: { reason?: string } }).incomplete_details?.reason;
+      const detail =
+        status === "incomplete"
+          ? `status=incomplete${reason ? `, reason=${reason}` : ""}（出力トークン上限に達した可能性があります）`
+          : `status=${status ?? "不明"}`;
+      throw new Error(
+        `[レスポンス形式] モデル(${env.OPENAI_MODEL})が空の応答を返しました（${detail}）。`
+      );
+    }
+
     return {
-      content: response.output_text?.trim() ?? null,
+      content,
       tokenUsage: (response.usage as Record<string, unknown> | undefined) ?? null
     };
   },

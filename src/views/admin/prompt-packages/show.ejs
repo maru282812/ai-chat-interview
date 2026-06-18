@@ -67,9 +67,11 @@ const CATEGORY_LABELS = {
         </span>
       </td>
       <td style="font-size:12px;white-space:nowrap">
+        <% if (typeof summarizeTemplateDefinitions === 'function') { %>
         <% const vSum = summarizeTemplateDefinitions(v.templates_json); %>
         <strong><%= vSum.defined %>/<%= vSum.total %></strong>
         <span style="color:#60726f">（<%= vSum.custom %>ｶｽﾀﾑ / <%= vSum.base %>BASE<% if (vSum.disabled > 0) { %> / <%= vSum.disabled %>無効<% } %>）</span>
+        <% } else { %>—<% } %>
       </td>
       <td style="font-size:13px;color:#60726f"><%= v.change_note || '—' %></td>
       <td style="font-size:12px">
@@ -114,6 +116,41 @@ const CATEGORY_LABELS = {
     <tr id="vd-<%= v.id %>" style="display:none">
       <td colspan="7" style="padding:0">
         <div style="background:#f8faf9;padding:12px 16px;border-top:1px solid #e0ebe8">
+          <!-- 系統別サマリー（配置可視化）: どの系統を何キーカスタムしているか -->
+          <% if (typeof summarizeTemplateDefinitionsByFamily === 'function') { %>
+          <div style="margin-bottom:14px">
+            <strong style="font-size:13px">系統別の定義状況</strong>
+            <table style="border-collapse:collapse;width:100%;margin-top:6px;font-size:12px">
+              <thead>
+                <tr style="color:#60726f;text-align:left">
+                  <th style="padding:3px 8px;font-weight:600">系統</th>
+                  <th style="padding:3px 8px;font-weight:600">管理元</th>
+                  <th style="padding:3px 8px;font-weight:600">キー数</th>
+                  <th style="padding:3px 8px;font-weight:600">内訳</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% for (const fs of summarizeTemplateDefinitionsByFamily(v.templates_json)) { %>
+                <tr style="border-top:1px solid #e8efec">
+                  <td style="padding:3px 8px"><%= fs.familyLabel %></td>
+                  <td style="padding:3px 8px">
+                    <% if (fs.managedBy === 'package') { %>
+                      <span style="background:#e8f5ef;color:#1a7a5a;border:1px solid #bfe3d3;border-radius:4px;padding:1px 6px">パッケージ編集</span>
+                    <% } else { %>
+                      <span style="background:#eef2f7;color:#5a6b80;border:1px solid #d4dde8;border-radius:4px;padding:1px 6px">BASE固定</span>
+                    <% } %>
+                  </td>
+                  <td style="padding:3px 8px"><%= fs.total %></td>
+                  <td style="padding:3px 8px;color:#60726f">
+                    <% if (fs.custom > 0) { %><span style="color:#1a7a5a;font-weight:600"><%= fs.custom %>ｶｽﾀﾑ</span> / <% } %><%= fs.base %>BASE<% if (fs.disabled > 0) { %> / <span style="color:#c62828"><%= fs.disabled %>無効</span><% } %>
+                  </td>
+                </tr>
+                <% } %>
+              </tbody>
+            </table>
+            <p style="font-size:11px;color:#8a9a96;margin:4px 0 0">「パッケージ編集」系統＝会話系のみがビルダー生成・編集の主対象。BASE固定系統は通常 BASE のままで問題ありません。</p>
+          </div>
+          <% } %>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
             <div>
               <strong style="font-size:13px">policy_json</strong>
