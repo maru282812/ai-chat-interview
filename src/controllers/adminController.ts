@@ -5552,11 +5552,16 @@ export const adminController = {
   // ============================================================
 
   async deliveryOperationsPage(_req: Request, res: Response): Promise<void> {
+    const { documentRepository } = await import("../repositories/documentRepository");
     const [projects, segments, notificationTemplates, campaigns] = await Promise.all([
       projectRepository.list(),
       segmentRepository.list(),
       notificationTemplateRepository.list(),
       deliveryCampaignRepository.list(),
+    ]);
+    const [globalDocuments, projectDocumentRows] = await Promise.all([
+      documentRepository.listGlobalRequired(),
+      documentRepository.listProjectDocumentsForProjects(projects.map((p) => p.id)),
     ]);
 
     const campaignsByProject = new Map<string, typeof campaigns>();
@@ -5565,6 +5570,31 @@ export const adminController = {
       if (!campaignsByProject.has(c.project_id)) campaignsByProject.set(c.project_id, []);
       campaignsByProject.get(c.project_id)!.push(c);
     }
+
+    const documentRequirementsByProject = new Map<string, Array<{
+      documentId: string;
+      title: string;
+      versionNo: string | null;
+      isRequired: boolean;
+    }>>();
+    for (const row of projectDocumentRows) {
+      if (!documentRequirementsByProject.has(row.project_id)) {
+        documentRequirementsByProject.set(row.project_id, []);
+      }
+      documentRequirementsByProject.get(row.project_id)!.push({
+        documentId: row.document_id,
+        title: row.document.title,
+        versionNo: row.document.current_version?.version_no ?? null,
+        isRequired: row.is_required,
+      });
+    }
+
+    const globalConsentDocuments = globalDocuments.map((doc) => ({
+      documentId: doc.id,
+      title: doc.title,
+      versionNo: doc.current_version?.version_no ?? null,
+      isRequired: true,
+    }));
 
     const projectsWithMeta = projects.map(p => {
       const pCampaigns = campaignsByProject.get(p.id) ?? [];
@@ -5576,7 +5606,12 @@ export const adminController = {
       else if (hasSent) deliveryStatus = "completed";
       else if (p.delivery_enabled) deliveryStatus = "ready";
       else if (p.delivered_at) deliveryStatus = "paused";
-      return { ...p, deliveryStatus, campaigns: pCampaigns };
+      return {
+        ...p,
+        deliveryStatus,
+        campaigns: pCampaigns,
+        documentRequirements: documentRequirementsByProject.get(p.id) ?? [],
+      };
     });
 
     res.render("admin/delivery-operations/index", {
@@ -5585,6 +5620,7 @@ export const adminController = {
       segments,
       notificationTemplates,
       campaigns,
+      globalConsentDocuments,
     });
   },
 

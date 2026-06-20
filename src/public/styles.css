@@ -232,3 +232,71 @@ button,
   box-shadow: none;
   border: 1px solid #dce9e6;
 }
+
+.document-markdown {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #263331;
+}
+
+.document-markdown h1,
+.document-markdown h2,
+.document-markdown h3 {
+  color: #123b3a;
+  line-height: 1.4;
+  margin: 18px 0 8px;
+}
+
+.document-markdown h1 {
+  font-size: 20px;
+}
+
+.document-markdown h2 {
+  font-size: 17px;
+}
+
+.document-markdown h3 {
+  font-size: 15px;
+}
+
+.document-markdown p {
+  margin: 8px 0;
+}
+
+.document-markdown ul,
+.document-markdown ol {
+  margin: 8px 0;
+  padding-left: 1.4em;
+}
+
+.document-markdown li {
+  margin: 4px 0;
+}
+
+.document-markdown .doc-table-wrap {
+  overflow-x: auto;
+  margin: 12px 0 16px;
+  border: 1px solid #dce9e6;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.document-markdown .doc-markdown-table {
+  min-width: 640px;
+  width: 100%;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.document-markdown .doc-markdown-table th,
+.document-markdown .doc-markdown-table td {
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 10px 12px;
+  border-right: 1px solid #e3ecea;
+}
+
+.document-markdown .doc-markdown-table th:last-child,
+.document-markdown .doc-markdown-table td:last-child {
+  border-right: 0;
+}

@@ -192,6 +192,28 @@
     #chatAnswerArea .free-text-input { font-size: 14px; }
     .chat-answer-inline .free-text-input { font-size: 14px; }
 
+    /* ---- ラベル付きスケール（sd / numeric・選択肢にラベルあり）----
+       長いラベルが固定円形ボタンからあふれて重なるのを防ぐため、
+       縦積みのフル幅ボタンで全ラベルを常に視認できるようにする。 */
+    .scale-list { display: flex; flex-direction: column; gap: 8px; }
+    .scale-btn-labeled {
+      display: flex; align-items: center; gap: 10px;
+      width: 100%; height: auto; min-height: 44px;
+      border-radius: 12px; padding: 10px 14px;
+      text-align: left; white-space: normal; line-height: 1.4;
+      box-sizing: border-box;
+    }
+    .scale-btn-labeled .scale-num {
+      flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: #eef4f2; color: #2ca87a; font-size: 13px; font-weight: 700;
+    }
+    .scale-btn-labeled.selected .scale-num { background: rgba(255,255,255,.25); color: #fff; }
+    .scale-btn-labeled .scale-text { flex: 1; font-size: 14px; font-weight: 500; }
+    /* チャットモードの固定44px指定（同特異性）を後勝ちで打ち消す */
+    #chatAnswerArea .scale-btn-labeled,
+    .chat-answer-inline .scale-btn-labeled { width: 100%; height: auto; min-height: 42px; font-size: 14px; }
+
     /* ---- interview_chat インライン送信ボタン ---- */
     .chat-next-row {
       width: 100%;
@@ -822,9 +844,24 @@
       }
     } else if (['numeric', 'sd'].includes(qType)) {
       if (cfg.options && cfg.options.length > 0) {
-        inputHtml = `<div class="scale-row">` +
-          cfg.options.map(o => `<button type="button" class="scale-btn" data-val="${esc(o.value)}" data-code="${esc(q.question_code)}">${esc(o.label || o.value)}</button>`).join('') +
-          `</div>`;
+        // ラベルが値と異なる（説明的ラベルを持つ）場合は縦積みのフル幅ボタンで描画し、
+        // 円形ボタンからのラベルあふれ・重なりを防ぐ。
+        const hasTextLabel = cfg.options.some(o => o.label && String(o.label) !== String(o.value));
+        if (hasTextLabel) {
+          inputHtml = `<div class="scale-list">` +
+            cfg.options.map(o => {
+              const label = (o.label && String(o.label) !== String(o.value)) ? esc(o.label) : '';
+              return `<button type="button" class="scale-btn scale-btn-labeled" data-val="${esc(o.value)}" data-code="${esc(q.question_code)}">` +
+                `<span class="scale-num">${esc(o.value)}</span>` +
+                (label ? `<span class="scale-text">${label}</span>` : '') +
+                `</button>`;
+            }).join('') +
+            `</div>`;
+        } else {
+          inputHtml = `<div class="scale-row">` +
+            cfg.options.map(o => `<button type="button" class="scale-btn" data-val="${esc(o.value)}" data-code="${esc(q.question_code)}">${esc(o.label || o.value)}</button>`).join('') +
+            `</div>`;
+        }
       } else {
         const mn = cfg.min || 1;
         const mx = cfg.max || 5;
@@ -970,6 +1007,18 @@
     if (val === null || val === undefined) return '';
     const cfg = q ? (q.question_config || {}) : {};
     const qType = q ? q.question_type : '';
+
+    // 画像アップロード: 内部のStorage URLは絶対に露出させず、受領メッセージのみ表示する。
+    // （サムネイルは設問ブロック内に表示済みで凍結後も残る）
+    if (qType === 'image_upload') {
+      const urls = Array.isArray(val)
+        ? val
+        : (val && typeof val === 'object' && Array.isArray(val.imageUrls) ? val.imageUrls : []);
+      const count = urls.length;
+      const supplement = q ? (answerCtx.imageTexts[q.question_code.toLowerCase()] || '') : '';
+      const base = count > 0 ? `📷 画像を${count}枚アップロードしました` : '画像なし';
+      return supplement ? `${base}\n${supplement}` : base;
+    }
 
     // 配列（multi_choice）
     if (Array.isArray(val)) {

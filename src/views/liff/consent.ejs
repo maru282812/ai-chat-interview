@@ -6,6 +6,7 @@
     <title><%= title %></title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
+    <script src="/public/documentMarkdown.js"></script>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body {
@@ -101,6 +102,41 @@
       .doc-body p  { margin: 6px 0; }
       .doc-body ul, .doc-body ol { padding-left: 1.4em; margin: 6px 0; }
       .doc-body li { margin: 3px 0; }
+      .doc-body .doc-table-wrap {
+        overflow-x: auto;
+        margin: 10px 0 12px;
+        border: 1px solid #e3ecea;
+        border-radius: 8px;
+        background: #fff;
+      }
+      .doc-body .doc-markdown-table {
+        width: 100%;
+        min-width: 520px;
+        border-collapse: collapse;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .doc-body .doc-markdown-table th,
+      .doc-body .doc-markdown-table td {
+        border-bottom: 1px solid #e3ecea;
+        border-right: 1px solid #e3ecea;
+        padding: 8px 10px;
+        text-align: left;
+        vertical-align: top;
+      }
+      .doc-body .doc-markdown-table th {
+        background: #eef7f5;
+        color: #1a2f2a;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      .doc-body .doc-markdown-table th:last-child,
+      .doc-body .doc-markdown-table td:last-child {
+        border-right: 0;
+      }
+      .doc-body .doc-markdown-table tr:last-child td {
+        border-bottom: 0;
+      }
 
       .scroll-note {
         font-size: 11px; color: #999;
@@ -408,23 +444,9 @@
         }
       }
 
-      // 最小限のMarkdownレンダー
+      // Markdownレンダー
       function renderMarkdown(md) {
-        return md
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-          .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-          .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-          .replace(/^- (.+)$/gm, '<li>$1</li>')
-          .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
-          .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
-          .replace(/\n{2,}/g, '</p><p>')
-          .replace(/^(?!<[hul])/gm, '')
-          .replace(/\n/g, '<br>')
-          || '<p>' + md + '</p>';
+        return window.DocumentMarkdown.render(md);
       }
     </script>
   </body>

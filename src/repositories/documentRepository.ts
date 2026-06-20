@@ -194,6 +194,35 @@ export const documentRepository = {
     }>;
   },
 
+  async listProjectDocumentsForProjects(projectIds: string[]): Promise<Array<{
+    project_id: string;
+    document_id: string;
+    is_required: boolean;
+    sort_order: number;
+    document: Document;
+  }>> {
+    if (projectIds.length === 0) return [];
+    const { data, error } = await supabase
+      .from("project_document_requirements")
+      .select(`
+        project_id, document_id, is_required, sort_order,
+        document:documents(
+          *,
+          current_version:document_versions!fk_documents_current_version(*)
+        )
+      `)
+      .in("project_id", projectIds)
+      .order("sort_order");
+    throwIfError(error);
+    return (data ?? []) as unknown as Array<{
+      project_id: string;
+      document_id: string;
+      is_required: boolean;
+      sort_order: number;
+      document: Document;
+    }>;
+  },
+
   async upsertProjectDocument(
     projectId: string,
     documentId: string,

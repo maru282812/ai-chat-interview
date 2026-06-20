@@ -123,6 +123,43 @@
     text-transform: uppercase;
     margin-bottom: 6px;
   }
+  .doc-requirements-card {
+    background: #f8faf9;
+    border: 1px solid #e3ecea;
+    border-radius: 8px;
+    padding: 9px 11px;
+    font-size: 12px;
+    color: #314642;
+  }
+  .doc-requirements-list {
+    display: grid;
+    gap: 5px;
+    margin-top: 6px;
+  }
+  .doc-requirement-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px solid #e3ecea;
+    padding-bottom: 5px;
+  }
+  .doc-requirement-row:last-child {
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
+  .doc-requirement-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .doc-requirement-meta {
+    color: #6a7b78;
+    white-space: nowrap;
+    font-size: 11px;
+  }
   .kanban-board {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
@@ -394,6 +431,12 @@
           <div id="sel-template-info" style="font-size:12px;color:#6a7b78;padding:4px 0"></div>
         </div>
 
+        <!-- 同意書類確認 -->
+        <div style="margin-bottom:14px">
+          <div class="section-label">同意書類を確認</div>
+          <div id="sel-documents-info" class="doc-requirements-card"></div>
+        </div>
+
         <!-- セパレータ -->
         <div style="border-top:1px solid #e3ecea;margin:14px 0 12px"></div>
 
@@ -471,6 +514,7 @@
             </tr>
             <tr><td>テンプレート</td><td id="sum-template"></td></tr>
             <tr><td>キャンペーン</td><td id="sum-campaign"></td></tr>
+            <tr><td>同意書類</td><td id="sum-documents"></td></tr>
           </tbody>
         </table>
 
@@ -580,6 +624,7 @@
         <tr><td>セグメント</td><td id="modal-segment"></td></tr>
         <tr><td>テンプレート</td><td id="modal-template"></td></tr>
         <tr><td>キャンペーン</td><td id="modal-campaign"></td></tr>
+        <tr><td>同意書類</td><td id="modal-documents"></td></tr>
       </tbody>
     </table>
     <div class="modal-actions">
@@ -599,6 +644,7 @@
   const CAMPAIGNS_DATA = <%- JSON.stringify(campaigns) %>;
   const SEGMENTS_DATA = <%- JSON.stringify(segments) %>;
   const NOTIFICATION_TEMPLATES_DATA = <%- JSON.stringify(notificationTemplates) %>;
+  const GLOBAL_CONSENT_DOCUMENTS_DATA = <%- JSON.stringify(globalConsentDocuments || []) %>;
 
   const DS_LABELS = {
     undelivered: '未配信',
@@ -693,6 +739,9 @@
     // テンプレートドロップダウン
     renderTemplateDropdown();
 
+    // 同意書類
+    renderDocumentRequirements(project);
+
     // 詳細・情報欄リセット
     document.getElementById('campaign-detail').style.display = 'none';
     document.getElementById('sel-segment-info').textContent = '';
@@ -709,6 +758,62 @@
         row.style.background = '';
       }
     });
+  }
+
+  // ============================================================
+  // 同意書類
+  // ============================================================
+  function getConsentDocuments(project) {
+    const byId = new Map();
+    for (const doc of GLOBAL_CONSENT_DOCUMENTS_DATA) {
+      byId.set(doc.documentId, { ...doc, scope: '全体必須', isRequired: true });
+    }
+    for (const doc of (project.documentRequirements || [])) {
+      const existing = byId.get(doc.documentId);
+      if (existing) {
+        existing.scope = existing.scope + ' / 案件';
+        existing.isRequired = existing.isRequired || doc.isRequired;
+      } else {
+        byId.set(doc.documentId, {
+          ...doc,
+          scope: doc.isRequired ? '案件必須' : '案件任意',
+        });
+      }
+    }
+    return Array.from(byId.values());
+  }
+
+  function formatConsentDocumentSummary(project) {
+    const docs = getConsentDocuments(project);
+    if (docs.length === 0) return 'なし';
+    const requiredCount = docs.filter(d => d.isRequired).length;
+    return `${docs.length}件（必須 ${requiredCount}件）`;
+  }
+
+  function renderDocumentRequirements(project) {
+    const el = document.getElementById('sel-documents-info');
+    if (!el) return;
+
+    const docs = getConsentDocuments(project);
+    if (docs.length === 0) {
+      el.innerHTML = `
+        <div style="color:#6a7b78">この案件に紐づく同意書類はありません。</div>
+        <a href="/admin/documents" style="display:inline-block;margin-top:6px;color:#0b7a75">書類管理を開く</a>`;
+      return;
+    }
+
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <strong>${formatConsentDocumentSummary(project)}</strong>
+        <a href="/admin/documents" style="color:#0b7a75;white-space:nowrap">書類管理</a>
+      </div>
+      <div class="doc-requirements-list">
+        ${docs.map(doc => `
+          <div class="doc-requirement-row" title="${escHtml(doc.title)}">
+            <span class="doc-requirement-name">${escHtml(doc.title)}</span>
+            <span class="doc-requirement-meta">${escHtml(doc.scope)} / v${escHtml(doc.versionNo || '-')}</span>
+          </div>`).join('')}
+      </div>`;
   }
 
   // ============================================================
@@ -875,6 +980,7 @@
     document.getElementById('sum-count').textContent = countText;
     document.getElementById('sum-template').textContent = tmpl ? tmpl.name : '（未選択）';
     document.getElementById('sum-campaign').textContent = campaign ? campaign.name : '（未選択）';
+    document.getElementById('sum-documents').textContent = formatConsentDocumentSummary(project);
 
     document.getElementById('preview-empty').style.display = 'none';
     document.getElementById('preview-content').style.display = 'flex';
@@ -910,6 +1016,7 @@
     document.getElementById('modal-segment').textContent = seg ? seg.name : '全会員';
     document.getElementById('modal-template').textContent = tmpl ? tmpl.name : '（プロジェクト標準）';
     document.getElementById('modal-campaign').textContent = campaign.name;
+    document.getElementById('modal-documents').textContent = formatConsentDocumentSummary(project);
     document.getElementById('modal-confirm-btn').disabled = false;
     document.getElementById('modal-confirm-btn').textContent = '配信を実行';
 

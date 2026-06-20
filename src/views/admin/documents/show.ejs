@@ -78,9 +78,14 @@ const TYPE_LABELS = {
   </details>
   <% } %>
 
-  <div style="background:#f8faf9;border-radius:8px;padding:16px;max-height:400px;overflow-y:auto">
-    <pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.7;margin:0"><%= document.current_version.content %></pre>
+  <div style="background:#f8faf9;border-radius:8px;padding:16px;max-height:520px;overflow-y:auto">
+    <div id="current-document-render" class="document-markdown"></div>
+    <details style="margin-top:14px">
+      <summary style="cursor:pointer;font-size:13px;color:#60726f">Markdown原文を表示</summary>
+      <pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.7;margin:10px 0 0"><%= document.current_version.content %></pre>
+    </details>
   </div>
+  <script type="application/json" id="current-document-markdown"><%- JSON.stringify(document.current_version.content).replace(/</g, "\\u003c") %></script>
   <p style="font-size:12px;color:#999;margin-top:8px;text-align:right">
     作成者: <%= document.current_version.created_by %> |
     作成日時: <%= new Date(document.current_version.created_at).toLocaleString('ja-JP') %>
@@ -143,7 +148,14 @@ const TYPE_LABELS = {
   <a href="/admin/documents/exports/consents.csv?document_id=<%= document.id %>" class="button-link" style="background:#555;color:#fff">📄 CSV出力</a>
 </div>
 
+<script src="/public/documentMarkdown.js"></script>
 <script>
+const currentDocumentMarkdown = document.getElementById('current-document-markdown');
+const currentDocumentRender = document.getElementById('current-document-render');
+if (currentDocumentMarkdown && currentDocumentRender) {
+  currentDocumentRender.innerHTML = window.DocumentMarkdown.render(JSON.parse(currentDocumentMarkdown.textContent || '""'));
+}
+
 function toggleContent(id) {
   const row = document.getElementById('content-' + id);
   row.style.display = row.style.display === 'none' ? '' : 'none';
