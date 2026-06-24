@@ -8,7 +8,7 @@ const app = createApp();
 app.listen(env.PORT, () => {
   logger.info("Server started", {
     port: env.PORT,
-    baseUrl: env.APP_BASE_URL
+    baseUrl: env.APP_BASE_URL,
   });
 
   notificationSchedulerService.startScheduler().catch((e) => {

@@ -53,6 +53,9 @@ function createBaseProject(): Project {
     delivery_enabled: false,
     delivery_type: null,
     delivered_at: null,
+    visibility_type: "public",
+    entry_code: null,
+    client_id: null,
     created_at: "2026-06-07T00:00:00.000Z",
     updated_at: "2026-06-07T00:00:00.000Z"
   };

@@ -140,6 +140,9 @@ function createInterviewProjectFixture(): Project {
     delivery_enabled: false,
     delivery_type: null,
     delivered_at: null,
+    visibility_type: "public",
+    entry_code: null,
+    client_id: null,
     created_at: "2026-04-20T00:00:00.000Z",
     updated_at: "2026-04-20T00:00:00.000Z"
   };

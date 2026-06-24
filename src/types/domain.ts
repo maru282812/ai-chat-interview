@@ -307,6 +307,12 @@ export interface Project {
   delivery_type: DeliveryType | null;
   /** 最後に自動配信が完了した日時 */
   delivered_at: string | null;
+  /** 公開区分: public=通常案件(探すに表示) / private_store=店舗専用(entry_code流入のみ) (Migration 064) */
+  visibility_type: 'public' | 'private_store';
+  /** 店舗流入キー。private_store 案件で専用URL/QR の判定に使う (Migration 064) */
+  entry_code: string | null;
+  /** 企業/店舗マスタへの参照（任意） (Migration 064) */
+  client_id: UUID | null;
   created_at: string;
   updated_at: string;
 }

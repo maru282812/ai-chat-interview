@@ -50,6 +50,9 @@ interface ProjectMutationInput {
   ai_prompt_mode?: 'custom' | 'package';
   ai_prompt_package_version_id?: string | null;
   ai_prompt_overrides_json?: AIPromptOverrides | null;
+  visibility_type?: 'public' | 'private_store';
+  entry_code?: string | null;
+  client_id?: string | null;
 }
 
 type ProjectUpdateInput = Partial<ProjectMutationInput>;
@@ -217,6 +220,7 @@ export const projectRepository = {
       .from("projects")
       .select("id, name, user_display_title, category, delivery_type, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at")
       .eq("status", "published")
+      .eq("visibility_type", "public")
       .order("created_at", { ascending: false });
     throwIfError(error);
     return (data ?? []) as unknown as Project[];
@@ -228,9 +232,22 @@ export const projectRepository = {
       .select("id, name, user_display_title, category, delivery_type, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at, objective, screening_config")
       .eq("id", id)
       .eq("status", "published")
+      .eq("visibility_type", "public")
       .maybeSingle();
     throwIfError(error);
     return data as Project | null;
+  },
+
+  async getStoreProjectByEntryCode(entryCode: string): Promise<Project | null> {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("entry_code", entryCode)
+      .eq("visibility_type", "private_store")
+      .eq("status", "published")
+      .maybeSingle();
+    throwIfError(error);
+    return (data as Project | null) ?? null;
   },
 
   async listReadyForDelivery(targetTypes: string[], createdWithinHours?: number | null): Promise<Project[]> {

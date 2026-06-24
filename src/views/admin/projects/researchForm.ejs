@@ -236,6 +236,43 @@
           <input type="checkbox" name="is_discoverable" value="true" <%= project?.is_discoverable ? "checked" : "" %> />
           LIFF案件一覧に公開する
         </label>
+        <label>
+          公開区分（店舗専用アンケート）
+          <select name="visibility_type" id="visibility_type_select">
+            <option value="public" <%= (project?.visibility_type ?? 'public') === 'public' ? "selected" : "" %>>通常案件（探す一覧に表示）</option>
+            <option value="private_store" <%= project?.visibility_type === 'private_store' ? "selected" : "" %>>店舗専用（専用URL/QRからのみ・一覧に出さない）</option>
+          </select>
+        </label>
+        <label>
+          店舗コード（entry_code）
+          <input type="text" name="entry_code" id="entry_code_input" value="<%= project?.entry_code || '' %>" placeholder="例: abc（店舗専用時に必須・一意）" autocomplete="off" />
+        </label>
+        <div id="store_url_preview" style="display:none;background:#f6f8f7;border:1px solid #d8e3e0;border-radius:8px;padding:10px 12px;font-size:13px;color:#445">
+          専用URL：<code id="store_url_text"></code>
+          <p style="margin:6px 0 0;color:#789">このURLをQRコード化して店舗に配布してください。</p>
+        </div>
+        <script>
+          (function () {
+            const sel = document.getElementById('visibility_type_select');
+            const codeInput = document.getElementById('entry_code_input');
+            const preview = document.getElementById('store_url_preview');
+            const urlText = document.getElementById('store_url_text');
+            if (!sel || !codeInput) return;
+            function refresh() {
+              const isStore = sel.value === 'private_store';
+              const code = (codeInput.value || '').trim();
+              if (isStore && code) {
+                urlText.textContent = location.origin + '/liff/store?entry_code=' + encodeURIComponent(code);
+                preview.style.display = '';
+              } else {
+                preview.style.display = 'none';
+              }
+            }
+            sel.addEventListener('change', refresh);
+            codeInput.addEventListener('input', refresh);
+            refresh();
+          })();
+        </script>
       </div>
     </div>
   </details>

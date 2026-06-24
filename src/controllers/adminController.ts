@@ -2492,6 +2492,10 @@ export const adminController = {
         category: bodyString(req.body.category) || null,
         estimated_minutes: parseOptionalInteger(req.body.estimated_minutes) ?? null,
         max_respondents: parseOptionalInteger(req.body.max_respondents) ?? null,
+        visibility_type: bodyString(req.body.visibility_type) === "private_store" ? "private_store" : "public",
+        entry_code: bodyString(req.body.visibility_type) === "private_store"
+          ? (bodyString(req.body.entry_code) || null)
+          : null,
         delivery_enabled: req.body.delivery_enabled === "true" || req.body.delivery_enabled === "on",
         delivery_type: (bodyString(req.body.delivery_type) || null) as import("../types/domain").DeliveryType | null,
         // Phase B: プロジェクト個別の policy / override 編集UIは撤去。編集はせず既存値を保全する

@@ -397,6 +397,10 @@
         <button id="btnCloseLiff" class="btn-next" style="min-width:160px;">LINEに戻る</button>
         <p id="completeCloseTip" style="display:none;font-size:13px;color:#60726f;margin-top:8px;">アンケートは完了しました。この画面を閉じてください。</p>
       </div>
+      <div id="storeSurveyCta" style="margin-top:16px;display:none">
+        <p style="font-size:13px;color:#60726f;margin-bottom:10px;">ご希望の方は、Hibiの他のアンケート案件にもご参加いただけます。</p>
+        <a id="btnViewProjects" class="btn-next" style="display:inline-block;text-decoration:none;min-width:160px;">通常の案件を見る</a>
+      </div>
       <p id="completeError" style="display:none;color:#e53e3e;font-size:14px;margin-top:12px;">完了処理に失敗しました。時間をおいて再度お試しください。</p>
     </div>
   </div>
@@ -424,6 +428,9 @@
   // 'screening' | 'main'
   const SURVEY_PHASE           = <%- JSON.stringify(locals.surveyPhase || 'main') %>;
   const SCREENING_FAIL_MESSAGE = <%- JSON.stringify(locals.screeningFailMessage || '今回はご参加いただけませんでした。またの機会にご協力をお願いします。') %>;
+  // 店舗専用アンケート完了後に通常案件へ誘導する（希望者のみ）
+  const IS_STORE_SURVEY = <%- JSON.stringify(locals.isStoreSurvey === true) %>;
+  const PROJECTS_URL    = <%- JSON.stringify(locals.projectsUrl || '/liff/projects') %>;
 
   console.log("[survey] script loaded");
   console.log("[survey] liffId=", LIFF_ID);
@@ -1681,6 +1688,16 @@
         } else {
           btnCloseLiff.style.display = 'none';
           completeCloseTip.style.display = '';
+        }
+
+        // 店舗専用アンケートのときだけ「通常案件を見る」CTA を表示（希望者のみ）
+        if (IS_STORE_SURVEY) {
+          const storeCta = document.getElementById('storeSurveyCta');
+          const btnViewProjects = document.getElementById('btnViewProjects');
+          if (storeCta && btnViewProjects) {
+            btnViewProjects.href = PROJECTS_URL;
+            storeCta.style.display = 'block';
+          }
         }
       } catch(e) {
         console.error('complete failed', e);

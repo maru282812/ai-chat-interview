@@ -29,6 +29,7 @@ import { runPostCompleteProcess } from "../services/postCompleteService";
 import { rantTagRepository } from "../repositories/rantTagRepository";
 import { postRepository } from "../repositories/postRepository";
 import { dailySurveyService } from "../services/dailySurveyService";
+import { storeEntryService } from "../services/storeEntryService";
 import { dailySurveyRepository } from "../repositories/dailySurveyRepository";
 import { userStreakService } from "../services/userStreakService";
 import { userBadgeService } from "../services/userBadgeService";
@@ -821,6 +822,9 @@ export const liffController = {
       liffAuthAvailable: liffConfig.liffAuthAvailable,
       authRequired: liffConfig.authRequired,
       skipAllowed: liffConfig.skipAllowed,
+      // 店舗専用アンケート完了後に「通常案件を見る」CTA を出すための判定（希望者のみ誘導）
+      isStoreSurvey: project.visibility_type === "private_store",
+      projectsUrl: "/liff/projects",
     };
 
     logger.info("[surveyPage] before render survey.ejs", {
@@ -1887,6 +1891,64 @@ export const liffController = {
         mypageUrl: "/liff/mypage",
       }
     });
+  },
+
+  // ---- 店舗専用アンケート流入（B案: 専用URL / QR） ----
+
+  /**
+   * 店舗QR / 専用URL の着地点。`?entry_code=abc` を受け、LIFF 認証後に
+   * resolve API を叩いて専用アンケートの assignment を確保し、survey へ遷移する。
+   */
+  async storeEntryPage(req: Request, res: Response): Promise<void> {
+    const liffId = env.LINE_LIFF_ID_SURVEY ?? env.LINE_LIFF_ID ?? "";
+
+    // entry_code は query / liff.state(LIFF SDK のエンコード済みクエリ) の双方から拾う
+    let liffStateEntryCode: string | undefined;
+    const liffState = stringValue(req.query["liff.state"] ?? "");
+    if (liffState) {
+      try {
+        const params = new URLSearchParams(liffState.startsWith("?") ? liffState.slice(1) : liffState);
+        liffStateEntryCode = params.get("entry_code") ?? undefined;
+      } catch {
+        // parse failure → fall through
+      }
+    }
+    const entryCode = stringValue(req.query.entry_code ?? liffStateEntryCode ?? "").trim();
+
+    res.render("liff/store-entry", {
+      title: "お店のアンケート",
+      initialData: {
+        liffId,
+        entryCode,
+        resolveUrl: "/liff/store/resolve",
+        surveyBaseUrl: "/liff/survey",
+      },
+    });
+  },
+
+  /**
+   * entry_code から専用アンケートの assignment を解決して返す。
+   * 見つからない（未知コード / 公開案件 / 非公開）場合は 404。
+   */
+  async resolveStoreEntry(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const entryCode = stringValue(req.body.entry_code).trim();
+
+    if (!entryCode) {
+      throw new HttpError(400, "店舗コードが指定されていません。");
+    }
+
+    const resolution = await storeEntryService.resolveEntry(
+      entryCode,
+      verifiedUser.userId,
+      verifiedUser.displayName ?? null
+    );
+
+    if (!resolution) {
+      throw new HttpError(404, "このお店のアンケートが見つかりませんでした。");
+    }
+
+    res.json({ ok: true, assignment_id: resolution.assignmentId, project_id: resolution.projectId });
   },
 
   async projectsPage(_req: Request, res: Response): Promise<void> {

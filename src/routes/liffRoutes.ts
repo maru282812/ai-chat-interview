@@ -50,6 +50,10 @@ liffRoutes.get("/daily-survey", asyncHandler(liffController.dailySurveyPage));
 liffRoutes.get("/daily-survey-data", asyncHandler(liffController.getDailySurveyData));
 liffRoutes.post("/daily-survey/:surveyId/answer", asyncHandler(liffController.submitDailySurveyAnswer));
 
+// 店舗専用アンケート流入（専用URL / QR）
+liffRoutes.get("/store", asyncHandler(liffController.storeEntryPage));
+liffRoutes.post("/store/resolve", asyncHandler(liffController.resolveStoreEntry));
+
 // 案件一覧・詳細・保存・やりとり
 // NOTE: /projects/:id の静的セグメントより先に定義
 liffRoutes.get("/projects", asyncHandler(liffController.projectsPage));
