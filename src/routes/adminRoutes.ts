@@ -232,6 +232,14 @@ adminRoutes.get("/documents/:documentId/versions/new",            asyncHandler(a
 adminRoutes.post("/documents/:documentId/versions",               asyncHandler(adminController.createDocumentVersion));
 adminRoutes.get("/documents/:documentId/consent-audit",           asyncHandler(adminController.documentConsentAudit));
 
+// 店舗専用アンケート管理
+adminRoutes.get("/store-surveys",                       asyncHandler(adminController.storeSurveys));
+adminRoutes.post("/store-surveys/mark",                 asyncHandler(adminController.markProjectAsStore));
+adminRoutes.post("/store-surveys/:projectId",           asyncHandler(adminController.updateStoreSurvey));
+adminRoutes.post("/store-clients",                      asyncHandler(adminController.createClient));
+adminRoutes.post("/store-clients/:clientId",            asyncHandler(adminController.updateClient));
+adminRoutes.post("/store-clients/:clientId/delete",     asyncHandler(adminController.deleteClient));
+
 // 交換申請管理
 adminRoutes.get("/exchange-requests",                             asyncHandler(adminController.exchangeRequestsPage));
 adminRoutes.post("/exchange-requests/:id/approve",                asyncHandler(adminController.approveExchange));

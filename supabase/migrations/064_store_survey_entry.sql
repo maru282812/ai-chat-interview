@@ -27,4 +27,6 @@ CREATE TABLE IF NOT EXISTS clients (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON clients TO anon, authenticated;
+-- アプリは service_role キーで接続するため service_role への付与が必須
+-- （抜けると「permission denied for table clients」になる）
+GRANT SELECT, INSERT, UPDATE, DELETE ON clients TO service_role, authenticated, anon;

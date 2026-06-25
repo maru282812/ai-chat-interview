@@ -1,0 +1,235 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const STATUS_LABELS = {
+  draft:     { label: '下書き',   color: '#999' },
+  ready:     { label: '配信準備', color: '#c8851b' },
+  published: { label: '公開中',   color: '#2ca87a' },
+  paused:    { label: '一時停止', color: '#c8851b' },
+  closed:    { label: '終了',     color: '#b14' },
+  archived:  { label: 'アーカイブ', color: '#999' }
+};
+function statusBadge(status) {
+  const s = STATUS_LABELS[status] || { label: status, color: '#999' };
+  return '<span style="display:inline-block;background:' + s.color + ';color:#fff;font-size:11px;padding:1px 7px;border-radius:3px">' + s.label + '</span>';
+}
+%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>店舗専用アンケート</h2>
+</div>
+
+<% if (msg) { %>
+  <div class="card" style="background:#e9f7f0;border:1px solid #2ca87a;color:#1c6e4f;padding:10px 14px;margin-bottom:1rem"><%= msg %></div>
+<% } %>
+<% if (err) { %>
+  <div class="card" style="background:#fdeaea;border:1px solid #b14;color:#902a2a;padding:10px 14px;margin-bottom:1rem"><%= err %></div>
+<% } %>
+<% if (clientsError) { %>
+  <div class="card" style="background:#fff6e5;border:1px solid #c8851b;color:#8a5a12;padding:10px 14px;margin-bottom:1rem">
+    ⚠ 店舗マスタ（clients テーブル）にアクセスできません。Supabase の SQL エディタで
+    <code>supabase/migrations/065_fix_064_clients_grant.sql</code> を実行してください。
+    店舗の登録・紐づけ機能はそれまで利用できませんが、店舗専用アンケートの一覧・コード編集は利用できます。
+  </div>
+<% } %>
+
+<p class="muted" style="margin-bottom:1.5rem">
+  店舗専用アンケートは「探す」一覧には表示されず、店舗ごとの<strong>専用URL / QRコード</strong>
+  （<code>/liff/store?entry_code=◯◯◯</code>）からのみ回答に進めます。美容室・飲食店などの単発依頼向けです。
+  <br>※ 回答を受け付けるにはステータスが<strong>公開中</strong>である必要があります。
+</p>
+
+<!-- ============================================================ -->
+<!-- 店舗専用アンケート一覧 -->
+<!-- ============================================================ -->
+<section style="margin-bottom:2.5rem">
+  <h3 style="margin-bottom:.5rem">店舗専用アンケート一覧 <span class="muted" style="font-size:13px;font-weight:400">（<%= rows.length %> 件）</span></h3>
+
+  <% if (rows.length === 0) { %>
+    <div class="card" style="text-align:center;padding:1.5rem">
+      <p class="muted">店舗専用アンケートはまだありません。下の「既存案件を店舗専用にする」から設定してください。</p>
+    </div>
+  <% } else { %>
+    <table>
+      <thead>
+        <tr>
+          <th>アンケート名</th>
+          <th>店舗</th>
+          <th>店舗コード</th>
+          <th>専用URL / QR</th>
+          <th>状態</th>
+          <th>回答数</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const row of rows) { const p = row.project; %>
+        <tr>
+          <td>
+            <strong><%= p.user_display_title || p.name %></strong>
+            <% if (p.status !== 'published') { %>
+              <br><span style="color:#b14;font-size:11px">⚠ 公開中でないため回答できません</span>
+            <% } %>
+          </td>
+          <td><%= row.clientName || '—' %></td>
+          <td><code><%= p.entry_code || '—' %></code></td>
+          <td style="max-width:320px">
+            <% if (row.entryUrl) { %>
+              <div style="display:flex;align-items:center;gap:6px">
+                <input type="text" readonly value="<%= row.entryUrl %>" onclick="this.select()"
+                       style="flex:1;font-size:11px;padding:3px 6px" />
+                <button type="button" class="btn-secondary" style="padding:2px 8px;font-size:11px"
+                        onclick="navigator.clipboard.writeText('<%= row.entryUrl %>');this.textContent='✓'">コピー</button>
+              </div>
+              <details style="margin-top:4px">
+                <summary style="cursor:pointer;font-size:12px;color:#2a6">QRコードを表示</summary>
+                <img alt="QR" loading="lazy"
+                     data-src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=<%= encodeURIComponent(row.entryUrl) %>"
+                     class="qr-img" style="margin-top:6px;border:1px solid #ddd;border-radius:4px" />
+              </details>
+            <% } else { %>
+              <span class="muted">—</span>
+            <% } %>
+          </td>
+          <td style="white-space:nowrap"><%- statusBadge(p.status) %></td>
+          <td style="text-align:right"><%= row.responseCount %></td>
+          <td style="white-space:nowrap">
+            <details>
+              <summary style="cursor:pointer;font-size:13px;color:#2a6">編集</summary>
+              <form method="post" action="/admin/store-surveys/<%= p.id %>"
+                    style="margin-top:8px;display:grid;gap:6px;min-width:220px">
+                <label style="font-size:12px">店舗コード（半角英数・ハイフン・一意 / 空で未割り当て）
+                  <input type="text" name="entry_code" value="<%= p.entry_code || '' %>"
+                         placeholder="例: abc-salon" autocomplete="off" style="width:100%" />
+                </label>
+                <label style="font-size:12px">店舗
+                  <select name="client_id" style="width:100%">
+                    <option value="">（未設定）</option>
+                    <% for (const c of clients) { %>
+                      <option value="<%= c.id %>" <%= p.client_id === c.id ? 'selected' : '' %>><%= c.name %></option>
+                    <% } %>
+                  </select>
+                </label>
+                <label style="font-size:12px">状態
+                  <select name="status" style="width:100%">
+                    <% for (const s of ['draft','published','paused','closed']) { %>
+                      <option value="<%= s %>" <%= p.status === s ? 'selected' : '' %>><%= STATUS_LABELS[s].label %></option>
+                    <% } %>
+                  </select>
+                </label>
+                <button type="submit" class="btn" style="padding:4px 10px;font-size:12px">保存</button>
+              </form>
+              <form method="post" action="/admin/store-surveys/<%= p.id %>" style="margin-top:6px"
+                    onsubmit="return confirm('通常案件に戻します。専用URLは無効になります。よろしいですか？')">
+                <input type="hidden" name="action" value="revert" />
+                <button type="submit" class="btn-secondary" style="padding:4px 10px;font-size:12px">通常案件に戻す</button>
+              </form>
+            </details>
+            <div style="margin-top:4px;font-size:12px">
+              <a href="/admin/projects/<%= p.id %>/edit">案件詳細</a> ·
+              <a href="/admin/projects/<%= p.id %>/questions">設問</a> ·
+              <a href="/admin/projects/<%= p.id %>/respondents">回答者</a>
+            </div>
+          </td>
+        </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } %>
+</section>
+
+<!-- ============================================================ -->
+<!-- 既存案件を店舗専用にする -->
+<!-- ============================================================ -->
+<section style="margin-bottom:2.5rem">
+  <h3 style="margin-bottom:.5rem">既存案件を店舗専用にする</h3>
+  <p class="muted" style="font-size:13px;margin-bottom:.5rem">
+    まず通常どおり案件・設問を作成し、ここで店舗専用に設定します。
+    <strong>店舗コードは設定後、上の一覧の「編集」から割り当ててください</strong>（割り当てると専用URLが発行されます）。
+  </p>
+  <form method="post" action="/admin/store-surveys/mark" class="card"
+        style="display:grid;gap:10px;max-width:560px;padding:1rem">
+    <label style="font-size:13px">対象の案件
+      <select name="project_id" required style="width:100%">
+        <option value="">選択してください</option>
+        <% for (const p of convertibleProjects) { %>
+          <option value="<%= p.id %>"><%= p.user_display_title || p.name %>（<%= STATUS_LABELS[p.status]?.label || p.status %>）</option>
+        <% } %>
+      </select>
+    </label>
+    <label style="font-size:13px">店舗（任意）
+      <select name="client_id" style="width:100%">
+        <option value="">（未設定）</option>
+        <% for (const c of clients) { %>
+          <option value="<%= c.id %>"><%= c.name %></option>
+        <% } %>
+      </select>
+    </label>
+    <div><button type="submit" class="btn">店舗専用に設定</button></div>
+  </form>
+</section>
+
+<!-- ============================================================ -->
+<!-- 店舗マスタ -->
+<!-- ============================================================ -->
+<% if (!clientsError) { %>
+<section style="margin-bottom:2rem">
+  <h3 style="margin-bottom:.5rem">店舗マスタ <span class="muted" style="font-size:13px;font-weight:400">（<%= clients.length %> 件）</span></h3>
+  <p class="muted" style="font-size:13px;margin-bottom:.5rem">複数の案件を同じ店舗にまとめたいときに登録します（任意）。</p>
+
+  <form method="post" action="/admin/store-clients" class="card"
+        style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;max-width:560px;padding:1rem;margin-bottom:1rem">
+    <label style="font-size:13px;flex:1;min-width:160px">店舗名
+      <input type="text" name="name" required style="width:100%" />
+    </label>
+    <label style="font-size:13px;flex:1;min-width:160px">連絡先（任意）
+      <input type="text" name="contact" placeholder="メール / 電話 など" style="width:100%" />
+    </label>
+    <button type="submit" class="btn">＋ 追加</button>
+  </form>
+
+  <% if (clients.length > 0) { %>
+    <table>
+      <thead>
+        <tr><th>店舗名</th><th>連絡先</th><th>操作</th></tr>
+      </thead>
+      <tbody>
+        <% for (const c of clients) { %>
+        <tr>
+          <td colspan="3" style="padding:0">
+            <form method="post" action="/admin/store-clients/<%= c.id %>"
+                  style="display:flex;gap:8px;align-items:center;padding:8px 10px">
+              <input type="text" name="name" value="<%= c.name %>" required style="flex:1;min-width:140px" />
+              <input type="text" name="contact" value="<%= c.contact || '' %>" placeholder="連絡先" style="flex:1;min-width:140px" />
+              <button type="submit" class="btn-secondary" style="padding:3px 10px;font-size:12px">保存</button>
+            </form>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="3" style="padding:0 10px 10px;text-align:right;border-top:none">
+            <form method="post" action="/admin/store-clients/<%= c.id %>/delete" style="display:inline"
+                  onsubmit="return confirm('「<%= c.name %>」を削除しますか？')">
+              <button type="submit" class="btn-danger" style="padding:2px 8px;font-size:11px">削除</button>
+            </form>
+          </td>
+        </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } %>
+</section>
+<% } %>
+
+<script>
+  // QR 画像は <details> を開いたときに初めて読み込む（外部リクエストを最小化）
+  document.querySelectorAll('details').forEach(function (d) {
+    d.addEventListener('toggle', function () {
+      if (!d.open) return;
+      d.querySelectorAll('img.qr-img').forEach(function (img) {
+        if (!img.src && img.dataset.src) img.src = img.dataset.src;
+      });
+    });
+  });
+</script>
+
+<%- include("../../partials/footer") %>

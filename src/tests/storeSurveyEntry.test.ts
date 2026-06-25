@@ -174,6 +174,43 @@ test("getStoreProjectByEntryCode は private_store かつ published で絞る", 
   assert.ok(eqCalls.some((a) => a[0] === "status" && a[1] === "published"));
 });
 
+test("listStoreProjects は visibility_type=private_store で絞る（管理画面一覧）", async () => {
+  const calls: QueryCall[] = [];
+  supabase.from = ((_table: string) =>
+    createThenableSelectBuilder({ data: [], error: null }, calls)) as unknown as SupabaseClient["from"];
+
+  await projectRepository.listStoreProjects();
+
+  const eqCalls = calls.filter((c) => c.method === "eq").map((c) => c.args);
+  assert.ok(eqCalls.some((a) => a[0] === "visibility_type" && a[1] === "private_store"));
+  // 全ステータス対象（status 条件を付けない）
+  assert.ok(!eqCalls.some((a) => a[0] === "status"));
+});
+
+test("findAnyByEntryCode は status/visibility を問わず entry_code 一致で1件返す（重複検証）", async () => {
+  const calls: QueryCall[] = [];
+  supabase.from = ((_table: string) =>
+    createThenableSelectBuilder({ data: null, error: null }, calls)) as unknown as SupabaseClient["from"];
+
+  await projectRepository.findAnyByEntryCode("abc");
+
+  const eqCalls = calls.filter((c) => c.method === "eq").map((c) => c.args);
+  assert.ok(eqCalls.some((a) => a[0] === "entry_code" && a[1] === "abc"));
+  assert.ok(!eqCalls.some((a) => a[0] === "visibility_type"), "公開区分で絞らない");
+  assert.ok(!eqCalls.some((a) => a[0] === "status"), "ステータスで絞らない");
+});
+
+test("findAnyByEntryCode は空コードを DB 非アクセスで null 返し", async () => {
+  let called = false;
+  supabase.from = ((_table: string) => {
+    called = true;
+    return createThenableSelectBuilder({ data: null, error: null }, []);
+  }) as unknown as SupabaseClient["from"];
+
+  assert.equal(await projectRepository.findAnyByEntryCode("  "), null);
+  assert.equal(called, false, "空コードでは DB を引かない");
+});
+
 // ---- storeEntryService の流入解決ロジック ----
 
 test("未知コード / 該当なしは null を返す", async () => {

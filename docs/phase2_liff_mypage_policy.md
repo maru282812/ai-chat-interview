@@ -74,16 +74,76 @@ if (!profile.profile_completed && requiredFields.every(f => f !== null && f !== 
 
 ---
 
-## 未登録ユーザーのリダイレクト制御
+## アンケート回答前のプロフィール確認（必須ルール）
+
+### ルール
+
+`/liff/survey`（案件アンケート本体）は、**回答を開始する前に必ずプロフィール確認画面を一度挟む**。
+未登録ユーザーだけでなく、登録済みユーザーに対しても「回答開始前に基本情報を確認させる」ことを目的とする。
+
+- 確認は **セッション単位** で一度きり。同一セッション内で確認済みなら以降はスキップする。
+- 確認完了は `sessions.state_json.mypage_confirmed_at`（タイムスタンプ）で記録する。
+
+### 判定ロジック（liffController.ts `surveyPage`）
+
+```ts
+// プロフィール確認: user_id が判明しており、かつ今セッションでまだ確認していない場合は
+// プロフィール確認画面へ誘導する
+if (assignment.user_id && !sessionForCheck?.state_json?.mypage_confirmed_at) {
+  // session_id が空だと confirm-mypage が 400 になり無限リダイレクトになるため、
+  // セッション未作成ならここで先行作成する
+  const currentUrl = `/liff/survey?assignment_id=${encodeURIComponent(assignmentId)}`;
+  res.redirect(
+    `/liff/profile/check?next=${encodeURIComponent(currentUrl)}&session_id=${encodeURIComponent(sessionForCheck.id)}`
+  );
+  return;
+}
+```
+
+`assignment.user_id` が無い（=匿名/LIFF未連携の流入）場合は確認画面を挟まずアンケート本体へ進む。
+
+### リダイレクト先
+
+```
+/liff/profile/check?next={元のsurveyURL（encodeURIComponent済み）}&session_id={確認対象セッションID}
+```
+
+- 専用ページ `profileCheckPage`（`src/views/liff/profile-check.ejs`）を使う。
+  マイページ機能（ポイント・履歴・ランク）は表示せず、プロフィール確認 → 保存 → 案件へ直接遷移する導線に特化する。
+- survey LIFF コンテキスト内で別の LIFF ID（mypage）を `liff.init()` すると "Invalid LIFF ID" になるため、
+  profile-check は **survey LIFF ID**（`LINE_LIFF_ID_SURVEY`）で動作する。
+
+### 完了後の動作
+
+1. profile-check 画面で「確認しました」操作をすると `POST /liff/session/confirm-mypage`
+   （body: `session_id`）を呼び、`state_json.mypage_confirmed_at` を記録する。
+2. その後 `next`（= 元の survey URL）へ `window.location.href` で戻す。
+3. 再度 `/liff/survey` に到達した時点では `mypage_confirmed_at` が存在するため、
+   確認をスキップしてアンケート本体を表示する。
+
+### 関連エンドポイント / ファイル
+
+| 種別 | パス / ファイル |
+|---|---|
+| 確認画面 | `GET /liff/profile/check` → `liffController.profileCheckPage` |
+| 確認画面ビュー | `src/views/liff/profile-check.ejs` |
+| 確認用プロフィール取得 | `GET /liff/profile-check-data` → `getProfileCheckData` |
+| 確認完了の記録 | `POST /liff/session/confirm-mypage` → `confirmMypage` |
+| 判定元 | `liffController.surveyPage`（`assignment.user_id` + `mypage_confirmed_at`） |
+
+---
+
+## 未登録ユーザーのリダイレクト制御（マイページ系）
 
 ### 対象ページ
 
 | ページ | リダイレクト方式 |
 |---|---|
-| `/liff/survey` | サーバーサイド（assignmentのuser_idで判定） |
 | `/liff/rant` | クライアントサイド（LIFF init後にGET /liff/profile-status） |
 | `/liff/diary` | クライアントサイド（同上） |
 | `/liff/personality` | クライアントサイド（同上） |
+
+> `/liff/survey` のプロフィール確認は上記「アンケート回答前のプロフィール確認」を参照（遷移先は `/liff/profile/check`）。
 
 ### リダイレクト先
 

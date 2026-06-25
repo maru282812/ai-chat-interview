@@ -26,6 +26,8 @@ import { adminService } from "../services/adminService";
 import { pointService } from "../services/pointService";
 import { assignmentService, type AssignmentRuleFilter } from "../services/assignmentService";
 import { projectRepository } from "../repositories/projectRepository";
+import { clientRepository } from "../repositories/clientRepository";
+import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
 import { questionRepository } from "../repositories/questionRepository";
 import { rankRepository } from "../repositories/rankRepository";
 import { analysisService } from "../services/analysisService";
@@ -7222,4 +7224,171 @@ export const adminController = {
       warnings: parsed.warnings,
     });
   },
+
+  // ============================================================
+  // 店舗専用アンケート管理（visibility_type='private_store'）
+  // 専用URL/QR で配布し、一般の「探す」一覧には出さない単発アンケート。
+  // ============================================================
+
+  async storeSurveys(req: Request, res: Response): Promise<void> {
+    const [storeProjects, allProjects] = await Promise.all([
+      projectRepository.listStoreProjects(),
+      projectRepository.list()
+    ]);
+
+    // clients テーブルの GRANT 未適用（migration 065 未実行）でも画面は遷移できるようにする。
+    // 失敗時は店舗マスタ機能だけ無効化し、適用案内を表示する。
+    let clients: Awaited<ReturnType<typeof clientRepository.list>> = [];
+    let clientsError = false;
+    try {
+      clients = await clientRepository.list();
+    } catch (error) {
+      clientsError = true;
+      logger.warn("store-surveys: clients テーブル読み込み失敗（migration 065 未適用の可能性）", {
+        error: String(error)
+      });
+    }
+
+    const clientNameById = new Map(clients.map((c) => [c.id, c.name]));
+
+    const rows = await Promise.all(
+      storeProjects.map(async (p) => ({
+        project: p,
+        clientName: p.client_id ? clientNameById.get(p.client_id) ?? null : null,
+        entryUrl: buildStoreEntryUrl(p.entry_code),
+        responseCount: await projectAssignmentRepository.countByProject(p.id)
+      }))
+    );
+
+    // 「店舗専用にする」候補（まだ店舗専用化されていない案件）
+    const convertibleProjects = allProjects.filter((p) => p.visibility_type !== "private_store");
+
+    res.render("admin/store-surveys/index", {
+      title: "店舗専用アンケート管理",
+      rows,
+      clients,
+      clientsError,
+      convertibleProjects,
+      msg: typeof req.query.msg === "string" ? req.query.msg : null,
+      err: typeof req.query.err === "string" ? req.query.err : null
+    });
+  },
+
+  // ---- 店舗マスタ（clients）CRUD ----
+
+  async createClient(req: Request, res: Response): Promise<void> {
+    const name = bodyString(req.body.name).trim();
+    if (!name) {
+      res.redirect("/admin/store-surveys?err=" + encodeURIComponent("店舗名を入力してください"));
+      return;
+    }
+    await clientRepository.create({ name, contact: bodyString(req.body.contact).trim() || null });
+    res.redirect("/admin/store-surveys?msg=" + encodeURIComponent("店舗を追加しました"));
+  },
+
+  async updateClient(req: Request, res: Response): Promise<void> {
+    const clientId = routeParam(req, "clientId");
+    const name = bodyString(req.body.name).trim();
+    if (!name) {
+      res.redirect("/admin/store-surveys?err=" + encodeURIComponent("店舗名を入力してください"));
+      return;
+    }
+    await clientRepository.update(clientId, {
+      name,
+      contact: bodyString(req.body.contact).trim() || null
+    });
+    res.redirect("/admin/store-surveys?msg=" + encodeURIComponent("店舗を更新しました"));
+  },
+
+  async deleteClient(req: Request, res: Response): Promise<void> {
+    const clientId = routeParam(req, "clientId");
+    await clientRepository.delete(clientId);
+    res.redirect("/admin/store-surveys?msg=" + encodeURIComponent("店舗を削除しました"));
+  },
+
+  // ---- 既存案件を店舗専用にする ----
+
+  async markProjectAsStore(req: Request, res: Response): Promise<void> {
+    const projectId = bodyString(req.body.project_id).trim();
+    if (!projectId) {
+      res.redirect("/admin/store-surveys?err=" + encodeURIComponent("案件を選択してください"));
+      return;
+    }
+    // 店舗コードは初期設定では割り当てない。一覧の編集フォームで後から設定する運用。
+    const clientId = bodyString(req.body.client_id).trim() || null;
+    await projectRepository.update(projectId, {
+      visibility_type: "private_store",
+      client_id: clientId
+    });
+    res.redirect(
+      "/admin/store-surveys?msg=" +
+        encodeURIComponent("店舗専用アンケートに設定しました。店舗コードを編集から設定してください")
+    );
+  },
+
+  // ---- 店舗専用アンケートの編集（コード/店舗/公開状態の変更・通常案件へ戻す） ----
+
+  async updateStoreSurvey(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+
+    // 通常案件へ戻す
+    if (bodyString(req.body.action) === "revert") {
+      await projectRepository.update(projectId, {
+        visibility_type: "public",
+        entry_code: null
+      });
+      res.redirect("/admin/store-surveys?msg=" + encodeURIComponent("通常案件に戻しました"));
+      return;
+    }
+
+    const validation = await validateEntryCode(bodyString(req.body.entry_code), projectId);
+    if (!validation.ok) {
+      res.redirect("/admin/store-surveys?err=" + encodeURIComponent(validation.error));
+      return;
+    }
+
+    const statusInput = bodyString(req.body.status).trim();
+    const allowedStatuses = ["draft", "published", "paused", "closed"];
+    const clientId = bodyString(req.body.client_id).trim() || null;
+
+    await projectRepository.update(projectId, {
+      entry_code: validation.code,
+      client_id: clientId,
+      ...(allowedStatuses.includes(statusInput)
+        ? { status: statusInput as import("../types/domain").ProjectStatus }
+        : {})
+    });
+    res.redirect("/admin/store-surveys?msg=" + encodeURIComponent("店舗専用アンケートを更新しました"));
+  }
 };
+
+/** 店舗流入用の専用URL。entry_code 未設定時は null。 */
+function buildStoreEntryUrl(entryCode: string | null | undefined): string | null {
+  if (!entryCode) return null;
+  return `${appEnv.APP_BASE_URL}/liff/store?entry_code=${encodeURIComponent(entryCode)}`;
+}
+
+type EntryCodeValidation =
+  | { ok: true; code: string | null }
+  | { ok: false; error: string };
+
+/**
+ * 店舗コード（entry_code）の検証。
+ * - 空は許容（null で保存）。店舗専用化の初期設定では未割り当てで、編集で後から設定する運用。
+ * - 入力時は英数とハイフン/アンダースコアのみ（QR/URL で扱いやすくするため）
+ * - 他案件と重複しないこと（DB 側に部分 unique index あり。事前検証で親切なエラーに）
+ */
+async function validateEntryCode(rawCode: string, selfProjectId: string): Promise<EntryCodeValidation> {
+  const code = rawCode.trim();
+  if (!code) {
+    return { ok: true, code: null };
+  }
+  if (!/^[A-Za-z0-9_-]+$/.test(code)) {
+    return { ok: false, error: "店舗コードは半角英数・ハイフン・アンダースコアのみ使用できます" };
+  }
+  const existing = await projectRepository.findAnyByEntryCode(code);
+  if (existing && existing.id !== selfProjectId) {
+    return { ok: false, error: `店舗コード「${code}」は既に他の案件で使われています` };
+  }
+  return { ok: true, code };
+}

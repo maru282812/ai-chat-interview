@@ -238,6 +238,33 @@ export const projectRepository = {
     return data as Project | null;
   },
 
+  /** 店舗専用アンケート（visibility_type='private_store'）を全ステータスで一覧。管理画面用。 */
+  async listStoreProjects(): Promise<Project[]> {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("visibility_type", "private_store")
+      .order("created_at", { ascending: false });
+    throwIfError(error);
+    return (data ?? []) as Project[];
+  },
+
+  /**
+   * entry_code の重複チェック用。ステータス/公開区分を問わず entry_code 一致案件を1件返す。
+   * （getStoreProjectByEntryCode は published×private_store に限定するため、入力検証には使えない）
+   */
+  async findAnyByEntryCode(entryCode: string): Promise<Project | null> {
+    const code = entryCode.trim();
+    if (!code) return null;
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("entry_code", code)
+      .maybeSingle();
+    throwIfError(error);
+    return (data as Project | null) ?? null;
+  },
+
   async getStoreProjectByEntryCode(entryCode: string): Promise<Project | null> {
     const { data, error } = await supabase
       .from("projects")
