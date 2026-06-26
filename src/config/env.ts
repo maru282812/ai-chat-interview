@@ -48,7 +48,11 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value === "true"),
   ADMIN_BASIC_USER: z.string().min(1),
-  ADMIN_BASIC_PASSWORD: z.string().min(1)
+  ADMIN_BASIC_PASSWORD: z.string().min(1),
+  // Vercel Cron ディスパッチャ（/api/cron/dispatch）の認証用シークレット。
+  // Vercel に CRON_SECRET を設定すると Vercel Cron が Authorization: Bearer <secret> を付与する。
+  // 未設定の場合 /api/cron/dispatch は 503 を返し、定期配信は行われない。
+  CRON_SECRET: z.string().min(1).optional()
 });
 
 export const env = envSchema.parse(process.env);
