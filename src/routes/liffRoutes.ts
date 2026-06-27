@@ -18,8 +18,6 @@ liffRoutes.get("/mypage-data", asyncHandler(liffController.getMypageData));
 liffRoutes.post("/mypage-data", asyncHandler(liffController.updateMypageData));
 liffRoutes.get("/history-data", asyncHandler(liffController.getHistoryData));
 liffRoutes.get("/points-data", asyncHandler(liffController.getPointsData));
-liffRoutes.get("/consent-data", asyncHandler(liffController.getConsentData));
-liffRoutes.post("/consent-data", asyncHandler(liffController.updateConsentData));
 liffRoutes.get("/diary-calendar", asyncHandler(liffController.getDiaryCalendar));
 
 // マイページ確認完了記録

@@ -543,7 +543,26 @@
       // ネットワークエラー時は開発環境のみスキップ
     }
 
+    // 規約同意ゲート: グローバル必須書類（利用規約・PP）に未同意なら、回答開始前に同意画面へ離脱する。
+    if (await ensureGlobalConsent(idToken)) return;
+
     startSurvey();
+  }
+
+  // consent.ejs と同一エンドポイントで未同意を判定し、未同意なら同意画面へ誘導する。
+  // 同意後はこのアンケートURLへ復帰し、再度の認証を経て startSurvey に進む。
+  async function ensureGlobalConsent(idToken) {
+    try {
+      const res = await fetch('/liff/consent-check', { headers: { Authorization: 'Bearer ' + idToken } });
+      if (!res.ok) return false; // 同意基盤の障害で回答自体を止めない（フェイルオープン）
+      const data = await res.json();
+      if (!data.count) return false;
+      const redirect = encodeURIComponent(location.pathname + location.search);
+      location.href = '/liff/consent?mode=initial&redirect=' + redirect;
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   function showAuthError(code) {

@@ -12,6 +12,21 @@ const TYPE_LABELS = {
   campaign_terms:          'キャンペーン応募規約',
   project_specific:        '案件向け個別同意書',
 };
+// 用途区分: 表示順・ラベル・配色
+const USAGE_ORDER = ['consent_global', 'consent_project', 'public', 'b2b_contract', 'internal'];
+const USAGE_META = {
+  consent_global:  { label: '回答者・登録時同意', color: '#2ca87a', bg: '#e8f5ef' },
+  consent_project: { label: '案件別同意',         color: '#2563eb', bg: '#e8effb' },
+  public:          { label: '公開・閲覧のみ',     color: '#9333ea', bg: '#f3e8fb' },
+  b2b_contract:    { label: '企業向け契約',       color: '#b45309', bg: '#fbf0e0' },
+  internal:        { label: '社内・非配布',       color: '#60726f', bg: '#f0f4f3' },
+};
+// 用途区分でグルーピング
+const grouped = {};
+for (const doc of documents) {
+  const key = doc.usage_category || 'internal';
+  (grouped[key] = grouped[key] || []).push(doc);
+}
 %>
 
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
@@ -32,6 +47,17 @@ const TYPE_LABELS = {
   本文の更新は必ず新バージョンとして追加してください（既存バージョンは変更不可）。
 </p>
 
+<% if (documents.length === 0) { %>
+<p style="text-align:center;color:#999;padding:2rem">書類がまだありません</p>
+<% } %>
+
+<% for (const usageKey of USAGE_ORDER) { %>
+<% const docs = grouped[usageKey]; if (!docs || docs.length === 0) continue; %>
+<% const meta = USAGE_META[usageKey]; %>
+<div style="margin-top:1.5rem;margin-bottom:.5rem;display:flex;align-items:center;gap:10px">
+  <span style="font-size:13px;font-weight:600;color:<%= meta.color %>;background:<%= meta.bg %>;padding:4px 12px;border-radius:6px"><%= meta.label %></span>
+  <span style="font-size:12px;color:#999"><%= docs.length %>件</span>
+</div>
 <table>
   <thead>
     <tr>
@@ -45,8 +71,8 @@ const TYPE_LABELS = {
     </tr>
   </thead>
   <tbody>
-    <% for (const doc of documents) { %>
-    <tr>
+    <% for (const doc of docs) { %>
+    <tr<%= doc.is_active ? '' : ' style="opacity:.55"' %>>
       <td><span style="font-size:12px;background:#f0f4f3;padding:2px 8px;border-radius:4px"><%= TYPE_LABELS[doc.document_type] || doc.document_type %></span></td>
       <td><a href="/admin/documents/<%= doc.id %>"><strong><%= doc.title %></strong></a></td>
       <td>
@@ -63,7 +89,7 @@ const TYPE_LABELS = {
         <% if (doc.is_active) { %>
           <span style="color:#2ca87a">● 公開中</span>
         <% } else { %>
-          <span style="color:#999">○ 非公開</span>
+          <span style="color:#999">○ アーカイブ</span>
         <% } %>
       </td>
       <td style="text-align:center">
@@ -77,11 +103,9 @@ const TYPE_LABELS = {
       </td>
     </tr>
     <% } %>
-    <% if (documents.length === 0) { %>
-    <tr><td colspan="7" style="text-align:center;color:#999">書類がまだありません</td></tr>
-    <% } %>
   </tbody>
 </table>
+<% } %>
 
 <div style="margin-top:2rem;padding:16px;background:#f8faf9;border-radius:8px;border-left:4px solid #2ca87a">
   <h4 style="margin:0 0 8px">書類管理ポリシー</h4>

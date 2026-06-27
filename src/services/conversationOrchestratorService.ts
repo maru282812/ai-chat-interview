@@ -44,6 +44,7 @@ import type {
 import { analysisService } from "./analysisService";
 import { aiService } from "./aiService";
 import { answerExtractionService } from "./answerExtractionService";
+import { consentService } from "./consentService";
 import { lineMessagingService } from "./lineMessagingService";
 import { menuActionServiceDb } from "./menuActionServiceDb";
 import { pointService } from "./pointService";
@@ -1238,6 +1239,30 @@ async function replyAndFinalizeCompletionV2(input: {
       ]);
     });
 }
+// LINEトーク内インタビュー（delivery_channel="line"）の同意ゲート。
+// グローバル必須書類（利用規約・PP）に未同意なら、インタビューを開始せず
+// 同意ゲートを内蔵するマイページLIFFへ誘導し、true を返す（呼び出し側は中断する）。
+async function replyIfGlobalConsentPending(lineUserId: string, replyToken: string): Promise<boolean> {
+  const pending = await consentService.getPendingGlobalConsents(lineUserId);
+  if (pending.length === 0) return false;
+  const mypageLiff = await liffService.getPage("mypage");
+  const mypageUrl = mypageLiff?.url ?? `${env.APP_BASE_URL}/liff/mypage`;
+  await lineMessagingService.reply(replyToken, [
+    buildTextMessage(
+      "ご利用には利用規約・プライバシーポリシーへの同意が必要です。下の「マイページ」から内容をご確認のうえ同意してください。同意後、もう一度「はじめる」と送ってください。"
+    ),
+    buildMypageLiffFlex(mypageUrl)
+  ]);
+  return true;
+}
+
+// respondentId から LINE ユーザーIDを解決して同意ゲートを適用する。
+async function replyIfConsentPendingByRespondent(respondentId: string, replyToken: string): Promise<boolean> {
+  const respondent = await respondentRepository.getById(respondentId).catch(() => null);
+  if (!respondent?.line_user_id) return false; // 解決できない場合はゲートしない（フェイルオープン）
+  return replyIfGlobalConsentPending(respondent.line_user_id, replyToken);
+}
+
 async function startSession(input: {
   respondentId: string;
   projectId: string;
@@ -1246,6 +1271,11 @@ async function startSession(input: {
   leadMessage?: string | null;
   assignmentId?: string | null;
 }): Promise<void> {
+  // インタビュー開始前に規約同意を確認（未同意ならマイページへ誘導して中断）
+  if (await replyIfConsentPendingByRespondent(input.respondentId, input.replyToken)) {
+    return;
+  }
+
   const firstQuestion = await questionFlowService.getFirstQuestion(input.projectId);
   if (!firstQuestion) {
     await replyWithTiming({
@@ -1322,6 +1352,11 @@ async function replyWithCurrentPrompt(input: {
   leadMessage?: string | null;
   assignmentId?: string | null;
 }): Promise<void> {
+  // 再開時も規約同意を確認（未同意・改定時はマイページへ誘導して中断）
+  if (await replyIfConsentPendingByRespondent(input.session.respondent_id, input.replyToken)) {
+    return;
+  }
+
   const prompt = await currentPromptForSession(input.session);
   if (!prompt) {
     const { settings } = await resolveProjectContext(input.session.project_id);

@@ -290,7 +290,7 @@
     <script>
     (() => {
       const initialData = JSON.parse(document.getElementById("initial-data").dataset.json || "{}");
-      const { liffId, mode, next, sessionId, profileUrl, updateUrl, confirmMypageUrl, historyUrl, pointsUrl, exchangeRequestUrl, consentUrl, interactionsUrl } = initialData;
+      const { liffId, mode, next, sessionId, profileUrl, updateUrl, confirmMypageUrl, historyUrl, pointsUrl, exchangeRequestUrl, consentStatusUrl, consentPageUrl, documentBaseUrl, interactionsUrl } = initialData;
       const appView   = document.getElementById("app-view");
       const loadingView = document.getElementById("loading-view");
       let idToken = null;
@@ -437,7 +437,7 @@
             <button class="btn btn-secondary btn-sm" id="btn-history">回答履歴を見る</button>
             <button class="btn btn-secondary btn-sm" id="btn-points-detail">ポイント明細を見る</button>
             <button class="btn btn-secondary btn-sm" id="btn-edit-profile">プロフィールを編集</button>
-            <button class="btn btn-secondary btn-sm" id="btn-consent">同意・プライバシー設定</button>
+            <button class="btn btn-secondary btn-sm" id="btn-consent">規約・同意状況</button>
           </div>
         `);
 
@@ -534,15 +534,9 @@
                 </div>
               </div>
 
-              <div class="form-group" style="margin-top:8px">
-                <label style="display:flex;align-items:flex-start;gap:10px;font-weight:400;cursor:pointer">
-                  <input type="checkbox" name="terms_agreed" id="terms-check" style="margin-top:3px;accent-color:#2ca87a;flex-shrink:0" required />
-                  <span style="font-size:13px;color:#444;line-height:1.6">
-                    <a href="https://line.me/terms" target="_blank" style="color:#2ca87a">利用規約</a>および
-                    個人情報の取り扱いに同意します<span class="required">必須</span>
-                  </span>
-                </label>
-              </div>
+              <p style="font-size:12px;color:#60726f;line-height:1.6;margin-top:4px">
+                利用規約・プライバシーポリシーへの同意は確認済みです。内容は「マイページ」からいつでも再確認できます。
+              </p>
               <p id="setup-status" class="status-msg"></p>
               <button type="submit" class="btn btn-primary">登録して始める</button>
             </form>
@@ -558,11 +552,6 @@
           // 性別は radio なので HTML required が効かないブラウザ向けに JS バリデーション
           if (!fd.get("gender")) {
             statusEl.textContent = "性別を選択してください。";
-            statusEl.className = "status-msg error";
-            return;
-          }
-          if (!document.getElementById("terms-check").checked) {
-            statusEl.textContent = "利用規約への同意が必要です。";
             statusEl.className = "status-msg error";
             return;
           }
@@ -931,82 +920,98 @@
         }
       }
 
-      // ---- 同意・プライバシー設定 ----
+      // ---- 規約・同意状況 ----
+      // バージョン管理された書類（利用規約・PP等）の実際の同意状況を表示し、本文を再確認できる。
       async function renderConsentPage() {
         show(`<div style="text-align:center;padding:40px;color:#60726f">読み込み中...</div>`);
         try {
-          const res = await fetch(consentUrl, { headers: { Authorization: `Bearer ${idToken}` } });
+          const res = await fetch(consentStatusUrl, { headers: { Authorization: `Bearer ${idToken}` } });
           if (!res.ok) throw new Error("取得に失敗しました");
           const data = await res.json();
-          const consents = data.consents || {};
+          const statuses = data.statuses || [];
 
-          const items = [
-            { key: "ai_analysis",        label: "AI分析への利用",        desc: "投稿・回答内容をAIが分析し、属性推定に使用します。" },
-            { key: "company_data_share",  label: "企業への統計データ提供", desc: "匿名集計データを調査依頼企業に提供します（個人を特定できない形式）。" },
-            { key: "ai_learning",         label: "AIモデルの学習利用",     desc: "回答内容をAIモデルの改善に使用します（将来対応）。" },
-          ];
+          const rows = statuses.length === 0
+            ? `<p style="font-size:13px;color:#60726f;padding:8px 0">現在、同意が必要な書類はありません。</p>`
+            : statuses.map(s => {
+              let badge;
+              if (!s.consented) {
+                badge = `<span style="font-size:12px;font-weight:600;color:#c0392b;background:#fdecea;padding:3px 10px;border-radius:12px">未同意</span>`;
+              } else if (!s.isLatestVersion) {
+                badge = `<span style="font-size:12px;font-weight:600;color:#b45309;background:#fbf0e0;padding:3px 10px;border-radius:12px">要再同意</span>`;
+              } else {
+                badge = `<span style="font-size:12px;font-weight:600;color:#1a7a5a;background:#e8f5ef;padding:3px 10px;border-radius:12px">同意済み</span>`;
+              }
+              const detail = s.consented
+                ? `v${esc(s.consentedVersionNo || "")}${s.consentedAt ? "・" + fmtDate(s.consentedAt) : ""}${!s.isLatestVersion && s.currentVersionNo ? `（最新 v${esc(s.currentVersionNo)}）` : ""}`
+                : (s.currentVersionNo ? `最新 v${esc(s.currentVersionNo)}` : "");
+              return `
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 0;border-bottom:1px solid #f0f4f3">
+                  <div style="flex:1">
+                    <div style="font-size:14px;font-weight:600;color:#1a2f2a">${esc(s.title)}</div>
+                    <div style="font-size:12px;color:#60726f;margin-top:3px">${detail}</div>
+                  </div>
+                  ${badge}
+                  <button class="doc-read-btn" data-id="${esc(s.documentId)}" data-title="${esc(s.title)}"
+                    style="background:none;border:1px solid #cfe0db;border-radius:8px;padding:6px 12px;font-size:12px;color:#2ca87a;cursor:pointer;white-space:nowrap">読む</button>
+                </div>`;
+            }).join("");
 
-          const rows = items.map(item => {
-            const current = consents[item.key];
-            const isOn = current?.consented !== false;
-            return `
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid #f0f4f3">
-                <div style="flex:1;padding-right:12px">
-                  <div style="font-size:14px;font-weight:600;color:#1a2f2a">${esc(item.label)}</div>
-                  <div style="font-size:12px;color:#60726f;margin-top:3px;line-height:1.5">${esc(item.desc)}</div>
-                </div>
-                <button data-key="${esc(item.key)}" data-current="${isOn}"
-                  class="consent-toggle"
-                  style="min-width:60px;padding:7px 14px;border-radius:20px;border:none;font-size:13px;font-weight:600;cursor:pointer;background:${isOn ? '#2ca87a' : '#e0ede9'};color:${isOn ? '#fff' : '#60726f'}">
-                  ${isOn ? 'ON' : 'OFF'}
-                </button>
-              </div>`;
-          }).join("");
+          const reconsentBtn = data.has_unsigned
+            ? `<button id="btn-reconsent" class="btn btn-primary" style="margin-top:16px">未同意・改定された書類を確認する</button>`
+            : "";
 
           show(`
             <div class="card" style="display:flex;align-items:center;gap:12px;padding:14px 20px;">
               <button id="btn-back" style="background:none;border:none;font-size:20px;cursor:pointer;padding:0;">←</button>
-              <span style="font-weight:600;font-size:16px;">同意・プライバシー設定</span>
+              <span style="font-weight:600;font-size:16px;">規約・同意状況</span>
             </div>
             <div class="card">
-              <div style="font-size:12px;color:#60726f;margin-bottom:12px;line-height:1.6">
-                以下の設定はいつでも変更できます。OFFにすると該当データの処理を停止します。
+              <div style="font-size:12px;color:#60726f;margin-bottom:8px;line-height:1.6">
+                ご利用にあたって同意いただいた書類の状況です。本文は「読む」からいつでも再確認できます。
               </div>
               ${rows}
-              <p id="consent-status" class="status-msg" style="margin-top:8px"></p>
+              ${reconsentBtn}
             </div>
           `);
 
           document.getElementById("btn-back")?.addEventListener("click", () => load());
 
-          document.querySelectorAll(".consent-toggle").forEach(btn => {
-            btn.addEventListener("click", async () => {
-              const key = btn.dataset.key;
-              const current = btn.dataset.current === "true";
-              const newVal = !current;
-              btn.disabled = true;
-              const statusEl = document.getElementById("consent-status");
-              try {
-                const r = await fetch(consentUrl, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-                  body: JSON.stringify({ consent_type: key, consented: newVal })
-                });
-                if (!r.ok) throw new Error("更新に失敗しました");
-                btn.dataset.current = String(newVal);
-                btn.textContent = newVal ? "ON" : "OFF";
-                btn.style.background = newVal ? "#2ca87a" : "#e0ede9";
-                btn.style.color = newVal ? "#fff" : "#60726f";
-                if (statusEl) { statusEl.textContent = "保存しました"; statusEl.className = "status-msg success"; }
-              } catch (e) {
-                if (statusEl) { statusEl.textContent = e.message || "エラーが発生しました"; statusEl.className = "status-msg error"; }
-              } finally {
-                btn.disabled = false;
-              }
-            });
+          document.getElementById("btn-reconsent")?.addEventListener("click", () => {
+            const redirect = encodeURIComponent(location.pathname + location.search);
+            location.href = `${consentPageUrl}?mode=update&redirect=${redirect}`;
+          });
+
+          document.querySelectorAll(".doc-read-btn").forEach(btn => {
+            btn.addEventListener("click", () => openDocumentOverlay(btn.dataset.id, btn.dataset.title));
           });
         } catch (err) {
           showError(err.message || "読み込みに失敗しました");
+        }
+      }
+
+      // ---- 書類本文オーバーレイ（再確認用） ----
+      async function openDocumentOverlay(docId, title) {
+        const overlay = document.createElement("div");
+        overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:flex-end;justify-content:center";
+        overlay.innerHTML = `
+          <div style="background:#fff;width:100%;max-width:560px;max-height:85vh;border-radius:16px 16px 0 0;display:flex;flex-direction:column">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #f0f4f3">
+              <span style="font-weight:600;font-size:15px">${esc(title || "書類")}</span>
+              <button class="ov-close" style="background:none;border:none;font-size:22px;cursor:pointer;color:#999">×</button>
+            </div>
+            <div class="ov-body" style="overflow-y:auto;padding:16px;font-size:13px;line-height:1.8;color:#333;white-space:pre-wrap">読み込み中...</div>
+          </div>`;
+        document.body.appendChild(overlay);
+        const close = () => overlay.remove();
+        overlay.querySelector(".ov-close")?.addEventListener("click", close);
+        overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+        try {
+          const res = await fetch(`${documentBaseUrl}/${docId}`, { headers: { Authorization: `Bearer ${idToken}` } });
+          if (!res.ok) throw new Error("本文の取得に失敗しました");
+          const data = await res.json();
+          overlay.querySelector(".ov-body").textContent = data.version?.content || "(本文がありません)";
+        } catch (e) {
+          overlay.querySelector(".ov-body").textContent = e.message || "本文の取得に失敗しました";
         }
       }
 
@@ -1178,6 +1183,26 @@
         } catch (_) {}
       }
 
+      // ---- 同意ゲート ----
+      // バージョン管理されたグローバル必須書類（利用規約・PP）の最新版に未同意なら
+      // 同意画面 /liff/consent へ誘導する。プロフィール登録より前に同意を取得する。
+      // 戻り先として現在のURLを渡し、同意後はこのページに復帰する。
+      async function ensureGlobalConsent() {
+        try {
+          // 同意画面 consent.ejs と同一エンドポイントで判定する（基準を揃えてループを防ぐ）。
+          // count>0 = 未同意 or 改定による要再同意。
+          const res = await fetch('/liff/consent-check', { headers: { Authorization: `Bearer ${idToken}` } });
+          if (!res.ok) return false; // 同意基盤の障害で登録自体を止めない（フェイルオープン）
+          const data = await res.json();
+          if (!data.count) return false;
+          const redirect = encodeURIComponent(location.pathname + location.search);
+          location.href = `/liff/consent?mode=initial&redirect=${redirect}`;
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
       // ---- メインロード ----
       async function load() {
         if (!liffId) {
@@ -1188,6 +1213,9 @@
           const token = await LiffAuth.initLiffOrWebAuth(liffId);
           if (!token) return; // LINE Login リダイレクト中
           idToken = token;
+
+          // プロフィール表示・登録の前に規約同意を確認（未同意なら同意画面へ離脱）
+          if (await ensureGlobalConsent()) return;
 
           const res = await fetch(profileUrl, { headers: { Authorization: `Bearer ${idToken}` } });
           if (!res.ok) throw new Error("情報の取得に失敗しました。");

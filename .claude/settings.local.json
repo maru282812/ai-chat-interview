@@ -8,7 +8,11 @@
       "Bash(npm run:*)",
       "Bash(ls -la c:/work/ai-chat-interview/.env*)",
       "Bash(python -c ' *)",
-      "Bash(python)"
+      "Bash(python)",
+      "Bash(git commit -m ' *)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\PC_User\\.claude\\projects\\c--work-ai-chat-interview\\memory"
     ]
   }
 }

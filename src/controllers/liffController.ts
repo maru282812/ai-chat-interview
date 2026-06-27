@@ -430,7 +430,9 @@ export const liffController = {
         historyUrl: "/liff/history-data",
         pointsUrl: "/liff/points-data",
         exchangeRequestUrl: "/liff/exchange-requests",
-        consentUrl: "/liff/consent-data",
+        consentStatusUrl: "/liff/consent-statuses",
+        consentPageUrl: "/liff/consent",
+        documentBaseUrl: "/liff/documents",
         interactionsUrl: "/liff/interactions",
       }
     });
@@ -1477,51 +1479,6 @@ export const liffController = {
     });
   },
 
-  // ============================================================
-  // Phase 2-D: 同意管理
-  // ============================================================
-
-  async getConsentData(req: Request, res: Response): Promise<void> {
-    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
-    const { supabase } = await import("../config/supabase");
-
-    const { data } = await supabase
-      .from("user_consent")
-      .select("consent_type, consented, version, consented_at")
-      .eq("line_user_id", verifiedUser.userId);
-
-    const consentMap: Record<string, { consented: boolean; consented_at: string }> = {};
-    for (const row of (data ?? []) as { consent_type: string; consented: boolean; consented_at: string }[]) {
-      consentMap[row.consent_type] = { consented: row.consented, consented_at: row.consented_at };
-    }
-
-    res.json({ ok: true, consents: consentMap });
-  },
-
-  async updateConsentData(req: Request, res: Response): Promise<void> {
-    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
-    const body = req.body as Record<string, unknown>;
-    const consentType = stringValue(body.consent_type).trim();
-    const consented = body.consented === true || body.consented === "true";
-
-    const OPTIONAL_TYPES = ["ai_analysis", "company_data_share", "ai_learning"];
-    if (!OPTIONAL_TYPES.includes(consentType)) {
-      throw new HttpError(400, "この同意設定は変更できません");
-    }
-
-    const { supabase } = await import("../config/supabase");
-    await supabase.from("user_consent").upsert(
-      {
-        line_user_id: verifiedUser.userId,
-        consent_type: consentType,
-        consented,
-        consented_at: new Date().toISOString(),
-      },
-      { onConflict: "line_user_id,consent_type" }
-    );
-
-    res.json({ ok: true, consent_type: consentType, consented });
-  },
 
   async contactPage(_req: Request, res: Response): Promise<void> {
     const liffId = env.LINE_LIFF_ID_CONTACT ?? env.LINE_LIFF_ID ?? "";
@@ -2193,7 +2150,11 @@ export const liffController = {
     const liffId = env.LINE_LIFF_ID ?? "";
     const mode = (req.query.mode as string) || "initial";
     const projectId = (req.query.project_id as string) || "";
-    const redirectTo = (req.query.redirect as string) || "/liff/mypage";
+    // オープンリダイレクト防止: 内部 LIFF パスのみ許可（外部URL・スキーム付きは既定値に倒す）
+    const rawRedirect = (req.query.redirect as string) || "";
+    const redirectTo = /^\/liff\/[A-Za-z0-9/_\-?=&.%]*$/.test(rawRedirect)
+      ? rawRedirect
+      : "/liff/mypage";
     res.render("liff/consent", {
       title: mode === "update" ? "規約の更新" : "ご利用前の確認",
       liffId,

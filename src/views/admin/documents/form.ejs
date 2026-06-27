@@ -12,6 +12,13 @@ const TYPE_OPTIONS = [
   { value: 'campaign_terms',          label: 'キャンペーン応募規約' },
   { value: 'project_specific',        label: '案件向け個別同意書' },
 ];
+const USAGE_OPTIONS = [
+  { value: 'consent_global',  label: '回答者・登録時同意（global）', desc: '全回答者が登録時に同意必須。友だち追加＋初回LIFFで提示・バージョン記録。' },
+  { value: 'consent_project', label: '案件別同意',                 desc: '案件単位で同意。案件回答前に提示。' },
+  { value: 'public',          label: '公開・閲覧のみ',             desc: '同意不要。フッター・LP等で閲覧。' },
+  { value: 'b2b_contract',    label: '企業向け契約・締結テンプレ', desc: '企業との契約・締結用。LIFF外で扱う。' },
+  { value: 'internal',        label: '社内文書・非配布',           desc: '管理画面でのみ閲覧。回答者には渡さない。' },
+];
 const isNew = !locals.document;
 %>
 
@@ -33,6 +40,21 @@ const isNew = !locals.document;
       <% } %>
     </select>
   </label>
+
+  <label>
+    用途区分 <span style="color:red">*</span>
+    <select name="usage_category" required>
+      <% const currentUsage = document?.usage_category || 'internal'; %>
+      <% for (const opt of USAGE_OPTIONS) { %>
+        <option value="<%= opt.value %>" <%= (currentUsage === opt.value) ? 'selected' : '' %>>
+          <%= opt.label %>
+        </option>
+      <% } %>
+    </select>
+  </label>
+  <p style="font-size:12px;color:#60726f;margin:-4px 0 8px">
+    <% for (const opt of USAGE_OPTIONS) { %><strong><%= opt.label %></strong>: <%= opt.desc %><br><% } %>
+  </p>
 
   <label>
     タイトル <span style="color:red">*</span>

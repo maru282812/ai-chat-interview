@@ -232,7 +232,9 @@
       const LIFF_ID    = '<%= liffId %>';
       const MODE       = '<%= mode %>';
       const PROJECT_ID = '<%= projectId || '' %>';
-      const REDIRECT   = '<%= redirectTo || '/liff/mypage' %>';
+      // redirectTo は内部 LIFF パスに限定済み（controller で検証）。
+      // クエリ文字列の & を壊さないよう JSON 文字列として出力する。
+      const REDIRECT   = <%- JSON.stringify(redirectTo || '/liff/mypage') %>;
 
       let authToken = null;
       let pendingDocs = [];  // [{ documentId, versionId, versionNo, title, content, isRequired }]

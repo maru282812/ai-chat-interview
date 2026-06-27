@@ -21,6 +21,10 @@ export function buildWelcomeMessages(): LineMessage[] {
     {
       type: "text",
       text: "「はじめる」で開始、「再開」で続きから再開、「マイページ」で基本情報の登録・確認ができます。"
+    },
+    {
+      type: "text",
+      text: "ご利用にあたっては、利用規約・プライバシーポリシーへの同意が必要です。「マイページ」を開くと内容をご確認のうえ同意いただけます。"
     }
   ];
 }

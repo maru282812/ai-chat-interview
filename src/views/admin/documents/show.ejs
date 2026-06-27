@@ -21,8 +21,19 @@ const TYPE_LABELS = {
     <span style="font-size:12px;background:#f0f4f3;padding:2px 8px;border-radius:4px">
       <%= TYPE_LABELS[document.document_type] || document.document_type %>
     </span>
+    <%
+      const USAGE_META = {
+        consent_global:  { label: '回答者・登録時同意', color: '#1a7a5a', bg: '#e8f5ef' },
+        consent_project: { label: '案件別同意',         color: '#2563eb', bg: '#e8effb' },
+        public:          { label: '公開・閲覧のみ',     color: '#9333ea', bg: '#f3e8fb' },
+        b2b_contract:    { label: '企業向け契約',       color: '#b45309', bg: '#fbf0e0' },
+        internal:        { label: '社内・非配布',       color: '#60726f', bg: '#f0f4f3' },
+      };
+      const usageMeta = USAGE_META[document.usage_category] || USAGE_META.internal;
+    %>
+    <span style="font-size:12px;color:<%= usageMeta.color %>;background:<%= usageMeta.bg %>;padding:2px 8px;border-radius:4px;margin-left:4px"><%= usageMeta.label %></span>
     <% if (!document.is_active) { %>
-      <span style="font-size:12px;background:#fff0f0;color:#c00;padding:2px 8px;border-radius:4px;margin-left:4px">非公開</span>
+      <span style="font-size:12px;background:#fff0f0;color:#c00;padding:2px 8px;border-radius:4px;margin-left:4px">アーカイブ</span>
     <% } %>
     <% if (document.is_required_global) { %>
       <span style="font-size:12px;background:#e8f5ef;color:#1a7a5a;padding:2px 8px;border-radius:4px;margin-left:4px">グローバル必須</span>

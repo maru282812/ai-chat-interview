@@ -1,9 +1,23 @@
 import { supabase } from "../config/supabase";
 import { throwIfError } from "./baseRepository";
 
+// 用途区分: 書類を「誰に・どこで・同意を取るのか」で分類する軸。
+//   consent_global  : 全回答者が登録時に同意必須（利用規約・PP）
+//   consent_project : 案件単位で同意（案件別同意書）
+//   public          : 公開・閲覧のみ（同意不要）
+//   b2b_contract    : 企業向け契約・締結テンプレ（LIFF 外）
+//   internal        : 社内文書・実装参照（非配布）
+export type DocumentUsageCategory =
+  | "consent_global"
+  | "consent_project"
+  | "public"
+  | "b2b_contract"
+  | "internal";
+
 export interface Document {
   id: string;
   document_type: string;
+  usage_category: DocumentUsageCategory;
   title: string;
   description: string | null;
   current_version_id: string | null;
@@ -29,6 +43,7 @@ export interface DocumentVersion {
 
 export interface DocumentCreateInput {
   document_type: string;
+  usage_category?: DocumentUsageCategory;
   title: string;
   description?: string;
   is_active?: boolean;
@@ -92,6 +107,7 @@ export const documentRepository = {
       .from("documents")
       .insert({
         document_type: input.document_type,
+        usage_category: input.usage_category ?? "internal",
         title: input.title,
         description: input.description ?? null,
         is_active: input.is_active ?? true,

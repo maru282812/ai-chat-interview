@@ -144,6 +144,23 @@ function parseDqpOptions(raw: string | undefined): Array<{ label: string; value:
   }
 }
 
+// 書類の用途区分。未知値・未指定は安全側の "internal"（非配布）に倒す。
+const DOCUMENT_USAGE_CATEGORIES = [
+  "consent_global",
+  "consent_project",
+  "public",
+  "b2b_contract",
+  "internal",
+] as const;
+type DocumentUsageCategoryValue = (typeof DOCUMENT_USAGE_CATEGORIES)[number];
+
+function normalizeUsageCategory(value: unknown): DocumentUsageCategoryValue {
+  const v = bodyString(value).trim();
+  return (DOCUMENT_USAGE_CATEGORIES as readonly string[]).includes(v)
+    ? (v as DocumentUsageCategoryValue)
+    : "internal";
+}
+
 function bodyStringArray(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.map((item) => String(item));
@@ -5678,6 +5695,7 @@ export const adminController = {
 
     const title = bodyString(req.body.title).trim();
     const documentType = bodyString(req.body.document_type).trim();
+    const usageCategory = normalizeUsageCategory(req.body.usage_category);
     const description = bodyString(req.body.description).trim() || null;
     const isActive = req.body.is_active === "true";
     const isRequiredGlobal = req.body.is_required_global === "true";
@@ -5694,7 +5712,7 @@ export const adminController = {
 
     let doc;
     try {
-      doc = await documentRepository.create({ document_type: documentType, title, description: description ?? undefined, is_active: isActive, is_required_global: isRequiredGlobal });
+      doc = await documentRepository.create({ document_type: documentType, usage_category: usageCategory, title, description: description ?? undefined, is_active: isActive, is_required_global: isRequiredGlobal });
     } catch {
       logger.error("createDocument: failed to create document");
       res.render("admin/documents/form", {
@@ -5763,6 +5781,7 @@ export const adminController = {
     const docId = routeParam(req, "documentId");
     const title = bodyString(req.body.title).trim();
     const documentType = bodyString(req.body.document_type).trim();
+    const usageCategory = normalizeUsageCategory(req.body.usage_category);
     const description = bodyString(req.body.description).trim() || null;
     const isActive = req.body.is_active === "true";
     const isRequiredGlobal = req.body.is_required_global === "true";
@@ -5771,6 +5790,7 @@ export const adminController = {
       await documentRepository.update(docId, {
         title: title || undefined,
         document_type: documentType || undefined,
+        usage_category: usageCategory,
         description: description !== null ? description : undefined,
         is_active: isActive,
         is_required_global: isRequiredGlobal,
