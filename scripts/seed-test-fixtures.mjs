@@ -48,14 +48,24 @@ const ID = {
   qMain: `${P}12`,
   respondentFail: `${P}21`,
   respondentUnjudged: `${P}22`,
+  respondentCompleted: `${P}23`,
+  respondentOwner: `${P}24`,
   assignmentFail: `${P}31`,
   assignmentUnjudged: `${P}32`,
+  assignmentCompleted: `${P}33`,
+  assignmentOwner: `${P}34`,
   sessionFail: `${P}41`,
   sessionUnjudged: `${P}42`,
+  sessionCompleted: `${P}43`,
+  sessionOwner: `${P}44`,
 };
 const LINE = {
   fail: "tmtest_screening_fail",
   unjudged: "tmtest_screening_unjudged",
+  completed: "tmtest_completed",
+  // owner: verify-identity 所有者一致 / profile 未確認誘導の両方に使う固定 LINE userId。
+  // 認証 seam では Authorization: Bearer tmtest:tmtest_owner で本人として通る。
+  owner: "tmtest_owner",
 };
 
 async function up({ table, row, onConflict = "id" }) {
@@ -186,6 +196,82 @@ async function seed() {
     },
   });
 
+  // 3-C. 完了済み用: completed assignment + completed session（二重回答防止/再アクセス画面）。
+  //      user_id は null のまま → profile 誘導分岐(branch5)を飛ばして completed 分岐(branch6)に入る。
+  await up({
+    table: "respondents",
+    row: {
+      id: ID.respondentCompleted,
+      line_user_id: LINE.completed,
+      display_name: "[TESTMASTER] completed",
+      project_id: ID.project,
+      status: "active",
+    },
+    onConflict: "line_user_id,project_id",
+  });
+  await up({
+    table: "project_assignments",
+    row: {
+      id: ID.assignmentCompleted,
+      project_id: ID.project,
+      respondent_id: ID.respondentCompleted,
+      assignment_type: "manual",
+      status: "completed",
+      completed_at: new Date().toISOString(),
+    },
+    onConflict: "project_id,respondent_id",
+  });
+  await up({
+    table: "sessions",
+    row: {
+      id: ID.sessionCompleted,
+      respondent_id: ID.respondentCompleted,
+      project_id: ID.project,
+      current_phase: "completed",
+      status: "completed",
+      state_json: {},
+    },
+  });
+
+  // 3-D. 所有者/未確認誘導用: user_id を立てた started assignment + mypage 未確認 session。
+  //      surveyPage では branch5(profile/check リダイレクト)に入る。
+  //      verify-identity では assignment.user_id===LINE.owner との一致/不一致テストに使う。
+  await up({
+    table: "respondents",
+    row: {
+      id: ID.respondentOwner,
+      line_user_id: LINE.owner,
+      display_name: "[TESTMASTER] owner",
+      project_id: ID.project,
+      status: "active",
+    },
+    onConflict: "line_user_id,project_id",
+  });
+  await up({
+    table: "project_assignments",
+    row: {
+      id: ID.assignmentOwner,
+      project_id: ID.project,
+      respondent_id: ID.respondentOwner,
+      assignment_type: "manual",
+      status: "started",
+      user_id: LINE.owner,
+    },
+    onConflict: "project_id,respondent_id",
+  });
+  await up({
+    table: "sessions",
+    row: {
+      id: ID.sessionOwner,
+      respondent_id: ID.respondentOwner,
+      project_id: ID.project,
+      current_question_id: ID.qScreening,
+      current_phase: "question",
+      status: "active",
+      state_json: {}, // mypage_confirmed_at 無し = 未確認 → profile/check 誘導
+    },
+  });
+
   console.log("\nseed 完了。run-screen で使う assignmentId:");
   printIds();
 }
@@ -198,9 +284,12 @@ async function del(table, column, value) {
 
 async function teardown() {
   // 子→親の順で削除（FK cascade があっても明示削除で確実に）
-  for (const id of [ID.sessionFail, ID.sessionUnjudged]) await del("sessions", "id", id);
-  for (const id of [ID.assignmentFail, ID.assignmentUnjudged]) await del("project_assignments", "id", id);
-  for (const id of [ID.respondentFail, ID.respondentUnjudged]) await del("respondents", "id", id);
+  for (const id of [ID.sessionFail, ID.sessionUnjudged, ID.sessionCompleted, ID.sessionOwner])
+    await del("sessions", "id", id);
+  for (const id of [ID.assignmentFail, ID.assignmentUnjudged, ID.assignmentCompleted, ID.assignmentOwner])
+    await del("project_assignments", "id", id);
+  for (const id of [ID.respondentFail, ID.respondentUnjudged, ID.respondentCompleted, ID.respondentOwner])
+    await del("respondents", "id", id);
   for (const id of [ID.qScreening, ID.qMain]) await del("questions", "id", id);
   await del("projects", "id", ID.project);
   console.log("\nteardown 完了（テスト専用行のみ削除）。");
@@ -211,7 +300,10 @@ function printIds() {
     project_id: ID.project,
     screening_fail: { assignmentId: ID.assignmentFail, url: `/liff/survey/${ID.assignmentFail}` },
     screening_unjudged: { assignmentId: ID.assignmentUnjudged, url: `/liff/survey/${ID.assignmentUnjudged}` },
+    completed: { assignmentId: ID.assignmentCompleted, url: `/liff/survey/${ID.assignmentCompleted}` },
+    profile_redirect: { assignmentId: ID.assignmentOwner, url: `/liff/survey/${ID.assignmentOwner}`, owner_line_user_id: LINE.owner },
     force_503_seam: "GET /liff/survey/<任意のassignmentId> に header x-test-auth-required:1 または ?__test_auth_required=1",
+    auth_seam: "認証が要る API は Authorization: Bearer tmtest:<lineUserId>（例 tmtest:tmtest_owner）。verify-identity 等 body の id_token も同形式。非本番限定。",
   }, null, 2));
 }
 
