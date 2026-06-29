@@ -174,6 +174,13 @@ function stringValue(value: unknown): string {
   return "";
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** uuid 型カラムへ直接渡る id の形式検証。形式不正は DB に渡す前に存在しない扱い（404）にする。 */
+function isUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
 function resolveMenuActionKey(value: unknown, fallback: string): string {
   const normalized = stringValue(value).trim();
   return normalized || fallback;
@@ -645,8 +652,14 @@ export const liffController = {
       });
       return;
     }
+    if (!isUuid(assignmentId)) throw new HttpError(404, "アンケートが見つかりません。");
 
-    const liffConfig = getSurveyLiffConfig();
+    // テスト到達用 seam（非本番限定）: 503「LIFF設定不足」分岐を env 改変なしで再現する。
+    // ヘッダ x-test-auth-required:1 または ?__test_auth_required=1 のときのみ有効。本番では無視。
+    const forceAuthConfigMissing =
+      env.NODE_ENV !== "production" &&
+      (req.get("x-test-auth-required") === "1" || req.query.__test_auth_required === "1");
+    const liffConfig = getSurveyLiffConfig({ forceAuthConfigMissing });
 
     logger.info("survey.page.liffConfig", {
       assignmentId,
@@ -1094,6 +1107,7 @@ export const liffController = {
       res.status(400).json({ ok: false, error: "assignment_id は必須です。" });
       return;
     }
+    if (!isUuid(assignmentId)) throw new HttpError(404, "アンケートが見つかりません。");
 
     const assignment = await projectAssignmentRepository.getById(assignmentId);
 
@@ -1583,6 +1597,7 @@ export const liffController = {
       res.status(400).json({ ok: false, error: "assignment_id と session_id は必須です。" });
       return;
     }
+    if (!isUuid(assignmentId)) throw new HttpError(404, "アンケートが見つかりません。");
 
     const [assignment, session] = await Promise.all([
       projectAssignmentRepository.getById(assignmentId),
@@ -1729,6 +1744,7 @@ export const liffController = {
     const body = req.body as Record<string, unknown>;
 
     if (!surveyId) throw new HttpError(400, "surveyId は必須です。");
+    if (!isUuid(surveyId)) throw new HttpError(404, "アンケートが見つかりません。");
 
     const deliveryId = stringValue(body.deliveryId).trim();
     const rawAnswers = Array.isArray(body.answers) ? body.answers : [];
@@ -1834,6 +1850,7 @@ export const liffController = {
     const liffId = process.env.LINE_LIFF_ID_MYPAGE || process.env.LINE_LIFF_ID || null;
     const projectId = stringValue(req.params.id).trim();
     if (!projectId) throw new HttpError(400, "案件IDが指定されていません。");
+    if (!isUuid(projectId)) throw new HttpError(404, "案件が見つかりません。");
     res.render("liff/project-detail", {
       title: "案件詳細",
       initialData: {
@@ -1956,6 +1973,7 @@ export const liffController = {
     const projectId = stringValue(req.params.id).trim();
 
     if (!projectId) throw new HttpError(400, "案件IDが指定されていません。");
+    if (!isUuid(projectId)) throw new HttpError(404, "案件が見つかりません。");
 
     const [project, isSaved] = await Promise.all([
       projectRepository.getDiscoverableById(projectId),
@@ -2010,6 +2028,7 @@ export const liffController = {
     const lineUserId = verifiedUser.userId;
     const projectId = stringValue(req.params.id).trim();
     if (!projectId) throw new HttpError(400, "案件IDが指定されていません。");
+    if (!isUuid(projectId)) throw new HttpError(404, "案件が見つかりません。");
 
     const result = await projectFavoriteRepository.toggle(lineUserId, projectId);
     res.json({ ok: true, saved: result.saved });
@@ -2239,6 +2258,8 @@ export const liffController = {
     const docId = stringValue(req.params.documentId ?? "").trim();
     const versionId = typeof req.query.version_id === "string" ? req.query.version_id : null;
 
+    if (!isUuid(docId)) throw new HttpError(404, "書類が見つかりません");
+
     const doc = await documentRepository.getById(docId);
     if (!doc || !doc.is_active) throw new HttpError(404, "書類が見つかりません");
 
@@ -2314,6 +2335,7 @@ export const liffController = {
       res.status(400).json({ ok: false, error: "id が必要です" });
       return;
     }
+    if (!isUuid(requestId)) throw new HttpError(404, "交換申請が見つかりません。");
 
     try {
       const canceled = await pointExchangeService.cancelExchange(requestId, lineUserId);
