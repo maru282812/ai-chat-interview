@@ -22,6 +22,9 @@ import {
 } from "../lib/questionMetadata";
 import { getProjectResearchSettings, parseLineSeparatedList } from "../lib/projectResearch";
 import { csvService } from "../services/csvService";
+import { statExportService } from "../services/statExportService";
+import { snapshotService } from "../services/snapshotService";
+import { validateSurvey } from "../lib/surveyValidation";
 import { adminService } from "../services/adminService";
 import { pointService } from "../services/pointService";
 import { assignmentService, type AssignmentRuleFilter } from "../services/assignmentService";
@@ -3096,6 +3099,101 @@ export const adminController = {
   async exportProjectExpiredAssignments(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
     res.type("text/csv").send(await csvService.expiredAssignmentsCsv(projectId));
+  },
+
+  // ------------------------------------------------------------------
+  // 統計向けエクスポート (§11)。既存CSVは変更せず追加 (§12)。
+  // 出力は UTF-8 BOM + RFC4180 (§21)。respondent_key は擬似匿名 (§19)。
+  // ------------------------------------------------------------------
+  sendStatCsv(res: Response, filename: string, body: string): void {
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
+    res.send(body);
+  },
+
+  statExportOptions(req: Request): { excludeTest: boolean; consentedOnly: boolean; consentDocType?: string } {
+    return {
+      excludeTest: bodyString(req.query.includeTest) !== "1",
+      consentedOnly: bodyString(req.query.consentedOnly) === "1",
+      consentDocType: bodyString(req.query.consentDocType) || undefined
+    };
+  },
+
+  async exportStatRespondentsWide(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    adminController.sendStatCsv(
+      res,
+      "respondents_wide.csv",
+      await statExportService.respondentsWideCsv(projectId, adminController.statExportOptions(req))
+    );
+  },
+
+  async exportStatAnswersLong(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    adminController.sendStatCsv(
+      res,
+      "answers_long.csv",
+      await statExportService.answersLongCsv(projectId, adminController.statExportOptions(req))
+    );
+  },
+
+  async exportStatCodebook(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    adminController.sendStatCsv(res, "codebook.csv", await statExportService.codebookCsv(projectId));
+  },
+
+  async exportStatSnapshot(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=questionnaire_snapshot.json");
+    res.send(await statExportService.questionnaireSnapshotJson(projectId));
+  },
+
+  async exportStatRandomizationLog(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    adminController.sendStatCsv(
+      res,
+      "randomization_log.csv",
+      await statExportService.randomizationLogCsv(projectId, adminController.statExportOptions(req))
+    );
+  },
+
+  // 送付前バリデーション (§4/§5/§6/§13)。JSONでレポートを返す。
+  async validateProjectSurvey(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const questions = await questionRepository.listByProject(projectId);
+    res.json(validateSurvey(questions));
+  },
+
+  // 送付前「確定（凍結＋検証ゲート）」(§1/§6)。
+  // 検証で error があれば 400 でブロック（?force=1 で警告のみ無視して凍結も可）。
+  async createProjectSnapshot(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const questions = await questionRepository.listByProject(projectId);
+    const report = validateSurvey(questions);
+    const force = bodyString(req.query.force) === "1";
+    if (!report.ok && !force) {
+      res.status(400).json({ ok: false, blocked: true, report });
+      return;
+    }
+    const snapshot = await snapshotService.createOrReuse(projectId, bodyString(req.body.wave_code) || null);
+    res.json({ ok: true, snapshot_id: snapshot.id, snapshot_version: snapshot.version, wave_code: snapshot.wave_code, report });
+  },
+
+  // スナップショット一覧 (§1/§14)
+  async listProjectSnapshots(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const snapshots = await snapshotService.list(projectId);
+    res.json(
+      snapshots.map((snapshot) => ({
+        id: snapshot.id,
+        version: snapshot.version,
+        wave_code: snapshot.wave_code,
+        snapshot_hash: snapshot.snapshot_hash,
+        is_active: snapshot.is_active,
+        created_at: snapshot.created_at
+      }))
+    );
   },
 
   // ------------------------------------------------------------------

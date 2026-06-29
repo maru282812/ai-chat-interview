@@ -1,6 +1,7 @@
 # 要件定義書: Phase 2 project-discovery 統合ポータル
 
 作成日: 2026-06-19
+更新日: 2026-06-28
 
 ## 目的
 
@@ -12,10 +13,13 @@
 
 - 既存LIFF画面は `/liff/projects`、`/liff/projects/:id`、`/liff/saved-projects`、`/liff/interactions`、`/liff/mypage`、`/liff/daily-survey`、`/liff/survey/:assignmentId` に分かれている。
 - project-discovery の土台として、`projects` に `category`、`display_thumbnail_url`、`estimated_minutes`、`max_respondents` などの表示用カラムがあり、`project_favorites` で保存機能を持つ。
-- 現在の案件一覧は `projectRepository.listDiscoverable()` が `status = 'published'` の案件を返している。
+- 現在の案件一覧は `projectRepository.listDiscoverable()` が `status = 'published'` かつ `visibility_type = 'public'` の案件を返している。
 - 既存の通常案件回答は `/liff/survey/:assignmentId` と `project_assignments` / `sessions` / `answers` を使っているため、このフローは変更しない。
 - デイリーアンケートは `daily_surveys`、`daily_survey_questions`、`daily_survey_deliveries`、`daily_survey_answers` とポイント・ストリーク更新処理を持つが、現状はLIFF画面回答が中心。
 - リッチメニュー相当のテキスト・アクションは `line_menu_actions` と `liff_entrypoints` で管理されている。
+- 店舗専用アンケートとして `projects.visibility_type = 'private_store'`、`entry_code`、`client_id`、`clients` が追加され、`/liff/store?entry_code=...` から assignment を確保して既存 `/liff/survey/:assignmentId` へ進む導線がある。
+- 書類同意は `documents.usage_category` が追加され、`consent_global`、`consent_project`、`public`、`b2b_contract`、`internal` の用途区分を配布・同意ロジックの主軸にする方針へ変わっている。
+- 定期配信は Vercel Cron 常駐制約に合わせ、`/api/cron/dispatch` と `cron_dispatch_runs` を使うディスパッチャ方式が追加されている。ただし Vercel Hobby では毎分cronを有効化しない前提。
 
 ## スコープ
 
@@ -44,6 +48,8 @@
 - LINE内起動はLIFF ID tokenで本人確認する。PCブラウザでも利用できるよう、既存のWeb認証フォールバック方針を維持する。
 - スマホは下部ナビゲーション、PCは左サイドバーまたは上部タブで、同じ情報設計を画面幅に応じて切り替える。
 - 添付イメージのように、LINE上の案件配信は横並びカードで複数案件を比較できる形にする。ただし詳細閲覧、検索、保存、マイページは統合ポータル側で扱う。
+- 統合ポータルの案件探索対象は `visibility_type = 'public'` の公開案件に限定する。`private_store` 案件は店舗QR・専用URL専用で、通常の案件一覧・保存一覧・検索には出さない。
+- 回答者向け同意は `usage_category = 'consent_global'`、案件別同意は `usage_category = 'consent_project'` を基準に扱い、`public`、`b2b_contract`、`internal` はLIFF上の同意取得対象にしない。
 
 ## ユーザー種別
 
@@ -65,6 +71,15 @@
 5. ユーザーは詳細、謝礼、所要時間、募集人数、応募状態を確認する。
 6. 対象ユーザーに既存 assignment がある場合は `/liff/survey/:assignmentId` へ進む。
 7. 回答フロー、完了処理、ポイント付与は既存実装を使う。
+
+### 店舗専用アンケートから回答
+
+1. 運営が店舗・クライアントと紐づく `private_store` 案件を準備し、`entry_code` を発行する。
+2. 店舗QRまたは専用URL `/liff/store?entry_code={entryCode}` からユーザーがLIFFを開く。
+3. LIFF ID tokenで本人確認し、`entry_code` が `published` かつ `private_store` の案件に紐づくことを検証する。
+4. respondent と assignment を冪等に確保する。再訪問時は既存 assignment を再利用する。
+5. 既存 `/liff/survey/:assignmentId` へ遷移し、回答フロー、完了処理、ポイント付与は通常案件と同じ実装を使う。
+6. `private_store` 案件は統合ポータルの通常検索・保存一覧・公開詳細には表示しない。
 
 ### リッチメニューからマイページ
 
@@ -444,7 +459,7 @@ postback payload例:
 
 追加要件:
 
-- 公開条件を `status = 'published'` に加え、`is_discoverable = true` も使う場合は既存公開案件をバックフィルする。
+- 公開条件は `status = 'published'` かつ `visibility_type = 'public'` とする。`is_discoverable = true` も併用する場合は既存公開案件をバックフィルする。
 - タイトル検索は `user_display_title` と `name` を対象にする。
 
 ### 案件詳細
@@ -457,6 +472,23 @@ postback payload例:
 - 回答開始URL
 - 対象外理由を表示できる場合は返す
 - 受付終了・非公開時は404または受付終了レスポンスにする
+
+### 店舗専用アンケート入口
+
+既存 `GET /liff/store` と `POST /liff/store/resolve` を継続利用する。
+
+`GET /liff/store`
+
+- 種別: EJSページ
+- 入力: `entry_code`、またはLIFF SDK経由の `liff.state`
+- 出力: 店舗専用アンケートの解決・遷移用シェル
+
+`POST /liff/store/resolve`
+
+- 認証: LIFF ID token必須
+- 入力: `entry_code`
+- 処理: `published` かつ `visibility_type = 'private_store'` の案件だけを解決し、respondent / assignment を冪等に確保する
+- 出力: `assignment_id`, `project_id`
 
 ### 保存
 
@@ -476,7 +508,7 @@ webhookの postback / message で受ける。既存 `/liff/daily-survey/:surveyI
 
 | テーブル | 用途 |
 |---|---|
-| `projects` | 案件基本情報、公開状態、表示メタデータ |
+| `projects` | 案件基本情報、公開状態、表示メタデータ、`visibility_type`、店舗専用 `entry_code` |
 | `project_assignments` | ユーザーごとの案件配信・回答状態 |
 | `project_favorites` | 保存済み案件 |
 | `sessions` / `answers` | 通常案件回答 |
@@ -487,15 +519,25 @@ webhookの postback / message で受ける。既存 `/liff/daily-survey/:surveyI
 | `line_menu_actions` | リッチメニュー・テキスト導線 |
 | `liff_entrypoints` | LIFF起動先管理 |
 | `notification_logs` / `delivery_logs` | 配信記録 |
+| `clients` | 店舗専用アンケートの依頼元・店舗管理 |
+| `documents` / `document_versions` | 利用規約・プライバシーポリシー・案件別同意・公開文書 |
+| `user_consent_records` | ユーザーごとの同意履歴 |
+| `cron_dispatch_runs` | Vercel Cronディスパッチャの発火履歴・二重実行防止 |
 
 追加・見直し:
 
 | 対象 | 要件 |
 |---|---|
-| `projects.is_discoverable` | 統合ポータル表示可否に使う場合、既存 `published` 案件を true にバックフィルする |
+| `projects.visibility_type` | `public` は統合ポータル探索対象、`private_store` は店舗QR・専用URL専用 |
+| `projects.entry_code` | 店舗専用アンケートの専用URL/QR識別子。非NULL時は一意にする |
+| `projects.client_id` / `clients` | 店舗・クライアント単位の管理に使う |
+| `projects.is_discoverable` | 併用する場合、`visibility_type = 'public'` との役割分担を明確にし、既存 `published` 案件を true にバックフィルする |
+| `documents.usage_category` | `consent_global` / `consent_project` / `public` / `b2b_contract` / `internal` を同意・配布判定の主軸にする |
+| `project_document_requirements` | 案件別同意に使う場合、紐づく書類は `is_active = true` かつ `usage_category = 'consent_project'` に限定する |
 | `liff_entrypoints` | `portal` entrypoint を追加する |
 | `line_menu_actions` | `portal` の深いリンクを設定できるようにする |
 | `daily_survey_line_sessions` | 複数問・自由入力のLINE内回答に必要 |
+| `cron_dispatch_runs` | 定期配信ディスパッチャの最終発火履歴を保持する |
 
 ## 権限・セキュリティ要件
 
@@ -503,7 +545,11 @@ webhookの postback / message で受ける。既存 `/liff/daily-survey/:surveyI
 - line_user_id はサーバー側でID tokenまたはLINE webhook sourceから取得する。
 - 他ユーザーの保存案件、assignment、ポイント、プロフィールを取得できないこと。
 - 案件詳細は公開状態を確認する。非公開・停止・アーカイブは表示しない。
+- 統合ポータルの案件詳細・一覧は `visibility_type = 'public'` に限定し、`private_store` は `/liff/store` の `entry_code` 解決以外で表示しない。
 - assignment がない案件では通常案件回答URLを発行しない。
+- グローバル同意は `is_active = true`、`is_required_global = true`、`usage_category = 'consent_global'` の書類だけを対象にする。
+- 案件別同意は `project_document_requirements` に紐づき、かつ `is_active = true`、`usage_category = 'consent_project'` の書類だけを対象にする。
+- `public`、`b2b_contract`、`internal` の書類は回答者向けLIFF同意フローに出さない。
 - デイリーアンケートのpostbackは、配信対象ユーザー・有効期限・回答済みを検証する。
 - PCブラウザ利用時も認証状態なしで個人情報を表示しない。
 
@@ -543,6 +589,9 @@ PC:
 - [ ] リッチメニューの「案件を探す」から検索可能な案件一覧が開く。
 - [ ] スマホ幅360px、390px、PC幅1366pxで主要画面の表示が破綻しない。
 - [ ] 案件一覧で検索、カテゴリ、並び替え、保存、詳細遷移ができる。
+- [ ] `visibility_type = 'private_store'` の案件は通常の案件一覧・検索・保存一覧・公開詳細に表示されない。
+- [ ] `/liff/store?entry_code=...` から店舗専用アンケートを開き、既存 `/liff/survey/:assignmentId` で回答できる。
+- [ ] グローバル同意は `usage_category = 'consent_global'`、案件別同意は `usage_category = 'consent_project'` の有効書類だけが表示される。
 - [ ] 保存済み案件で受付中・受付終了の状態が分かる。
 - [ ] デイリーアンケートをLINE内ボタンで回答でき、`daily_survey_answers`、`daily_survey_deliveries.status = answered`、ポイント・ストリークが更新される。
 - [ ] デイリーアンケートに重複回答した場合、追加保存や二重ポイント付与が発生しない。
@@ -557,12 +606,14 @@ PC:
 2. `GET /liff/app` と `src/views/liff/app.ejs` を作る。
 3. 既存の `/liff/projects-data`、`/liff/projects/:id/data`、`/liff/mypage-data`、`/liff/interactions-data` を統合ポータルから呼び出す。
 4. 既存 `/liff/projects` などは統合ポータルへ寄せる。完全削除はしない。
-5. LINE新着案件カードをcarousel化し、CTAを統合ポータルの詳細URLへ変更する。
-6. `line_menu_actions` のリッチメニュー導線を統合ポータルの深いリンクへ更新する。
-7. デイリーアンケートLINE内回答のpostback処理を追加する。
-8. 複数問・自由入力対応が必要な場合は `daily_survey_line_sessions` を追加する。
-9. PC・スマホ表示をPlaywrightまたはブラウザで確認する。
-10. `npm run build` と関連テストを実行する。
+5. `visibility_type = 'public'` を統合ポータル探索対象、`private_store` を店舗専用導線として明確に分離する。
+6. 書類同意処理を `usage_category` 基準に合わせ、`consent_global` / `consent_project` 以外がLIFF同意フローに混ざらないようにする。
+7. LINE新着案件カードをcarousel化し、CTAを統合ポータルの詳細URLへ変更する。
+8. `line_menu_actions` のリッチメニュー導線を統合ポータルの深いリンクへ更新する。
+9. デイリーアンケートLINE内回答のpostback処理を追加する。
+10. 複数問・自由入力対応が必要な場合は `daily_survey_line_sessions` を追加する。
+11. PC・スマホ表示をPlaywrightまたはブラウザで確認する。
+12. `npm run build` と関連テストを実行する。
 
 触らないもの:
 

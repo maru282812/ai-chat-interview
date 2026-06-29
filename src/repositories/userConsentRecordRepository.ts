@@ -156,6 +156,20 @@ export const userConsentRecordRepository = {
     return (data ?? []) as UserConsentRecord[];
   },
 
+  // 統計エクスポートの同意フィルタ用: 複数ユーザーの有効な同意レコードを一括取得 (§19)
+  async listActiveByLineUserIds(lineUserIds: string[]): Promise<UserConsentRecord[]> {
+    if (lineUserIds.length === 0) {
+      return [];
+    }
+    const { data, error } = await supabase
+      .from("user_consent_records")
+      .select("*, document:documents(id, title, document_type)")
+      .in("line_user_id", lineUserIds)
+      .is("deleted_at", null);
+    throwIfError(error);
+    return (data ?? []) as UserConsentRecord[];
+  },
+
   // CSV出力用: 全件取得（フィルタ可）
   async listForExport(filters: {
     documentId?: string;

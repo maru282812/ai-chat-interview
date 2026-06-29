@@ -51,6 +51,41 @@ adminRoutes.get(
   "/projects/:projectId/exports/expired.csv",
   asyncHandler(adminController.exportProjectExpiredAssignments)
 );
+// 統計向けエクスポート (§11)
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/respondents-wide.csv",
+  asyncHandler(adminController.exportStatRespondentsWide)
+);
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/answers-long.csv",
+  asyncHandler(adminController.exportStatAnswersLong)
+);
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/codebook.csv",
+  asyncHandler(adminController.exportStatCodebook)
+);
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/questionnaire-snapshot.json",
+  asyncHandler(adminController.exportStatSnapshot)
+);
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/randomization-log.csv",
+  asyncHandler(adminController.exportStatRandomizationLog)
+);
+// 送付前バリデーション (§4/§5/§6)
+adminRoutes.get(
+  "/projects/:projectId/validate",
+  asyncHandler(adminController.validateProjectSurvey)
+);
+// 調査票スナップショット 確定/一覧 (§1/§14)
+adminRoutes.post(
+  "/projects/:projectId/snapshot",
+  asyncHandler(adminController.createProjectSnapshot)
+);
+adminRoutes.get(
+  "/projects/:projectId/snapshots",
+  asyncHandler(adminController.listProjectSnapshots)
+);
 adminRoutes.get("/questions/:questionId/edit", asyncHandler(adminController.editQuestion));
 adminRoutes.post("/questions/:questionId", asyncHandler(adminController.updateQuestion));
 

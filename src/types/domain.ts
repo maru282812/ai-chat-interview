@@ -499,6 +499,10 @@ export interface QuestionMeta {
   probe_config?: QuestionProbeConfig;
   completion_conditions?: QuestionCompletionCondition[];
   render_style?: QuestionRenderStyle;
+  /** 統計エクスポート用クリーニングメタの上書き (codebook.ts CleaningOverride)。任意。 */
+  cleaning?: Record<string, unknown>;
+  /** 明示的な設問間依存（surveyValidation 用）。任意。 */
+  dependencies?: Array<Record<string, unknown>>;
 }
 
 export interface Question {
@@ -585,6 +589,20 @@ export interface Respondent {
   created_at: string;
   updated_at: string;
   current_rank?: Rank | null;
+  /** テスト回答フラグ（統計エクスポート §17・migration 067）。既定 false。 */
+  is_test?: boolean;
+}
+
+/** 調査票スナップショット（統計エクスポート §1/§14・migration 068）。 */
+export interface QuestionnaireSnapshot {
+  id: UUID;
+  project_id: UUID;
+  version: number;
+  wave_code: string | null;
+  snapshot_hash: string;
+  definition_json: Record<string, unknown>;
+  is_active: boolean;
+  created_at: string;
 }
 
 export interface ProjectAssignment {
@@ -760,6 +778,12 @@ export interface Session {
   started_at: string;
   completed_at: string | null;
   last_activity_at: string;
+  /** ランダム化シード（再現性・§22・migration 069）。 */
+  randomization_seed?: string | null;
+  /** 実表示順 { question_id: position }（§3・migration 069）。 */
+  display_order_json?: Record<string, number> | null;
+  /** 回答時点の調査票スナップショット（§1・migration 068）。 */
+  snapshot_id?: string | null;
 }
 
 export interface Message {
