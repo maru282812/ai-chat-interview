@@ -236,6 +236,10 @@
           <input type="checkbox" name="is_discoverable" value="true" <%= project?.is_discoverable ? "checked" : "" %> />
           LIFF案件一覧に公開する
         </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" name="randomize_question_order" value="true" <%= project?.randomize_question_order ? "checked" : "" %> />
+          設問をランダム表示する（回答者ごとに設問順を入替・依存順は自動保持）
+        </label>
         <label>
           公開区分（店舗専用アンケート）
           <select name="visibility_type" id="visibility_type_select">

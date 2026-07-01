@@ -69,6 +69,18 @@ function shuffleInPlace<T>(items: T[], rng: () => number): void {
   }
 }
 
+/** シード文字列から決定的な擬似乱数関数を作る（他モジュール再利用用）。 */
+export function createSeededRng(seed: string): () => number {
+  return mulberry32(hashSeed(seed));
+}
+
+/** シードで決定的にシャッフルした新しい配列を返す。 */
+export function seededShuffle<T>(items: T[], seed: string): T[] {
+  const copy = [...items];
+  shuffleInPlace(copy, createSeededRng(seed));
+  return copy;
+}
+
 interface PseudoBlock {
   block_code: string;
   master_order: number;

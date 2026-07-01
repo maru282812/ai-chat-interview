@@ -117,6 +117,17 @@ adminRoutes.get("/projects/:projectId/page-groups",           asyncHandler(admin
 adminRoutes.post("/projects/:projectId/page-groups",          asyncHandler(adminController.createPageGroup));
 adminRoutes.post("/projects/:projectId/page-groups/:pageGroupId", asyncHandler(adminController.updatePageGroup));
 adminRoutes.post("/projects/:projectId/page-groups/:pageGroupId/delete", asyncHandler(adminController.deletePageGroup));
+// コンセプト・ローテーション（L1）
+adminRoutes.get("/projects/:projectId/concepts",                       asyncHandler(adminController.conceptsPage));
+adminRoutes.post("/projects/:projectId/concept-rotation",             asyncHandler(adminController.setConceptRotationMode));
+adminRoutes.post("/projects/:projectId/concepts",                     asyncHandler(adminController.createConcept));
+adminRoutes.post("/projects/:projectId/concepts/:conceptId",          asyncHandler(adminController.updateConcept));
+adminRoutes.post("/projects/:projectId/concepts/:conceptId/delete",   asyncHandler(adminController.deleteConcept));
+// ブロック自動設計（AI提案＋プレビュー）
+adminRoutes.get("/projects/:projectId/blocks",          asyncHandler(adminController.blockDesigner));
+adminRoutes.post("/projects/:projectId/blocks/suggest", asyncHandler(adminController.suggestBlocks));
+adminRoutes.post("/projects/:projectId/blocks/preview", asyncHandler(adminController.previewBlocks));
+adminRoutes.post("/projects/:projectId/blocks/apply",   asyncHandler(adminController.applyBlocks));
 
 // Tag API (formV3.ejs から呼び出される)
 adminRoutes.post("/api/parse-tags",    asyncHandler(adminController.parseTagsApi));
@@ -269,6 +280,7 @@ adminRoutes.get("/documents/:documentId/consent-audit",           asyncHandler(a
 
 // 店舗専用アンケート管理
 adminRoutes.get("/store-surveys",                       asyncHandler(adminController.storeSurveys));
+adminRoutes.get("/store-surveys/:projectId/flyer",      asyncHandler(adminController.storeSurveyFlyer));
 adminRoutes.post("/store-surveys/mark",                 asyncHandler(adminController.markProjectAsStore));
 adminRoutes.post("/store-surveys/:projectId",           asyncHandler(adminController.updateStoreSurvey));
 adminRoutes.post("/store-clients",                      asyncHandler(adminController.createClient));

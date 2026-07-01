@@ -13,6 +13,9 @@ import {
 } from "../lib/statExport";
 import { validateSurvey } from "../lib/surveyValidation";
 import { type RandomizationQuestion, computeDisplayOrder } from "../lib/randomization";
+import { buildFallbackPlan, parseAiPlan, previewOrders } from "../lib/blockPlan";
+import { computeOptionOrder } from "../lib/optionRandomization";
+import { assignConceptOrder, latinSquareOrder, permutations } from "../lib/latinSquare";
 import type { Answer, Project, Question } from "../types/domain";
 
 function makeQuestion(partial: Partial<Question> & Pick<Question, "question_code" | "question_type" | "sort_order">): Question {
@@ -310,6 +313,115 @@ test("randomization: fix_within はブロック内順を固定する（§3）", 
     const { order } = computeDisplayOrder({ questions, blocks, seed });
     assert.deepEqual([order.get("id-Q1"), order.get("id-Q2"), order.get("id-Q3")], [1, 2, 3]);
   }
+});
+
+test("blockPlan: フォールバックはマスター順を連続チャンクでN分割する", () => {
+  const qs = [Q_SINGLE, Q_MULTI, Q_NUM, Q_TEXT]; // sort_order 1..4
+  const plan = buildFallbackPlan(qs, 2);
+  assert.equal(plan.blocks.length, 2);
+  assert.deepEqual(plan.blocks[0]!.question_ids, [Q_SINGLE.id, Q_MULTI.id]);
+  assert.deepEqual(plan.blocks[1]!.question_ids, [Q_NUM.id, Q_TEXT.id]);
+});
+
+test("blockPlan: AI出力を解析し、未割当設問は最後のブロックへ寄せる", () => {
+  const qs = [Q_SINGLE, Q_MULTI, Q_NUM, Q_TEXT];
+  const content = '```json\n{"blocks":[{"title":"前半","question_codes":["Q1","Q2"],"randomize_within":true},{"title":"後半","question_codes":["Q3"]}]}\n```';
+  const plan = parseAiPlan(content, qs);
+  assert.ok(plan);
+  assert.equal(plan!.blocks.length, 2);
+  assert.equal(plan!.blocks[0]!.randomize_within, true);
+  // Q4 はAI出力に無い → 最後のブロックへ寄る
+  assert.ok(plan!.blocks[1]!.question_ids.includes(Q_TEXT.id));
+});
+
+test("blockPlan: プレビューは依存順を保ち、決定的（同seed同結果）", () => {
+  const qs = [Q_SINGLE, Q_MULTI, Q_NUM, Q_TEXT];
+  // Q_TEXT(Q4) が Q_MULTI(Q2) に依存する設問文＋answerInsertion を付与
+  const q4dep = makeQuestion({
+    question_code: "Q4",
+    question_type: "free_text_long",
+    sort_order: 4,
+    ai_probe_enabled: true,
+    display_tags_parsed: { answerInsertions: [{ source: "Q2", target: "question_text" }] }
+  });
+  const questions = [Q_SINGLE, Q_MULTI, Q_NUM, q4dep];
+  const plan = { blocks: [{ title: "B1", is_randomizable: false, randomize_within: true, fix_within: false, question_ids: questions.map((q) => q.id) }] };
+  const run1 = previewOrders({ plan, questions, n: 3 });
+  const run2 = previewOrders({ plan, questions, n: 3 });
+  assert.deepEqual(run1, run2, "決定的");
+  for (const respondent of run1) {
+    assert.ok(respondent.question_codes.indexOf("Q2") < respondent.question_codes.indexOf("Q4"), "依存先Q2はQ4より前");
+  }
+});
+
+const OPT = (v: string) => ({ value: v, label: v });
+
+test("optionRandomization: アンカー(その他)は固定し、それ以外をシャッフル（L3）", () => {
+  const options = [OPT("a"), OPT("b"), OPT("c"), OPT("other")];
+  const config = { enabled: true, anchored_values: ["other"] };
+  // 複数seedで other は常に末尾(index3)、a/b/c は入れ替わりうる
+  let shuffledSomewhere = false;
+  for (const seed of ["s1", "s2", "s3", "s4", "s5"]) {
+    const out = computeOptionOrder(options, config, seed);
+    assert.equal(out[3]!.value, "other", "アンカーは元の位置に固定");
+    assert.deepEqual([...out.map((o) => o.value)].sort(), ["a", "b", "c", "other"], "選択肢は保持");
+    if (out.map((o) => o.value).slice(0, 3).join("") !== "abc") shuffledSomewhere = true;
+  }
+  assert.ok(shuffledSomewhere, "非アンカーがシャッフルされる");
+});
+
+test("optionRandomization: enabled=false は不変", () => {
+  const options = [OPT("a"), OPT("b"), OPT("c")];
+  const out = computeOptionOrder(options, { enabled: false }, "s1");
+  assert.deepEqual(out.map((o) => o.value), ["a", "b", "c"]);
+});
+
+test("optionRandomization: グループは群内でまとまり、同seedは決定的（L3'）", () => {
+  const options = ["apple", "banana", "tshirt", "pants", "other"].map(OPT);
+  const config = {
+    enabled: true,
+    anchored_values: ["other"],
+    randomize_groups: true,
+    groups: [
+      { label: "果物", values: ["apple", "banana"] },
+      { label: "服", values: ["tshirt", "pants"] }
+    ]
+  };
+  const out1 = computeOptionOrder(options, config, "seed-x");
+  const out2 = computeOptionOrder(options, config, "seed-x");
+  assert.deepEqual(out1.map((o) => o.value), out2.map((o) => o.value), "決定的");
+  assert.equal(out1[4]!.value, "other", "アンカー固定");
+  // 群はまとまる: 果物2つが隣接、服2つが隣接
+  const seq = out1.slice(0, 4).map((o) => o.value);
+  const fruitIdx = [seq.indexOf("apple"), seq.indexOf("banana")].sort((a, b) => a - b);
+  const clothIdx = [seq.indexOf("tshirt"), seq.indexOf("pants")].sort((a, b) => a - b);
+  assert.equal(fruitIdx[1]! - fruitIdx[0]!, 1, "果物が隣接");
+  assert.equal(clothIdx[1]! - clothIdx[0]!, 1, "服が隣接");
+});
+
+test("latinSquare: 巡回ラテン方格は各位置に各コンセプトが均等に出る（L1）", () => {
+  const concepts = ["P", "Q", "R"];
+  const rows = [0, 1, 2].map((i) => latinSquareOrder(concepts, i));
+  assert.deepEqual(rows[0], ["P", "Q", "R"]);
+  assert.deepEqual(rows[1], ["Q", "R", "P"]);
+  assert.deepEqual(rows[2], ["R", "P", "Q"]);
+  // 各位置(列)に P/Q/R が1回ずつ出る＝ラテン方格
+  for (let col = 0; col < 3; col += 1) {
+    assert.deepEqual([rows[0]![col], rows[1]![col], rows[2]![col]].sort(), ["P", "Q", "R"]);
+  }
+  // 巡回: index=3 は index=0 と同じ
+  assert.deepEqual(latinSquareOrder(concepts, 3), ["P", "Q", "R"]);
+});
+
+test("latinSquare: full は全順列、assignConceptOrder は mode で切替・off/単一は不変（L1）", () => {
+  assert.equal(permutations(["P", "Q", "R"]).length, 6);
+  assert.deepEqual(assignConceptOrder(["P", "Q", "R"], 0, "off"), ["P", "Q", "R"]);
+  assert.deepEqual(assignConceptOrder(["P"], 5, "latin"), ["P"]);
+  assert.deepEqual(assignConceptOrder(["P", "Q", "R"], 1, "latin"), ["Q", "R", "P"]);
+  // full は index で別の順列
+  const a = assignConceptOrder(["P", "Q", "R"], 0, "full");
+  const b = assignConceptOrder(["P", "Q", "R"], 1, "full");
+  assert.notDeepEqual(a, b);
 });
 
 test("validation: 健全な調査票は ok=true（warningのみ許容）", () => {

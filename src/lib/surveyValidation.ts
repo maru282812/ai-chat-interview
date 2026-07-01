@@ -168,6 +168,18 @@ function deriveEdges(question: Question): DependencyEdge[] {
   return edges;
 }
 
+/**
+ * ランダム化が壊してはならない順序制約エッジ（from は to より後に表示される必要がある）を抽出する。
+ * branch_logic は順序制約に含めない（分岐先は前後どちらでもよい）。
+ */
+export function extractOrderingEdges(questions: Question[]): Array<{ from: string; to: string }> {
+  return questions
+    .filter((question) => !question.is_system)
+    .flatMap((question) => deriveEdges(question))
+    .filter((edge) => ORDERING_TYPES.includes(edge.type))
+    .map((edge) => ({ from: edge.from, to: edge.to }));
+}
+
 function hasOrderDependentWording(question: Question): boolean {
   const text = `${question.question_text ?? ""}${question.comment_top ?? ""}${question.comment_bottom ?? ""}`;
   return ORDER_DEPENDENT_PHRASES.some((phrase) => text.includes(phrase));

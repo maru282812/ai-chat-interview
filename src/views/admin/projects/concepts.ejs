@@ -1,0 +1,97 @@
+<%- include("../../partials/header", { title }) %>
+
+<div class="card stack">
+  <div class="actions-row" style="justify-content:space-between;">
+    <h1 style="margin:0;">コンセプト管理（ローテーション）</h1>
+    <a class="button-link secondary" href="/admin/projects/<%= project.id %>/questions">設問一覧へ戻る</a>
+  </div>
+  <p class="muted">プロジェクト: <strong><%= project.name %></strong></p>
+
+  <div class="card subtle-card" style="background:#f3f9f8;border:1px solid #cfe3df;padding:12px;font-size:13px;">
+    複数コンセプト（例: おいしさ重視P / 品質重視Q / 価格重視R）を用意すると、<strong>同じアンケートを1人が全コンセプト分回答</strong>し、
+    提示順を回答者ごとに均等ローテーション（ラテン方格）して順序効果を抑えられます。コンセプトを1つも作らなければ従来どおり（単一）。
+  </div>
+
+  <!-- ローテーション方式 -->
+  <form method="post" action="/admin/projects/<%= project.id %>/concept-rotation" style="margin-top:12px;">
+    <label>ローテーション方式
+      <select name="concept_rotation_mode" onchange="this.form.submit()">
+        <% const mode = project.concept_rotation_mode || 'off'; %>
+        <option value="off"   <%= mode==='off'?'selected':'' %>>off（ローテーションしない）</option>
+        <option value="latin" <%= mode==='latin'?'selected':'' %>>latin（ラテン方格・推奨）</option>
+        <option value="full"  <%= mode==='full'?'selected':'' %>>full（全順列・人数管理が大変）</option>
+      </select>
+    </label>
+    <noscript><button type="submit">適用</button></noscript>
+  </form>
+
+  <!-- コンセプト一覧 -->
+  <h2 style="margin-top:16px;">コンセプト</h2>
+  <% if (concepts.length === 0) { %>
+    <p class="muted">未登録です。下のフォームから追加してください（2つ以上でローテーションが有効）。</p>
+  <% } else { %>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+      <thead>
+        <tr style="border-bottom:2px solid #d8e3e0;">
+          <th style="padding:8px;text-align:left;">順</th>
+          <th style="padding:8px;text-align:left;">コード</th>
+          <th style="padding:8px;text-align:left;">タイトル</th>
+          <th style="padding:8px;text-align:left;">有効</th>
+          <th style="padding:8px;text-align:left;">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const c of concepts) { %>
+          <tr style="border-bottom:1px solid #eee;">
+            <td style="padding:8px;"><%= c.master_order %></td>
+            <td style="padding:8px;"><strong><%= c.concept_code %></strong></td>
+            <td style="padding:8px;"><%= c.title || '' %></td>
+            <td style="padding:8px;"><%= c.is_active ? '✓' : '—' %></td>
+            <td style="padding:8px;">
+              <details>
+                <summary class="button-link secondary" style="cursor:pointer;list-style:none;display:inline-block;padding:4px 10px;font-size:12px;">編集</summary>
+                <div style="margin-top:8px;padding:12px;border:1px solid #d8e3e0;border-radius:8px;background:#fff;">
+                  <form method="post" action="/admin/projects/<%= project.id %>/concepts/<%= c.id %>">
+                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+                      <label>コード <input type="text" name="concept_code" value="<%= c.concept_code %>" /></label>
+                      <label>順 <input type="number" name="master_order" value="<%= c.master_order %>" min="0" /></label>
+                      <label>タイトル <input type="text" name="title" value="<%= c.title || '' %>" /></label>
+                    </div>
+                    <label style="display:block;margin-top:6px;">説明（コンセプト提示文）
+                      <textarea name="description" rows="2" style="width:100%;"><%= c.description || '' %></textarea>
+                    </label>
+                    <label style="display:block;margin-top:6px;"><input type="checkbox" name="is_active" value="1" <%= c.is_active ? 'checked' : '' %> /> 有効</label>
+                    <div style="margin-top:8px;display:flex;gap:8px;">
+                      <button type="submit" class="button-link primary" style="font-size:13px;">更新</button>
+                    </div>
+                  </form>
+                  <form method="post" action="/admin/projects/<%= project.id %>/concepts/<%= c.id %>/delete" style="margin-top:8px;">
+                    <button type="submit" class="button-link danger" style="font-size:12px;" onclick="return confirm('このコンセプトを削除します。')">削除</button>
+                  </form>
+                </div>
+              </details>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } %>
+
+  <hr style="border:none;border-top:1px solid #d8e3e0;margin:12px 0;" />
+  <h2>コンセプトを追加</h2>
+  <form method="post" action="/admin/projects/<%= project.id %>/concepts" class="stack-sm">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+      <label>コード <span style="color:red">*</span> <input type="text" name="concept_code" placeholder="例: P" required /></label>
+      <label>順 <input type="number" name="master_order" min="0" placeholder="例: 1" /></label>
+      <label>タイトル <input type="text" name="title" placeholder="例: おいしさ重視" /></label>
+    </div>
+    <label>説明（コンセプト提示文） <textarea name="description" rows="2" placeholder="このコンセプトの説明・提示文"></textarea></label>
+    <div><button type="submit" class="button-link primary">追加する</button></div>
+  </form>
+
+  <p class="helper-text" style="margin-top:10px;font-size:11px;">
+    ※ 提示順の割当（ラテン方格）と集計エンジンは実装済みです。「全コンセプトを順に回答させる」実際の配信画面の結線は次工程です（docs参照）。
+  </p>
+</div>
+
+<%- include("../../partials/footer") %>

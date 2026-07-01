@@ -110,6 +110,7 @@
     <p class="muted" style="margin:0;">プロジェクト: <%= project.name %></p>
     <div class="inline-actions">
       <button type="button" id="previewBtn" class="button-link secondary">プレビュー</button>
+      <a class="button-link secondary" href="/admin/projects/<%= project.id %>/page-groups">🧩 ブロック/ページ</a>
       <a class="button-link secondary" href="/admin/projects/<%= project.id %>/questions">一覧へ戻る</a>
     </div>
   </div>
@@ -388,6 +389,26 @@
         <p id="screeningPassOnNote" class="helper-text" style="color:#1a7a57;display:none;">
           通過対象にしたい回答へチェックを入れてください。この回答を選んだ回答者のみ、本案件へ進みます。
         </p>
+
+        <!-- 選択肢ランダム化 (L3) -->
+        <% const optRand = (question && question.question_config && question.question_config.option_randomization) || {}; %>
+        <% const optFreeText = (question && question.question_config && Array.isArray(question.question_config.options)) ? question.question_config.options.filter(o => o.allow_free_text).map(o => o.label).join("\n") : ""; %>
+        <% const optGroupsText = (optRand.groups || []).map(g => `${g.label || ''}: ${(g.values||[]).join(', ')}`).join("\n"); %>
+        <fieldset style="margin-top:12px;border:1px solid #d8e3e0;border-radius:10px;padding:12px;background:#fafcfb;">
+          <legend style="font-size:13px;color:#2c4a46;">選択肢ランダム化（L3・回答者ごとに適用）</legend>
+          <label style="display:block;"><input type="checkbox" name="option_randomize_enabled" value="1" <%= optRand.enabled ? 'checked' : '' %> /> 選択肢の順番をランダム表示する</label>
+          <label style="display:block;"><input type="checkbox" name="option_randomize_groups" value="1" <%= optRand.randomize_groups ? 'checked' : '' %> /> 群（グループ）の順番もランダム化する</label>
+          <label style="display:block;margin-top:6px;">固定する選択肢（アンカー・改行/カンマ区切り。「その他」「特になし」等はここに入れると位置が固定されます）
+            <textarea name="option_anchors" rows="2" placeholder="その他&#10;特になし"><%= (optRand.anchored_values || []).join("\n") %></textarea>
+          </label>
+          <label style="display:block;margin-top:6px;">群の定義（1行＝「群名: 選択肢1, 選択肢2」。群順＋群内をランダム化）
+            <textarea name="option_groups_text" rows="3" placeholder="果物: りんご, バナナ&#10;服: Tシャツ, ズボン"><%= optGroupsText %></textarea>
+          </label>
+          <label style="display:block;margin-top:6px;">自由記述を出す選択肢（「その他」など・改行/カンマ区切り）
+            <textarea name="option_freetext_labels" rows="2" placeholder="その他"><%= optFreeText %></textarea>
+          </label>
+          <p class="helper-text" style="font-size:11px;margin:4px 0 0;">選択肢は「ラベル名」で指定します。アンカー・群・記述に書いた名前は、上の選択肢のテキストと一致させてください。</p>
+        </fieldset>
       </div>
 
       <!-- 選択肢表示形式 -->

@@ -17,6 +17,47 @@ export const answerRepository = {
     return data as Answer;
   },
 
+  /**
+   * 同一 session×question の primary 回答を1件に収束させる（フォームでの再回答は上書き）。
+   * 既存 primary があれば update-in-place（answer.id を保持し probe の parent_answer_id 参照を壊さない）、
+   * なければ新規作成。answerRepository.create を毎回呼ぶと再回答で重複行が増える問題への対処。
+   */
+  async upsertPrimary(input: {
+    session_id: string;
+    question_id: string;
+    answer_text: string;
+    free_text_answer?: string | null;
+    normalized_answer?: Record<string, unknown> | null;
+  }): Promise<Answer> {
+    const { data: existingRows, error: selErr } = await supabase
+      .from("answers")
+      .select("id")
+      .eq("session_id", input.session_id)
+      .eq("question_id", input.question_id)
+      .eq("answer_role", "primary")
+      .order("created_at", { ascending: true })
+      .limit(1);
+    throwIfError(selErr);
+    const existing = (existingRows ?? [])[0] as { id: string } | undefined;
+
+    if (existing) {
+      const { data, error } = await supabase
+        .from("answers")
+        .update({
+          answer_text: input.answer_text,
+          free_text_answer: input.free_text_answer ?? null,
+          normalized_answer: input.normalized_answer ?? null,
+        })
+        .eq("id", existing.id)
+        .select("*")
+        .single();
+      throwIfError(error);
+      return data as Answer;
+    }
+
+    return this.create({ ...input, answer_role: "primary" });
+  },
+
   async listBySession(sessionId: string): Promise<Answer[]> {
     const { data, error } = await supabase
       .from("answers")

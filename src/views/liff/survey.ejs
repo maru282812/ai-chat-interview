@@ -397,9 +397,16 @@
         <button id="btnCloseLiff" class="btn-next" style="min-width:160px;">LINEに戻る</button>
         <p id="completeCloseTip" style="display:none;font-size:13px;color:#60726f;margin-top:8px;">アンケートは完了しました。この画面を閉じてください。</p>
       </div>
-      <div id="storeSurveyCta" style="margin-top:16px;display:none">
-        <p style="font-size:13px;color:#60726f;margin-bottom:10px;">ご希望の方は、Hibiの他のアンケート案件にもご参加いただけます。</p>
-        <a id="btnViewProjects" class="btn-next" style="display:inline-block;text-decoration:none;min-width:160px;">通常の案件を見る</a>
+      <div id="storeSurveyCta" style="margin-top:20px;display:none;border-top:1px solid #e3ecea;padding-top:18px;">
+        <p style="font-size:14px;font-weight:600;color:#1a2f2a;margin-bottom:6px;">Hibiの他のアンケートにも参加しませんか？</p>
+        <p style="font-size:13px;color:#60726f;line-height:1.7;margin-bottom:14px;">
+          ご参加いただくと、今後Hibiから配信されるアンケート・インタビューに回答してポイントを貯められます。
+          ご利用には利用規約等への同意（無料の会員登録）が必要です。
+        </p>
+        <a id="btnJoinHibi" class="btn-next" style="display:inline-block;text-decoration:none;min-width:200px;">Hibiに参加する（会員登録）</a>
+        <div style="margin-top:10px;">
+          <button id="btnSkipJoin" type="button" class="btn-back" style="display:inline-block;">今はしない</button>
+        </div>
       </div>
       <p id="completeError" style="display:none;color:#e53e3e;font-size:14px;margin-top:12px;">完了処理に失敗しました。時間をおいて再度お試しください。</p>
     </div>
@@ -431,6 +438,17 @@
   // 店舗専用アンケート完了後に通常案件へ誘導する（希望者のみ）
   const IS_STORE_SURVEY = <%- JSON.stringify(locals.isStoreSurvey === true) %>;
   const PROJECTS_URL    = <%- JSON.stringify(locals.projectsUrl || '/liff/projects') %>;
+  // 店舗回答後にグローバル同意フローへ通して正式な Hibi 会員へ昇格させる導線（同意済みなら即マイページへ）
+  const MEMBER_JOIN_URL = <%- JSON.stringify(locals.memberJoinUrl || '/liff/consent?mode=initial&redirect=/liff/mypage') %>;
+
+  // 本人確認済みの LIFF ID token。書込み系API（回答/完了/画像/判定）に添付して所有者検証を通す。
+  let AUTH_ID_TOKEN = null;
+  // 書込み系 fetch 用の共通ヘッダ。トークンがあれば Authorization を付ける。
+  function apiHeaders() {
+    const h = { 'Content-Type': 'application/json' };
+    if (AUTH_ID_TOKEN) h['Authorization'] = 'Bearer ' + AUTH_ID_TOKEN;
+    return h;
+  }
 
   console.log("[survey] script loaded");
   console.log("[survey] liffId=", LIFF_ID);
@@ -499,6 +517,7 @@
     try {
       idToken = liff.getIDToken();
       if (!idToken) throw new Error('getIDToken returned null');
+      AUTH_ID_TOKEN = idToken; // 以降の書込み系APIに添付
       console.info('[survey] ID token acquired');
     } catch (e) {
       console.error('[survey] liff.getIDToken failed', e);
@@ -789,6 +808,7 @@
       imageUrls: o.imageUrls || [],
       title: o.title || '',
       description: o.description || '',
+      allow_free_text: o.allow_free_text || false,
     }));
     const choices = filterChoices(rawChoices, parsed);
 
@@ -814,6 +834,7 @@
         ${choiceImg(c)}
         <span class="choice-label">${esc(c.label)}</span>
         ${c.description ? `<span class="choice-desc">${esc(c.description)}</span>` : ''}
+        ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" style="margin-top:6px;width:100%;box-sizing:border-box;" onclick="event.stopPropagation();" />` : ''}
         ${choiceAdditionalImgs(c)}
       </label>`;
     }
@@ -836,6 +857,7 @@
               ${imgSrc ? `<img class="card-item-img" src="${esc(imgSrc)}" alt="" loading="lazy" onerror="this.style.display='none'" />` : ''}
               <span class="card-item-title">${esc(c.title || c.label)}</span>
               ${c.description ? `<span class="card-item-desc">${esc(c.description)}</span>` : ''}
+              ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" onclick="event.stopPropagation();" style="margin-top:6px;width:100%;box-sizing:border-box;" />` : ''}
               ${additionals.length ? `<div class="card-extra-imgs">${additionals.map(u => `<img class="card-extra-img" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.display='none'" />`).join('')}</div>` : ''}
             </label>`;
           }).join('') + `</div>`;
@@ -861,6 +883,7 @@
               ${imgSrc ? `<img class="card-item-img" src="${esc(imgSrc)}" alt="" loading="lazy" onerror="this.style.display='none'" />` : ''}
               <span class="card-item-title">${esc(c.title || c.label)}</span>
               ${c.description ? `<span class="card-item-desc">${esc(c.description)}</span>` : ''}
+              ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" onclick="event.stopPropagation();" style="margin-top:6px;width:100%;box-sizing:border-box;" />` : ''}
               ${additionals.length ? `<div class="card-extra-imgs">${additionals.map(u => `<img class="card-extra-img" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.display='none'" />`).join('')}</div>` : ''}
             </label>`;
           }).join('') + `</div>`;
@@ -1116,7 +1139,7 @@
     });
     const resp = await fetch('/liff/survey/upload-image', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders(),
       body: JSON.stringify({
         session_id: SESSION_ID,
         assignment_id: ASSIGNMENT_ID,
@@ -1186,7 +1209,7 @@
     try {
       const response = await fetch('/liff/survey/answer', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: apiHeaders(),
         body: JSON.stringify({
           session_id: SESSION_ID,
           assignment_id: ASSIGNMENT_ID,
@@ -1324,6 +1347,18 @@
     }
 
     function bindInputEvents(q) {
+      // 選択肢の回答値を収集（その他=自由記述を考慮・L3）。list/card・single/multi 共通。
+      function collectChoiceVal(qq) {
+        const checked = [...questionArea.querySelectorAll(`input[name="q_${qq.question_code}"]:checked`)];
+        const valueOf = (el) => {
+          const wrap = el.closest('.choice-item') || el.closest('.card-item');
+          const other = wrap && wrap.querySelector('.other-text-input');
+          return (other && other.value.trim()) ? other.value.trim() : el.value;
+        };
+        if (qq.question_type === 'multi_choice') return checked.map(valueOf);
+        return checked.length ? valueOf(checked[0]) : '';
+      }
+
       // ---- 画像カードグリッド（click で label 全体を選択） ----
       questionArea.querySelectorAll('.card-item').forEach(card => {
         card.addEventListener('click', (e) => {
@@ -1338,15 +1373,27 @@
             input.checked = !input.checked;
             card.classList.toggle('selected', input.checked);
           }
-          const qType = q.question_type;
-          let val;
-          if (qType === 'multi_choice') {
-            val = [...questionArea.querySelectorAll(`input[name="q_${q.question_code}"]:checked`)].map(e => e.value);
-          } else {
-            const checked = questionArea.querySelector(`input[name="q_${q.question_code}"]:checked`);
-            val = checked ? checked.value : '';
+          answerCtx.answers[q.question_code.toLowerCase()] = collectChoiceVal(q);
+          checkNextEnabled();
+        });
+      });
+
+      // ---- その他=自由記述 (L3): list/card・single/multi 共通。入力したら該当選択肢を選択状態にして収集 ----
+      questionArea.querySelectorAll('.other-text-input').forEach(inp => {
+        inp.addEventListener('input', () => {
+          const wrap = inp.closest('.choice-item') || inp.closest('.card-item');
+          const box = wrap && wrap.querySelector(`input[name="q_${q.question_code}"]`);
+          if (box && !box.checked) {
+            if (box.type === 'radio') {
+              questionArea.querySelectorAll(`input[name="q_${q.question_code}"]`).forEach(b => { b.checked = false; });
+            }
+            box.checked = true;
+            questionArea.querySelectorAll('.choice-item, .card-item').forEach(l => {
+              const b = l.querySelector('input');
+              if (b) l.classList.toggle('selected', b.checked);
+            });
           }
-          answerCtx.answers[q.question_code.toLowerCase()] = val;
+          answerCtx.answers[q.question_code.toLowerCase()] = collectChoiceVal(q);
           checkNextEnabled();
         });
       });
@@ -1421,18 +1468,15 @@
       questionArea.querySelectorAll(`input[name="q_${q.question_code}"]`).forEach(el => {
         el.addEventListener('change', () => {
           const qType = q.question_type;
-          let val;
           if (qType === 'multi_choice') {
-            val = [...questionArea.querySelectorAll(`input[name="q_${q.question_code}"]:checked`)].map(e => e.value);
             // チェックボックスは個別に toggle（全解除してから追加すると他の選択が消える）
             el.closest('label')?.classList.toggle('selected', el.checked);
           } else {
-            val = el.value;
             // ラジオは排他選択なので全解除→選択項目のみ追加
             questionArea.querySelectorAll(`label.choice-item`).forEach(l => l.classList.remove('selected'));
             el.closest('label')?.classList.add('selected');
           }
-          answerCtx.answers[q.question_code.toLowerCase()] = val;
+          answerCtx.answers[q.question_code.toLowerCase()] = collectChoiceVal(q);
           checkNextEnabled();
         });
       });
@@ -1652,7 +1696,7 @@
         try {
           const judgeResp = await fetch('/liff/survey/' + ASSIGNMENT_ID + '/judge-screening', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: apiHeaders(),
             body: JSON.stringify({ session_id: SESSION_ID }),
           });
           const judgeData = await judgeResp.json();
@@ -1694,7 +1738,7 @@
       try {
         const resp = await fetch('/liff/survey/' + ASSIGNMENT_ID + '/complete', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: apiHeaders(),
           body: JSON.stringify({ session_id: SESSION_ID }),
         });
         if (!resp.ok) throw new Error('complete API error');
@@ -1709,12 +1753,17 @@
           completeCloseTip.style.display = '';
         }
 
-        // 店舗専用アンケートのときだけ「通常案件を見る」CTA を表示（希望者のみ）
+        // 店舗専用アンケートのときだけ「Hibiに参加する（会員登録）」CTA を表示（希望者のみ）
         if (IS_STORE_SURVEY) {
           const storeCta = document.getElementById('storeSurveyCta');
-          const btnViewProjects = document.getElementById('btnViewProjects');
-          if (storeCta && btnViewProjects) {
-            btnViewProjects.href = PROJECTS_URL;
+          const btnJoinHibi = document.getElementById('btnJoinHibi');
+          const btnSkipJoin = document.getElementById('btnSkipJoin');
+          if (storeCta && btnJoinHibi) {
+            // グローバル同意フローへ。同意後 /liff/mypage 着地で正式な Hibi 会員になる。
+            btnJoinHibi.href = MEMBER_JOIN_URL;
+            if (btnSkipJoin) {
+              btnSkipJoin.addEventListener('click', () => { storeCta.style.display = 'none'; });
+            }
             storeCta.style.display = 'block';
           }
         }
@@ -2056,7 +2105,7 @@
             try {
               const judgeResp = await fetch('/liff/survey/' + ASSIGNMENT_ID + '/judge-screening', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: apiHeaders(),
                 body: JSON.stringify({ session_id: SESSION_ID }),
               });
               const judgeData = await judgeResp.json();
@@ -2093,7 +2142,7 @@
           try {
             const resp = await fetch('/liff/survey/' + ASSIGNMENT_ID + '/complete', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: apiHeaders(),
               body: JSON.stringify({ session_id: SESSION_ID }),
             });
             if (!resp.ok) throw new Error('complete API error');

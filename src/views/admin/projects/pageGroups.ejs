@@ -2,8 +2,9 @@
 
 <div class="card stack">
   <div class="actions-row" style="justify-content:space-between;">
-    <h1 style="margin:0;">ページグループ管理</h1>
+    <h1 style="margin:0;">ブロック / ページグループ管理</h1>
     <div style="display:flex;gap:8px;">
+      <a class="button-link primary" href="/admin/projects/<%= project.id %>/blocks">🤖 AIでブロック自動設計</a>
       <a class="button-link secondary" href="/admin/projects/<%= project.id %>/questions">設問一覧へ戻る</a>
     </div>
   </div>
@@ -13,13 +14,17 @@
     &nbsp;|&nbsp; 表示モード: <strong><%= project.display_mode || 'survey_question' %></strong>
   </p>
 
-  <% if (project.display_mode !== 'survey_page') { %>
-    <div class="card subtle-card" style="border:1px solid #f2cf88;background:#fff7e8;color:#8a5b00;padding:12px;">
-      このプロジェクトの表示モードは <strong><%= project.display_mode || 'survey_question' %></strong> です。
-      ページグループは <strong>survey_page</strong> モード時のみ有効です。
-      プロジェクト設定から display_mode を変更してください。
-    </div>
-  <% } %>
+  <div class="card subtle-card" style="border:1px solid #cfe3df;background:#f3f9f8;color:#2c4a46;padding:12px;font-size:13px;">
+    <% if (project.display_mode === 'survey_page') { %>
+      <strong>survey_page モード</strong>：各グループは<strong>視覚的なページ</strong>として表示され、同時に
+      集計・ランダム化の<strong>ブロック</strong>としても機能します。
+    <% } else { %>
+      <strong><%= project.display_mode || 'survey_question' %> モード</strong>：視覚的なページ分割はありませんが、
+      各グループは集計・<strong>ランダム化のブロック</strong>として機能します
+      （設問は各「編集」画面の「ページグループ」でブロックに割り当て）。
+    <% } %>
+    ブロック単位／ブロック内のランダム化は下の各グループの「編集」で設定でき、送付時に回答者ごとへ適用されます（依存順は保持）。
+  </div>
 
   <!-- ページグループ一覧 -->
   <h2>現在のページグループ</h2>
@@ -34,6 +39,7 @@
           <th style="padding:8px;text-align:left;">説明</th>
           <th style="padding:8px;text-align:left;">並び順</th>
           <th style="padding:8px;text-align:left;">所属設問数</th>
+          <th style="padding:8px;text-align:left;">ランダム化</th>
           <th style="padding:8px;text-align:left;">操作</th>
         </tr>
       </thead>
@@ -46,6 +52,12 @@
             <td style="padding:8px;font-size:12px;color:#60726f;"><%= pg.description || '' %></td>
             <td style="padding:8px;"><%= pg.sort_order %></td>
             <td style="padding:8px;"><%= pgQuestions.length %> 問</td>
+            <td style="padding:8px;font-size:12px;">
+              <% if (pg.is_randomizable) { %><span title="ブロック間ランダム化">🔀ページ</span><br/><% } %>
+              <% if (pg.randomize_within && !pg.fix_within) { %><span title="ブロック内ランダム化">🔀ページ内</span><br/><% } %>
+              <% if (pg.fix_within) { %><span title="ページ内順序固定">📌固定</span><% } %>
+              <% if (!pg.is_randomizable && !pg.randomize_within && !pg.fix_within) { %><span class="muted">なし</span><% } %>
+            </td>
             <td style="padding:8px;">
               <details>
                 <summary class="button-link secondary" style="cursor:pointer;list-style:none;display:inline-block;padding:4px 10px;font-size:12px;">編集</summary>
@@ -57,6 +69,13 @@
                       <label>タイトル  <input type="text"   name="title"        value="<%= pg.title || '' %>" /></label>
                     </div>
                     <label>説明 <input type="text" name="description" value="<%= pg.description || '' %>" style="width:100%;" /></label>
+                    <fieldset style="margin-top:8px;border:1px solid #e0e8e6;border-radius:6px;padding:8px;">
+                      <legend style="font-size:12px;color:#60726f;">ランダム化（統計エクスポート §3・送付時に回答者ごとへ適用）</legend>
+                      <label style="display:block;font-size:13px;"><input type="checkbox" name="is_randomizable" <%= pg.is_randomizable ? 'checked' : '' %> /> このページ(ブロック)をページ間でランダムに並べ替える</label>
+                      <label style="display:block;font-size:13px;"><input type="checkbox" name="randomize_within" <%= pg.randomize_within ? 'checked' : '' %> /> ページ内の設問順をランダム化する</label>
+                      <label style="display:block;font-size:13px;"><input type="checkbox" name="fix_within" <%= pg.fix_within ? 'checked' : '' %> /> ページ内の設問順を固定する（ランダム化より優先）</label>
+                      <p class="helper-text" style="margin:4px 0 0;font-size:11px;">依存関係（前問参照・piping 等）がある設問は、ランダム化しても順序が保たれます。</p>
+                    </fieldset>
                     <div style="margin-top:8px;display:flex;gap:8px;">
                       <button type="submit" class="button-link primary" style="font-size:13px;padding:6px 16px;">更新</button>
                     </div>

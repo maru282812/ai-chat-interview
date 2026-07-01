@@ -24,6 +24,9 @@ import { getProjectResearchSettings, parseLineSeparatedList } from "../lib/proje
 import { csvService } from "../services/csvService";
 import { statExportService } from "../services/statExportService";
 import { snapshotService } from "../services/snapshotService";
+import { conceptService } from "../services/conceptService";
+import { projectConceptRepository } from "../repositories/projectConceptRepository";
+import { blockDesignService, type BlockPlan } from "../services/blockDesignService";
 import { validateSurvey } from "../lib/surveyValidation";
 import { adminService } from "../services/adminService";
 import { pointService } from "../services/pointService";
@@ -1799,6 +1802,43 @@ function buildQuestionConfigFromRequest(
       console.log("[question save debug] normalized options:", JSON.stringify(questionConfig.options));
       console.log("[question save debug] valid options count:", (questionConfig.options ?? []).length);
     }
+    // 選択肢ランダム化 (L3): ラベル名で指定（option.value === label）
+    const splitList = (raw: unknown): string[] =>
+      bodyString(raw)
+        .split(/[\n,、]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    const optAnchors = splitList(req.body.option_anchors);
+    const optFreeText = new Set(splitList(req.body.option_freetext_labels));
+    const optGroups = bodyString(req.body.option_groups_text)
+      .split(/\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const sep = line.indexOf(":");
+        const colon = sep >= 0 ? sep : line.indexOf("：");
+        const label = colon >= 0 ? line.slice(0, colon).trim() : "";
+        const values = (colon >= 0 ? line.slice(colon + 1) : line)
+          .split(/[,、]/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        return { label, values };
+      })
+      .filter((group) => group.values.length > 0);
+    const optRandEnabled = req.body.option_randomize_enabled === "1";
+    if (optFreeText.size > 0 && questionConfig.options) {
+      questionConfig.options = questionConfig.options.map((opt) =>
+        optFreeText.has(opt.label) ? { ...opt, allow_free_text: true } : opt
+      );
+    }
+    if (optRandEnabled || optGroups.length > 0 || optAnchors.length > 0) {
+      questionConfig.option_randomization = {
+        enabled: optRandEnabled,
+        ...(optAnchors.length > 0 ? { anchored_values: optAnchors } : {}),
+        ...(optGroups.length > 0 ? { groups: optGroups, randomize_groups: req.body.option_randomize_groups === "1" } : {})
+      };
+    }
+
     if (MULTI_CHOICE_TYPES.includes(questionType)) {
       const minSelect = parseOptionalInteger(req.body.min_select);
       const maxSelect = parseOptionalInteger(req.body.max_select);
@@ -2511,6 +2551,7 @@ export const adminController = {
         screening_config: buildScreeningConfig(req),
         screening_last_question_order: existing.screening_last_question_order ?? null,
         is_discoverable: req.body.is_discoverable === "true" || req.body.is_discoverable === "on",
+        randomize_question_order: req.body.randomize_question_order === "true" || req.body.randomize_question_order === "on",
         category: bodyString(req.body.category) || null,
         estimated_minutes: parseOptionalInteger(req.body.estimated_minutes) ?? null,
         max_respondents: parseOptionalInteger(req.body.max_respondents) ?? null,
@@ -3235,6 +3276,10 @@ export const adminController = {
       description: bodyString(req.body.description).trim() || null,
       sort_order: parseOptionalInteger(req.body.sort_order) ?? undefined,
       page_number: parseOptionalInteger(req.body.page_number) ?? undefined,
+      // §3 ブロック(ページ)ランダム化フラグ（チェックボックス）
+      is_randomizable: req.body.is_randomizable === "on" || req.body.is_randomizable === "true",
+      randomize_within: req.body.randomize_within === "on" || req.body.randomize_within === "true",
+      fix_within: req.body.fix_within === "on" || req.body.fix_within === "true",
     });
     res.redirect(`/admin/projects/${projectId}/page-groups`);
   },
@@ -3244,6 +3289,100 @@ export const adminController = {
     const pageGroupId = routeParam(req, "pageGroupId");
     await questionPageGroupRepository.deleteById(pageGroupId);
     res.redirect(`/admin/projects/${projectId}/page-groups`);
+  },
+
+  // ------------------------------------------------------------------
+  // コンセプト・ローテーション（L1・ラテン方格）
+  // ------------------------------------------------------------------
+  async conceptsPage(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const [project, concepts] = await Promise.all([
+      projectRepository.getById(projectId),
+      conceptService.list(projectId)
+    ]);
+    res.render("admin/projects/concepts", { title: "コンセプト管理", project, concepts });
+  },
+
+  async setConceptRotationMode(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const mode = bodyString(req.body.concept_rotation_mode);
+    const allowed = ["off", "latin", "full"] as const;
+    await projectRepository.update(projectId, {
+      concept_rotation_mode: (allowed as readonly string[]).includes(mode) ? (mode as "off" | "latin" | "full") : "off"
+    });
+    res.redirect(`/admin/projects/${projectId}/concepts`);
+  },
+
+  async createConcept(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const existing = await projectConceptRepository.listByProject(projectId);
+    const nextOrder = existing.reduce((max, concept) => Math.max(max, concept.master_order), 0) + 1;
+    await projectConceptRepository.create({
+      project_id: projectId,
+      concept_code: bodyString(req.body.concept_code).trim() || `C${nextOrder}`,
+      title: bodyString(req.body.title).trim() || null,
+      description: bodyString(req.body.description).trim() || null,
+      master_order: parseOptionalInteger(req.body.master_order) ?? nextOrder
+    });
+    res.redirect(`/admin/projects/${projectId}/concepts`);
+  },
+
+  async updateConcept(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const conceptId = routeParam(req, "conceptId");
+    await projectConceptRepository.update(conceptId, {
+      concept_code: bodyString(req.body.concept_code).trim() || undefined,
+      title: bodyString(req.body.title).trim() || null,
+      description: bodyString(req.body.description).trim() || null,
+      master_order: parseOptionalInteger(req.body.master_order) ?? undefined,
+      is_active: req.body.is_active === "1" || req.body.is_active === "on"
+    });
+    res.redirect(`/admin/projects/${projectId}/concepts`);
+  },
+
+  async deleteConcept(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const conceptId = routeParam(req, "conceptId");
+    await projectConceptRepository.deleteById(conceptId);
+    res.redirect(`/admin/projects/${projectId}/concepts`);
+  },
+
+  // ------------------------------------------------------------------
+  // ブロック自動設計（AI提案＋プレビュー編集・統計エクスポート §3 支援）
+  // ------------------------------------------------------------------
+  async blockDesigner(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const [project, questions, pageGroups] = await Promise.all([
+      projectRepository.getById(projectId),
+      questionRepository.listByProject(projectId),
+      questionPageGroupRepository.listByProject(projectId)
+    ]);
+    res.render("admin/projects/blockDesigner", {
+      title: "ブロック自動設計",
+      project,
+      questions: blockDesignService.designableQuestions(questions),
+      pageGroups
+    });
+  },
+
+  async suggestBlocks(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const count = Number(req.body?.count) || 0; // 0 = 自動
+    res.json(await blockDesignService.suggest(projectId, count));
+  },
+
+  async previewBlocks(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const plan = (req.body?.plan ?? { blocks: [] }) as BlockPlan;
+    const n = Number(req.body?.n) || 3;
+    res.json({ respondents: await blockDesignService.preview(projectId, plan, n) });
+  },
+
+  async applyBlocks(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const plan = (req.body?.plan ?? { blocks: [] }) as BlockPlan;
+    const result = await blockDesignService.apply(projectId, plan);
+    res.json({ ok: true, ...result });
   },
 
   // ------------------------------------------------------------------
@@ -7374,7 +7513,8 @@ export const adminController = {
         project: p,
         clientName: p.client_id ? clientNameById.get(p.client_id) ?? null : null,
         entryUrl: buildStoreEntryUrl(p.entry_code),
-        responseCount: await projectAssignmentRepository.countByProject(p.id)
+        // 「回答数」は完了数（URLを開いただけの流入は含めない）
+        responseCount: await projectAssignmentRepository.countCompletedByProject(p.id)
       }))
     );
 
@@ -7389,6 +7529,34 @@ export const adminController = {
       convertibleProjects,
       msg: typeof req.query.msg === "string" ? req.query.msg : null,
       err: typeof req.query.err === "string" ? req.query.err : null
+    });
+  },
+
+  // ---- 配布用フライヤー（印刷 / PDF 化向けの単独ページ） ----
+
+  async storeSurveyFlyer(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const project = await projectRepository.getById(projectId);
+
+    let clientName: string | null = null;
+    if (project.client_id) {
+      try {
+        const client = await clientRepository.getById(project.client_id);
+        clientName = client?.name ?? null;
+      } catch {
+        // clients テーブル未 GRANT（migration 065 未適用）でもフライヤーは表示する
+      }
+    }
+
+    const surveyTitle = project.user_display_title || project.name;
+    res.render("admin/store-surveys/flyer", {
+      title: `配布用QR - ${clientName || surveyTitle}`,
+      storeName: clientName,
+      surveyTitle,
+      entryUrl: buildStoreEntryUrl(project.entry_code),
+      entryCode: project.entry_code ?? null,
+      isPublished: project.status === "published",
+      backUrl: "/admin/store-surveys"
     });
   },
 
@@ -7432,15 +7600,19 @@ export const adminController = {
       res.redirect("/admin/store-surveys?err=" + encodeURIComponent("案件を選択してください"));
       return;
     }
-    // 店舗コードは初期設定では割り当てない。一覧の編集フォームで後から設定する運用。
+    // 店舗コードは登録時に自動付与する（一意なランダムコード）。編集フォームで後から変更可。
+    // 既に entry_code を持つ案件（再設定など）は上書きしない。
     const clientId = bodyString(req.body.client_id).trim() || null;
+    const current = await projectRepository.getById(projectId);
+    const entryCode = current.entry_code?.trim() || (await generateUniqueEntryCode());
     await projectRepository.update(projectId, {
       visibility_type: "private_store",
-      client_id: clientId
+      client_id: clientId,
+      entry_code: entryCode
     });
     res.redirect(
       "/admin/store-surveys?msg=" +
-        encodeURIComponent("店舗専用アンケートに設定しました。店舗コードを編集から設定してください")
+        encodeURIComponent(`店舗専用アンケートに設定しました（店舗コード: ${entryCode}）。コードは編集から変更できます`)
     );
   },
 
@@ -7479,6 +7651,29 @@ export const adminController = {
     res.redirect("/admin/store-surveys?msg=" + encodeURIComponent("店舗専用アンケートを更新しました"));
   }
 };
+
+/**
+ * 一意な店舗コード（entry_code）を自動生成する。
+ * - URL/QR で扱いやすい英数小文字（紛らわしい 0/o/1/l/i を除外）。
+ * - `st-` プレフィックス + 6 文字。DB の部分 unique index と衝突しないよう事前確認し再試行。
+ */
+async function generateUniqueEntryCode(): Promise<string> {
+  const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+  const makeCode = (): string => {
+    let s = "";
+    for (let i = 0; i < 6; i++) {
+      s += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    return `st-${s}`;
+  };
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const code = makeCode();
+    const existing = await projectRepository.findAnyByEntryCode(code);
+    if (!existing) return code;
+  }
+  // 極めて稀な衝突連続時のフォールバック（タイムスタンプで一意性を担保）
+  return `st-${Date.now().toString(36)}`;
+}
 
 /** 店舗流入用の専用URL。entry_code 未設定時は null。 */
 function buildStoreEntryUrl(entryCode: string | null | undefined): string | null {

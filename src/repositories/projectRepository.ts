@@ -53,6 +53,8 @@ interface ProjectMutationInput {
   visibility_type?: 'public' | 'private_store';
   entry_code?: string | null;
   client_id?: string | null;
+  concept_rotation_mode?: 'off' | 'latin' | 'full';
+  randomize_question_order?: boolean;
 }
 
 type ProjectUpdateInput = Partial<ProjectMutationInput>;

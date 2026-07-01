@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+        background: #eceeed;
+        color: #1a2f2a;
+        padding: 24px 16px;
+      }
+
+      /* 画面操作バー（印刷時は非表示） */
+      .toolbar {
+        max-width: 720px;
+        margin: 0 auto 20px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+      }
+      .toolbar a, .toolbar button {
+        font-size: 14px;
+        padding: 8px 16px;
+        border-radius: 8px;
+        border: 1px solid #cdd9d6;
+        background: #fff;
+        color: #1a2f2a;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .toolbar .primary {
+        background: #2ca87a;
+        color: #fff;
+        border-color: #2ca87a;
+        font-weight: 700;
+      }
+
+      /* A4 を想定したフライヤー本体 */
+      .flyer {
+        max-width: 720px;
+        margin: 0 auto;
+        background: #fff;
+        border-radius: 18px;
+        box-shadow: 0 4px 20px rgba(0,0,0,.08);
+        padding: 48px 40px 40px;
+        text-align: center;
+      }
+      .store-name {
+        font-size: 30px;
+        font-weight: 800;
+        letter-spacing: .02em;
+        margin-bottom: 6px;
+      }
+      .store-name .suffix { font-size: 20px; font-weight: 600; margin-left: 4px; }
+      .survey-title {
+        font-size: 16px;
+        color: #60726f;
+        margin-bottom: 28px;
+      }
+      .lead {
+        font-size: 22px;
+        font-weight: 700;
+        line-height: 1.5;
+        margin-bottom: 28px;
+      }
+      .lead .accent { color: #2ca87a; }
+
+      .qr-box {
+        display: inline-block;
+        padding: 20px;
+        border: 2px solid #e3ecea;
+        border-radius: 16px;
+        background: #fff;
+        margin-bottom: 28px;
+      }
+      .qr-box img { display: block; width: 320px; height: 320px; }
+
+      .steps {
+        max-width: 460px;
+        margin: 0 auto 28px;
+        text-align: left;
+      }
+      .step {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 10px 0;
+        border-bottom: 1px dashed #e3ecea;
+      }
+      .step:last-child { border-bottom: none; }
+      .step .num {
+        flex-shrink: 0;
+        width: 28px; height: 28px;
+        border-radius: 50%;
+        background: #2ca87a;
+        color: #fff;
+        font-weight: 700;
+        font-size: 15px;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .step .txt { font-size: 16px; line-height: 1.5; padding-top: 2px; }
+
+      .url-line {
+        font-size: 13px;
+        color: #60726f;
+        word-break: break-all;
+        background: #f6f9f8;
+        border-radius: 8px;
+        padding: 12px 14px;
+      }
+      .url-line .label { font-weight: 700; color: #1a2f2a; }
+
+      .warn {
+        max-width: 720px;
+        margin: 0 auto 20px;
+        background: #fdeaea;
+        border: 1px solid #b14;
+        color: #902a2a;
+        border-radius: 12px;
+        padding: 14px 18px;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .warn a { color: #902a2a; font-weight: 700; }
+
+      @media print {
+        body { background: #fff; padding: 0; }
+        .toolbar, .warn .noprint { display: none !important; }
+        .warn { display: none !important; }
+        .flyer { box-shadow: none; border-radius: 0; max-width: 100%; padding: 24px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="toolbar">
+      <a href="<%= backUrl %>">← 一覧に戻る</a>
+      <% if (entryUrl) { %>
+        <button class="primary" onclick="window.print()">🖨 印刷 / PDFに保存</button>
+      <% } %>
+    </div>
+
+    <% if (!entryUrl) { %>
+      <div class="warn">
+        この案件には<strong>店舗コードが設定されていない</strong>ため、配布用QRを発行できません。
+        <a href="<%= backUrl %>">一覧の「編集」</a>から店舗コードを設定してください。
+      </div>
+    <% } else { %>
+      <% if (!isPublished) { %>
+        <div class="warn">
+          <span class="noprint">⚠ この案件は<strong>公開中ではありません</strong>。このままだとQRから回答できません。配布前に状態を「公開中」にしてください。</span>
+        </div>
+      <% } %>
+
+      <div class="flyer">
+        <% if (storeName) { %>
+          <div class="store-name"><%= storeName %><span class="suffix">のお客様へ</span></div>
+          <div class="survey-title"><%= surveyTitle %></div>
+        <% } else { %>
+          <div class="store-name"><%= surveyTitle %></div>
+        <% } %>
+
+        <div class="lead">
+          かんたん<span class="accent">アンケート</span>に<br>ご協力ください
+        </div>
+
+        <div class="qr-box">
+          <img alt="アンケート用QRコード"
+               src="https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=8&data=<%= encodeURIComponent(entryUrl) %>" />
+        </div>
+
+        <div class="steps">
+          <div class="step">
+            <div class="num">1</div>
+            <div class="txt">スマートフォンのカメラで<strong>QRコードを読み取る</strong></div>
+          </div>
+          <div class="step">
+            <div class="num">2</div>
+            <div class="txt">LINEで<strong>「Hibi」を友だち追加</strong></div>
+          </div>
+          <div class="step">
+            <div class="num">3</div>
+            <div class="txt">そのまま画面に沿って<strong>アンケートに回答</strong>（数分で完了）</div>
+          </div>
+        </div>
+
+        <div class="url-line">
+          <span class="label">QRが読み取れない場合：</span><br>
+          <%= entryUrl %>
+        </div>
+      </div>
+    <% } %>
+  </body>
+</html>

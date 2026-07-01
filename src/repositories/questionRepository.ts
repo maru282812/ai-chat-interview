@@ -206,6 +206,13 @@ export const questionRepository = {
     return data as Question;
   },
 
+  // ブロック割当用: page_group_id を直接更新する（null で割当解除も可能）。
+  // 通常の update() は page_group_id=null をペイロードから除外するため別経路を用意する。
+  async setPageGroup(id: string, pageGroupId: string | null): Promise<void> {
+    const { error } = await supabase.from("questions").update({ page_group_id: pageGroupId }).eq("id", id);
+    throwIfError(error);
+  },
+
   async getSystemFreeCommentQuestion(projectId: string): Promise<Question | null> {
     return this.getByProjectAndCode(projectId, FREE_COMMENT_QUESTION_CODE);
   },

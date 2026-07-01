@@ -273,6 +273,10 @@ export interface Project {
   name: string;
   /** USERに表示するタイトル。未設定時は name にフォールバックする */
   user_display_title?: string | null;
+  /** コンセプト・ローテーション方式（L1・migration 070）: off|latin|full */
+  concept_rotation_mode?: import("../lib/latinSquare").ConceptRotationMode;
+  /** 設問順ランダマイズの簡単トグル（パターン1・migration 071）。ブロック不要。 */
+  randomize_question_order?: boolean;
   client_name: string | null;
   objective: string | null;
   status: ProjectStatus;
@@ -320,6 +324,8 @@ export interface Project {
 export interface QuestionOption {
   value: string;
   label: string;
+  /** 「その他」等で自由記述欄を出すか（記述あり/なし・L3）。 */
+  allow_free_text?: boolean;
   imageUrl?: string;
   /** 複数画像（画像付きマトリクス行や画像カード複数画像対応） */
   imageUrls?: string[];
@@ -409,6 +415,25 @@ export interface QuestionExtractionConfig {
   extracted_branch_enabled?: boolean;
 }
 
+/** 選択肢グループ（果物/服/動物 のような群）。 */
+export interface OptionGroup {
+  label?: string;
+  /** この群に属する選択肢 value */
+  values: string[];
+}
+
+/** 選択肢ランダム化設定（L3）。 */
+export interface OptionRandomizationConfig {
+  /** 選択肢順をランダム化するか */
+  enabled?: boolean;
+  /** 固定する選択肢 value（「その他」「特になし」等のアンカー）。元の位置を保持する。 */
+  anchored_values?: string[];
+  /** 選択肢グループ（定義があれば群単位で扱う） */
+  groups?: OptionGroup[];
+  /** 群の順序もランダム化するか */
+  randomize_groups?: boolean;
+}
+
 export interface QuestionConfig {
   options?: QuestionOption[];
   matrix_cols?: QuestionOption[];
@@ -438,6 +463,8 @@ export interface QuestionConfig {
   /** 設問文に付ける画像パッケージ */
   question_text_image?: QuestionTextImage;
   meta?: QuestionMeta;
+  /** 選択肢ランダム化設定（L3・選択肢順/グループ/アンカー固定）。 */
+  option_randomization?: OptionRandomizationConfig;
   extraction?: QuestionExtractionConfig | null;
   conversationControl?: {
     probeIntent?: string;
@@ -553,6 +580,12 @@ export interface QuestionPageGroup {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  /** このページ(ブロック)自体をページ間ランダム化の対象にするか（§3・migration 069）。 */
+  is_randomizable?: boolean;
+  /** ページ(ブロック)内の設問順をランダム化するか（§3）。 */
+  randomize_within?: boolean;
+  /** ページ(ブロック)内の設問順を固定する（randomize_within より優先・§3）。 */
+  fix_within?: boolean;
 }
 
 export interface PendingNextQuestionCache {
@@ -591,6 +624,19 @@ export interface Respondent {
   current_rank?: Rank | null;
   /** テスト回答フラグ（統計エクスポート §17・migration 067）。既定 false。 */
   is_test?: boolean;
+}
+
+/** コンセプト（統計エクスポート §3 L1・migration 070）。同一アンケートを複数コンセプト分回答させる単位。 */
+export interface ProjectConcept {
+  id: UUID;
+  project_id: UUID;
+  concept_code: string;
+  title: string | null;
+  description: string | null;
+  master_order: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 /** 調査票スナップショット（統計エクスポート §1/§14・migration 068）。 */
@@ -784,6 +830,8 @@ export interface Session {
   display_order_json?: Record<string, number> | null;
   /** 回答時点の調査票スナップショット（§1・migration 068）。 */
   snapshot_id?: string | null;
+  /** 割り当てられたコンセプト提示順（L1・migration 070）。 */
+  concept_order_json?: string[] | null;
 }
 
 export interface Message {
@@ -804,6 +852,8 @@ export interface Answer {
   answer_role: AnswerRole;
   parent_answer_id: UUID | null;
   normalized_answer: Record<string, unknown> | null;
+  /** どのコンセプトに対する回答か（L1・migration 070）。単一コンセプトなら null。 */
+  concept_code?: string | null;
   created_at: string;
 }
 

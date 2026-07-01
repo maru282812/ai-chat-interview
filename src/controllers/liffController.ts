@@ -24,6 +24,8 @@ import { personalityService } from "../services/personalityService";
 import { postService } from "../services/postService";
 import { respondentService } from "../services/respondentService";
 import { screeningService } from "../services/screeningService";
+import { surveyOrderingService } from "../services/surveyOrderingService";
+import { conceptService } from "../services/conceptService";
 import type { Gender, MaritalStatus, RantTag } from "../types/domain";
 import { runPostCompleteProcess } from "../services/postCompleteService";
 import { rantTagRepository } from "../repositories/rantTagRepository";
@@ -162,6 +164,45 @@ function bearerToken(req: Request): string {
     throw new HttpError(401, "認証情報を確認できませんでした。LINEから開き直してください。");
   }
   return header.slice("Bearer ".length).trim();
+}
+
+/**
+ * 書込み系エンドポイント（回答送信 / 完了 / 画像アップロード / スクリーニング判定）の所有者検証。
+ * verifyIdentity と同じ規則で LIFF ID token を検証し assignment.user_id と一致させる。
+ * これが無いと session_id / assignment_id(UUID) を知る第三者が他人の回答を書き換え・完了できる（IDOR）。
+ * supabase は service_role 接続で RLS が効かないため、この照合がアプリ層の唯一の砦。
+ *
+ * - LIFF未構成/開発skip経路（liffAuthAvailable=false）では検証を省略し従来どおり回答継続を妨げない。
+ * - assignment.user_id 未設定は本番のみ 403、非本番は許容（verifyIdentity と同挙動）。
+ * - トークンは Authorization: Bearer <id_token> または body.id_token を受理。tmtest: seam も透過。
+ */
+async function verifyAssignmentOwnerOrThrow(req: Request, assignmentId: string): Promise<void> {
+  const liffConfig = getSurveyLiffConfig();
+  if (!liffConfig.liffAuthAvailable) {
+    return;
+  }
+  if (!assignmentId) {
+    throw new HttpError(400, "assignment_id が必要です。");
+  }
+  const header = req.headers.authorization;
+  const bearer = header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
+  const token = bearer || stringValue((req.body as { id_token?: unknown })?.id_token).trim();
+  if (!token) {
+    throw new HttpError(401, "認証情報を確認できませんでした。LINEから開き直してください。");
+  }
+  const verified = await liffAuthService.verifyIdToken(token, { path: req.path });
+  const assignment = await projectAssignmentRepository.getById(assignmentId);
+  if (!assignment.user_id) {
+    if (env.NODE_ENV === "production") {
+      logger.warn("verifyOwner.noLineUserId.blocked", { assignmentId, path: req.path });
+      throw new HttpError(403, "本人確認に失敗しました。LINEアプリ内から開き直してください。");
+    }
+    return;
+  }
+  if (assignment.user_id !== verified.userId) {
+    logger.warn("verifyOwner.mismatch", { assignmentId, path: req.path });
+    throw new HttpError(403, "本人確認に失敗しました。LINEアプリ内から開き直してください。");
+  }
 }
 
 function stringValue(value: unknown): string {
@@ -784,6 +825,23 @@ export const liffController = {
       });
     }
 
+    // L1 コンセプト・ローテーション: 初回に提示順を確定して保存（rotation 有効時のみ・additive）。
+    try {
+      const rotationMode = project.concept_rotation_mode ?? "off";
+      if (rotationMode !== "off" && !session.concept_order_json) {
+        const respondents = await respondentRepository.listByProject(project.id);
+        const ordered = [...respondents].sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+        const respondentIndex = Math.max(0, ordered.findIndex(r => r.id === assignment.respondent_id));
+        const order = await conceptService.resolveOrder({ projectId: project.id, respondentIndex, mode: rotationMode });
+        if (order.length > 1) {
+          await sessionRepository.update(session.id, { concept_order_json: order });
+          session = { ...session, concept_order_json: order };
+        }
+      }
+    } catch (err) {
+      logger.warn("[surveyPage] concept order assign skipped", { assignmentId, error: String(err) });
+    }
+
     // スクリーニング質問の有無でレンダリング対象を切り替える
     const allVisible = questions.filter(q => !q.is_hidden);
     const screeningQuestions = allVisible.filter(q => q.question_role === "screening");
@@ -817,6 +875,24 @@ export const liffController = {
       void incrementCampaignCount(assignment.id, "started_count").catch(() => {});
     }
 
+    // §3 ブロック(ページ)ランダム化: メイン設問フェーズのみ、回答者ごとの表示順を確定して反映する。
+    // ランダム化未設定なら従来どおり（変更なし）。失敗しても回答継続を妨げない。
+    let orderedPageGroups = pageGroups;
+    if (surveyPhase === "main") {
+      try {
+        const reordered = await surveyOrderingService.resolveOrder({
+          session,
+          project,
+          questions: renderQuestions,
+          pageGroups,
+        });
+        renderQuestions = reordered.questions;
+        orderedPageGroups = reordered.pageGroups;
+      } catch (err) {
+        logger.warn("[surveyPage] ordering skipped", { assignmentId, error: String(err) });
+      }
+    }
+
     const DEFAULT_FAIL_MSG = "今回はご参加いただけませんでした。またの機会にご協力をお願いします。";
     const renderData = {
       title: project.user_display_title || project.name,
@@ -827,7 +903,7 @@ export const liffController = {
         display_mode: project.display_mode ?? "survey_question",
       },
       questions: renderQuestions,
-      pageGroups,
+      pageGroups: orderedPageGroups,
       sessionId: session.id,
       assignmentId: assignment.id,
       displayMode: project.display_mode ?? "survey_question",
@@ -837,9 +913,12 @@ export const liffController = {
       liffAuthAvailable: liffConfig.liffAuthAvailable,
       authRequired: liffConfig.authRequired,
       skipAllowed: liffConfig.skipAllowed,
-      // 店舗専用アンケート完了後に「通常案件を見る」CTA を出すための判定（希望者のみ誘導）
+      // 店舗専用アンケート完了後に「Hibi会員になって参加同意する」CTA を出すための判定（希望者のみ誘導）
       isStoreSurvey: project.visibility_type === "private_store",
       projectsUrl: "/liff/projects",
+      // 店舗回答者をグローバル必須書類の同意フローへ通し、正式な Hibi 会員に昇格させる導線。
+      // 既に同意済みなら consent ページが即マイページへリダイレクトする（冪等）。
+      memberJoinUrl: "/liff/consent?mode=initial&redirect=/liff/mypage",
     };
 
     logger.info("[surveyPage] before render survey.ejs", {
@@ -971,6 +1050,9 @@ export const liffController = {
       return;
     }
 
+    // 所有者検証（IDOR 防止）: 回答は本人の assignment のみ書き込める
+    await verifyAssignmentOwnerOrThrow(req, stringValue(req.body.assignment_id).trim());
+
     const session = await sessionRepository.getById(sessionId);
     console.log("ASSIGNMENT_STATE", { session_id: session.id, project_id: session.project_id, status: session.status });
 
@@ -991,12 +1073,12 @@ export const liffController = {
         ? (normalizedAnswerRaw as Record<string, unknown>)
         : null;
 
-    await answerRepository.create({
+    // 同一設問への再回答は上書き（重複行を作らない）
+    await answerRepository.upsertPrimary({
       session_id: sessionId,
       question_id: question.id,
       answer_text: answerText,
       free_text_answer: freeTextRaw,
-      answer_role: "primary",
       normalized_answer: normalizedAnswer ?? undefined,
     });
 
@@ -1026,6 +1108,10 @@ export const liffController = {
       res.status(400).json({ ok: false, error: "session_id と assignment_id は必須です。" });
       return;
     }
+
+    // 所有者検証（IDOR 防止）: 画像は本人の assignment にのみ紐付けられる
+    await verifyAssignmentOwnerOrThrow(req, assignmentId);
+
     if (!base64Data) {
       res.status(400).json({ ok: false, error: "data (base64) は必須です。" });
       return;
@@ -1108,6 +1194,9 @@ export const liffController = {
       return;
     }
     if (!isUuid(assignmentId)) throw new HttpError(404, "アンケートが見つかりません。");
+
+    // 所有者検証（IDOR 防止）: 完了確定・ポイント付与は本人のみ発火できる
+    await verifyAssignmentOwnerOrThrow(req, assignmentId);
 
     const assignment = await projectAssignmentRepository.getById(assignmentId);
 
@@ -1598,6 +1687,9 @@ export const liffController = {
       return;
     }
     if (!isUuid(assignmentId)) throw new HttpError(404, "アンケートが見つかりません。");
+
+    // 所有者検証（IDOR 防止）: スクリーニング判定は本人のみ実行できる
+    await verifyAssignmentOwnerOrThrow(req, assignmentId);
 
     const [assignment, session] = await Promise.all([
       projectAssignmentRepository.getById(assignmentId),
@@ -2227,6 +2319,22 @@ export const liffController = {
     );
 
     res.json({ ok: true, recorded: body.items.length });
+
+    // 会員化（グローバル必須書類にすべて同意）が成立したら、会員化前に完了して
+    // 保留されていたアンケート完了ポイントをまとめて付与する（非同期・失敗は無視）。
+    void (async () => {
+      try {
+        const pending = await consentService.getPendingGlobalConsents(verifiedUser.userId);
+        if (pending.length > 0) return; // まだ未同意の必須書類が残る＝会員化未成立
+        const { awardDeferredCompletionsForMember } = await import("../services/postCompleteService");
+        await awardDeferredCompletionsForMember(verifiedUser.userId);
+      } catch (err) {
+        logger.warn("submitConsents.awardDeferred.failed", {
+          lineUserId: verifiedUser.userId,
+          error: String(err),
+        });
+      }
+    })();
   },
 
   // マイページ用: 同意状況サマリー取得
