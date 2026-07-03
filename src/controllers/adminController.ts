@@ -20,6 +20,14 @@ import {
   buildExtractionSchemaFromExpectedSlots,
   buildQuestionMetaFromAuthoringInput
 } from "../lib/questionMetadata";
+import {
+  METRIC_CATALOG,
+  METRIC_DIRECTIONS,
+  defaultMetricDirection,
+  metricDirectionLabel,
+  normalizeMetricCode,
+  normalizeMetricDirection
+} from "../lib/metricCatalog";
 import { getProjectResearchSettings, parseLineSeparatedList } from "../lib/projectResearch";
 import { csvService } from "../services/csvService";
 import { statExportService } from "../services/statExportService";
@@ -34,7 +42,9 @@ import { assignmentService, type AssignmentRuleFilter } from "../services/assign
 import { projectRepository } from "../repositories/projectRepository";
 import { clientRepository } from "../repositories/clientRepository";
 import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
+import { respondentRepository } from "../repositories/respondentRepository";
 import { questionRepository } from "../repositories/questionRepository";
+import { collectClientMetrics } from "../lib/aggregationScope";
 import { rankRepository } from "../repositories/rankRepository";
 import { analysisService } from "../services/analysisService";
 import type {
@@ -1205,6 +1215,8 @@ interface QuestionFormValues {
   max_probe_count_text: string;
   render_strategy: "static" | "dynamic";
   question_goal: string;
+  metric_code: string;
+  metric_direction: string;
   max_probes: string;
   placeholder: string;
   option_labels: string[];
@@ -1386,6 +1398,8 @@ function buildQuestionFormValues(
       (question?.max_probe_count != null ? String(question.max_probe_count) : ""),
     render_strategy: overrides.render_strategy ?? question?.render_strategy ?? "static",
     question_goal: overrides.question_goal ?? meta.question_goal ?? "",
+    metric_code: overrides.metric_code ?? meta.metric_code ?? "",
+    metric_direction: overrides.metric_direction ?? meta.metric_direction ?? "",
     max_probes:
       overrides.max_probes ??
       String(typeof meta.probe_config?.max_probes === "number" ? meta.probe_config.max_probes : 1),
@@ -1554,6 +1568,8 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     max_probe_count_text: bodyString(req.body.max_probe_count),
     render_strategy: (bodyString(req.body.render_strategy) === "dynamic" ? "dynamic" : "static") as "static" | "dynamic",
     question_goal: bodyString(req.body.question_goal),
+    metric_code: bodyString(req.body.metric_code),
+    metric_direction: bodyString(req.body.metric_direction),
     max_probes: bodyString(req.body.max_probes) || "1",
     placeholder: bodyString(req.body.placeholder),
     option_labels: normalizeTextList(bodyStringArray(req.body.option_labels)),
@@ -1680,6 +1696,8 @@ function renderQuestionForm(
       (candidate) => !candidate.is_hidden || candidate.id === input.question?.id
     ),
     pageGroups: input.pageGroups ?? [],
+    metricCatalog: METRIC_CATALOG,
+    metricDirections: METRIC_DIRECTIONS.map((d) => ({ value: d, label: metricDirectionLabel(d) })),
     errorMessage: input.errorMessage ?? null,
     successMessage: input.successMessage ?? null,
     prevQuestion: input.prevQuestion ?? null,
@@ -1748,6 +1766,8 @@ const CHOICE_QUESTION_TYPES: QuestionType[] = [
 ];
 const MATRIX_QUESTION_TYPES: QuestionType[] = ["matrix_single", "matrix_multi", "matrix_mixed"];
 const MULTI_CHOICE_TYPES: QuestionType[] = ["multi_choice"];
+// この語を含むラベルの選択肢は複数選択で自動的に全排他(exclusive)にする（特になし等）。
+const EXCLUSIVE_AUTO_LABEL_RE = /特になし|わからない|分からない|該当なし|その他/;
 const SCREENING_CHOICE_QUESTION_TYPES: QuestionType[] = ["single_choice", "multi_choice"];
 
 function buildQuestionConfigFromRequest(
@@ -1844,6 +1864,22 @@ function buildQuestionConfigFromRequest(
       const maxSelect = parseOptionalInteger(req.body.max_select);
       if (minSelect !== null) { questionConfig.min_select = minSelect; } else { delete questionConfig.min_select; }
       if (maxSelect !== null) { questionConfig.max_select = maxSelect; } else { delete questionConfig.max_select; }
+    }
+
+    // 排他制御 (multi_choice のみ・自動): ラベルが「特になし/わからない/該当なし/その他」
+    // または自由記述(allow_free_text)の選択肢を、自動的に全排他(exclusive)にする。
+    // 手動UIは廃止したため body からは読まない。exclusive_with は使用しない。
+    if (MULTI_CHOICE_TYPES.includes(questionType) && questionConfig.options) {
+      questionConfig.options = questionConfig.options.map((opt) => {
+        const next = { ...opt };
+        delete next.exclusive_with;
+        if (EXCLUSIVE_AUTO_LABEL_RE.test(opt.label) || opt.allow_free_text === true) {
+          next.exclusive = true;
+        } else {
+          delete next.exclusive;
+        }
+        return next;
+      });
     }
   } else if (MATRIX_QUESTION_TYPES.includes(questionType)) {
     const rowLabels = parseLineSeparatedList(bodyString(req.body.matrix_rows));
@@ -1954,11 +1990,21 @@ function buildQuestionConfigFromRequest(
     }
   }
 
+  // 「その他（自由入力）」= select が __custom__ の場合は自由入力欄を採用（JS無効時のフォールバック）。
+  const rawMetricCode =
+    bodyString(req.body.metric_code) === "__custom__"
+      ? req.body.metric_code_custom
+      : req.body.metric_code;
+  const metricCode = normalizeMetricCode(rawMetricCode);
   const meta = buildQuestionMetaFromAuthoringInput({
     questionGoal,
     extractionItemLabels: extractionEnabled ? extractionItems : [],
     maxProbes: parseOptionalInteger(req.body.max_probes),
-    existingMeta: existing?.meta ?? null
+    existingMeta: existing?.meta ?? null,
+    metricCode,
+    metricDirection: metricCode
+      ? normalizeMetricDirection(req.body.metric_direction) ?? defaultMetricDirection(metricCode)
+      : null
   });
   questionConfig.meta = meta;
 
@@ -7529,6 +7575,58 @@ export const adminController = {
       convertibleProjects,
       msg: typeof req.query.msg === "string" ? req.query.msg : null,
       err: typeof req.query.err === "string" ? req.query.err : null
+    });
+  },
+
+  // ---- 企業ごとまとめ画面（複数アンケートを client 単位で合算・納品物リンク） ----
+
+  async clientOverview(req: Request, res: Response): Promise<void> {
+    const clientId = routeParam(req, "clientId");
+    const client = await clientRepository.getById(clientId);
+
+    // client 配下の案件を created_at 昇順で（将来の wave 列を差し込める自然順・★予約③）
+    const projects = await projectRepository.listByClient(clientId);
+
+    // 各案件の件数系(A)＋設問（横断指標の可視化用）を並行取得
+    const rows = await Promise.all(
+      projects.map(async (project) => {
+        const [respondentCount, completedCount, questions] = await Promise.all([
+          respondentRepository.countByProject(project.id),
+          projectAssignmentRepository.countCompletedByProject(project.id),
+          questionRepository.listByProject(project.id, { includeHidden: false })
+        ]);
+        return { project, respondentCount, completedCount, questions };
+      })
+    );
+
+    // 件数系の単純合算(A)
+    const totals = rows.reduce(
+      (acc, r) => ({
+        respondents: acc.respondents + r.respondentCount,
+        completed: acc.completed + r.completedCount
+      }),
+      { respondents: 0, completed: 0 }
+    );
+
+    // 横断集計できる指標の可視化（実合算(B)は将来Slice）
+    const metrics = collectClientMetrics(
+      rows.map((r) => ({ project_id: r.project.id, questions: r.questions }))
+    );
+
+    res.render("admin/clients/overview", {
+      title: `企業まとめ - ${client.name}`,
+      // NOTE: EJS(renderFile/__express) は data 内の `client` キーを compile オプション
+      // （client-mode）として解釈し include ヘルパーを外してしまう。キー名は clientInfo にする。
+      clientInfo: client,
+      rows: rows.map((r) => ({
+        project: r.project,
+        respondentCount: r.respondentCount,
+        completedCount: r.completedCount
+      })),
+      totals,
+      projectCount: projects.length,
+      metrics,
+      backUrl: "/admin/store-surveys"
     });
   },
 

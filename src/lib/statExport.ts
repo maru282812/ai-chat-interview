@@ -435,7 +435,9 @@ export function buildCodebookRows(variables: VariableDefinition[]): ExportRow[] 
     allowed_values_json: JSON.stringify(variable.allowed_values),
     missing_codes_json: JSON.stringify(variable.missing_codes),
     ai_probe_enabled: variable.ai_probe_enabled,
-    cleaning_note: variable.cleaning_note
+    cleaning_note: variable.cleaning_note,
+    metric_code: variable.metric_code,
+    metric_direction: variable.metric_direction
   }));
 }
 

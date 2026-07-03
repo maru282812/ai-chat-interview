@@ -126,6 +126,10 @@ export interface VariableDefinition {
   is_required: boolean;
   ai_probe_enabled: boolean;
   cleaning_note: string;
+  /** 共通指標コード（横断集計キー）。未設定は空文字（§土台①）。 */
+  metric_code: string;
+  /** 指標の集計方向。未設定は空文字。 */
+  metric_direction: string;
 }
 
 const CATEGORICAL_SINGLE: QuestionType[] = ["single_choice", "single_select", "hidden_single", "yes_no"];
@@ -271,7 +275,9 @@ export function deriveVariableDefinition(question: Question): VariableDefinition
     scale_max: typeof scaleMax === "number" ? scaleMax : null,
     is_required: question.is_required,
     ai_probe_enabled: question.ai_probe_enabled,
-    cleaning_note: override.cleaning_note ?? ""
+    cleaning_note: override.cleaning_note ?? "",
+    metric_code: config?.meta?.metric_code ?? "",
+    metric_direction: config?.meta?.metric_direction ?? ""
   };
 }
 

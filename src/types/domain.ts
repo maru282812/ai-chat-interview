@@ -326,6 +326,10 @@ export interface QuestionOption {
   label: string;
   /** 「その他」等で自由記述欄を出すか（記述あり/なし・L3）。 */
   allow_free_text?: boolean;
+  /** true の場合、選択すると同一設問の他選択肢を全解除する排他選択肢（特になし/わからない/該当なし/その他）。 */
+  exclusive?: boolean;
+  /** 特定の選択肢とだけ排他にする value(=label) の配列。B↔[C,D] のような部分排他。評価は双方向（無向）。 */
+  exclusive_with?: string[];
   imageUrl?: string;
   /** 複数画像（画像付きマトリクス行や画像カード複数画像対応） */
   imageUrls?: string[];
@@ -530,6 +534,14 @@ export interface QuestionMeta {
   cleaning?: Record<string, unknown>;
   /** 明示的な設問間依存（surveyValidation 用）。任意。 */
   dependencies?: Array<Record<string, unknown>>;
+  /**
+   * 共通指標コード（canonical metric）。複数アンケート横断の合算・比較の突き合わせキー。任意。
+   * 語彙は metricCatalog.ts（推奨カタログ＋自由入力可・[a-z0-9_]+ 正規化）。
+   * 例: "satisfaction" | "revisit_intent" | "nps" | "awareness_channel"
+   */
+  metric_code?: string;
+  /** 指標の集計方向。ランキング/ビフォーアフターでの良し悪し判定に使う。任意。 */
+  metric_direction?: "higher_is_better" | "lower_is_better" | "neutral";
 }
 
 export interface Question {

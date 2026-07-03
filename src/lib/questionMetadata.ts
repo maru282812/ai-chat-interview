@@ -135,6 +135,10 @@ export interface QuestionAuthoringMetaInput {
   extractionItemLabels?: string[];
   maxProbes?: number | null;
   existingMeta?: QuestionMeta | null;
+  /** 共通指標コード（正規化済み or null）。null なら未設定として meta から除去する。 */
+  metricCode?: string | null;
+  /** 指標の集計方向（検証済み or null）。 */
+  metricDirection?: QuestionMeta["metric_direction"] | null;
 }
 
 function normalizeAuthoringLabel(value: unknown): string {
@@ -277,7 +281,15 @@ export function buildQuestionMetaFromAuthoringInput(input: QuestionAuthoringMeta
         ? existingMeta.probe_config.max_probes
         : 1;
 
-  return {
+  // 共通指標（横断集計キー）。null は未設定 = meta からキーを外す。
+  // input に metricCode プロパティ自体が渡されない場合は既存値を維持する（後方互換）。
+  const metricProvided = "metricCode" in input;
+  const metricCode = metricProvided ? input.metricCode ?? null : existingMeta.metric_code ?? null;
+  const metricDirection = metricProvided
+    ? input.metricDirection ?? null
+    : existingMeta.metric_direction ?? null;
+
+  const meta: QuestionMeta = {
     ...existingMeta,
     question_goal: questionGoal,
     expected_slots: expectedSlots,
@@ -298,6 +310,16 @@ export function buildQuestionMetaFromAuthoringInput(input: QuestionAuthoringMeta
           ? [{ type: "required_slots" }, { type: "no_bad_patterns" }]
           : [{ type: "no_bad_patterns" }]
   };
+
+  if (metricCode) {
+    meta.metric_code = metricCode;
+    meta.metric_direction = metricDirection ?? "neutral";
+  } else {
+    delete meta.metric_code;
+    delete meta.metric_direction;
+  }
+
+  return meta;
 }
 
 function createDefaultBadAnswerPatterns(maxLength = 12): QuestionBadAnswerPattern[] {

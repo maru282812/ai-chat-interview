@@ -809,6 +809,8 @@
       title: o.title || '',
       description: o.description || '',
       allow_free_text: o.allow_free_text || false,
+      exclusive: o.exclusive === true,
+      exclusive_with: Array.isArray(o.exclusive_with) ? o.exclusive_with : [],
     }));
     const choices = filterChoices(rawChoices, parsed);
 
@@ -816,6 +818,12 @@
     const gridCols = cfg.grid_cols || 2;
     const hasImages = choices.some(c => c.imageUrl || (c.imageUrls && c.imageUrls.length > 0));
     const choiceClass = hasImages ? 'choice-list has-images' : 'choice-list';
+
+    // multi_choice 排他制御用の data 属性（相手ラベルは `,` 連結）
+    function exclAttrs(c) {
+      const ew = (c.exclusive_with || []).join(',');
+      return `data-exclusive="${c.exclusive ? '1' : '0'}" data-exclusive-with="${esc(ew)}"`;
+    }
 
     function choiceImg(c) {
       if (!c.imageUrl) return '';
@@ -879,7 +887,7 @@
             const imgSrc = c.imageUrl || (c.imageUrls && c.imageUrls[0]) || '';
             const additionals = (c.imageUrls || []).filter(u => u && u !== imgSrc);
             return `<label class="card-item">
-              <input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" style="display:none" />
+              <input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" ${exclAttrs(c)} style="display:none" />
               ${imgSrc ? `<img class="card-item-img" src="${esc(imgSrc)}" alt="" loading="lazy" onerror="this.style.display='none'" />` : ''}
               <span class="card-item-title">${esc(c.title || c.label)}</span>
               ${c.description ? `<span class="card-item-desc">${esc(c.description)}</span>` : ''}
@@ -889,7 +897,7 @@
           }).join('') + `</div>`;
       } else {
         inputHtml = `<div class="${choiceClass}" data-type="multi">` +
-          choices.map(c => choiceListItem(`<input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />`, c)).join('') + `</div>`;
+          choices.map(c => choiceListItem(`<input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" ${exclAttrs(c)} />`, c)).join('') + `</div>`;
       }
     } else if (['numeric', 'sd'].includes(qType)) {
       if (cfg.options && cfg.options.length > 0) {
@@ -1359,6 +1367,29 @@
         return checked.length ? valueOf(checked[0]) : '';
       }
 
+      // multi_choice 排他制御: 今 ON にした選択肢と衝突する既存の ON を自動 OFF にする（無向評価）。
+      function applyExclusion(changedEl, qCode) {
+        if (!changedEl || !changedEl.checked) return;
+        const boxes = [...questionArea.querySelectorAll(`input[name="q_${qCode}"]`)];
+        const parseWith = (el) => (el.getAttribute('data-exclusive-with') || '').split(',').map(s => s.trim()).filter(Boolean);
+        const isEx = (el) => el.getAttribute('data-exclusive') === '1';
+        const conflicts = (a, b) => {
+          if (a === b) return false;
+          if (isEx(a) || isEx(b)) return true;
+          if (parseWith(a).includes(b.value)) return true;
+          if (parseWith(b).includes(a.value)) return true;
+          return false;
+        };
+        boxes.forEach(other => {
+          if (other === changedEl) return;
+          if (other.checked && conflicts(changedEl, other)) {
+            other.checked = false;
+            const w = other.closest('.choice-item') || other.closest('.card-item');
+            if (w) w.classList.remove('selected');
+          }
+        });
+      }
+
       // ---- 画像カードグリッド（click で label 全体を選択） ----
       questionArea.querySelectorAll('.card-item').forEach(card => {
         card.addEventListener('click', (e) => {
@@ -1372,6 +1403,7 @@
           } else {
             input.checked = !input.checked;
             card.classList.toggle('selected', input.checked);
+            applyExclusion(input, q.question_code); // 排他相手を自動解除
           }
           answerCtx.answers[q.question_code.toLowerCase()] = collectChoiceVal(q);
           checkNextEnabled();
@@ -1471,6 +1503,7 @@
           if (qType === 'multi_choice') {
             // チェックボックスは個別に toggle（全解除してから追加すると他の選択が消える）
             el.closest('label')?.classList.toggle('selected', el.checked);
+            applyExclusion(el, q.question_code); // 排他相手を自動解除
           } else {
             // ラジオは排他選択なので全解除→選択項目のみ追加
             questionArea.querySelectorAll(`label.choice-item`).forEach(l => l.classList.remove('selected'));

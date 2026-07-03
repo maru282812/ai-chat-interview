@@ -299,6 +299,67 @@
         <textarea name="question_goal" id="questionGoalInput" rows="2"
           placeholder="例: なぜその選択をしたのか"><%= safeForm.question_goal || '' %></textarea>
       </label>
+
+      <!-- 共通指標（複数アンケート横断の合算キー）。任意。 -->
+      <%
+        const metricCatalogList = (typeof metricCatalog !== 'undefined' && metricCatalog) ? metricCatalog : [];
+        const metricDirList = (typeof metricDirections !== 'undefined' && metricDirections) ? metricDirections : [];
+        const currentMetric = safeForm.metric_code || '';
+        const isCatalogMetric = metricCatalogList.some(function (m) { return m.code === currentMetric; });
+        const metricDirection = safeForm.metric_direction || '';
+      %>
+      <label>
+        共通指標（横断集計キー・任意）
+        <select name="metric_code" id="metricCodeSelect" onchange="onMetricCodeChange()">
+          <option value="">（なし）</option>
+          <% for (const m of metricCatalogList) { %>
+            <option value="<%= m.code %>" <%= currentMetric === m.code ? 'selected' : '' %>><%= m.label %>（<%= m.code %>）</option>
+          <% } %>
+          <option value="__custom__" <%= (currentMetric && !isCatalogMetric) ? 'selected' : '' %>>その他（自由入力）</option>
+        </select>
+        <small class="muted">複数アンケートを企業単位で合算・比較するための共通キーです。満足度など同じ意味の設問に同じ指標を付けてください。</small>
+      </label>
+      <label id="metricCustomWrap" style="<%= (currentMetric && !isCatalogMetric) ? '' : 'display:none' %>">
+        共通指標コード（自由入力・英数と _ のみ）
+        <input type="text" name="metric_code_custom" id="metricCodeCustom"
+          value="<%= (currentMetric && !isCatalogMetric) ? currentMetric : '' %>"
+          placeholder="例: waiting_time_eval" />
+      </label>
+      <label>
+        指標の集計方向
+        <select name="metric_direction" id="metricDirectionSelect">
+          <option value="">（自動）</option>
+          <% for (const d of metricDirList) { %>
+            <option value="<%= d.value %>" <%= metricDirection === d.value ? 'selected' : '' %>><%= d.label %></option>
+          <% } %>
+        </select>
+      </label>
+      <script>
+        // 「その他」選択時に自由入力欄を出し、送信時は自由入力値を metric_code に採用する。
+        function onMetricCodeChange() {
+          var sel = document.getElementById('metricCodeSelect');
+          var wrap = document.getElementById('metricCustomWrap');
+          wrap.style.display = (sel.value === '__custom__') ? '' : 'none';
+        }
+        // 送信直前に __custom__ を自由入力値へ差し替え（サーバ側 normalizeMetricCode で最終正規化）。
+        (function () {
+          var form = document.getElementById('metricCodeSelect').closest('form');
+          if (form) {
+            form.addEventListener('submit', function () {
+              var sel = document.getElementById('metricCodeSelect');
+              if (sel.value === '__custom__') {
+                var custom = document.getElementById('metricCodeCustom').value || '';
+                sel.value = custom.trim();
+                if (!sel.querySelector('option[value="' + CSS.escape(sel.value) + '"]')) {
+                  var opt = document.createElement('option');
+                  opt.value = sel.value; opt.selected = true;
+                  sel.appendChild(opt);
+                }
+              }
+            });
+          }
+        })();
+      </script>
     </section>
   </div>
 
@@ -440,6 +501,21 @@
       <div id="typeMultiFields" class="form-grid <%= qType !== 'multi_choice' ? 'hidden' : '' %>">
         <label>最小選択数 <input type="number" name="min_select" min="0" value="<%= safeForm.min_select_text || '' %>" /></label>
         <label>最大選択数 <input type="number" name="max_select" min="1" value="<%= safeForm.max_select_text || '' %>" /></label>
+      </div>
+
+      <!-- 排他制御プレビュー（multi_choice のみ・回答画面と同じ挙動で試せる） -->
+      <div id="exclusivePreviewBlock" class="stack-sm <%= qType !== 'multi_choice' ? 'hidden' : '' %>"
+           style="padding:12px;border:1px solid #d8b98a;border-radius:10px;background:#fffdf7;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+          <h4 style="margin:0;font-size:14px;">🔍 排他制御プレビュー</h4>
+          <button type="button" id="exclusivePreviewRefresh" class="button-link secondary" style="font-size:12px;">最新の選択肢で更新</button>
+        </div>
+        <p class="helper-text">回答画面と同じ挙動です。下のチェックを実際に押して、排他が効くか確認できます（保存はされません）。</p>
+        <!-- ルール要約 -->
+        <div id="exclusivePreviewSummary" style="font-size:12px;color:#5a4a2a;"></div>
+        <!-- インタラクティブ・チェック -->
+        <div id="exclusivePreviewChecks" style="display:flex;flex-direction:column;gap:6px;margin-top:4px;"></div>
+        <div id="exclusivePreviewNote" style="font-size:12px;color:#1a7a57;min-height:16px;"></div>
       </div>
 
       <!-- スケール設定（未使用） -->
@@ -1154,6 +1230,129 @@
 
   // 初期表示
   syncScreeningPassUI();
+
+  // ----------------------------------------------------------------
+  // 排他制御（手動UIは廃止）: ラベルが「特になし/わからない/該当なし/その他」の
+  // 選択肢は、保存時にサーバ側で自動的に全排他(exclusive)になる。
+  // ここではプレビュー表示のためだけにラベルから同じ判定を行う。
+  // ----------------------------------------------------------------
+  const EXCLUSIVE_DEFAULT_RE = /特になし|わからない|分からない|該当なし|その他/;
+
+  function isMultiChoice() {
+    return (document.getElementById('questionType')?.value ?? '') === 'multi_choice';
+  }
+
+  // ----------------------------------------------------------------
+  // 排他制御プレビュー（回答画面と同じ挙動で試せる）
+  // ----------------------------------------------------------------
+  // 現在のフォーム状態から選択肢モデルを読む（exclusive はラベルから自動判定）
+  function readOptionModel() {
+    return [...document.querySelectorAll('#optionRows .option-row')].map(row => {
+      const label = (row.querySelector('input[name="option_labels"]')?.value ?? '').trim();
+      const exclusive = EXCLUSIVE_DEFAULT_RE.test(label);
+      return { label, exclusive, exclusive_with: [] };
+    }).filter(o => o.label !== '');
+  }
+
+  // 無向の排他判定（survey.ejs applyExclusion と同一ルール）
+  function conflictsModel(a, b) {
+    if (a.label === b.label) return false;
+    if (a.exclusive || b.exclusive) return true;
+    if (a.exclusive_with.includes(b.label)) return true;
+    if (b.exclusive_with.includes(a.label)) return true;
+    return false;
+  }
+
+  function renderExclusivePreview() {
+    const model = readOptionModel();
+    const summaryEl = document.getElementById('exclusivePreviewSummary');
+    const checksEl  = document.getElementById('exclusivePreviewChecks');
+    const noteEl    = document.getElementById('exclusivePreviewNote');
+    if (!summaryEl || !checksEl) return;
+    noteEl && (noteEl.textContent = '');
+
+    // --- ルール要約 ---
+    const lines = [];
+    model.forEach(o => {
+      if (o.exclusive) {
+        lines.push(`<div>🚫 <strong>${escHtml(o.label)}</strong> … 他すべてと排他（選ぶと他が全部外れる）</div>`);
+      } else if (o.exclusive_with.length > 0) {
+        lines.push(`<div>⇔ <strong>${escHtml(o.label)}</strong> … ${o.exclusive_with.map(escHtml).join('・')} と排他</div>`);
+      }
+    });
+    summaryEl.innerHTML = lines.length
+      ? lines.join('')
+      : '<span style="color:#8a7a5a;">排他ルールは未設定です。上の各選択肢「排他設定」で設定できます。</span>';
+
+    // --- インタラクティブ・チェック（回答画面の再現） ---
+    checksEl.innerHTML = '';
+    if (model.length === 0) {
+      checksEl.innerHTML = '<span style="color:#8a7a5a;font-size:12px;">選択肢を入力するとプレビューできます。</span>';
+      return;
+    }
+    model.forEach((o, i) => {
+      const id = 'exprev_' + i;
+      const wrap = document.createElement('label');
+      wrap.style.cssText = 'display:flex;align-items:center;gap:8px;font-weight:normal;font-size:13px;padding:6px 10px;border:1px solid #e2d6bd;border-radius:8px;background:#fff;cursor:pointer;';
+      const badge = o.exclusive
+        ? '<span style="margin-left:auto;font-size:11px;color:#b45309;">全排他</span>'
+        : (o.exclusive_with.length ? `<span style="margin-left:auto;font-size:11px;color:#b45309;">排他${o.exclusive_with.length}</span>` : '');
+      wrap.innerHTML = `<input type="checkbox" data-label="${escHtml(o.label)}" style="width:auto;flex:0 0 auto;padding:0;margin:0;border:none;" /><span>${escHtml(o.label)}</span>${badge}`;
+      checksEl.appendChild(wrap);
+    });
+
+    // クリックで排他挙動（回答画面と同じ：ONにしたら衝突相手を自動OFF）
+    const boxes = [...checksEl.querySelectorAll('input[type=checkbox]')];
+    const modelByLabel = new Map(model.map(o => [o.label, o]));
+    boxes.forEach(box => {
+      box.addEventListener('change', () => {
+        if (!box.checked) { paintPreviewRows(); return; }
+        const me = modelByLabel.get(box.getAttribute('data-label'));
+        const removed = [];
+        boxes.forEach(other => {
+          if (other === box || !other.checked) return;
+          const o2 = modelByLabel.get(other.getAttribute('data-label'));
+          if (me && o2 && conflictsModel(me, o2)) {
+            other.checked = false;
+            removed.push(o2.label);
+          }
+        });
+        paintPreviewRows();
+        if (noteEl) {
+          noteEl.textContent = removed.length
+            ? `「${me.label}」を選んだので、排他の「${removed.join('」「')}」を自動で外しました。`
+            : `「${me.label}」を選択（排他相手なし）。`;
+        }
+      });
+    });
+
+    function paintPreviewRows() {
+      boxes.forEach(b => {
+        const lbl = b.closest('label');
+        if (lbl) lbl.style.background = b.checked ? '#e8f7f0' : '#fff';
+        if (lbl) lbl.style.borderColor = b.checked ? '#2ca87a' : '#e2d6bd';
+      });
+    }
+  }
+
+  document.getElementById('exclusivePreviewRefresh')?.addEventListener('click', renderExclusivePreview);
+  // 選択肢・排他設定の変更に追従（デバウンス）
+  let exPreviewTimer = null;
+  document.getElementById('optionRows')?.addEventListener('input', () => {
+    clearTimeout(exPreviewTimer); exPreviewTimer = setTimeout(renderExclusivePreview, 300);
+  });
+  document.getElementById('optionRows')?.addEventListener('change', () => {
+    clearTimeout(exPreviewTimer); exPreviewTimer = setTimeout(renderExclusivePreview, 150);
+  });
+  // multi_choice 切替でプレビュー枠の表示同期＋再描画
+  document.getElementById('questionType')?.addEventListener('change', () => {
+    const block = document.getElementById('exclusivePreviewBlock');
+    const show = isMultiChoice();
+    if (block) block.classList.toggle('hidden', !show);
+    if (show) renderExclusivePreview();
+  });
+  // 初期描画
+  renderExclusivePreview();
 
   // ----------------------------------------------------------------
   // AI 深掘りオプションの表示

@@ -5,6 +5,13 @@ import { HttpError } from "../lib/http";
 import { logger } from "../lib/logger";
 import { getProjectResearchSettings } from "../lib/projectResearch";
 import { normalizeQuestionMeta } from "../lib/questionMetadata";
+import { findExclusionViolation } from "../lib/optionExclusion";
+import { isQuestionVisible } from "../lib/questionEngine";
+import {
+  answerValueForContext,
+  buildAnswerContext,
+  computeNextView,
+} from "../services/surveyFlowService";
 import { userProfileRepository, type UserProfileUpsertInput } from "../repositories/userProfileRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { projectFavoriteRepository } from "../repositories/projectFavoriteRepository";
@@ -27,6 +34,7 @@ import { screeningService } from "../services/screeningService";
 import { surveyOrderingService } from "../services/surveyOrderingService";
 import { conceptService } from "../services/conceptService";
 import type { Gender, MaritalStatus, RantTag } from "../types/domain";
+import type { AnswerContext } from "../types/questionSchema";
 import { runPostCompleteProcess } from "../services/postCompleteService";
 import { rantTagRepository } from "../repositories/rantTagRepository";
 import { postRepository } from "../repositories/postRepository";
@@ -1056,9 +1064,39 @@ export const liffController = {
     const session = await sessionRepository.getById(sessionId);
     console.log("ASSIGNMENT_STATE", { session_id: session.id, project_id: session.project_id, status: session.status });
 
-    const question = await questionRepository.getByProjectAndCode(session.project_id, questionCode);
+    // 進行制御の唯一の正はサーバー（plan §Phase1）。案件全設問と既存回答を読み、
+    // ①この設問がそもそも表示条件を満たすか（可視性ゲート）②回答後に出す次設問、をサーバーで決める。
+    const questions = await questionRepository.listByProject(session.project_id);
+    const question = questions.find((q) => q.question_code === questionCode)
+      ?? (await questionRepository.getByProjectAndCode(session.project_id, questionCode));
     if (!question) {
       res.status(404).json({ ok: false, error: `質問コードが見つかりません: ${questionCode}` });
+      return;
+    }
+
+    // 排他制御 (multi_choice): フロント制御を直叩きで回避した不正な組み合わせをサーバ側で拒否する。
+    if (question.question_type === "multi_choice" && Array.isArray(answerValue)) {
+      const options = question.question_config?.options ?? [];
+      const violation = findExclusionViolation(answerValue.map((v) => String(v)), options);
+      if (violation) {
+        res.status(400).json({
+          ok: false,
+          error: `同時に選択できない選択肢が含まれています（「${violation[0]}」と「${violation[1]}」）。`,
+        });
+        return;
+      }
+    }
+
+    // 可視性ゲート: 既存回答から組んだ ctx でこの設問が visibility_conditions を満たさないなら拒否（§3-2）。
+    // 条件が無い設問（大多数）は isQuestionVisible=true で常に通過する。
+    const priorAnswers = await answerRepository.listBySession(sessionId);
+    const priorCtx = buildAnswerContext(questions, priorAnswers);
+    if (!isQuestionVisible(question, priorCtx)) {
+      logger.warn("submitSurveyAnswer.hiddenQuestionBlocked", { sessionId, questionCode });
+      res.status(409).json({
+        ok: false,
+        error: "この設問は現在の回答条件では表示対象外です。画面を開き直してください。",
+      });
       return;
     }
 
@@ -1084,7 +1122,26 @@ export const liffController = {
 
     await sessionRepository.update(sessionId, { current_question_id: question.id });
 
-    res.json({ ok: true });
+    // 次設問をサーバーで解決して返す（Phase2 でクライアントはこれを描画する。現行クライアントは無視して従来動作）。
+    // NOTE: クライアントは配列をカンマ結合した文字列で送るため、型ベースで array/scalar を復元する。
+    const ctxValue = answerValueForContext(question.question_type, answerText);
+    const nextCtx: AnswerContext = {
+      answers: { ...priorCtx.answers, [questionCode.toLowerCase()]: ctxValue },
+    };
+    const branchPayload: Record<string, unknown> = { ...(normalizedAnswer ?? {}) };
+    if (Array.isArray(ctxValue)) {
+      if (branchPayload.values === undefined) branchPayload.values = ctxValue;
+    } else if (branchPayload.value === undefined) {
+      branchPayload.value = ctxValue;
+    }
+    const next = computeNextView({
+      questions,
+      ctx: nextCtx,
+      fromQuestion: question,
+      normalizedAnswer: branchPayload,
+    });
+
+    res.json({ ok: true, next });
   },
 
   async uploadRespondentImage(req: Request, res: Response): Promise<void> {

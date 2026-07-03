@@ -240,6 +240,22 @@ export const projectRepository = {
     return data as Project | null;
   },
 
+  /**
+   * 企業（client_id）配下の案件を全ステータスで一覧。企業まとめ画面用。
+   * 並び順は created_at 昇順（将来の wave/シリーズ列を差し込める自然順・★予約③）。
+   */
+  async listByClient(clientId: string): Promise<Project[]> {
+    const id = clientId.trim();
+    if (!id) return [];
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("client_id", id)
+      .order("created_at", { ascending: true });
+    throwIfError(error);
+    return (data ?? []) as Project[];
+  },
+
   /** 店舗専用アンケート（visibility_type='private_store'）を全ステータスで一覧。管理画面用。 */
   async listStoreProjects(): Promise<Project[]> {
     const { data, error } = await supabase

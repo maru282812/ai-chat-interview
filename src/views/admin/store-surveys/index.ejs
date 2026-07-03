@@ -208,7 +208,8 @@ function statusBadge(status) {
           </td>
         </tr>
         <tr>
-          <td colspan="3" style="padding:0 10px 10px;text-align:right;border-top:none">
+          <td colspan="3" style="padding:0 10px 10px;border-top:none;display:flex;justify-content:space-between;align-items:center">
+            <a href="/admin/clients/<%= c.id %>/overview" style="font-size:12px">📊 企業まとめ（複数アンケート合算）→</a>
             <form method="post" action="/admin/store-clients/<%= c.id %>/delete" style="display:inline"
                   onsubmit="return confirm('「<%= c.name %>」を削除しますか？')">
               <button type="submit" class="btn-danger" style="padding:2px 8px;font-size:11px">削除</button>

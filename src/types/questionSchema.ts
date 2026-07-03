@@ -165,6 +165,18 @@ export interface DisableRule {
 }
 
 /**
+ * <carry q●●>  選択肢の持ち越し（carry-forward）
+ * 指定設問で「選んだ／選ばなかった」選択肢だけを、本設問の選択肢集合にする。
+ * DBマイグレーション不要のため display_tags_parsed に載せる（plan §Phase3 決定②）。
+ */
+export interface OptionSource {
+  /** 参照元の質問コード: "q1" */
+  fromQuestion: string;
+  /** selected=選んだものだけ残す / unselected=選ばなかったものだけ残す */
+  mode: "selected" | "unselected";
+}
+
+/**
  * DisplayTagsParsed
  * タグの構造化表現（canonical）
  * raw 文字列は互換用。アプリ内部ではこちらを優先する。
@@ -206,6 +218,7 @@ export interface DisplayTagsParsed {
   pipingConditions?: PipingCondition[];    // <pipe 条件>  ※表示制御用のみ
   answerInsertions?: AnswerInsertion[];    // <ans q●●>
   disableRules?: DisableRule[];            // <disable 条件>
+  optionSource?: OptionSource;             // <carry q●●>  選択肢の持ち越し
 }
 
 // ------------------------------------------------------------------

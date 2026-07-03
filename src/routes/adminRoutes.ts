@@ -283,6 +283,7 @@ adminRoutes.get("/store-surveys",                       asyncHandler(adminContro
 adminRoutes.get("/store-surveys/:projectId/flyer",      asyncHandler(adminController.storeSurveyFlyer));
 adminRoutes.post("/store-surveys/mark",                 asyncHandler(adminController.markProjectAsStore));
 adminRoutes.post("/store-surveys/:projectId",           asyncHandler(adminController.updateStoreSurvey));
+adminRoutes.get("/clients/:clientId/overview",          asyncHandler(adminController.clientOverview));
 adminRoutes.post("/store-clients",                      asyncHandler(adminController.createClient));
 adminRoutes.post("/store-clients/:clientId",            asyncHandler(adminController.updateClient));
 adminRoutes.post("/store-clients/:clientId/delete",     asyncHandler(adminController.deleteClient));
