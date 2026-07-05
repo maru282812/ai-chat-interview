@@ -5,6 +5,7 @@ import {
   buildAnswerContext,
   computeNextView,
   resumeView,
+  selectPhaseQuestions,
 } from "../services/surveyFlowService";
 import type { Answer, Question } from "../types/domain";
 
@@ -129,4 +130,48 @@ test("resumeView: 未回答かつ可視の最初の設問を返す", () => {
   const q2 = makeQuestion({ question_code: "q2", sort_order: 2 });
   const view = resumeView([q1, q2], { answers: { q1: "1" } }, new Set(["q1"]));
   assert.equal(view?.question_code, "q2");
+});
+
+test("computeNextView: 次判定は sort_order 直接比較でなく表示順(index)で辿る（ランダム化耐性）", () => {
+  // 表示順は sort_order 昇順 = [qC(1), qA(2), qB(3)]。fromQuestion の master sort_order(99) は無視され、
+  // 集合内の code 位置で「次」を決める。
+  const qC = makeQuestion({ question_code: "qC", sort_order: 1 });
+  const qA = makeQuestion({ question_code: "qA", sort_order: 2 });
+  const qB = makeQuestion({ question_code: "qB", sort_order: 3 });
+  const fromQuestion = makeQuestion({ question_code: "qC", sort_order: 99 });
+  const view = computeNextView({
+    questions: [qA, qB, qC],
+    ctx: { answers: { qc: "1" } },
+    fromQuestion,
+    normalizedAnswer: { value: "1" },
+  });
+  assert.equal(view?.question_code, "qA");
+});
+
+test("selectPhaseQuestions: 未判定はスクリーニング設問のみ / 判定済みはメインのみ", () => {
+  const sc = makeQuestion({ question_code: "s1", sort_order: 1, question_role: "screening" });
+  const m1 = makeQuestion({ question_code: "q1", sort_order: 2, question_role: "main" });
+
+  const screening = selectPhaseQuestions([sc, m1], { screeningEnabled: true, screeningJudged: false });
+  assert.equal(screening.phase, "screening");
+  assert.deepEqual(screening.questions.map((q) => q.question_code), ["s1"]);
+
+  const main = selectPhaseQuestions([sc, m1], { screeningEnabled: true, screeningJudged: true });
+  assert.equal(main.phase, "main");
+  assert.deepEqual(main.questions.map((q) => q.question_code), ["q1"]);
+});
+
+test("selectPhaseQuestions: スクリーニング無効なら常にメイン（非スクリーニング）", () => {
+  const sc = makeQuestion({ question_code: "s1", sort_order: 1, question_role: "screening" });
+  const m1 = makeQuestion({ question_code: "q1", sort_order: 2, question_role: "main" });
+  const res = selectPhaseQuestions([sc, m1], { screeningEnabled: false, screeningJudged: false });
+  assert.equal(res.phase, "main");
+  assert.deepEqual(res.questions.map((q) => q.question_code), ["q1"]);
+});
+
+test("selectPhaseQuestions: is_hidden は常に除外", () => {
+  const m1 = makeQuestion({ question_code: "q1", sort_order: 1, question_role: "main" });
+  const hidden = makeQuestion({ question_code: "h1", sort_order: 2, question_role: "main", is_hidden: true });
+  const res = selectPhaseQuestions([m1, hidden], { screeningEnabled: false, screeningJudged: false });
+  assert.deepEqual(res.questions.map((q) => q.question_code), ["q1"]);
 });

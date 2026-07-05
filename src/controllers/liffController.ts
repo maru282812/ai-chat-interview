@@ -11,6 +11,9 @@ import {
   answerValueForContext,
   buildAnswerContext,
   computeNextView,
+  resolveOrderedRenderSet,
+  resumeView,
+  selectPhaseQuestions,
 } from "../services/surveyFlowService";
 import { userProfileRepository, type UserProfileUpsertInput } from "../repositories/userProfileRepository";
 import { projectRepository } from "../repositories/projectRepository";
@@ -40,6 +43,8 @@ import { rantTagRepository } from "../repositories/rantTagRepository";
 import { postRepository } from "../repositories/postRepository";
 import { dailySurveyService } from "../services/dailySurveyService";
 import { storeEntryService } from "../services/storeEntryService";
+import { applicationService, isRecruitClosed } from "../services/applicationService";
+import { projectApplicationRepository } from "../repositories/projectApplicationRepository";
 import { dailySurveyRepository } from "../repositories/dailySurveyRepository";
 import { userStreakService } from "../services/userStreakService";
 import { userBadgeService } from "../services/userBadgeService";
@@ -850,24 +855,13 @@ export const liffController = {
       logger.warn("[surveyPage] concept order assign skipped", { assignmentId, error: String(err) });
     }
 
-    // スクリーニング質問の有無でレンダリング対象を切り替える
-    const allVisible = questions.filter(q => !q.is_hidden);
-    const screeningQuestions = allVisible.filter(q => q.question_role === "screening");
-    const screeningConfigEnabled = project.screening_config?.enabled === true;
-    const hasScreeningQuestions = screeningQuestions.length > 0 && screeningConfigEnabled;
-    const screeningJudged = !!session.state_json?.screening_result;
-
-    let renderQuestions: typeof questions;
-    let surveyPhase: "screening" | "main";
-    if (hasScreeningQuestions && !screeningJudged) {
-      // スクリーニング未判定: スクリーニング設問のみ表示
-      renderQuestions = screeningQuestions;
-      surveyPhase = "screening";
-    } else {
-      // スクリーニング不要 or 通過済み: メイン設問（非スクリーニング）のみ表示
-      renderQuestions = allVisible.filter(q => q.question_role !== "screening");
-      surveyPhase = "main";
-    }
+    // スクリーニング質問の有無でレンダリング対象を切り替える（フロー系エンドポイントと同一ロジックを共有）
+    const phaseSelection = selectPhaseQuestions(questions, {
+      screeningEnabled: project.screening_config?.enabled === true,
+      screeningJudged: !!session.state_json?.screening_result,
+    });
+    let renderQuestions: typeof questions = phaseSelection.questions;
+    const surveyPhase: "screening" | "main" = phaseSelection.phase;
 
     // アサインメントを started に更新
     if (
@@ -1134,13 +1128,66 @@ export const liffController = {
     } else if (branchPayload.value === undefined) {
       branchPayload.value = ctxValue;
     }
-    const next = computeNextView({
+
+    // 次設問はクライアントと同一の集合・順序（フェーズ絞り込み＋ランダム化）で解決する。
+    const project = await projectRepository.getById(session.project_id);
+    const pageGroups = await questionPageGroupRepository.listByProject(session.project_id);
+    const renderSet = await resolveOrderedRenderSet({
+      session,
+      project,
       questions,
+      pageGroups,
+      screeningEnabled: project.screening_config?.enabled === true,
+      screeningJudged: Boolean(session.state_json?.screening_result),
+    });
+    const next = computeNextView({
+      questions: renderSet.questions,
       ctx: nextCtx,
       fromQuestion: question,
       normalizedAnswer: branchPayload,
     });
 
+    res.json({ ok: true, next });
+  },
+
+  /**
+   * 初回ロード・再開用: 未回答かつ可視な最初の設問の解決済みビューを返す（Phase2 クライアントが消費）。
+   * 送付済み回答から ctx を再構築し、クライアントと同一集合・順序で resumeView する。読み取り専用。
+   */
+  async getSurveyNext(req: Request, res: Response): Promise<void> {
+    const assignmentId = stringValue(req.params.assignmentId).trim();
+    const sessionId = stringValue(req.query.session_id).trim();
+    if (!sessionId) {
+      res.status(400).json({ ok: false, error: "session_id は必須です。" });
+      return;
+    }
+    await verifyAssignmentOwnerOrThrow(req, assignmentId);
+
+    const session = await sessionRepository.getById(sessionId);
+    const project = await projectRepository.getById(session.project_id);
+    const questions = await questionRepository.listByProject(session.project_id);
+    const pageGroups = await questionPageGroupRepository.listByProject(session.project_id);
+    const answers = await answerRepository.listBySession(sessionId);
+
+    const ctx = buildAnswerContext(questions, answers);
+    const renderSet = await resolveOrderedRenderSet({
+      session,
+      project,
+      questions,
+      pageGroups,
+      screeningEnabled: project.screening_config?.enabled === true,
+      screeningJudged: Boolean(session.state_json?.screening_result),
+    });
+
+    const byId = new Map(questions.map((q) => [q.id, q] as const));
+    const answeredCodes = new Set<string>();
+    for (const a of answers) {
+      if (a.answer_role && a.answer_role !== "primary") continue;
+      const q = byId.get(a.question_id);
+      if (q) answeredCodes.add(q.question_code);
+    }
+
+    const next = resumeView(renderSet.questions, ctx, answeredCodes);
     res.json({ ok: true, next });
   },
 
@@ -1318,12 +1365,6 @@ export const liffController = {
       completed_at: now,
     });
 
-    // キャンペーン完了カウントアップ（非同期・エラーは無視）
-    void incrementCampaignCount(assignmentId, "completed_count").catch(() => {});
-
-    // DB更新完了後すぐにレスポンスを返し、重い後処理は非同期で実行する
-    res.json({ ok: true, alreadyCompleted: false });
-
     if (!session) {
       logger.warn("completeSurveyByAssignment.noSession", {
         assignmentId,
@@ -1331,18 +1372,31 @@ export const liffController = {
       });
     }
 
-    void runPostCompleteProcess({
-      assignmentId,
-      session,
-      respondent,
-      project,
-      lineUserId: assignment.user_id,
-    }).catch((err: unknown) => {
-      logger.error("completeSurveyByAssignment.postComplete.unhandled", {
+    // ポイント付与＋LINE完了通知は「レスポンスを返す前に」確実に実行する。
+    // Vercel 等のサーバーレスではレスポンス後の非同期処理が関数の凍結で
+    // 打ち切られうるため、fire-and-forget にしない。runPostCompleteProcess は
+    // べき等（同一 session に project_completion があれば二重付与しない）なので
+    // await しても安全。通知失敗などで throw しても、assignment は既に完了済みなので
+    // ok を返しつつログに残す。
+    try {
+      await runPostCompleteProcess({
+        assignmentId,
+        session,
+        respondent,
+        project,
+        lineUserId: assignment.user_id,
+      });
+    } catch (err: unknown) {
+      logger.error("completeSurveyByAssignment.postComplete.failed", {
         assignmentId,
         error: String(err),
       });
-    });
+    }
+
+    // キャンペーン完了カウントも配信上限判定に効くため await（非致命・失敗は無視）
+    await incrementCampaignCount(assignmentId, "completed_count").catch(() => {});
+
+    res.json({ ok: true, alreadyCompleted: false });
   },
 
   async chatMessage(req: Request, res: Response): Promise<void> {
@@ -2007,6 +2061,10 @@ export const liffController = {
         projectId,
         dataUrl: `/liff/projects/${projectId}/data`,
         favoriteUrl: `/liff/projects/${projectId}/favorite`,
+        applyUrl: `/liff/projects/${projectId}/apply`,
+        withdrawUrl: `/liff/projects/${projectId}/withdraw`,
+        consentCheckUrl: "/liff/consent-check",
+        consentPageUrl: "/liff/consent",
         surveyBaseUrl: "/liff/survey",
         projectsUrl: "/liff/projects",
         savedProjectsUrl: "/liff/saved-projects",
@@ -2094,9 +2152,11 @@ export const liffController = {
     const lineUserId = verifiedUser.userId;
     const category = stringValue(req.query.category).trim() || null;
 
-    const [projects, favoritedIds] = await Promise.all([
+    const [projects, favoritedIds, appliedMap, monthly] = await Promise.all([
       projectRepository.listDiscoverable(),
       projectFavoriteRepository.getFavoritedProjectIds(lineUserId),
+      projectApplicationRepository.getAppliedProjectIds(lineUserId),
+      applicationService.getMonthlySummary(lineUserId),
     ]);
 
     const filtered = category ? projects.filter(p => (p as unknown as Record<string, unknown>).category === category) : projects;
@@ -2111,9 +2171,14 @@ export const liffController = {
       thumbnail_url: (p as unknown as Record<string, unknown>).display_thumbnail_url ?? null,
       created_at: p.created_at,
       is_saved: favoritedIds.has(p.id),
+      tags: p.tags ?? [],
+      apply_mode: p.apply_mode ?? "manual",
+      recruit_deadline: p.recruit_deadline ?? null,
+      interview_format: p.interview_format ?? null,
+      application_status: appliedMap.get(p.id) ?? null,
     }));
 
-    res.json({ ok: true, projects: items });
+    res.json({ ok: true, projects: items, monthly_applications: monthly });
   },
 
   async getProjectDetailData(req: Request, res: Response): Promise<void> {
@@ -2124,9 +2189,10 @@ export const liffController = {
     if (!projectId) throw new HttpError(400, "案件IDが指定されていません。");
     if (!isUuid(projectId)) throw new HttpError(404, "案件が見つかりません。");
 
-    const [project, isSaved] = await Promise.all([
+    const [project, isSaved, myApplication] = await Promise.all([
       projectRepository.getDiscoverableById(projectId),
       projectFavoriteRepository.isFavorited(lineUserId, projectId),
+      projectApplicationRepository.findByProjectAndUser(projectId, lineUserId),
     ]);
 
     if (!project) throw new HttpError(404, "案件が見つかりませんでした。");
@@ -2165,11 +2231,74 @@ export const liffController = {
         thumbnail_url: (project as unknown as Record<string, unknown>).display_thumbnail_url ?? null,
         objective: project.objective ?? null,
         created_at: project.created_at,
+        tags: project.tags ?? [],
+        ng_conditions: project.ng_conditions ?? null,
+        apply_mode: project.apply_mode ?? "manual",
+        recruit_deadline: project.recruit_deadline ?? null,
+        interview_format: project.interview_format ?? null,
+        recruit_closed: isRecruitClosed(project),
       },
       is_saved: isSaved,
       my_assignment: myAssignment,
+      my_application: myApplication
+        ? { id: myApplication.id, status: myApplication.status, assignment_id: myApplication.assignment_id }
+        : null,
       completed_count: completedCount ?? 0,
     });
+  },
+
+  /**
+   * 案件への応募。応募＝assignment発行のリクエストであり、発行判断はサーバー側。
+   * auto案件: respondent/assignment を冪等確保して即回答URLを返す。
+   * manual案件: applied で選考待ち。
+   */
+  async applyToProject(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const lineUserId = verifiedUser.userId;
+    const projectId = stringValue(req.params.id).trim();
+    if (!projectId) throw new HttpError(400, "案件IDが指定されていません。");
+    if (!isUuid(projectId)) throw new HttpError(404, "案件が見つかりません。");
+
+    const result = await applicationService.apply(projectId, lineUserId, verifiedUser.displayName ?? null);
+
+    if (!result.ok) {
+      const map: Record<string, { status: number; message: string }> = {
+        not_found: { status: 404, message: "この案件は現在応募できません。" },
+        closed: { status: 409, message: "募集期限を過ぎています。" },
+        full: { status: 409, message: "募集人数に達したため応募を締め切りました。" },
+        duplicate: { status: 409, message: "この案件にはすでに応募済みです。" },
+      };
+      const e = map[result.reason] ?? { status: 400, message: "応募できませんでした。" };
+      res.status(e.status).json({ ok: false, reason: result.reason, error: e.message });
+      return;
+    }
+
+    if (result.mode === "auto") {
+      res.json({
+        ok: true,
+        mode: "auto",
+        application_status: "accepted",
+        assignment_id: result.assignmentId,
+        survey_url: `/liff/survey/${encodeURIComponent(result.assignmentId)}`,
+      });
+      return;
+    }
+
+    res.json({ ok: true, mode: "manual", application_status: "applied" });
+  },
+
+  /** 応募取り消し（選考中のみ） */
+  async withdrawApplication(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const projectId = stringValue(req.params.id).trim();
+    if (!projectId || !isUuid(projectId)) throw new HttpError(404, "案件が見つかりません。");
+
+    const result = await applicationService.withdraw(projectId, verifiedUser.userId);
+    if (!result.ok) {
+      res.status(409).json({ ok: false, error: "取り消せる応募がありません（選考中のみ取り消せます）。" });
+      return;
+    }
+    res.json({ ok: true });
   },
 
   async toggleProjectFavorite(req: Request, res: Response): Promise<void> {
@@ -2259,23 +2388,31 @@ export const liffController = {
     const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
     const lineUserId = verifiedUser.userId;
 
-    const respondents = await respondentRepository.listByLineUserId(lineUserId);
-    if (respondents.length === 0) {
-      res.json({ ok: true, pending: [], in_progress: [], completed: [] });
+    const [respondents, myApplications] = await Promise.all([
+      respondentRepository.listByLineUserId(lineUserId),
+      projectApplicationRepository.listByUser(lineUserId),
+    ]);
+    if (respondents.length === 0 && myApplications.length === 0) {
+      res.json({ ok: true, applications: [], pending: [], in_progress: [], completed: [] });
       return;
     }
 
     const { supabase } = await import("../config/supabase");
     const respondentIds = respondents.map(r => r.id);
 
-    const { data: assignments } = await supabase
-      .from("project_assignments")
-      .select("id, project_id, respondent_id, status, assigned_at, started_at, completed_at, expired_at, deadline")
-      .in("respondent_id", respondentIds)
-      .order("assigned_at", { ascending: false })
-      .limit(100);
+    const { data: assignments } = respondentIds.length > 0
+      ? await supabase
+          .from("project_assignments")
+          .select("id, project_id, respondent_id, status, assigned_at, started_at, completed_at, expired_at, deadline")
+          .in("respondent_id", respondentIds)
+          .order("assigned_at", { ascending: false })
+          .limit(100)
+      : { data: [] };
 
-    const projectIds = [...new Set(((assignments ?? []) as { project_id: string }[]).map(a => a.project_id))];
+    const projectIds = [...new Set([
+      ...((assignments ?? []) as { project_id: string }[]).map(a => a.project_id),
+      ...myApplications.map(a => a.project_id),
+    ])];
     const { data: projects } = projectIds.length > 0
       ? await supabase.from("projects").select("id, name, user_display_title, reward_points, estimated_minutes").in("id", projectIds)
       : { data: [] };
@@ -2307,7 +2444,24 @@ export const liffController = {
     const inProgress = all.filter(a => a.status === "started");
     const done       = all.filter(a => ["completed", "expired", "cancelled"].includes(a.status));
 
-    res.json({ ok: true, pending, in_progress: inProgress, completed: done });
+    // 応募中/落選（assignment未発行の応募）。当選済み（accepted）は assignment 側の pending に出る。
+    const applications = myApplications
+      .filter(a => a.status === "applied" || a.status === "rejected")
+      .map(a => {
+        const p = projectMap[a.project_id] as Record<string, unknown> | undefined;
+        return {
+          application_id: a.id,
+          project_id: a.project_id,
+          title: p ? String(p.user_display_title || p.name || "") : "不明",
+          reward_points: p?.reward_points ?? null,
+          estimated_minutes: p?.estimated_minutes ?? null,
+          status: a.status,
+          applied_at: a.applied_at,
+          decided_at: a.decided_at,
+        };
+      });
+
+    res.json({ ok: true, applications, pending, in_progress: inProgress, completed: done });
   },
 
   // ============================================================
@@ -2375,23 +2529,25 @@ export const liffController = {
       { source: "liff", ipAddress, userAgent }
     );
 
-    res.json({ ok: true, recorded: body.items.length });
-
     // 会員化（グローバル必須書類にすべて同意）が成立したら、会員化前に完了して
-    // 保留されていたアンケート完了ポイントをまとめて付与する（非同期・失敗は無視）。
-    void (async () => {
-      try {
-        const pending = await consentService.getPendingGlobalConsents(verifiedUser.userId);
-        if (pending.length > 0) return; // まだ未同意の必須書類が残る＝会員化未成立
+    // 保留されていたアンケート完了ポイントをまとめて付与する。
+    // サーバーレスでレスポンス後の処理が打ち切られないよう、レスポンス前に await する。
+    // ポイント付与はべき等（付与済みは二重付与しない）なので await して安全。
+    try {
+      const pending = await consentService.getPendingGlobalConsents(verifiedUser.userId);
+      if (pending.length === 0) {
+        // 未同意の必須書類が残っていなければ＝会員化成立
         const { awardDeferredCompletionsForMember } = await import("../services/postCompleteService");
         await awardDeferredCompletionsForMember(verifiedUser.userId);
-      } catch (err) {
-        logger.warn("submitConsents.awardDeferred.failed", {
-          lineUserId: verifiedUser.userId,
-          error: String(err),
-        });
       }
-    })();
+    } catch (err) {
+      logger.warn("submitConsents.awardDeferred.failed", {
+        lineUserId: verifiedUser.userId,
+        error: String(err),
+      });
+    }
+
+    res.json({ ok: true, recorded: body.items.length });
   },
 
   // マイページ用: 同意状況サマリー取得

@@ -1,0 +1,61 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>38 応募B・1ページ型（実survey_page UI準拠）</title><link rel="stylesheet" href="base.css">
+<style>
+  /* 実際の survey.ejs（survey_page モード）の構造を再現：ページタイトル+設問カード積み */
+  .phone { background: var(--paper); padding-bottom: 24px; }
+  .survey-container { max-width: 480px; margin: 0 auto; padding: 16px; }
+  .page-header { padding: 4px 0 12px; }
+  .page-title { font-size: 17px; font-weight: 700; margin: 0; }
+  .page-sub { font-size: 12px; color: #8a7434; margin-top: 4px; }
+  .question-card { background: #fff; border-radius: 16px; padding: 20px; box-shadow: 0 2px 8px rgba(120,90,20,.10); margin-bottom: 12px; }
+  .question-number { font-size: 12px; color: #8a7434; margin-bottom: 6px; }
+  .question-text { font-size: 15.5px; font-weight: 600; line-height: 1.5; margin-bottom: 12px; }
+  .required-badge { font-size: 10px; color: #fff; background: #e55; border-radius: 4px; padding: 2px 5px; margin-left: 6px; vertical-align: middle; }
+  .choice-list { display: flex; flex-direction: column; gap: 8px; }
+  .choice-item { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border: 1px solid #E3DAba; border-radius: 10px; font-size: 14px; }
+  .choice-item.selected { background: #E9F3F0; border-color: var(--teal); font-weight: 600; }
+  .choice-item .r { width: 18px; height: 18px; border: 2px solid #ccc; border-radius: 50%; flex-shrink: 0; }
+  .choice-item.selected .r { border: 5px solid var(--teal); }
+  .free-text-input { width: 100%; padding: 10px; border: 1px solid #E3DAba; border-radius: 10px; font-size: 15px; font-family: inherit; }
+  .scale-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .scale-btn { width: 44px; height: 44px; border-radius: 50%; border: 2px solid #E3DAba; background: #fff; font-size: 15px; font-weight: 600; }
+  .scale-btn.selected { background: var(--teal); color: #fff; border-color: var(--teal); }
+  .btn-next { width: 100%; padding: 14px; background: var(--teal); color: #fff; border: none; border-radius: 12px; font-size: 16px; font-weight: 600; margin-top: 8px; }
+  .consent { background: #fff; border-radius: 12px; padding: 13px; font-size: 12.5px; display: flex; gap: 10px; line-height: 1.7; margin-bottom: 12px; }
+  .consent .cb { width: 19px; height: 19px; border-radius: 5px; background: var(--teal); color: #fff; text-align: center; line-height: 17px; flex-shrink: 0; font-size: 12px; }
+</style></head>
+<body class="t-hibi">
+<div class="phone">
+  <header class="appbar"><span class="icon">‹</span><b style="font-size:14.5px;flex:1;text-align:center">応募フォーム</b><span></span></header>
+  <div class="survey-container">
+    <div class="page-header">
+      <h1 class="page-title">髪や頭皮の保水についての事前設問</h1>
+      <div class="page-sub">全3問・約2分 ｜ 通過するとそのまま回答に進めます（500pt）</div>
+    </div>
+    <div class="question-card">
+      <div class="question-number">Q1</div>
+      <div class="question-text">あなたの年代を教えてください<span class="required-badge">必須</span></div>
+      <div class="choice-list">
+        <div class="choice-item"><span class="r"></span>20代</div>
+        <div class="choice-item selected"><span class="r"></span>30代</div>
+        <div class="choice-item"><span class="r"></span>40代</div>
+        <div class="choice-item"><span class="r"></span>その他</div>
+      </div>
+    </div>
+    <div class="question-card">
+      <div class="question-number">Q2</div>
+      <div class="question-text">ヘアケアへの関心度を教えてください<span class="required-badge">必須</span></div>
+      <div class="scale-row">
+        <button class="scale-btn">1</button><button class="scale-btn">2</button><button class="scale-btn selected">3</button><button class="scale-btn">4</button><button class="scale-btn">5</button>
+      </div>
+    </div>
+    <div class="question-card">
+      <div class="question-number">Q3</div>
+      <div class="question-text">いま使っているヘアケア製品名（任意）</div>
+      <input class="free-text-input" placeholder="例）○○モイストシャンプー">
+    </div>
+    <div class="consent"><span class="cb">✓</span><span><a href="#" style="color:#A97814;font-weight:700">利用規約</a>・<a href="#" style="color:#A97814;font-weight:700">プライバシーポリシー</a>に同意して応募します</span></div>
+    <button class="btn-next">応募して回答に進む ⚡</button>
+  </div>
+</div>
+</body></html>

@@ -317,6 +317,48 @@ export interface Project {
   entry_code: string | null;
   /** 企業/店舗マスタへの参照（任意） (Migration 064) */
   client_id: UUID | null;
+  /** 検索サイト表示タグ（#顔出し必須 等）(Migration 072) */
+  tags?: string[];
+  /** NG条件（自由記述・改行区切り表示）(Migration 072) */
+  ng_conditions?: string | null;
+  /** 募集期限。超過案件は一覧非表示・応募拒否 (Migration 072) */
+  recruit_deadline?: string | null;
+  /** 応募方式: manual=管理者選考 / auto=応募と同時にassignment発行して即回答 (Migration 072) */
+  apply_mode?: ProjectApplyMode;
+  /** 実施形式の表示用テキスト（AIチャット/Google Meet等）(Migration 072) */
+  interview_format?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 応募方式 (Migration 072) */
+export type ProjectApplyMode = "manual" | "auto";
+
+/** 応募ステータス (Migration 072) */
+export type ProjectApplicationStatus =
+  | "applied"
+  | "accepted"
+  | "rejected"
+  | "withdrawn"
+  | "expired";
+
+/**
+ * 案件への応募 (Migration 072)。
+ * 応募＝assignment発行のリクエスト。発行判断は常にサーバー側
+ * （apply_mode='auto' は applicationService が即時発行、'manual' は管理者の当選操作）。
+ * line_user_id と respondent_id を併記する（将来の非LINE認証でも uuid 側で辿れる規律）。
+ */
+export interface ProjectApplication {
+  id: UUID;
+  project_id: UUID;
+  line_user_id: string;
+  respondent_id: UUID | null;
+  status: ProjectApplicationStatus;
+  assignment_id: UUID | null;
+  /** 管理者用メモ（選考理由等） */
+  note: string | null;
+  applied_at: string;
+  decided_at: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -278,6 +278,11 @@ adminRoutes.get("/documents/:documentId/versions/new",            asyncHandler(a
 adminRoutes.post("/documents/:documentId/versions",               asyncHandler(adminController.createDocumentVersion));
 adminRoutes.get("/documents/:documentId/consent-audit",           asyncHandler(adminController.documentConsentAudit));
 
+// 応募管理（案件検索サイト）
+adminRoutes.get("/applications",                        asyncHandler(adminController.applications));
+adminRoutes.post("/applications/:id/accept",            asyncHandler(adminController.acceptApplication));
+adminRoutes.post("/applications/:id/reject",            asyncHandler(adminController.rejectApplication));
+
 // 店舗専用アンケート管理
 adminRoutes.get("/store-surveys",                       asyncHandler(adminController.storeSurveys));
 adminRoutes.get("/store-surveys/:projectId/flyer",      asyncHandler(adminController.storeSurveyFlyer));

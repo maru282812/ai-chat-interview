@@ -1,0 +1,63 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>82 リッチメニュー構成案（公式LINE）</title><link rel="stylesheet" href="base.css">
+<style>
+  .phone { padding-bottom: 0; background: #8aa2c8; }
+  /* LINEトーク上部の雰囲気 */
+  .linebar { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: #FFFdf6; border-bottom: 1px solid #eee; }
+  .linebar .back { font-size: 18px; color: #333; }
+  .linebar .name { font-weight: 800; font-size: 16px; }
+  .linebar .name .badge2 { color: #06c755; font-size: 12px; }
+  .chatzone { padding: 16px 12px 10px; min-height: 150px; }
+  .day { text-align: center; margin-bottom: 12px; }
+  .day span { background: rgba(0,0,0,.22); color: #fff; font-size: 11px; border-radius: 12px; padding: 3px 12px; }
+  .brow { display: flex; gap: 8px; }
+  .avatar { width: 30px; height: 30px; border-radius: 50%; background: #DFA02F; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #fff; }
+  .bub { background: #fff; border-radius: 4px 14px 14px 14px; padding: 10px 13px; font-size: 13px; max-width: 78%; line-height: 1.5; }
+
+  /* リッチメニュー本体 */
+  .richmenu { background: #FBF0D2; padding: 4px; }
+  .rm-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
+  .rm-cell { background: #FCF4DE; border-radius: 10px; padding: 16px 6px 12px; text-align: center; position: relative; }
+  .rm-cell .ic { width: 52px; height: 52px; border-radius: 50%; background: #fff; margin: 0 auto; display: flex; align-items: center; justify-content: center; font-size: 24px; box-shadow: 0 1px 3px rgba(150,120,40,.15); }
+  .rm-cell .lb { font-size: 12.5px; font-weight: 800; color: #4A4A4A; margin-top: 8px; }
+  .rm-cell .sub { font-size: 9.5px; color: #A08A50; margin-top: 2px; }
+  .rm-cell .dot { position: absolute; top: 10px; right: 14px; min-width: 17px; height: 17px; border-radius: 9px; background: #E5484D; color: #fff; font-size: 10px; font-weight: 800; display: flex; align-items: center; justify-content: center; padding: 0 4px; }
+  .menubar { background: #FBF0D2; display: flex; align-items: center; justify-content: center; padding: 10px; font-size: 14px; color: #333; font-weight: 700; border-top: 1px solid #EEDFB0; }
+  .note-wrap { background: #fff; padding: 14px 16px 18px; }
+  .note-wrap h4 { font-size: 13px; color: #A97814; font-weight: 800; margin-bottom: 8px; }
+  .note-wrap li { font-size: 11.5px; color: #666; line-height: 1.7; list-style: none; padding-left: 1.1em; text-indent: -1.1em; }
+  .note-wrap li::before { content: "▸ "; color: #DFA02F; }
+</style></head>
+<body class="t-hibi">
+<div class="phone">
+  <div class="linebar"><span class="back">‹</span><span class="name"><span class="badge2">✓</span> Hibi</span></div>
+  <div class="chatzone">
+    <div class="day"><span>今日</span></div>
+    <div class="brow"><span class="avatar">🗨</span><div class="bub">こんにちは！下のメニューから案件をさがせます 👇</div></div>
+  </div>
+
+  <!-- ★ 推奨リッチメニュー（6ボタン・すべて同じLIFFサイトの各タブへディープリンク） -->
+  <div class="richmenu">
+    <div class="rm-grid">
+      <div class="rm-cell"><div class="ic">🔍</div><div class="lb">さがす</div><div class="sub">新着の案件</div></div>
+      <div class="rm-cell"><div class="ic">✨</div><div class="lb">おすすめ</div><div class="sub">あなた向け</div></div>
+      <div class="rm-cell"><div class="ic">☆</div><div class="lb">保存</div><div class="sub">気になる案件</div></div>
+      <div class="rm-cell"><div class="dot">2</div><div class="ic">📋</div><div class="lb">やりとり</div><div class="sub">回答待ち・選考中</div></div>
+      <div class="rm-cell"><div class="ic">👤</div><div class="lb">マイページ</div><div class="sub">ポイント・謝礼</div></div>
+      <div class="rm-cell"><div class="ic">💬</div><div class="lb">ヘルプ</div><div class="sub">ガイド・問合せ</div></div>
+    </div>
+  </div>
+  <div class="menubar">メニュー ▾</div>
+
+  <div class="note-wrap">
+    <h4>設計メモ</h4>
+    <ul>
+      <li>6ボタンはすべて<b>同じLIFFサイト</b>の各タブへディープリンク（別LIFFにしない）</li>
+      <li>下部ナビ（探す/保存/やりとり/マイページ）とラベルを揃えて迷わせない＋おすすめ・ヘルプを追加</li>
+      <li><b>デイリーは入れない</b>：毎日のpush＋サイト起動時インタースティシャル（p80）で誘導</li>
+      <li>「やりとり」の赤バッジ＝当選・未回答/回答途中の件数（再開導線）</li>
+      <li>枠を減らすなら：おすすめを「さがす」に統合し、ヘルプをマイページ内へ → 4ボタン化も可</li>
+    </ul>
+  </div>
+</div>
+</body></html>

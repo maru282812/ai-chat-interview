@@ -4,6 +4,14 @@ import { asyncHandler } from "../lib/http";
 
 export const liffRoutes = Router();
 
+// サイトの玄関。LIFF endpoint を {APP_BASE_URL}/liff に設定すると、
+// リッチメニュー等の https://liff.line.me/{id}/projects 形式のディープリンクが
+// そのまま各ページに解決される。無印(パス無し)で開かれたら「探す」へ送る。
+liffRoutes.get("/", (req, res) => {
+  const qs = req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "";
+  res.redirect(302, `/liff/projects${qs}`);
+});
+
 liffRoutes.get("/rant", asyncHandler(liffController.rantPage));
 liffRoutes.get("/diary", asyncHandler(liffController.diaryPage));
 liffRoutes.get("/personality", asyncHandler(liffController.personalityPage));
@@ -37,6 +45,8 @@ liffRoutes.post("/survey/verify-identity", asyncHandler(liffController.verifyIde
 liffRoutes.post("/survey/:assignmentId/complete", asyncHandler(liffController.completeSurveyByAssignment));
 // スクリーニング判定API
 liffRoutes.post("/survey/:assignmentId/judge-screening", asyncHandler(liffController.judgeScreening));
+// サーバー権威の次設問解決API（初回・再開用。Phase2 クライアントが消費）
+liffRoutes.get("/survey/:assignmentId/next", asyncHandler(liffController.getSurveyNext));
 liffRoutes.get("/survey/:assignmentId", asyncHandler(liffController.surveyPage));
 liffRoutes.get("/survey", asyncHandler(liffController.surveyPage));
 
@@ -58,6 +68,8 @@ liffRoutes.get("/projects", asyncHandler(liffController.projectsPage));
 liffRoutes.get("/projects-data", asyncHandler(liffController.getProjectsData));
 liffRoutes.get("/projects/:id/data", asyncHandler(liffController.getProjectDetailData));
 liffRoutes.post("/projects/:id/favorite", asyncHandler(liffController.toggleProjectFavorite));
+liffRoutes.post("/projects/:id/apply", asyncHandler(liffController.applyToProject));
+liffRoutes.post("/projects/:id/withdraw", asyncHandler(liffController.withdrawApplication));
 liffRoutes.get("/projects/:id", asyncHandler(liffController.projectDetailPage));
 liffRoutes.get("/saved-projects", asyncHandler(liffController.savedProjectsPage));
 liffRoutes.get("/saved-projects-data", asyncHandler(liffController.getSavedProjectsData));

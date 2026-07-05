@@ -42,6 +42,11 @@ interface ProjectMutationInput {
   display_thumbnail_url?: string | null;
   estimated_minutes?: number | null;
   max_respondents?: number | null;
+  tags?: string[];
+  ng_conditions?: string | null;
+  recruit_deadline?: string | null;
+  apply_mode?: import("../types/domain").ProjectApplyMode;
+  interview_format?: string | null;
   delivery_enabled?: boolean;
   delivery_type?: DeliveryType | null;
   delivered_at?: string | null;
@@ -220,9 +225,11 @@ export const projectRepository = {
   async listDiscoverable(): Promise<Project[]> {
     const { data, error } = await supabase
       .from("projects")
-      .select("id, name, user_display_title, category, delivery_type, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at")
+      .select("id, name, user_display_title, category, delivery_type, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at, tags, ng_conditions, recruit_deadline, apply_mode, interview_format")
       .eq("status", "published")
       .eq("visibility_type", "public")
+      // 募集期限切れは一覧に出さない（recruit_deadline 未設定は常に表示）
+      .or(`recruit_deadline.is.null,recruit_deadline.gte.${new Date().toISOString()}`)
       .order("created_at", { ascending: false });
     throwIfError(error);
     return (data ?? []) as unknown as Project[];
@@ -231,7 +238,7 @@ export const projectRepository = {
   async getDiscoverableById(id: string): Promise<Project | null> {
     const { data, error } = await supabase
       .from("projects")
-      .select("id, name, user_display_title, category, delivery_type, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at, objective, screening_config")
+      .select("id, name, user_display_title, category, delivery_type, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at, objective, screening_config, tags, ng_conditions, recruit_deadline, apply_mode, interview_format")
       .eq("id", id)
       .eq("status", "published")
       .eq("visibility_type", "public")

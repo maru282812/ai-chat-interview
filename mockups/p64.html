@@ -1,0 +1,30 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>64 通知一覧（仮・ベルタップ先）</title><link rel="stylesheet" href="base.css">
+<style>
+  .n { display: flex; gap: 12px; padding: 15px 16px; border-bottom: 1px solid #F0E6C8; background: #fff; }
+  .n.unread { background: #FCF6E3; }
+  .n .ic { width: 40px; height: 40px; border-radius: 50%; background: var(--brand-weak); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+  .n .t { font-size: 13.5px; font-weight: 700; line-height: 1.5; }
+  .n .d { font-size: 12px; color: var(--sub); margin-top: 3px; line-height: 1.6; }
+  .n .time { font-size: 11px; color: #bba; margin-top: 4px; }
+  .n.unread::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #E5484D; flex-shrink: 0; margin-top: 6px; }
+</style></head>
+<body class="t-hibi">
+<div class="phone">
+  <header class="appbar"><span class="icon">‹</span><b style="font-size:16px;flex:1;text-align:center">お知らせ</b><span style="font-size:12px;color:#A97814;font-weight:700">すべて既読</span></header>
+  <nav class="tabs"><a class="on" href="#">すべて</a><a href="#">未読<span class="cnt">2</span></a></nav>
+  <main>
+    <div class="n unread"><span class="ic" style="background:#E3F0EC">🎉</span>
+      <div><div class="t">【当選】髪や頭皮の保水インタビューに当選しました</div><div class="d">7/9 23:00までに回答をはじめてください。完了で500pt付与。</div><div class="time">1時間前</div></div></div>
+    <div class="n unread"><span class="ic">⏰</span>
+      <div><div class="t">保存した案件の締切が近づいています</div><div class="d">「目・目元悩みのある30代の方に…」あと2日で締切です。</div><div class="time">3時間前</div></div></div>
+    <div class="n"><span class="ic">✨</span>
+      <div><div class="t">あなたにおすすめの新着案件が2件あります</div><div class="d">プロフィール（30代・美容関心）に合う案件が公開されました。</div><div class="time">昨日</div></div></div>
+    <div class="n"><span class="ic" style="background:#E3F0EC">💰</span>
+      <div><div class="t">300ptを付与しました</div><div class="d">「在宅介護のアンケート」の回答が完了しました。</div><div class="time">6/28</div></div></div>
+    <div class="n"><span class="ic">📮</span>
+      <div><div class="t">応募を受け付けました</div><div class="d">「結婚式の引き出物探し」結果は7/17までにご連絡します。</div><div class="time">7/2</div></div></div>
+  </main>
+  <nav class="bottomnav"><a href="p51.html"><span class="i">🔍</span>探す</a><a href="p59.html"><span class="i">☆</span>保存</a><a href="p61.html"><span class="i">📋</span>やりとり</a><a href="p40.html"><span class="i">👤</span>マイページ</a></nav>
+</div>
+</body></html>

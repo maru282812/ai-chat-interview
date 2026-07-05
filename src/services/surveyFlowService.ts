@@ -18,7 +18,8 @@ import {
   resolveQuestionView,
   type ResolvedQuestionView,
 } from "../lib/questionEngine";
-import type { Answer, Question } from "../types/domain";
+import { surveyOrderingService } from "./surveyOrderingService";
+import type { Answer, Project, Question, QuestionPageGroup, Session } from "../types/domain";
 import type { AnswerContext } from "../types/questionSchema";
 
 /** 配列（複数選択）として ctx に格納すべき設問タイプ。 */
@@ -60,33 +61,34 @@ export function buildAnswerContext(questions: Question[], answers: Answer[]): An
   return { answers: map };
 }
 
-/** is_hidden を除外し sort_order 昇順に整列した設問配列を返す。 */
+/**
+ * is_hidden を除外し sort_order 昇順に整列した設問配列を返す。
+ * ランダム化時は sort_order が表示順位で上書き済み（surveyOrderingService）なので、
+ * ここでの整列＝実際の表示順になる。以降の「次」判定は配列インデックスで行う。
+ */
 function orderedVisibleUniverse(questions: Question[]): Question[] {
   return questions
     .filter((q) => !q.is_hidden)
     .sort((a, b) => a.sort_order - b.sort_order);
 }
 
-/** 指定設問より後ろ（sort_order 昇順）で、現 ctx で可視な最初の設問を返す。 */
+/** ordered 配列の index 位置から、現 ctx で可視な最初の設問（自身含む前進）を返す。 */
 function advancePastInvisible(
-  start: Question | null,
+  startIndex: number,
   ordered: Question[],
   ctx: AnswerContext
 ): Question | null {
-  let candidate = start;
-  const seen = new Set<string>();
-  while (candidate && !isQuestionVisible(candidate, ctx)) {
-    if (seen.has(candidate.question_code)) return null; // 循環ガード
-    seen.add(candidate.question_code);
-    const cursor = candidate;
-    candidate = ordered.find((q) => q.sort_order > cursor.sort_order) ?? null;
+  for (let i = startIndex; i >= 0 && i < ordered.length; i++) {
+    const q = ordered[i];
+    if (q && isQuestionVisible(q, ctx)) return q;
   }
-  return candidate;
+  return null;
 }
 
 /**
  * 直前に回答した設問（fromQuestion）と、その回答を反映した ctx から、次に出す設問ビューを返す。
- * 決定順: branch_rule（一致 or default/merge） → 無ければ sort_order の次 → 不可視はスキップ。
+ * 決定順: branch_rule（一致 or default/merge） → 無ければ表示順の次 → 不可視はスキップ。
+ * 表示順はランダム化を含む ordered 配列の index で辿る（sort_order 直接比較はしない）。
  * @param normalizedAnswer 分岐評価に使う fromQuestion の回答ペイロード（{value|values|boolean|...}）
  */
 export function computeNextView(input: {
@@ -100,14 +102,73 @@ export function computeNextView(input: {
   const nextCode = resolveBranchNextCode(input.fromQuestion.branch_rule ?? null, input.normalizedAnswer);
   let candidate: Question | null = null;
   if (nextCode) {
-    candidate = ordered.find((q) => q.question_code === nextCode) ?? null;
+    // 分岐ジャンプ先。不可視ならそこから表示順で前進する。
+    const jumpIndex = ordered.findIndex((q) => q.question_code === nextCode);
+    candidate = jumpIndex >= 0 ? advancePastInvisible(jumpIndex, ordered, input.ctx) : null;
   }
   if (!candidate) {
-    candidate = ordered.find((q) => q.sort_order > input.fromQuestion.sort_order) ?? null;
+    const fromIndex = ordered.findIndex((q) => q.question_code === input.fromQuestion.question_code);
+    candidate = advancePastInvisible(fromIndex + 1, ordered, input.ctx);
   }
 
-  candidate = advancePastInvisible(candidate, ordered, input.ctx);
   return candidate ? resolveQuestionView(candidate, input.ctx) : null;
+}
+
+// ------------------------------------------------------------------
+// フェーズ絞り込み＋表示順の解決（surveyPage と同一の設問集合をフロー側でも再現する）
+// ------------------------------------------------------------------
+
+export type SurveyPhase = "screening" | "main";
+
+/**
+ * スクリーニング/メインのフェーズに応じて表示対象設問を絞り込む（surveyPage と同一ロジック）。
+ * - screeningEnabled かつスクリーニング設問があり未判定 → スクリーニング設問のみ（phase=screening）
+ * - それ以外 → 非スクリーニング設問のみ（phase=main）
+ */
+export function selectPhaseQuestions(
+  allQuestions: Question[],
+  opts: { screeningEnabled: boolean; screeningJudged: boolean }
+): { questions: Question[]; phase: SurveyPhase } {
+  const allVisible = allQuestions.filter((q) => !q.is_hidden);
+  const screeningQuestions = allVisible.filter((q) => q.question_role === "screening");
+  const hasScreening = screeningQuestions.length > 0 && opts.screeningEnabled;
+  if (hasScreening && !opts.screeningJudged) {
+    return { questions: screeningQuestions, phase: "screening" };
+  }
+  return { questions: allVisible.filter((q) => q.question_role !== "screening"), phase: "main" };
+}
+
+/**
+ * surveyPage がクライアントへ渡すのと同一の「フェーズ絞り込み＋ランダム化順序」を再現する。
+ * main フェーズのみ surveyOrderingService で表示順を確定（回答者ごとに決定的・既に確定済みなら再利用）。
+ * 副作用（assignment status 更新等）は含めない＝フロー用の純粋な集合解決。
+ */
+export async function resolveOrderedRenderSet(input: {
+  session: Session;
+  project: Project;
+  questions: Question[];
+  pageGroups: QuestionPageGroup[];
+  screeningEnabled: boolean;
+  screeningJudged: boolean;
+}): Promise<{ questions: Question[]; phase: SurveyPhase }> {
+  const { questions: phaseQuestions, phase } = selectPhaseQuestions(input.questions, {
+    screeningEnabled: input.screeningEnabled,
+    screeningJudged: input.screeningJudged,
+  });
+  if (phase !== "main") {
+    return { questions: phaseQuestions, phase };
+  }
+  try {
+    const reordered = await surveyOrderingService.resolveOrder({
+      session: input.session,
+      project: input.project,
+      questions: phaseQuestions,
+      pageGroups: input.pageGroups,
+    });
+    return { questions: reordered.questions, phase };
+  } catch {
+    return { questions: phaseQuestions, phase };
+  }
 }
 
 /**

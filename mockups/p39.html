@@ -1,0 +1,43 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>39 応募C・チャット型（実interview_chat UI準拠）</title><link rel="stylesheet" href="base.css">
+<style>
+  /* 実際の survey.ejs（interview_chat モード）の構造を再現：
+     白AI吹き出し(18/4)・ユーザー吹き出し・インライン選択肢＋送信ボタン・下部固定入力欄 */
+  .phone { background: var(--paper); padding-bottom: 84px; }
+  .chat-container { max-width: 480px; margin: 0 auto; padding: 12px; }
+  .chat-messages { display: flex; flex-direction: column; gap: 10px; }
+  .chat-bubble { max-width: 85%; padding: 12px 16px; border-radius: 18px; line-height: 1.55; font-size: 14.5px; }
+  .chat-bubble.ai { background: #fff; box-shadow: 0 1px 4px rgba(120,90,20,.12); border-radius: 18px 18px 18px 4px; align-self: flex-start; }
+  .chat-bubble.user { background: var(--teal); color: #fff; border-radius: 18px 18px 4px 18px; align-self: flex-end; }
+  .chat-answer-inline { width: 88%; padding-left: 8px; }
+  .choice-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #E3DAba; border-radius: 10px; background: #fff; font-size: 14px; margin-bottom: 8px; }
+  .choice-item.selected { background: #E9F3F0; border-color: var(--teal); font-weight: 600; }
+  .choice-item .r { width: 17px; height: 17px; border: 2px solid #ccc; border-radius: 50%; flex-shrink: 0; }
+  .choice-item.selected .r { border: 5px solid var(--teal); }
+  .chat-next-btn { display: block; width: 100%; padding: 12px; background: var(--teal); color: #fff; border: none; border-radius: 12px; font-size: 15px; font-weight: 600; }
+  .chat-input-area { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 430px; background: #fff; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); box-shadow: 0 -2px 8px rgba(120,90,20,.10); display: flex; gap: 8px; align-items: flex-end; }
+  .chat-input { flex: 1; padding: 10px 14px; border: 1px solid #E3DAba; border-radius: 20px; font-size: 15px; }
+  .chat-send { width: 44px; height: 44px; background: var(--teal); border: none; border-radius: 50%; color: #fff; font-size: 18px; flex-shrink: 0; }
+</style></head>
+<body class="t-hibi">
+<div class="phone">
+  <header class="appbar"><span class="icon">‹</span><b style="font-size:14.5px;flex:1;text-align:center">髪や頭皮の保水について（応募〜回答）</b><span></span></header>
+  <div class="chat-container">
+    <div class="chat-messages">
+      <div class="chat-bubble ai">応募ありがとうございます！はじめに参加条件を確認します。あなたの年代を教えてください。</div>
+      <div class="chat-answer-inline">
+        <div class="choice-item"><span class="r"></span>20代</div>
+        <div class="choice-item selected"><span class="r"></span>30代</div>
+        <div class="choice-item"><span class="r"></span>40代</div>
+        <div class="choice-item"><span class="r"></span>その他</div>
+        <button class="chat-next-btn">回答を送信</button>
+      </div>
+      <div class="chat-bubble user">30代</div>
+      <div class="chat-bubble ai">ありがとうございます、条件を満たしています✨ このままインタビューを始めますね。まず、ふだんのヘアケアで一番気になっていることを教えてください。</div>
+      <div class="chat-bubble user">乾燥で髪が広がりやすいことです</div>
+      <div class="chat-bubble ai">広がりが特に気になるのは、どんな場面が多いですか？朝のセット時、外出先など具体的に教えてください 😊</div>
+    </div>
+  </div>
+  <div class="chat-input-area"><input class="chat-input" placeholder="回答を入力…"><button class="chat-send">➤</button></div>
+</div>
+</body></html>

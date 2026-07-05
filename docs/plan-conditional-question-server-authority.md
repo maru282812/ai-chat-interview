@@ -100,7 +100,20 @@
   クライアントが配列をカンマ結合文字列で送る点に合わせ型ベースで array/scalar を復元。
   テスト `surveyFlowService.test.ts` 7件＋全263件パス・typecheckクリーン。
   **`GET /survey/:id/next` は消費者が定義される Phase 2 に延期**（未消費APIの増設回避。`resumeView` は先行実装済み）。
-- ⬜ Phase 2 クライアント thin 化 / Phase 4 LINE会話統一 は未着手。
+- 🟡 **Phase 2（サーバー基盤）完了・クライアント消費は未**（2026-07-03）:
+  - **重要発見**: surveyPage はクライアントへ全設問ではなく **フェーズ絞り込み（screening/main）＋ブロック/選択肢ランダム化済み** の
+    部分集合 `renderQuestions` を渡す（surveyOrderingService は初回のみ session に順序を永続化し以降は決定的に再利用）。
+    Phase1 の `next` は `listByProject`（全設問）で計算しており、クライアントが消費すると集合・順序がズレる欠陥があった。
+  - 対処: `surveyFlowService` に `selectPhaseQuestions` / `resolveOrderedRenderSet` を追加し、フロー側でも同一集合・順序を再現。
+    `computeNextView` を sort_order 直接比較から **表示順(index)ベース**へ修正（ランダム化耐性）。
+    `submitSurveyAnswer` の `next` をフェーズ絞り込み済みセットで解決するよう修正。
+    `surveyPage` を `selectPhaseQuestions` 共有へリファクタ（挙動不変・重複削減）。
+  - `GET /liff/survey/:assignmentId/next` を新設（初回・再開用。`resumeView` で未回答かつ可視の最初の設問ビューを返す）。
+  - テスト 11件（surveyFlowService）＋全267件パス・typecheck クリーン。**すべて後方互換**（現行クライアントは `next`/GET を未使用）。
+  - ⬜ **残: クライアント thin 化**（survey.ejs から isVisible/applyAns/filterChoices/resolveNext を撤去し、
+    初回=GET /next、以後=POST /answer の `next` を描画。survey_question→interview_chat の順。survey_page はページ内可視性のみ
+    クライアント維持）。**3モード×主要設問タイプ×probe のブラウザE2E検証が必須**のため、実機/Playwright 検証とセットで実施する。
+- ⬜ Phase 4 LINE会話統一 は未着手。
 
 ## 影響・リスク
 

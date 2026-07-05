@@ -1,0 +1,38 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12 詳細・固定CTA+流れタイムライン型</title><link rel="stylesheet" href="base.css">
+<style>
+  .phone { padding-bottom: 90px; }
+  .tl { padding: 4px 0 0 6px; }
+  .tl li { list-style: none; position: relative; padding: 0 0 20px 26px; font-size: 14px; }
+  .tl li::before { content: ""; position: absolute; left: 5px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--brand); }
+  .tl li:not(:last-child)::after { content: ""; position: absolute; left: 9px; top: 18px; bottom: -2px; width: 2px; background: #f0ddc8; }
+  .tl b { display: block; }
+  .tl small { color: var(--sub); }
+</style></head>
+<body>
+<div class="phone">
+  <header class="appbar"><span class="icon">‹</span><b style="font-size:15px;flex:1;text-align:center">案件詳細</b><span class="icon">☆</span></header>
+  <section class="section" style="border-bottom:8px solid #f6f7f9">
+    <h3 style="font-size:18px;line-height:1.5">結婚式の引き出物探しについてお伺いしたいです</h3>
+    <div class="meta-line"><span class="badge new">新着</span><span class="badge fmt">オンラインインタビュー</span><span class="price">7,260<small>pt｜90分</small></span></div>
+    <div class="foot" style="font-size:13px"><span class="days">あと<b>13</b>日</span><span class="left">　募集<b>5</b>人</span></div>
+  </section>
+  <section class="section" style="border-bottom:8px solid #f6f7f9">
+    <div class="sec-title">🚩 実施までの流れ</div>
+    <ul class="tl">
+      <li><b>1. 応募する</b><small>事前設問11問に回答（約5分）</small></li>
+      <li><b>2. 選考</b><small>ご回答をもとに運営が選考します</small></li>
+      <li><b>3. 当選のご連絡</b><small>LINEでお知らせ・日程調整</small></li>
+      <li><b>4. インタビュー実施（90分）</b><small>Google Meet・顔出し必須・録画あり</small></li>
+      <li><b>5. 謝礼 7,260pt 付与</b><small>マイページから交換できます</small></li>
+    </ul>
+  </section>
+  <section class="section">
+    <div class="sec-title">👤 募集条件</div>
+    <ul class="list-dot"><li>25〜39歳</li><li>結婚式（フォト婚は除く）を挙げた、または挙げる予定の方</li></ul>
+    <div class="ngbox"><div class="t">⚠ NG条件</div><ul><li>ギフトやブライダル業界に従事されている方</li><li>結婚式の準備を配偶者に一任された方</li></ul></div>
+  </section>
+  <section class="section"><div class="sec-title">📅 募集期限</div><p style="font-size:15px">7月16日(木) 23:00 締切</p></section>
+  <div class="cta-fixed"><button class="btn-save">☆</button><a class="btn primary" href="p17.html">応募する（約5分）</a></div>
+</div>
+</body></html>

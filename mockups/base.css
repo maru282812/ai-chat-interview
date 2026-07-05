@@ -1,0 +1,226 @@
+/* Hibi 画面モック共通CSS（ロジックなし・スマホ基準 430px） */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --brand: #f28c28;          /* 基本ブランド（オレンジ） */
+  --brand-weak: #fdf3e7;
+  --accent: #06c755;         /* LINEグリーン */
+  --ink: #222;
+  --sub: #777;
+  --line: #eee;
+  --danger: #e5484d;
+  --danger-weak: #fdeeee;
+  --bg: #fff;
+}
+body { background: #e9ecef; font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; color: var(--ink); }
+/* テーマ差し替え */
+body.t-green  { --brand: #06c755; --brand-weak: #e8f9ef; }
+body.t-blue   { --brand: #2f6fed; --brand-weak: #eaf1fe; }
+body.t-coral  { --brand: #ff6b5e; --brand-weak: #ffefed; }
+body.t-navy   { --brand: #2b3a67; --brand-weak: #edf0f7; }
+body.t-dark   { --bg: #17181c; --ink: #f1f1f1; --sub: #9aa0a6; --line: #2b2d33; background: #000; }
+
+.phone { max-width: 430px; margin: 0 auto; min-height: 100vh; background: var(--bg); position: relative; padding-bottom: 76px; box-shadow: 0 0 24px rgba(0,0,0,.15); }
+a { color: inherit; text-decoration: none; }
+
+/* ヘッダー */
+.appbar { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 10; }
+.appbar .logo { font-weight: 800; font-size: 20px; color: var(--brand); letter-spacing: .5px; }
+.appbar .search { flex: 1; background: #f4f5f7; border-radius: 18px; padding: 8px 14px; color: #9aa; font-size: 13px; }
+body.t-dark .appbar .search { background: #26282e; }
+.appbar .icon { font-size: 20px; }
+
+/* タブ */
+.tabs { display: flex; gap: 4px; overflow-x: auto; border-bottom: 2px solid var(--line); padding: 0 8px; position: sticky; top: 49px; background: var(--bg); z-index: 9; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs a { flex-shrink: 0; padding: 12px 14px; font-size: 14px; font-weight: 600; color: var(--sub); border-bottom: 3px solid transparent; margin-bottom: -2px; }
+.tabs a.on { color: var(--brand); border-color: var(--brand); }
+.tabs .cnt { font-size: 11px; font-weight: 400; margin-left: 2px; }
+
+/* チップ絞り込み */
+.chips { display: flex; gap: 8px; overflow-x: auto; padding: 10px 16px; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chip { flex-shrink: 0; border: 1px solid #ddd; border-radius: 16px; padding: 6px 13px; font-size: 12px; color: #555; background: var(--bg); }
+.chip.on { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; }
+body.t-dark .chip { border-color: #3a3d45; color: #ccc; }
+
+/* 応募数プログレス */
+.progress { padding: 12px 16px; border-bottom: 8px solid #f6f7f9; }
+body.t-dark .progress { border-color: #101114; }
+.progress .row { display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 700; }
+.progress .num { color: var(--brand); font-size: 18px; }
+.progress .bar { height: 6px; background: #eceef1; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+.progress .bar i { display: block; height: 100%; width: 30%; background: var(--brand); border-radius: 3px; }
+.progress .hint { margin-top: 10px; background: var(--brand-weak); border-radius: 10px; padding: 10px 12px; font-size: 12px; color: #6b5238; line-height: 1.6; }
+body.t-dark .progress .hint { color: #d8c9b8; }
+
+/* 案件カード（基本） */
+.cards { padding: 0 0 16px; }
+.card { padding: 18px 16px; border-bottom: 8px solid #f6f7f9; background: var(--bg); }
+body.t-dark .card { border-color: #101114; }
+.card h3 { font-size: 16.5px; line-height: 1.5; font-weight: 700; }
+.card .tags { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.card .tags span { color: var(--brand); font-size: 12.5px; font-weight: 600; }
+.meta-line { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.badge { border-radius: 6px; padding: 4px 9px; font-size: 11.5px; font-weight: 700; }
+.badge.new { background: var(--danger); color: #fff; }
+.badge.fmt { background: var(--brand-weak); color: var(--brand); }
+.badge.ai { background: #eef3ff; color: #2f6fed; }
+.badge.instant { background: #e8f9ef; color: #06a04a; }
+.price { margin-left: auto; font-weight: 800; color: var(--brand); font-size: 21px; }
+.price small { font-size: 12px; color: var(--sub); font-weight: 600; }
+.cond { background: #f6f7f9; border-radius: 10px; padding: 12px 14px; margin-top: 12px; font-size: 13px; line-height: 1.8; color: #444; }
+body.t-dark .cond { background: #22242a; color: #ccc; }
+.cond b { display: block; margin-bottom: 2px; }
+.cond .more { display: block; text-align: right; color: var(--brand); font-weight: 700; font-size: 12.5px; margin-top: 4px; }
+.card .foot { display: flex; align-items: center; margin-top: 14px; font-size: 13px; gap: 4px; flex-wrap: wrap; row-gap: 10px; }
+.card .foot .days, .card .foot .left { white-space: nowrap; }
+.card .foot .days b, .card .foot .left b { color: var(--danger); font-size: 17px; padding: 0 2px; }
+.btn-save { margin-left: auto; border: 1.5px solid var(--brand); color: var(--brand); border-radius: 20px; padding: 8px 16px; font-size: 13px; font-weight: 700; background: var(--bg); white-space: nowrap; flex-shrink: 0; }
+.btn-save.saved { background: var(--brand); color: #fff; }
+
+/* ボタン */
+.btn { display: block; text-align: center; border-radius: 12px; padding: 15px; font-size: 16px; font-weight: 800; }
+.btn.primary { background: var(--brand); color: #fff; box-shadow: 0 3px 10px rgba(0,0,0,.12); }
+.btn.ghost { border: 1.5px solid var(--brand); color: var(--brand); background: var(--bg); }
+.btn.sub { background: #f1f2f4; color: #555; }
+
+/* 下部ナビ */
+.bottomnav { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 430px; display: flex; background: var(--bg); border-top: 1px solid var(--line); z-index: 20; }
+.bottomnav a { flex: 1; text-align: center; padding: 8px 0 10px; font-size: 10.5px; color: #999; }
+.bottomnav a .i { display: block; font-size: 21px; margin-bottom: 2px; }
+.bottomnav a.on { color: var(--brand); font-weight: 700; }
+
+/* FAB（並び替え） */
+.fab { position: fixed; bottom: 86px; left: 50%; transform: translateX(calc(-50% + 130px)); background: var(--brand); color: #fff; border-radius: 24px; padding: 12px 18px; font-size: 14px; font-weight: 800; box-shadow: 0 4px 12px rgba(0,0,0,.25); z-index: 21; }
+
+/* 詳細ページ部品 */
+.section { padding: 18px 16px; border-bottom: 1px solid var(--line); }
+.sec-title { color: var(--brand); font-weight: 800; font-size: 15px; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+.list-dot li { list-style: none; padding: 4px 0 4px 1em; text-indent: -1em; font-size: 14.5px; line-height: 1.7; }
+.list-dot li::before { content: "・"; }
+.ngbox { background: var(--danger-weak); border-radius: 12px; padding: 14px 16px; margin-top: 14px; }
+.ngbox .t { color: var(--danger); font-weight: 800; font-size: 14.5px; margin-bottom: 6px; }
+.ngbox li { list-style: none; color: #c0392b; font-size: 13.5px; line-height: 1.8; padding-left: 1em; text-indent: -1em; }
+.ngbox li::before { content: "・"; }
+.meta4 { display: flex; text-align: center; padding: 16px 8px; border-bottom: 1px solid var(--line); }
+.meta4 > div { flex: 1; border-right: 1px solid var(--line); padding: 0 4px; }
+.meta4 > div:last-child { border-right: 0; }
+.meta4 .i { font-size: 22px; }
+.meta4 .v { font-weight: 800; font-size: 15px; margin-top: 4px; }
+.meta4 .v b { font-size: 20px; }
+.meta4 .k { font-size: 11px; color: var(--sub); margin-top: 2px; }
+details.acc { border-bottom: 1px solid var(--line); }
+details.acc summary { list-style: none; display: flex; justify-content: space-between; padding: 17px 16px; font-weight: 700; font-size: 15px; cursor: pointer; }
+details.acc summary::after { content: "⌄"; color: #999; }
+details.acc[open] summary::after { content: "⌃"; }
+details.acc .body { padding: 0 16px 16px; font-size: 13.5px; color: #555; line-height: 1.8; }
+.cta-fixed { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 430px; background: var(--bg); padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); display: flex; gap: 10px; z-index: 30; }
+.cta-fixed .btn { flex: 1; }
+.cta-fixed .btn-save { margin: 0; padding: 12px 18px; border-radius: 12px; }
+
+/* フォーム */
+.q { padding: 18px 16px; border-bottom: 8px solid #f6f7f9; }
+.q .qt { font-weight: 700; font-size: 15.5px; line-height: 1.6; margin-bottom: 12px; }
+.q .req { color: var(--danger); font-size: 11px; border: 1px solid var(--danger); border-radius: 4px; padding: 1px 6px; margin-left: 8px; vertical-align: 2px; }
+.opt { display: flex; align-items: center; gap: 10px; border: 1.5px solid #ddd; border-radius: 12px; padding: 14px; font-size: 14.5px; margin-bottom: 10px; }
+.opt.on { border-color: var(--brand); background: var(--brand-weak); font-weight: 700; }
+.opt .r { width: 20px; height: 20px; border: 2px solid #ccc; border-radius: 50%; flex-shrink: 0; }
+.opt.on .r { border: 6px solid var(--brand); }
+textarea.ta, input.ti { width: 100%; border: 1.5px solid #ddd; border-radius: 12px; padding: 13px; font-size: 15px; font-family: inherit; background: var(--bg); color: var(--ink); }
+
+/* ステップ表示 */
+.steps { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 14px; font-size: 11px; color: #aaa; }
+.steps b { width: 26px; height: 26px; border-radius: 50%; background: #e5e7ea; color: #999; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; }
+.steps .on b { background: var(--brand); color: #fff; }
+.steps .on { color: var(--brand); font-weight: 700; }
+.steps i { width: 24px; height: 2px; background: #e5e7ea; }
+
+/* やりとり・リスト */
+.status { border-radius: 6px; padding: 3px 9px; font-size: 11px; font-weight: 800; }
+.status.wait { background: #fff3d6; color: #b07a00; }
+.status.todo { background: #eaf1fe; color: #2f6fed; }
+.status.doing { background: var(--brand-weak); color: var(--brand); }
+.status.done { background: #eef1f3; color: #789; }
+.status.win { background: #e8f9ef; color: #06a04a; }
+.status.lose { background: #f4f4f4; color: #999; }
+
+/* マイページ */
+.menu { border-top: 8px solid #f6f7f9; }
+.menu a { display: flex; justify-content: space-between; align-items: center; padding: 18px 16px; border-bottom: 1px solid var(--line); font-size: 15px; }
+.menu a::after { content: "›"; color: #bbb; font-size: 20px; }
+.menu a.danger { color: var(--danger); }
+.menu .h { padding: 16px 16px 6px; color: var(--brand); font-weight: 800; font-size: 14px; }
+
+/* ---- Hibi 公式LINEカラー（クリームイエロー×チャコール×ティールCTA） ---- */
+body.t-hibi {
+  --brand: #C9911F;        /* ゴールド（リンク・アクティブ・アイコン） */
+  --brand-weak: #FAF0D2;   /* クリーム */
+  --teal: #0E6B5A;         /* CTA・強調数字（公式LINEのボタン色） */
+  --paper: #FBF5E2;        /* ページ地（リッチメニューの淡黄） */
+  background: #EFE5C8;
+}
+body.t-hibi .phone { background: var(--paper); }
+body.t-hibi .appbar, body.t-hibi .tabs, body.t-hibi .bottomnav { background: #FFFdf6; }
+body.t-hibi .appbar .logo { color: #3B3B3B; display: inline-flex; align-items: center; gap: 6px; }
+/* 公式ロゴの吹き出しアイコン（角丸・左下しっぽ・チャコール細線） */
+body.t-hibi .appbar .logo::before {
+  content: ""; width: 22px; height: 22px; flex-shrink: 0;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='%233B3B3B' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 14.5a2.5 2.5 0 0 1-2.5 2.5H9l-4.5 4v-4H4.5A2.5 2.5 0 0 1 2 14.5v-8A2.5 2.5 0 0 1 4.5 4h14A2.5 2.5 0 0 1 21 6.5z'/%3E%3C/svg%3E") no-repeat center/contain;
+}
+body.t-hibi .appbar .search { background: #F3ECD5; color: #A99; }
+body.t-hibi .card, body.t-hibi .progress { background: #fff; border-color: var(--paper); }
+body.t-hibi .btn.primary { background: var(--teal); }
+body.t-hibi .btn.ghost { border-color: var(--teal); color: var(--teal); background: #fff; }
+body.t-hibi .price { color: var(--teal); }
+body.t-hibi .progress .bar i { background: var(--teal); }
+body.t-hibi .progress .hint { color: #7A6428; }
+body.t-hibi .fab { background: var(--teal); }
+body.t-hibi .badge.fmt { background: var(--brand-weak); color: #A97814; }
+body.t-hibi .badge.ai { background: #E3F0EC; color: var(--teal); }
+body.t-hibi .badge.instant { background: var(--teal); color: #fff; }
+body.t-hibi .status.win, body.t-hibi .status.doing { background: #E3F0EC; color: var(--teal); }
+body.t-hibi .tabs a.on { color: #A97814; border-color: #DFA02F; }
+body.t-hibi .bottomnav a.on { color: #A97814; }
+body.t-hibi .btn-save { border-color: #DFA02F; color: #A97814; background: #fff; }
+body.t-hibi .btn-save.saved { background: #DFA02F; border-color: #DFA02F; color: #fff; }
+body.t-hibi .sec-title { color: #A97814; }
+body.t-hibi .cond { background: var(--brand-weak); color: #6B5A2E; }
+body.t-hibi .opt.on { border-color: var(--teal); background: #E9F3F0; }
+body.t-hibi .opt.on .r { border-color: var(--teal); }
+body.t-hibi .menu .h { color: #A97814; }
+body.t-hibi .menu a { background: #fff; }
+body.t-hibi .menu { border-color: var(--paper); }
+
+/* ---- 報酬ファーストカード（pt左） 共通 ---- */
+.card.rf { display: flex; gap: 14px; }
+.rf .pt { flex-shrink: 0; width: 94px; text-align: center; background: var(--brand-weak); border-radius: 14px; padding: 14px 4px; align-self: flex-start; }
+.rf .pt b { display: block; color: var(--teal); font-size: 22px; font-weight: 900; }
+.rf .pt small { font-size: 10.5px; color: #A97814; font-weight: 700; }
+.rf .pt .min { margin-top: 6px; font-size: 11px; color: var(--sub); }
+.rf .pt.hot { background: var(--teal); }
+.rf .pt.hot b, .rf .pt.hot small, .rf .pt.hot .min { color: #fff; }
+.rf h3 { font-size: 14.5px; }
+
+/* ---- あなたへのおすすめ 共通 ---- */
+.reco-h { display: flex; align-items: baseline; gap: 8px; padding: 16px 16px 8px; font-weight: 900; font-size: 15px; }
+.reco-h .why { margin-left: auto; font-size: 11px; color: var(--sub); font-weight: 400; }
+.reco-band { background: linear-gradient(160deg,#FCF4DE,#FBEFC8); }
+.match { background: #E3F0EC; color: var(--teal); border-radius: 12px; padding: 3px 9px; font-size: 11px; font-weight: 800; white-space: nowrap; }
+.reco-scroll { display: flex; gap: 12px; overflow-x: auto; padding: 0 16px 14px; scrollbar-width: none; }
+.reco-scroll::-webkit-scrollbar { display: none; }
+.reco-card { flex-shrink: 0; width: 216px; background: #fff; border-radius: 14px; padding: 13px; border: 1px solid #F0E6C8; box-shadow: 0 2px 6px rgba(150,120,40,.08); }
+.reco-card h3 { font-size: 13.5px; line-height: 1.45; }
+.reco-card .price { font-size: 16px; }
+.reco-reasons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.reco-reasons span { background: var(--brand-weak); color: #A97814; border-radius: 10px; padding: 3px 8px; font-size: 10.5px; font-weight: 700; }
+
+/* ---- 通知ベル（細線チャコール＋未読ドット） ---- */
+.bell { position: relative; width: 24px; height: 24px; flex-shrink: 0; display: inline-block; cursor: pointer;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%233B3B3B' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 8.5a6 6 0 1 0-12 0c0 6-2.2 7.8-3 8.7-.3.3-.1.8.3.8h17.4c.4 0 .6-.5.3-.8-.8-.9-3-2.7-3-8.7'/%3E%3Cpath d='M10.3 20.5a2 2 0 0 0 3.4 0'/%3E%3C/svg%3E") no-repeat center/contain; }
+.bell.has::after { content: ""; position: absolute; top: 1px; right: 2px; width: 9px; height: 9px; border-radius: 50%; background: #E5484D; border: 2px solid #FFFdf6; }
+.bell.gold::after { background: #DFA02F; }
+
+.center { text-align: center; }
+.mt8{margin-top:8px}.mt12{margin-top:12px}.mt16{margin-top:16px}.mt24{margin-top:24px}
+.px16{padding-left:16px;padding-right:16px}
+.note { font-size: 12px; color: var(--sub); line-height: 1.7; }

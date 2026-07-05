@@ -98,6 +98,11 @@ import {
   buildAdjustQuestionsPrompt,
   buildGenerateFlowPrompt,
 } from "../prompts/adminPrompts";
+import { applicationService } from "../services/applicationService";
+import { projectApplicationRepository } from "../repositories/projectApplicationRepository";
+import { lineMessagingService } from "../services/lineMessagingService";
+import { buildApplicationAcceptedFlex, buildApplicationRejectedFlex } from "../templates/flex";
+import { buildProjectStartUrl } from "../services/liffService";
 
 // USERプロファイル管理の簡易認証設定
 const UP_ADMIN_ID = "admin";
@@ -2605,6 +2610,17 @@ export const adminController = {
         entry_code: bodyString(req.body.visibility_type) === "private_store"
           ? (bodyString(req.body.entry_code) || null)
           : null,
+        apply_mode: bodyString(req.body.apply_mode) === "auto" ? "auto" : "manual",
+        tags: bodyString(req.body.tags)
+          .split(",")
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0),
+        ng_conditions: bodyString(req.body.ng_conditions).trim() || null,
+        // datetime-local はタイムゾーンなしのJST入力 → UTCへ変換して保存
+        recruit_deadline: bodyString(req.body.recruit_deadline)
+          ? new Date(new Date(`${bodyString(req.body.recruit_deadline)}:00+09:00`).getTime()).toISOString()
+          : null,
+        interview_format: bodyString(req.body.interview_format).trim() || null,
         delivery_enabled: req.body.delivery_enabled === "true" || req.body.delivery_enabled === "on",
         delivery_type: (bodyString(req.body.delivery_type) || null) as import("../types/domain").DeliveryType | null,
         // Phase B: プロジェクト個別の policy / override 編集UIは撤去。編集はせず既存値を保全する
@@ -6244,8 +6260,11 @@ export const adminController = {
     const { pointExchangeService } = await import("../services/pointExchangeService");
     const id = routeParam(req, "id");
     await pointExchangeRepository.approve(id, "admin");
-    void pointExchangeAuditLogRepository.create({ requestId: id, action: "approved", adminId: "admin" });
-    void pointExchangeService.sendApprovedNotification(id);
+    // 金銭系の監査ログ・通知はレスポンス前に await（サーバーレスで打ち切られないように）。
+    // 監査ログは必ず残す。通知失敗は redirect を止めないようログのみ。
+    await pointExchangeAuditLogRepository.create({ requestId: id, action: "approved", adminId: "admin" });
+    try { await pointExchangeService.sendApprovedNotification(id); }
+    catch (err) { logger.warn("approveExchange.notify.failed", { id, error: String(err) }); }
     res.redirect("/admin/exchange-requests?status=approved");
   },
 
@@ -6255,7 +6274,7 @@ export const adminController = {
     const id     = routeParam(req, "id");
     const reason = typeof req.body.reason === "string" ? req.body.reason.trim() : "管理者による却下";
     await pointExchangeService.rejectExchange(id, "admin", reason);
-    void pointExchangeAuditLogRepository.create({ requestId: id, action: "rejected", adminId: "admin", detail: { reason } });
+    await pointExchangeAuditLogRepository.create({ requestId: id, action: "rejected", adminId: "admin", detail: { reason } });
     res.redirect("/admin/exchange-requests?status=rejected");
   },
 
@@ -6280,13 +6299,14 @@ export const adminController = {
       expiresAt:   expiresAt   || undefined,
       adminMemo:   adminMemo   || undefined,
     });
-    void pointExchangeAuditLogRepository.create({
+    await pointExchangeAuditLogRepository.create({
       requestId: id,
       action:    "fulfilled",
       adminId:   "admin",
       detail:    { gift_provider: giftProvider, expires_at: expiresAt || null },
     });
-    void pointExchangeService.sendFulfilledNotification(id);
+    try { await pointExchangeService.sendFulfilledNotification(id); }
+    catch (err) { logger.warn("fulfillExchange.notify.failed", { id, error: String(err) }); }
 
     res.redirect("/admin/exchange-requests?status=fulfilled");
   },
@@ -7747,6 +7767,113 @@ export const adminController = {
         : {})
     });
     res.redirect("/admin/store-surveys?msg=" + encodeURIComponent("店舗専用アンケートを更新しました"));
+  },
+
+  // ---- 応募管理（案件検索サイト・project_applications） ----
+
+  /** 応募一覧。?project_id= で案件フィルタ。 */
+  async applications(req: Request, res: Response): Promise<void> {
+    const projectIdFilter = typeof req.query.project_id === "string" ? req.query.project_id.trim() : "";
+    const allProjects = await projectRepository.list();
+    const projectById = new Map(allProjects.map((p) => [p.id, p]));
+
+    let applications;
+    if (projectIdFilter) {
+      applications = await projectApplicationRepository.listByProject(projectIdFilter);
+    } else {
+      // 全件: 応募のある案件を新しい順に。件数規模が小さい前提の素朴な実装。
+      const lists = await Promise.all(
+        allProjects
+          .filter((p) => p.visibility_type !== "private_store")
+          .map((p) => projectApplicationRepository.listByProject(p.id))
+      );
+      applications = lists.flat().sort((a, b) => (a.applied_at < b.applied_at ? 1 : -1));
+    }
+
+    const rows = applications.map((a) => ({
+      application: a,
+      project: projectById.get(a.project_id) ?? null,
+    }));
+
+    res.render("admin/applications/index", {
+      title: "応募管理",
+      rows,
+      projects: allProjects.filter((p) => p.visibility_type !== "private_store"),
+      projectIdFilter: projectIdFilter || null,
+      msg: typeof req.query.msg === "string" ? req.query.msg : null,
+      err: typeof req.query.err === "string" ? req.query.err : null
+    });
+  },
+
+  /** 当選: respondent/assignment を確保し、当選Flexを送る。 */
+  async acceptApplication(req: Request, res: Response): Promise<void> {
+    const applicationId = routeParam(req, "id");
+    const backProject = typeof req.body?.back === "string" ? req.body.back : "";
+    const back = `/admin/applications${backProject ? `?project_id=${encodeURIComponent(backProject)}&` : "?"}`;
+
+    const result = await applicationService.accept(applicationId);
+    if (!result.ok) {
+      res.redirect(`${back}err=` + encodeURIComponent(
+        result.reason === "not_found" ? "応募が見つかりません" : "選考中の応募のみ当選にできます"
+      ));
+      return;
+    }
+
+    // 当選通知（失敗しても当選自体は成立させ、エラーはメッセージで知らせる）
+    let notified = true;
+    try {
+      const startUrl = buildProjectStartUrl(result.assignmentId);
+      await lineMessagingService.push(result.application.line_user_id, [
+        buildApplicationAcceptedFlex({
+          projectTitle: result.project.user_display_title || result.project.name,
+          rewardPoints: result.project.reward_points,
+          estimatedMinutes: (result.project as unknown as { estimated_minutes?: number | null }).estimated_minutes ?? null,
+          surveyUrl: startUrl.url,
+        }),
+      ]);
+    } catch (error) {
+      notified = false;
+      logger.warn("applications.accept: 当選通知の送信に失敗", { applicationId, error: String(error) });
+    }
+
+    res.redirect(`${back}msg=` + encodeURIComponent(
+      notified ? "当選にしました（LINE通知済み）" : "当選にしました（LINE通知は失敗。手動で連絡してください）"
+    ));
+  },
+
+  /** 落選: rejected にし、チェック時のみ落選Flexを送る。 */
+  async rejectApplication(req: Request, res: Response): Promise<void> {
+    const applicationId = routeParam(req, "id");
+    const backProject = typeof req.body?.back === "string" ? req.body.back : "";
+    const back = `/admin/applications${backProject ? `?project_id=${encodeURIComponent(backProject)}&` : "?"}`;
+    const notify = req.body?.notify === "1";
+    const note = bodyString(req.body?.note).trim() || null;
+
+    const result = await applicationService.reject(applicationId, note);
+    if (!result.ok) {
+      res.redirect(`${back}err=` + encodeURIComponent(
+        result.reason === "not_found" ? "応募が見つかりません" : "選考中の応募のみ落選にできます"
+      ));
+      return;
+    }
+
+    let suffix = "";
+    if (notify) {
+      try {
+        const project = await projectRepository.getById(result.application.project_id);
+        await lineMessagingService.push(result.application.line_user_id, [
+          buildApplicationRejectedFlex({
+            projectTitle: project.user_display_title || project.name,
+            projectsUrl: `${appEnv.APP_BASE_URL}/liff/projects`,
+          }),
+        ]);
+        suffix = "（LINE通知済み）";
+      } catch (error) {
+        suffix = "（LINE通知は失敗）";
+        logger.warn("applications.reject: 落選通知の送信に失敗", { applicationId, error: String(error) });
+      }
+    }
+    res.redirect(`${back}msg=` + encodeURIComponent(`落選にしました${suffix}`));
   }
 };
 

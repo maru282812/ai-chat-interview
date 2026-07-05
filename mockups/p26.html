@@ -1,0 +1,39 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>26 マイページ・プロフィール充実度型</title><link rel="stylesheet" href="base.css">
+<style>
+  .ringwrap { display: flex; gap: 16px; align-items: center; padding: 18px 16px; }
+  .ring { width: 84px; height: 84px; border-radius: 50%; background: conic-gradient(var(--brand) 0 75%, #eceef1 75% 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .ring i { width: 62px; height: 62px; border-radius: 50%; background: var(--bg); display: flex; align-items: center; justify-content: center; font-style: normal; font-weight: 900; font-size: 17px; color: var(--brand); }
+  .missing { padding: 0 16px 16px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .missing span { border: 1.5px dashed var(--brand); color: var(--brand); border-radius: 16px; padding: 7px 13px; font-size: 12.5px; font-weight: 700; }
+</style></head>
+<body>
+<div class="phone">
+  <header class="appbar"><span class="logo">Hibi</span><b style="font-size:16px;flex:1;text-align:center">マイページ</b><span class="icon">⚙</span></header>
+  <div class="ringwrap">
+    <div class="ring"><i>75%</i></div>
+    <div>
+      <b style="font-size:15.5px">プロフィール充実度 75%</b>
+      <p class="note mt8">プロフィールを充実させると、条件に合う案件が見つかりやすくなり<b style="color:var(--brand)">当選率が上がります</b>。</p>
+    </div>
+  </div>
+  <div class="missing"><span>＋ 職業</span><span>＋ 世帯構成</span><span>＋ 興味のあるテーマ</span></div>
+  <section class="progress" style="border-top:8px solid #f6f7f9">
+    <div class="row"><span>📋 今月の応募状況</span><span class="num">3<small> /10件</small></span></div>
+    <div class="bar"><i></i></div>
+  </section>
+  <section class="section" style="border-bottom:8px solid #f6f7f9">
+    <div class="sec-title">💴 ポイント</div>
+    <div style="display:flex;align-items:baseline;gap:14px"><b style="font-size:26px">2,300<small style="font-size:13px"> pt</small></b><a href="#" style="color:var(--brand);font-weight:700;font-size:13px;margin-left:auto">交換する ›</a></div>
+  </section>
+  <nav class="menu" style="border-top:0">
+    <a href="#">プロフィール・タグ設定</a>
+    <a href="#">謝礼履歴</a>
+    <a href="#">通知設定</a>
+    <a href="#">ご利用ガイド・FAQ</a>
+    <a href="#">各種規約</a>
+    <a class="danger" href="#">退会する</a>
+  </nav>
+  <nav class="bottomnav"><a href="p01.html"><span class="i">🔍</span>探す</a><a href="p28.html"><span class="i">☆</span>保存</a><a href="p21.html"><span class="i">📋</span>やりとり</a><a class="on" href="#"><span class="i">👤</span>マイページ</a></nav>
+</div>
+</body></html>

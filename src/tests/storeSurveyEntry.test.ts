@@ -53,6 +53,10 @@ function createThenableSelectBuilder(response: SupabaseResponse, calls: QueryCal
       calls.push({ method: "eq", args });
       return builder;
     },
+    or(...args: unknown[]) {
+      calls.push({ method: "or", args });
+      return builder;
+    },
     order(...args: unknown[]) {
       calls.push({ method: "order", args });
       return builder;

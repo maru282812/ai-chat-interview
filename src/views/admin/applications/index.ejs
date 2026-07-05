@@ -1,0 +1,99 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const APP_STATUS = {
+  applied:   { label: '選考中',   color: '#c8851b' },
+  accepted:  { label: '当選',     color: '#2ca87a' },
+  rejected:  { label: '落選',     color: '#999' },
+  withdrawn: { label: '取り消し', color: '#999' },
+  expired:   { label: '期限切れ', color: '#b14' }
+};
+function appBadge(status) {
+  const s = APP_STATUS[status] || { label: status, color: '#999' };
+  return '<span style="display:inline-block;background:' + s.color + ';color:#fff;font-size:11px;padding:1px 7px;border-radius:3px">' + s.label + '</span>';
+}
+function fmt(dt) {
+  if (!dt) return '-';
+  const d = new Date(dt);
+  return (d.getMonth()+1) + '/' + d.getDate() + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>応募管理</h2>
+</div>
+
+<% if (msg) { %>
+  <div class="card" style="background:#e9f7f0;border:1px solid #2ca87a;color:#1c6e4f;padding:10px 14px;margin-bottom:1rem"><%= msg %></div>
+<% } %>
+<% if (err) { %>
+  <div class="card" style="background:#fdeaea;border:1px solid #b14;color:#902a2a;padding:10px 14px;margin-bottom:1rem"><%= err %></div>
+<% } %>
+
+<p class="muted" style="margin-bottom:1rem">
+  「探す」からの応募一覧です。<strong>応募方式が手動選考（manual）の案件</strong>はここで当選/落選を決めます。
+  当選にすると回答用の assignment が発行され、LINEで当選通知（回答URL付き）が送られます。
+  自動承認（auto）案件の応募は最初から「当選」として記録されます。
+</p>
+
+<form method="get" action="/admin/applications" style="margin-bottom:1rem">
+  <label>案件で絞り込み:
+    <select name="project_id" onchange="this.form.submit()">
+      <option value="">すべて</option>
+      <% projects.forEach(function(p) { %>
+        <option value="<%= p.id %>" <%= projectIdFilter === p.id ? 'selected' : '' %>><%= p.user_display_title || p.name %></option>
+      <% }); %>
+    </select>
+  </label>
+</form>
+
+<table class="table" style="width:100%;border-collapse:collapse">
+  <thead>
+    <tr style="text-align:left;border-bottom:2px solid #ddd">
+      <th style="padding:8px 6px">応募日時</th>
+      <th style="padding:8px 6px">案件</th>
+      <th style="padding:8px 6px">応募者（LINE ID）</th>
+      <th style="padding:8px 6px">状態</th>
+      <th style="padding:8px 6px">決定日時</th>
+      <th style="padding:8px 6px">操作</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% if (rows.length === 0) { %>
+      <tr><td colspan="6" style="padding:16px 6px;color:#888">応募はまだありません</td></tr>
+    <% } %>
+    <% rows.forEach(function(row) { const a = row.application; %>
+      <tr style="border-bottom:1px solid #eee">
+        <td style="padding:8px 6px;white-space:nowrap"><%= fmt(a.applied_at) %></td>
+        <td style="padding:8px 6px">
+          <% if (row.project) { %>
+            <a href="/admin/projects/<%= row.project.id %>"><%= row.project.user_display_title || row.project.name %></a>
+            <span class="muted" style="font-size:11px">（<%= (row.project.apply_mode || 'manual') === 'auto' ? '自動承認' : '手動選考' %>）</span>
+          <% } else { %>-<% } %>
+        </td>
+        <td style="padding:8px 6px;font-family:monospace;font-size:11.5px"><%= a.line_user_id %></td>
+        <td style="padding:8px 6px"><%- appBadge(a.status) %></td>
+        <td style="padding:8px 6px;white-space:nowrap"><%= fmt(a.decided_at) %></td>
+        <td style="padding:8px 6px;white-space:nowrap">
+          <% if (a.status === 'applied') { %>
+            <form method="post" action="/admin/applications/<%= a.id %>/accept" style="display:inline" onsubmit="return confirm('この応募を当選にして、回答URL付きのLINE通知を送りますか？')">
+              <input type="hidden" name="back" value="<%= projectIdFilter || '' %>">
+              <button type="submit" style="background:#2ca87a;color:#fff;border:none;border-radius:4px;padding:5px 12px;cursor:pointer">当選</button>
+            </form>
+            <form method="post" action="/admin/applications/<%= a.id %>/reject" style="display:inline;margin-left:6px" onsubmit="return confirm('この応募を落選にしますか？')">
+              <input type="hidden" name="back" value="<%= projectIdFilter || '' %>">
+              <label style="font-size:11px"><input type="checkbox" name="notify" value="1"> 通知する</label>
+              <button type="submit" style="background:#fff;color:#b14;border:1px solid #b14;border-radius:4px;padding:4px 12px;cursor:pointer;margin-left:4px">落選</button>
+            </form>
+          <% } else if (a.status === 'accepted' && a.assignment_id) { %>
+            <span class="muted" style="font-size:11px">assignment: <%= a.assignment_id.slice(0, 8) %>…</span>
+          <% } else { %>
+            <span class="muted">-</span>
+          <% } %>
+        </td>
+      </tr>
+    <% }); %>
+  </tbody>
+</table>
+
+<%- include("../../partials/footer") %>
