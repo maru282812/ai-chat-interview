@@ -1,6 +1,7 @@
 <%#
   LIFF共通下部ナビゲーション
-  使い方: <%- include('../partials/liff-bottom-nav', { active: 'projects' }) %>
+  使い方（呼び出し側）: include('../partials/liff-bottom-nav', { active: 'projects' })
+  注意: EJSコメント内にEJSタグのデリミタを書くとコメントの閉じ解釈が壊れるため書かないこと
   active: 'projects' | 'saved' | 'interactions' | 'mypage'
 %>
 <nav class="bottom-nav" id="liff-bottom-nav">
