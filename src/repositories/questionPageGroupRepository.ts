@@ -8,6 +8,9 @@ interface CreatePageGroupInput {
   title?: string | null;
   description?: string | null;
   sort_order?: number;
+  is_randomizable?: boolean;
+  randomize_within?: boolean;
+  fix_within?: boolean;
 }
 
 export const questionPageGroupRepository = {
@@ -52,7 +55,18 @@ export const questionPageGroupRepository = {
 
   async update(
     id: string,
-    input: Partial<Pick<QuestionPageGroup, "title" | "description" | "sort_order" | "page_number">>
+    input: Partial<
+      Pick<
+        QuestionPageGroup,
+        | "title"
+        | "description"
+        | "sort_order"
+        | "page_number"
+        | "is_randomizable"
+        | "randomize_within"
+        | "fix_within"
+      >
+    >
   ): Promise<QuestionPageGroup> {
     const { data, error } = await supabase
       .from("question_page_groups")

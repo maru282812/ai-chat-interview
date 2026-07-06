@@ -1,0 +1,49 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>42 マイページC・2タイル+ゴールド見出し（Hibiカラー）</title><link rel="stylesheet" href="base.css">
+<style>
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 14px 16px 0; }
+  .bigtile { border-radius: 16px; padding: 16px 14px; }
+  .bigtile.pt { background: linear-gradient(155deg,#0E6B5A,#17977f); color: #fff; }
+  .bigtile.pf { background: #fff; }
+  .bigtile .k { font-size: 11.5px; opacity: .85; font-weight: 700; }
+  .bigtile .v { font-size: 24px; font-weight: 900; margin-top: 4px; }
+  .bigtile .v small { font-size: 12px; }
+  .bigtile .sub { font-size: 11px; margin-top: 8px; opacity: .85; }
+  .minibar { height: 6px; background: #F0E6C8; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+  .minibar i { display: block; height: 100%; width: 75%; background: #DFA02F; border-radius: 3px; }
+</style></head>
+<body class="t-hibi">
+<div class="phone">
+  <header class="appbar"><span class="logo">Hibi</span><b style="font-size:16px;flex:1;text-align:center">マイページ</b><span class="icon">⚙</span></header>
+  <div class="two">
+    <div class="bigtile pt">
+      <div class="k">保有ポイント</div>
+      <div class="v">2,300<small> pt</small></div>
+      <div class="sub">今月 +800pt ｜ タップで交換 ›</div>
+    </div>
+    <div class="bigtile pf">
+      <div class="k" style="color:#A97814">プロフィール充実度</div>
+      <div class="v" style="color:#3b3b3b">75<small>%</small></div>
+      <div class="minibar"><i></i></div>
+      <div class="sub" style="color:var(--sub)">あと2項目で当選率UP ›</div>
+    </div>
+  </div>
+  <section class="progress" style="margin:12px 16px 0;border-radius:14px;border-bottom:0">
+    <div class="row"><span>📋 今月の応募状況</span><span class="num" style="color:var(--teal)">3<small> /10件</small></span></div>
+    <div class="bar"><i></i></div>
+    <div class="hint">毎月10件以上の応募がおすすめです。</div>
+  </section>
+  <nav class="menu" style="margin-top:14px;border-top:1px solid #F0E6C8">
+    <div class="h">アカウント</div>
+    <a href="#">プロフィール・タグ設定</a>
+    <a href="#">謝礼履歴・ポイント交換</a>
+    <a href="#">通知設定</a>
+    <div class="h">規約・サポート</div>
+    <a href="#">秘密保持誓約書</a>
+    <a href="#">利用規約・プライバシーポリシー</a>
+    <a href="#">ご利用ガイド・よくあるご質問</a>
+    <a class="danger" href="#">退会する</a>
+  </nav>
+  <nav class="bottomnav"><a href="p31.html"><span class="i">🔍</span>探す</a><a href="p43.html"><span class="i">☆</span>保存</a><a href="p21.html"><span class="i">📋</span>やりとり</a><a class="on" href="#"><span class="i">👤</span>マイページ</a></nav>
+</div>
+</body></html>

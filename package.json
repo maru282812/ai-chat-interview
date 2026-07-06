@@ -10,7 +10,8 @@
     "test": "tsx src/tests/questionSchemaRedesign.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "biome check --fix --unsafe .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "db:migrate": "node scripts/applyMigrations.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

@@ -42,6 +42,11 @@ interface ProjectMutationInput {
   display_thumbnail_url?: string | null;
   estimated_minutes?: number | null;
   max_respondents?: number | null;
+  tags?: string[];
+  ng_conditions?: string | null;
+  recruit_deadline?: string | null;
+  apply_mode?: import("../types/domain").ProjectApplyMode;
+  interview_format?: string | null;
   delivery_enabled?: boolean;
   delivery_type?: DeliveryType | null;
   delivered_at?: string | null;
@@ -53,6 +58,8 @@ interface ProjectMutationInput {
   visibility_type?: 'public' | 'private_store';
   entry_code?: string | null;
   client_id?: string | null;
+  concept_rotation_mode?: 'off' | 'latin' | 'full';
+  randomize_question_order?: boolean;
 }
 
 type ProjectUpdateInput = Partial<ProjectMutationInput>;
@@ -218,9 +225,11 @@ export const projectRepository = {
   async listDiscoverable(): Promise<Project[]> {
     const { data, error } = await supabase
       .from("projects")
-      .select("id, name, user_display_title, category, delivery_type, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at")
+      .select("id, name, user_display_title, category, delivery_type, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at, tags, ng_conditions, recruit_deadline, apply_mode, interview_format")
       .eq("status", "published")
       .eq("visibility_type", "public")
+      // 募集期限切れは一覧に出さない（recruit_deadline 未設定は常に表示）
+      .or(`recruit_deadline.is.null,recruit_deadline.gte.${new Date().toISOString()}`)
       .order("created_at", { ascending: false });
     throwIfError(error);
     return (data ?? []) as unknown as Project[];
@@ -229,13 +238,29 @@ export const projectRepository = {
   async getDiscoverableById(id: string): Promise<Project | null> {
     const { data, error } = await supabase
       .from("projects")
-      .select("id, name, user_display_title, category, delivery_type, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at, objective, screening_config")
+      .select("id, name, user_display_title, category, delivery_type, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at, objective, screening_config, tags, ng_conditions, recruit_deadline, apply_mode, interview_format")
       .eq("id", id)
       .eq("status", "published")
       .eq("visibility_type", "public")
       .maybeSingle();
     throwIfError(error);
     return data as Project | null;
+  },
+
+  /**
+   * 企業（client_id）配下の案件を全ステータスで一覧。企業まとめ画面用。
+   * 並び順は created_at 昇順（将来の wave/シリーズ列を差し込める自然順・★予約③）。
+   */
+  async listByClient(clientId: string): Promise<Project[]> {
+    const id = clientId.trim();
+    if (!id) return [];
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("client_id", id)
+      .order("created_at", { ascending: true });
+    throwIfError(error);
+    return (data ?? []) as Project[];
   },
 
   /** 店舗専用アンケート（visibility_type='private_store'）を全ステータスで一覧。管理画面用。 */

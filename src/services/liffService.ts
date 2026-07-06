@@ -178,13 +178,25 @@ export function buildProjectStartUrl(assignmentId: string): {
  * authRequired: LIFF_AUTH_REQUIRED=true のとき、設定不足ならエラー画面を表示する
  * skipAllowed:  ALLOW_LIFF_AUTH_SKIP=false のとき、クライアント側スキップを禁止する
  */
-export function getSurveyLiffConfig(): {
+export function getSurveyLiffConfig(opts?: { forceAuthConfigMissing?: boolean }): {
   liffId: string | null;
   liffAuthAvailable: boolean;
   missingEnvVars: string[];
   authRequired: boolean;
   skipAllowed: boolean;
 } {
+  // テスト到達用 seam: 非本番限定で「authRequired かつ LIFF設定不足」の 503 分岐を再現する。
+  // 本番では呼び出し側がこのフラグを立てないため一切影響しない。
+  if (opts?.forceAuthConfigMissing && env.NODE_ENV !== "production") {
+    return {
+      liffId: getSurveyLiffId(),
+      liffAuthAvailable: false,
+      missingEnvVars: ["__TEST_FORCED_MISSING__"],
+      authRequired: true,
+      skipAllowed: false,
+    };
+  }
+
   const missing: string[] = [];
   if (!env.LINE_LIFF_CHANNEL_ID) missing.push("LINE_LIFF_CHANNEL_ID");
   if (!env.LINE_LIFF_ID_SURVEY && !env.LINE_LIFF_ID) missing.push("LINE_LIFF_ID_SURVEY");

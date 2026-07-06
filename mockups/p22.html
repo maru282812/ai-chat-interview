@@ -1,0 +1,30 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>22 やりとり・ステータスリスト型</title><link rel="stylesheet" href="base.css">
+<style>
+  .item { display: flex; gap: 12px; padding: 15px 16px; border-bottom: 1px solid var(--line); align-items: center; }
+  .item .ic { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+  .item h3 { font-size: 14px; line-height: 1.45; }
+  .item .sub { font-size: 11.5px; color: var(--sub); margin-top: 4px; }
+  .item::after { content: "›"; color: #ccc; font-size: 20px; margin-left: auto; }
+</style></head>
+<body>
+<div class="phone">
+  <header class="appbar"><span class="logo">Hibi</span><b style="font-size:16px;flex:1;text-align:center">やりとり</b><span class="icon">🔔</span></header>
+  <nav class="chips"><span class="chip on">すべて 7</span><span class="chip">要対応 2</span><span class="chip">選考中 2</span><span class="chip">完了 3</span></nav>
+  <main>
+    <div class="item"><span class="ic" style="background:#e8f9ef">⚡</span>
+      <div><span class="status win">当選・未回答</span><h3 class="mt8">髪や頭皮の保水を意識されている方に話を聞きたい！</h3><div class="sub">期限 7/9 23:00・約15分・500pt</div></div></div>
+    <div class="item"><span class="ic" style="background:#fff3d6">⏳</span>
+      <div><span class="status doing">回答の続きから</span><h3 class="mt8">目・目元悩みのある30代女性にお話を聞きたい</h3><div class="sub">進捗 6/14問・500pt</div></div></div>
+    <div class="item"><span class="ic" style="background:#eaf1fe">📮</span>
+      <div><span class="status wait">選考中</span><h3 class="mt8">結婚式の引き出物探しについてお伺いしたいです</h3><div class="sub">7/2 応募・結果連絡 7/17まで</div></div></div>
+    <div class="item"><span class="ic" style="background:#eaf1fe">📮</span>
+      <div><span class="status wait">選考中</span><h3 class="mt8">食品メーカーで海外進出事業に関わっている人に…</h3><div class="sub">7/1 応募</div></div></div>
+    <div class="item" style="opacity:.65"><span class="ic" style="background:#eef1f3">✔</span>
+      <div><span class="status done">完了</span><h3 class="mt8">在宅介護でおしりふき等を使っている方へアンケート</h3><div class="sub">6/28 完了・300pt獲得</div></div></div>
+    <div class="item" style="opacity:.65"><span class="ic" style="background:#eef1f3">✔</span>
+      <div><span class="status lose">落選</span><h3 class="mt8">コーヒーの飲用習慣についてインタビュー</h3><div class="sub">6/20 結果連絡</div></div></div>
+  </main>
+  <nav class="bottomnav"><a href="p01.html"><span class="i">🔍</span>探す</a><a href="p28.html"><span class="i">☆</span>保存</a><a class="on" href="#"><span class="i">📋</span>やりとり</a><a href="p24.html"><span class="i">👤</span>マイページ</a></nav>
+</div>
+</body></html>

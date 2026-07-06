@@ -1,0 +1,55 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>57 詳細C・コンパクト（3カード+バナー一体→チャット主役）</title><link rel="stylesheet" href="base.css">
+<style>
+  .phone { padding-bottom: 90px; }
+  /* 3カード+バナーを1ブロックに一体化 */
+  .topblock { margin: 12px 16px 0; background: #E9F3F0; border: 1.5px solid #9DC6BB; border-radius: 16px; padding: 14px; }
+  .topblock .row { display: flex; gap: 8px; }
+  .topblock .stat { flex: 1; background: #fff; border-radius: 12px; text-align: center; padding: 11px 4px; }
+  .topblock .stat .k { font-size: 10px; color: #A97814; font-weight: 700; }
+  .topblock .stat .v { font-weight: 900; color: var(--teal); font-size: 15px; margin-top: 2px; }
+  .topblock .banner { margin-top: 12px; font-size: 12.5px; color: #2F5B50; line-height: 1.7; }
+  .topblock .banner b { color: var(--teal); font-size: 13.5px; display: block; margin-bottom: 3px; }
+  /* チャットプレビューを主役に */
+  .chatpv { margin: 14px 16px 0; background: #fff; border-radius: 16px; padding: 16px; border: 1px solid #F0E6C8; }
+  .chatpv .cap { font-size: 12px; color: var(--teal); font-weight: 800; margin-bottom: 10px; }
+  .bub { max-width: 88%; border-radius: 16px; padding: 11px 14px; font-size: 13.5px; line-height: 1.6; margin-bottom: 9px; }
+  .bub.ai { background: var(--paper); border-top-left-radius: 4px; }
+  .bub.me { background: var(--teal); color: #fff; margin-left: auto; border-bottom-right-radius: 4px; }
+</style></head>
+<body class="t-hibi">
+<div class="phone">
+  <header class="appbar"><span class="icon">‹</span><b style="font-size:15px;flex:1;text-align:center">案件詳細</b><span class="icon" style="color:#A97814">☆</span></header>
+  <section class="section" style="border-bottom:0;padding-bottom:4px">
+    <div class="meta-line" style="margin:0 0 10px"><span class="badge ai">AIインタビュー</span><span class="badge instant">⚡即回答OK</span></div>
+    <h3 style="font-size:18px;line-height:1.5">髪や頭皮の保水を意識されている方に話を聞きたい！</h3>
+  </section>
+
+  <!-- 3カード + 即回答バナー を一体化 -->
+  <div class="topblock">
+    <div class="row">
+      <div class="stat"><div class="k">謝礼</div><div class="v">500pt</div></div>
+      <div class="stat"><div class="k">所要時間</div><div class="v">約15分</div></div>
+      <div class="stat"><div class="k">形式</div><div class="v">AIチャット</div></div>
+    </div>
+    <div class="banner"><b>⚡ 応募後、すぐに回答できます</b>選考・日程調整なし。条件確認のあとそのままチャットが始まり、完了と同時に500pt付与。締切 7/9（あと5日・残り3枠）。</div>
+  </div>
+
+  <!-- チャットプレビュー（主役） -->
+  <div class="chatpv">
+    <div class="cap">💬 こんな会話で進みます</div>
+    <div class="bub ai">こんにちは！応募ありがとうございます。ふだんのヘアケアで一番気になっていることを教えてください 😊</div>
+    <div class="bub me">乾燥で髪が広がりやすいのが悩みです</div>
+    <div class="bub ai">広がりが特に気になるのはどんな場面が多いですか？朝のセット時、外出先など具体的に教えてください。</div>
+    <div class="bub me">朝セットしても昼にはふくらんでしまいます</div>
+  </div>
+
+  <section class="section" style="background:#fff;margin:14px 16px 0;border-radius:14px;border-bottom:0">
+    <div class="sec-title">👤 募集条件 / NG条件</div>
+    <ul class="list-dot"><li>20〜40代の女性・週1回以上ヘアケア製品を使用</li></ul>
+    <div class="ngbox"><div class="t">⚠ NG</div><ul><li>美容・ヘアケア業界に従事されている方</li></ul></div>
+  </section>
+
+  <div class="cta-fixed" style="background:#FFFdf6"><button class="btn-save">☆</button><a class="btn primary" href="p39.html">応募してすぐ回答する ⚡</a></div>
+</div>
+</body></html>

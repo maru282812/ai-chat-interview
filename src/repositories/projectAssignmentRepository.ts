@@ -206,5 +206,19 @@ export const projectAssignmentRepository = {
       .eq("project_id", projectId);
     throwIfError(error);
     return count ?? 0;
+  },
+
+  /**
+   * 案件の「完了した回答数」。status='completed' のみを数える。
+   * 管理画面の「回答数」は完了数を指す（URLを開いただけ＝流入の assignment は含めない）。
+   */
+  async countCompletedByProject(projectId: string): Promise<number> {
+    const { count, error } = await supabase
+      .from("project_assignments")
+      .select("*", { count: "exact", head: true })
+      .eq("project_id", projectId)
+      .eq("status", "completed");
+    throwIfError(error);
+    return count ?? 0;
   }
 };

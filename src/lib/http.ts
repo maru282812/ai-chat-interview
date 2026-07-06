@@ -52,11 +52,15 @@ export function errorHandler(
           ? error.message
           : "投稿の保存に失敗しました。時間を置いて再度お試しください。";
 
-    res.status(statusCode).json({
+    const body: { error: string; detail?: string; fallback: string } = {
       error: friendlyMessage,
-      detail: error.message,
       fallback: "解決しない場合はLINEトーク画面から再度開き直してください。"
-    });
+    };
+    // detail は 4xx のみ。5xx は DB 内部メッセージ等が混入し得るため露出させない。
+    if (statusCode < 500) {
+      body.detail = error.message;
+    }
+    res.status(statusCode).json(body);
     return;
   }
 

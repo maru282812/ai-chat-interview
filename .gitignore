@@ -5,3 +5,7 @@ dist/
 .env.local
 .skills/
 temp/
+
+# --- AI discovery skill chain (local copies from ai-development-skills; not committed) ---
+.agents/skills/
+.claude/skills/

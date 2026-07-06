@@ -1,0 +1,34 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>25 マイページ・ダッシュボードカード型</title><link rel="stylesheet" href="base.css">
+<style>
+  .dash { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 14px 16px; }
+  .dcard { border: 1px solid var(--line); border-radius: 14px; padding: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.04); }
+  .dcard .k { font-size: 11.5px; color: var(--sub); }
+  .dcard .v { font-size: 22px; font-weight: 900; margin-top: 4px; }
+  .dcard .v small { font-size: 12px; font-weight: 600; color: var(--sub); }
+  .dcard.hero { grid-column: 1 / -1; background: linear-gradient(135deg,var(--brand),#ffab5e); border: 0; color: #fff; display: flex; align-items: center; }
+  .dcard.hero .v { font-size: 30px; }
+  .dcard.hero .k { color: rgba(255,255,255,.85); }
+  .dcard.hero .btn { margin-left: auto; background: #fff; color: var(--brand); padding: 10px 16px; font-size: 13px; border-radius: 20px; }
+</style></head>
+<body>
+<div class="phone">
+  <header class="appbar"><span class="logo">Hibi</span><b style="font-size:16px;flex:1;text-align:center">マイページ</b><span class="icon">⚙</span></header>
+  <div class="dash">
+    <div class="dcard hero"><div><div class="k">保有ポイント</div><div class="v">2,300<small> pt</small></div></div><a class="btn" href="#">交換する ›</a></div>
+    <div class="dcard"><div class="k">今月の獲得謝礼</div><div class="v">800<small> pt</small></div></div>
+    <div class="dcard"><div class="k">今月の応募</div><div class="v">3<small> /10件</small></div></div>
+    <div class="dcard"><div class="k">回答待ち</div><div class="v" style="color:#06a04a">2<small> 件</small></div></div>
+    <div class="dcard"><div class="k">完了した調査</div><div class="v">12<small> 件</small></div></div>
+  </div>
+  <nav class="menu">
+    <a href="#">プロフィール・タグ設定</a>
+    <a href="#">謝礼履歴</a>
+    <a href="#">秘密保持誓約書・各種規約</a>
+    <a href="#">通知設定</a>
+    <a href="#">ご利用ガイド・FAQ</a>
+    <a class="danger" href="#">退会する</a>
+  </nav>
+  <nav class="bottomnav"><a href="p01.html"><span class="i">🔍</span>探す</a><a href="p28.html"><span class="i">☆</span>保存</a><a href="p21.html"><span class="i">📋</span>やりとり</a><a class="on" href="#"><span class="i">👤</span>マイページ</a></nav>
+</div>
+</body></html>

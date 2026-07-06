@@ -1,0 +1,42 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>03 探す・サムネイル大カード型</title><link rel="stylesheet" href="base.css">
+<style>
+  .cards { padding: 12px 16px 16px; }
+  .card { border: 1px solid var(--line); border-radius: 16px; margin-bottom: 16px; overflow: hidden; padding: 0; box-shadow: 0 2px 8px rgba(0,0,0,.05); }
+  .thumb { height: 150px; display: flex; align-items: center; justify-content: center; font-size: 52px; color: #fff; position: relative; }
+  .thumb .badge { position: absolute; top: 10px; left: 10px; }
+  .thumb .time { position: absolute; bottom: 10px; right: 10px; background: rgba(0,0,0,.55); color: #fff; border-radius: 6px; padding: 3px 8px; font-size: 11.5px; }
+  .g1 { background: linear-gradient(135deg,#ffb46b,#ff7a59); } .g2 { background: linear-gradient(135deg,#7fd6a4,#3aa876); } .g3 { background: linear-gradient(135deg,#8fb3ff,#5f7aea); }
+  .body { padding: 14px; }
+</style></head>
+<body>
+<div class="phone">
+  <header class="appbar"><span class="logo">Hibi</span><span class="search">キーワードで探す</span><span class="icon">🔔</span></header>
+  <nav class="tabs"><a class="on" href="#">すべて</a><a href="#">生活系</a><a href="#">仕事系</a><a href="#">検索</a></nav>
+  <main class="cards">
+    <article class="card">
+      <div class="thumb g1">💐<span class="badge new">新着</span><span class="time">90分</span></div>
+      <div class="body"><h3>結婚式の引き出物探しについてお伺いしたいです</h3>
+        <div class="tags"><span>#顔出し必須</span><span>#既婚</span></div>
+        <div class="meta-line"><span class="badge fmt">インタビュー</span><span class="price">7,260<small>pt</small></span></div>
+        <div class="foot"><span class="days">あと<b>13</b>日</span><button class="btn-save">☆ 保存する</button></div></div>
+    </article>
+    <article class="card">
+      <div class="thumb g2">💇‍♀️<span class="time">15分</span></div>
+      <div class="body"><h3>髪や頭皮の保水を意識されている方に話を聞きたい！</h3>
+        <div class="tags"><span>#女性限定</span><span>#美容・コスメ</span></div>
+        <div class="meta-line"><span class="badge ai">AIインタビュー</span><span class="badge instant">即回答OK</span><span class="price">500<small>pt</small></span></div>
+        <div class="foot"><span class="days">あと<b>5</b>日</span><button class="btn-save saved">★ 保存済み</button></div></div>
+    </article>
+    <article class="card">
+      <div class="thumb g3">🏠<span class="time">10分</span></div>
+      <div class="body"><h3>在宅介護でおしりふき等を使っている方へアンケート</h3>
+        <div class="tags"><span>#介護</span></div>
+        <div class="meta-line"><span class="badge fmt">アンケート</span><span class="price">300<small>pt</small></span></div>
+        <div class="foot"><span class="days">あと<b>14</b>日</span><button class="btn-save">☆ 保存する</button></div></div>
+    </article>
+  </main>
+  <div class="fab">⇅ 新着順</div>
+  <nav class="bottomnav"><a class="on" href="#"><span class="i">🔍</span>探す</a><a href="p28.html"><span class="i">☆</span>保存</a><a href="p21.html"><span class="i">📋</span>やりとり</a><a href="p24.html"><span class="i">👤</span>マイページ</a></nav>
+</div>
+</body></html>

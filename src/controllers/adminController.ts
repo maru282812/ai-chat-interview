@@ -20,15 +20,31 @@ import {
   buildExtractionSchemaFromExpectedSlots,
   buildQuestionMetaFromAuthoringInput
 } from "../lib/questionMetadata";
+import {
+  METRIC_CATALOG,
+  METRIC_DIRECTIONS,
+  defaultMetricDirection,
+  metricDirectionLabel,
+  normalizeMetricCode,
+  normalizeMetricDirection
+} from "../lib/metricCatalog";
 import { getProjectResearchSettings, parseLineSeparatedList } from "../lib/projectResearch";
 import { csvService } from "../services/csvService";
+import { statExportService } from "../services/statExportService";
+import { snapshotService } from "../services/snapshotService";
+import { conceptService } from "../services/conceptService";
+import { projectConceptRepository } from "../repositories/projectConceptRepository";
+import { blockDesignService, type BlockPlan } from "../services/blockDesignService";
+import { validateSurvey } from "../lib/surveyValidation";
 import { adminService } from "../services/adminService";
 import { pointService } from "../services/pointService";
 import { assignmentService, type AssignmentRuleFilter } from "../services/assignmentService";
 import { projectRepository } from "../repositories/projectRepository";
 import { clientRepository } from "../repositories/clientRepository";
 import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
+import { respondentRepository } from "../repositories/respondentRepository";
 import { questionRepository } from "../repositories/questionRepository";
+import { collectClientMetrics } from "../lib/aggregationScope";
 import { rankRepository } from "../repositories/rankRepository";
 import { analysisService } from "../services/analysisService";
 import type {
@@ -82,6 +98,11 @@ import {
   buildAdjustQuestionsPrompt,
   buildGenerateFlowPrompt,
 } from "../prompts/adminPrompts";
+import { applicationService } from "../services/applicationService";
+import { projectApplicationRepository } from "../repositories/projectApplicationRepository";
+import { lineMessagingService } from "../services/lineMessagingService";
+import { buildApplicationAcceptedFlex, buildApplicationRejectedFlex } from "../templates/flex";
+import { buildProjectStartUrl } from "../services/liffService";
 
 // USERプロファイル管理の簡易認証設定
 const UP_ADMIN_ID = "admin";
@@ -1199,6 +1220,8 @@ interface QuestionFormValues {
   max_probe_count_text: string;
   render_strategy: "static" | "dynamic";
   question_goal: string;
+  metric_code: string;
+  metric_direction: string;
   max_probes: string;
   placeholder: string;
   option_labels: string[];
@@ -1380,6 +1403,8 @@ function buildQuestionFormValues(
       (question?.max_probe_count != null ? String(question.max_probe_count) : ""),
     render_strategy: overrides.render_strategy ?? question?.render_strategy ?? "static",
     question_goal: overrides.question_goal ?? meta.question_goal ?? "",
+    metric_code: overrides.metric_code ?? meta.metric_code ?? "",
+    metric_direction: overrides.metric_direction ?? meta.metric_direction ?? "",
     max_probes:
       overrides.max_probes ??
       String(typeof meta.probe_config?.max_probes === "number" ? meta.probe_config.max_probes : 1),
@@ -1548,6 +1573,8 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     max_probe_count_text: bodyString(req.body.max_probe_count),
     render_strategy: (bodyString(req.body.render_strategy) === "dynamic" ? "dynamic" : "static") as "static" | "dynamic",
     question_goal: bodyString(req.body.question_goal),
+    metric_code: bodyString(req.body.metric_code),
+    metric_direction: bodyString(req.body.metric_direction),
     max_probes: bodyString(req.body.max_probes) || "1",
     placeholder: bodyString(req.body.placeholder),
     option_labels: normalizeTextList(bodyStringArray(req.body.option_labels)),
@@ -1674,6 +1701,8 @@ function renderQuestionForm(
       (candidate) => !candidate.is_hidden || candidate.id === input.question?.id
     ),
     pageGroups: input.pageGroups ?? [],
+    metricCatalog: METRIC_CATALOG,
+    metricDirections: METRIC_DIRECTIONS.map((d) => ({ value: d, label: metricDirectionLabel(d) })),
     errorMessage: input.errorMessage ?? null,
     successMessage: input.successMessage ?? null,
     prevQuestion: input.prevQuestion ?? null,
@@ -1742,6 +1771,8 @@ const CHOICE_QUESTION_TYPES: QuestionType[] = [
 ];
 const MATRIX_QUESTION_TYPES: QuestionType[] = ["matrix_single", "matrix_multi", "matrix_mixed"];
 const MULTI_CHOICE_TYPES: QuestionType[] = ["multi_choice"];
+// この語を含むラベルの選択肢は複数選択で自動的に全排他(exclusive)にする（特になし等）。
+const EXCLUSIVE_AUTO_LABEL_RE = /特になし|わからない|分からない|該当なし|その他/;
 const SCREENING_CHOICE_QUESTION_TYPES: QuestionType[] = ["single_choice", "multi_choice"];
 
 function buildQuestionConfigFromRequest(
@@ -1796,11 +1827,64 @@ function buildQuestionConfigFromRequest(
       console.log("[question save debug] normalized options:", JSON.stringify(questionConfig.options));
       console.log("[question save debug] valid options count:", (questionConfig.options ?? []).length);
     }
+    // 選択肢ランダム化 (L3): ラベル名で指定（option.value === label）
+    const splitList = (raw: unknown): string[] =>
+      bodyString(raw)
+        .split(/[\n,、]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    const optAnchors = splitList(req.body.option_anchors);
+    const optFreeText = new Set(splitList(req.body.option_freetext_labels));
+    const optGroups = bodyString(req.body.option_groups_text)
+      .split(/\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const sep = line.indexOf(":");
+        const colon = sep >= 0 ? sep : line.indexOf("：");
+        const label = colon >= 0 ? line.slice(0, colon).trim() : "";
+        const values = (colon >= 0 ? line.slice(colon + 1) : line)
+          .split(/[,、]/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        return { label, values };
+      })
+      .filter((group) => group.values.length > 0);
+    const optRandEnabled = req.body.option_randomize_enabled === "1";
+    if (optFreeText.size > 0 && questionConfig.options) {
+      questionConfig.options = questionConfig.options.map((opt) =>
+        optFreeText.has(opt.label) ? { ...opt, allow_free_text: true } : opt
+      );
+    }
+    if (optRandEnabled || optGroups.length > 0 || optAnchors.length > 0) {
+      questionConfig.option_randomization = {
+        enabled: optRandEnabled,
+        ...(optAnchors.length > 0 ? { anchored_values: optAnchors } : {}),
+        ...(optGroups.length > 0 ? { groups: optGroups, randomize_groups: req.body.option_randomize_groups === "1" } : {})
+      };
+    }
+
     if (MULTI_CHOICE_TYPES.includes(questionType)) {
       const minSelect = parseOptionalInteger(req.body.min_select);
       const maxSelect = parseOptionalInteger(req.body.max_select);
       if (minSelect !== null) { questionConfig.min_select = minSelect; } else { delete questionConfig.min_select; }
       if (maxSelect !== null) { questionConfig.max_select = maxSelect; } else { delete questionConfig.max_select; }
+    }
+
+    // 排他制御 (multi_choice のみ・自動): ラベルが「特になし/わからない/該当なし/その他」
+    // または自由記述(allow_free_text)の選択肢を、自動的に全排他(exclusive)にする。
+    // 手動UIは廃止したため body からは読まない。exclusive_with は使用しない。
+    if (MULTI_CHOICE_TYPES.includes(questionType) && questionConfig.options) {
+      questionConfig.options = questionConfig.options.map((opt) => {
+        const next = { ...opt };
+        delete next.exclusive_with;
+        if (EXCLUSIVE_AUTO_LABEL_RE.test(opt.label) || opt.allow_free_text === true) {
+          next.exclusive = true;
+        } else {
+          delete next.exclusive;
+        }
+        return next;
+      });
     }
   } else if (MATRIX_QUESTION_TYPES.includes(questionType)) {
     const rowLabels = parseLineSeparatedList(bodyString(req.body.matrix_rows));
@@ -1911,11 +1995,21 @@ function buildQuestionConfigFromRequest(
     }
   }
 
+  // 「その他（自由入力）」= select が __custom__ の場合は自由入力欄を採用（JS無効時のフォールバック）。
+  const rawMetricCode =
+    bodyString(req.body.metric_code) === "__custom__"
+      ? req.body.metric_code_custom
+      : req.body.metric_code;
+  const metricCode = normalizeMetricCode(rawMetricCode);
   const meta = buildQuestionMetaFromAuthoringInput({
     questionGoal,
     extractionItemLabels: extractionEnabled ? extractionItems : [],
     maxProbes: parseOptionalInteger(req.body.max_probes),
-    existingMeta: existing?.meta ?? null
+    existingMeta: existing?.meta ?? null,
+    metricCode,
+    metricDirection: metricCode
+      ? normalizeMetricDirection(req.body.metric_direction) ?? defaultMetricDirection(metricCode)
+      : null
   });
   questionConfig.meta = meta;
 
@@ -2508,6 +2602,7 @@ export const adminController = {
         screening_config: buildScreeningConfig(req),
         screening_last_question_order: existing.screening_last_question_order ?? null,
         is_discoverable: req.body.is_discoverable === "true" || req.body.is_discoverable === "on",
+        randomize_question_order: req.body.randomize_question_order === "true" || req.body.randomize_question_order === "on",
         category: bodyString(req.body.category) || null,
         estimated_minutes: parseOptionalInteger(req.body.estimated_minutes) ?? null,
         max_respondents: parseOptionalInteger(req.body.max_respondents) ?? null,
@@ -2515,6 +2610,17 @@ export const adminController = {
         entry_code: bodyString(req.body.visibility_type) === "private_store"
           ? (bodyString(req.body.entry_code) || null)
           : null,
+        apply_mode: bodyString(req.body.apply_mode) === "auto" ? "auto" : "manual",
+        tags: bodyString(req.body.tags)
+          .split(",")
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0),
+        ng_conditions: bodyString(req.body.ng_conditions).trim() || null,
+        // datetime-local はタイムゾーンなしのJST入力 → UTCへ変換して保存
+        recruit_deadline: bodyString(req.body.recruit_deadline)
+          ? new Date(new Date(`${bodyString(req.body.recruit_deadline)}:00+09:00`).getTime()).toISOString()
+          : null,
+        interview_format: bodyString(req.body.interview_format).trim() || null,
         delivery_enabled: req.body.delivery_enabled === "true" || req.body.delivery_enabled === "on",
         delivery_type: (bodyString(req.body.delivery_type) || null) as import("../types/domain").DeliveryType | null,
         // Phase B: プロジェクト個別の policy / override 編集UIは撤去。編集はせず既存値を保全する
@@ -3099,6 +3205,101 @@ export const adminController = {
   },
 
   // ------------------------------------------------------------------
+  // 統計向けエクスポート (§11)。既存CSVは変更せず追加 (§12)。
+  // 出力は UTF-8 BOM + RFC4180 (§21)。respondent_key は擬似匿名 (§19)。
+  // ------------------------------------------------------------------
+  sendStatCsv(res: Response, filename: string, body: string): void {
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
+    res.send(body);
+  },
+
+  statExportOptions(req: Request): { excludeTest: boolean; consentedOnly: boolean; consentDocType?: string } {
+    return {
+      excludeTest: bodyString(req.query.includeTest) !== "1",
+      consentedOnly: bodyString(req.query.consentedOnly) === "1",
+      consentDocType: bodyString(req.query.consentDocType) || undefined
+    };
+  },
+
+  async exportStatRespondentsWide(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    adminController.sendStatCsv(
+      res,
+      "respondents_wide.csv",
+      await statExportService.respondentsWideCsv(projectId, adminController.statExportOptions(req))
+    );
+  },
+
+  async exportStatAnswersLong(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    adminController.sendStatCsv(
+      res,
+      "answers_long.csv",
+      await statExportService.answersLongCsv(projectId, adminController.statExportOptions(req))
+    );
+  },
+
+  async exportStatCodebook(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    adminController.sendStatCsv(res, "codebook.csv", await statExportService.codebookCsv(projectId));
+  },
+
+  async exportStatSnapshot(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=questionnaire_snapshot.json");
+    res.send(await statExportService.questionnaireSnapshotJson(projectId));
+  },
+
+  async exportStatRandomizationLog(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    adminController.sendStatCsv(
+      res,
+      "randomization_log.csv",
+      await statExportService.randomizationLogCsv(projectId, adminController.statExportOptions(req))
+    );
+  },
+
+  // 送付前バリデーション (§4/§5/§6/§13)。JSONでレポートを返す。
+  async validateProjectSurvey(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const questions = await questionRepository.listByProject(projectId);
+    res.json(validateSurvey(questions));
+  },
+
+  // 送付前「確定（凍結＋検証ゲート）」(§1/§6)。
+  // 検証で error があれば 400 でブロック（?force=1 で警告のみ無視して凍結も可）。
+  async createProjectSnapshot(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const questions = await questionRepository.listByProject(projectId);
+    const report = validateSurvey(questions);
+    const force = bodyString(req.query.force) === "1";
+    if (!report.ok && !force) {
+      res.status(400).json({ ok: false, blocked: true, report });
+      return;
+    }
+    const snapshot = await snapshotService.createOrReuse(projectId, bodyString(req.body.wave_code) || null);
+    res.json({ ok: true, snapshot_id: snapshot.id, snapshot_version: snapshot.version, wave_code: snapshot.wave_code, report });
+  },
+
+  // スナップショット一覧 (§1/§14)
+  async listProjectSnapshots(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const snapshots = await snapshotService.list(projectId);
+    res.json(
+      snapshots.map((snapshot) => ({
+        id: snapshot.id,
+        version: snapshot.version,
+        wave_code: snapshot.wave_code,
+        snapshot_hash: snapshot.snapshot_hash,
+        is_active: snapshot.is_active,
+        created_at: snapshot.created_at
+      }))
+    );
+  },
+
+  // ------------------------------------------------------------------
   // ページグループ管理 (survey_page モード)
   // ------------------------------------------------------------------
 
@@ -3137,6 +3338,10 @@ export const adminController = {
       description: bodyString(req.body.description).trim() || null,
       sort_order: parseOptionalInteger(req.body.sort_order) ?? undefined,
       page_number: parseOptionalInteger(req.body.page_number) ?? undefined,
+      // §3 ブロック(ページ)ランダム化フラグ（チェックボックス）
+      is_randomizable: req.body.is_randomizable === "on" || req.body.is_randomizable === "true",
+      randomize_within: req.body.randomize_within === "on" || req.body.randomize_within === "true",
+      fix_within: req.body.fix_within === "on" || req.body.fix_within === "true",
     });
     res.redirect(`/admin/projects/${projectId}/page-groups`);
   },
@@ -3146,6 +3351,100 @@ export const adminController = {
     const pageGroupId = routeParam(req, "pageGroupId");
     await questionPageGroupRepository.deleteById(pageGroupId);
     res.redirect(`/admin/projects/${projectId}/page-groups`);
+  },
+
+  // ------------------------------------------------------------------
+  // コンセプト・ローテーション（L1・ラテン方格）
+  // ------------------------------------------------------------------
+  async conceptsPage(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const [project, concepts] = await Promise.all([
+      projectRepository.getById(projectId),
+      conceptService.list(projectId)
+    ]);
+    res.render("admin/projects/concepts", { title: "コンセプト管理", project, concepts });
+  },
+
+  async setConceptRotationMode(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const mode = bodyString(req.body.concept_rotation_mode);
+    const allowed = ["off", "latin", "full"] as const;
+    await projectRepository.update(projectId, {
+      concept_rotation_mode: (allowed as readonly string[]).includes(mode) ? (mode as "off" | "latin" | "full") : "off"
+    });
+    res.redirect(`/admin/projects/${projectId}/concepts`);
+  },
+
+  async createConcept(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const existing = await projectConceptRepository.listByProject(projectId);
+    const nextOrder = existing.reduce((max, concept) => Math.max(max, concept.master_order), 0) + 1;
+    await projectConceptRepository.create({
+      project_id: projectId,
+      concept_code: bodyString(req.body.concept_code).trim() || `C${nextOrder}`,
+      title: bodyString(req.body.title).trim() || null,
+      description: bodyString(req.body.description).trim() || null,
+      master_order: parseOptionalInteger(req.body.master_order) ?? nextOrder
+    });
+    res.redirect(`/admin/projects/${projectId}/concepts`);
+  },
+
+  async updateConcept(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const conceptId = routeParam(req, "conceptId");
+    await projectConceptRepository.update(conceptId, {
+      concept_code: bodyString(req.body.concept_code).trim() || undefined,
+      title: bodyString(req.body.title).trim() || null,
+      description: bodyString(req.body.description).trim() || null,
+      master_order: parseOptionalInteger(req.body.master_order) ?? undefined,
+      is_active: req.body.is_active === "1" || req.body.is_active === "on"
+    });
+    res.redirect(`/admin/projects/${projectId}/concepts`);
+  },
+
+  async deleteConcept(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const conceptId = routeParam(req, "conceptId");
+    await projectConceptRepository.deleteById(conceptId);
+    res.redirect(`/admin/projects/${projectId}/concepts`);
+  },
+
+  // ------------------------------------------------------------------
+  // ブロック自動設計（AI提案＋プレビュー編集・統計エクスポート §3 支援）
+  // ------------------------------------------------------------------
+  async blockDesigner(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const [project, questions, pageGroups] = await Promise.all([
+      projectRepository.getById(projectId),
+      questionRepository.listByProject(projectId),
+      questionPageGroupRepository.listByProject(projectId)
+    ]);
+    res.render("admin/projects/blockDesigner", {
+      title: "ブロック自動設計",
+      project,
+      questions: blockDesignService.designableQuestions(questions),
+      pageGroups
+    });
+  },
+
+  async suggestBlocks(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const count = Number(req.body?.count) || 0; // 0 = 自動
+    res.json(await blockDesignService.suggest(projectId, count));
+  },
+
+  async previewBlocks(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const plan = (req.body?.plan ?? { blocks: [] }) as BlockPlan;
+    const n = Number(req.body?.n) || 3;
+    res.json({ respondents: await blockDesignService.preview(projectId, plan, n) });
+  },
+
+  async applyBlocks(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const plan = (req.body?.plan ?? { blocks: [] }) as BlockPlan;
+    const result = await blockDesignService.apply(projectId, plan);
+    res.json({ ok: true, ...result });
   },
 
   // ------------------------------------------------------------------
@@ -5961,8 +6260,11 @@ export const adminController = {
     const { pointExchangeService } = await import("../services/pointExchangeService");
     const id = routeParam(req, "id");
     await pointExchangeRepository.approve(id, "admin");
-    void pointExchangeAuditLogRepository.create({ requestId: id, action: "approved", adminId: "admin" });
-    void pointExchangeService.sendApprovedNotification(id);
+    // 金銭系の監査ログ・通知はレスポンス前に await（サーバーレスで打ち切られないように）。
+    // 監査ログは必ず残す。通知失敗は redirect を止めないようログのみ。
+    await pointExchangeAuditLogRepository.create({ requestId: id, action: "approved", adminId: "admin" });
+    try { await pointExchangeService.sendApprovedNotification(id); }
+    catch (err) { logger.warn("approveExchange.notify.failed", { id, error: String(err) }); }
     res.redirect("/admin/exchange-requests?status=approved");
   },
 
@@ -5972,7 +6274,7 @@ export const adminController = {
     const id     = routeParam(req, "id");
     const reason = typeof req.body.reason === "string" ? req.body.reason.trim() : "管理者による却下";
     await pointExchangeService.rejectExchange(id, "admin", reason);
-    void pointExchangeAuditLogRepository.create({ requestId: id, action: "rejected", adminId: "admin", detail: { reason } });
+    await pointExchangeAuditLogRepository.create({ requestId: id, action: "rejected", adminId: "admin", detail: { reason } });
     res.redirect("/admin/exchange-requests?status=rejected");
   },
 
@@ -5997,13 +6299,14 @@ export const adminController = {
       expiresAt:   expiresAt   || undefined,
       adminMemo:   adminMemo   || undefined,
     });
-    void pointExchangeAuditLogRepository.create({
+    await pointExchangeAuditLogRepository.create({
       requestId: id,
       action:    "fulfilled",
       adminId:   "admin",
       detail:    { gift_provider: giftProvider, expires_at: expiresAt || null },
     });
-    void pointExchangeService.sendFulfilledNotification(id);
+    try { await pointExchangeService.sendFulfilledNotification(id); }
+    catch (err) { logger.warn("fulfillExchange.notify.failed", { id, error: String(err) }); }
 
     res.redirect("/admin/exchange-requests?status=fulfilled");
   },
@@ -7276,7 +7579,8 @@ export const adminController = {
         project: p,
         clientName: p.client_id ? clientNameById.get(p.client_id) ?? null : null,
         entryUrl: buildStoreEntryUrl(p.entry_code),
-        responseCount: await projectAssignmentRepository.countByProject(p.id)
+        // 「回答数」は完了数（URLを開いただけの流入は含めない）
+        responseCount: await projectAssignmentRepository.countCompletedByProject(p.id)
       }))
     );
 
@@ -7291,6 +7595,86 @@ export const adminController = {
       convertibleProjects,
       msg: typeof req.query.msg === "string" ? req.query.msg : null,
       err: typeof req.query.err === "string" ? req.query.err : null
+    });
+  },
+
+  // ---- 企業ごとまとめ画面（複数アンケートを client 単位で合算・納品物リンク） ----
+
+  async clientOverview(req: Request, res: Response): Promise<void> {
+    const clientId = routeParam(req, "clientId");
+    const client = await clientRepository.getById(clientId);
+
+    // client 配下の案件を created_at 昇順で（将来の wave 列を差し込める自然順・★予約③）
+    const projects = await projectRepository.listByClient(clientId);
+
+    // 各案件の件数系(A)＋設問（横断指標の可視化用）を並行取得
+    const rows = await Promise.all(
+      projects.map(async (project) => {
+        const [respondentCount, completedCount, questions] = await Promise.all([
+          respondentRepository.countByProject(project.id),
+          projectAssignmentRepository.countCompletedByProject(project.id),
+          questionRepository.listByProject(project.id, { includeHidden: false })
+        ]);
+        return { project, respondentCount, completedCount, questions };
+      })
+    );
+
+    // 件数系の単純合算(A)
+    const totals = rows.reduce(
+      (acc, r) => ({
+        respondents: acc.respondents + r.respondentCount,
+        completed: acc.completed + r.completedCount
+      }),
+      { respondents: 0, completed: 0 }
+    );
+
+    // 横断集計できる指標の可視化（実合算(B)は将来Slice）
+    const metrics = collectClientMetrics(
+      rows.map((r) => ({ project_id: r.project.id, questions: r.questions }))
+    );
+
+    res.render("admin/clients/overview", {
+      title: `企業まとめ - ${client.name}`,
+      // NOTE: EJS(renderFile/__express) は data 内の `client` キーを compile オプション
+      // （client-mode）として解釈し include ヘルパーを外してしまう。キー名は clientInfo にする。
+      clientInfo: client,
+      rows: rows.map((r) => ({
+        project: r.project,
+        respondentCount: r.respondentCount,
+        completedCount: r.completedCount
+      })),
+      totals,
+      projectCount: projects.length,
+      metrics,
+      backUrl: "/admin/store-surveys"
+    });
+  },
+
+  // ---- 配布用フライヤー（印刷 / PDF 化向けの単独ページ） ----
+
+  async storeSurveyFlyer(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const project = await projectRepository.getById(projectId);
+
+    let clientName: string | null = null;
+    if (project.client_id) {
+      try {
+        const client = await clientRepository.getById(project.client_id);
+        clientName = client?.name ?? null;
+      } catch {
+        // clients テーブル未 GRANT（migration 065 未適用）でもフライヤーは表示する
+      }
+    }
+
+    const surveyTitle = project.user_display_title || project.name;
+    res.render("admin/store-surveys/flyer", {
+      title: `配布用QR - ${clientName || surveyTitle}`,
+      storeName: clientName,
+      surveyTitle,
+      entryUrl: buildStoreEntryUrl(project.entry_code),
+      entryCode: project.entry_code ?? null,
+      isPublished: project.status === "published",
+      backUrl: "/admin/store-surveys"
     });
   },
 
@@ -7334,15 +7718,19 @@ export const adminController = {
       res.redirect("/admin/store-surveys?err=" + encodeURIComponent("案件を選択してください"));
       return;
     }
-    // 店舗コードは初期設定では割り当てない。一覧の編集フォームで後から設定する運用。
+    // 店舗コードは登録時に自動付与する（一意なランダムコード）。編集フォームで後から変更可。
+    // 既に entry_code を持つ案件（再設定など）は上書きしない。
     const clientId = bodyString(req.body.client_id).trim() || null;
+    const current = await projectRepository.getById(projectId);
+    const entryCode = current.entry_code?.trim() || (await generateUniqueEntryCode());
     await projectRepository.update(projectId, {
       visibility_type: "private_store",
-      client_id: clientId
+      client_id: clientId,
+      entry_code: entryCode
     });
     res.redirect(
       "/admin/store-surveys?msg=" +
-        encodeURIComponent("店舗専用アンケートに設定しました。店舗コードを編集から設定してください")
+        encodeURIComponent(`店舗専用アンケートに設定しました（店舗コード: ${entryCode}）。コードは編集から変更できます`)
     );
   },
 
@@ -7379,8 +7767,138 @@ export const adminController = {
         : {})
     });
     res.redirect("/admin/store-surveys?msg=" + encodeURIComponent("店舗専用アンケートを更新しました"));
+  },
+
+  // ---- 応募管理（案件検索サイト・project_applications） ----
+
+  /** 応募一覧。?project_id= で案件フィルタ。 */
+  async applications(req: Request, res: Response): Promise<void> {
+    const projectIdFilter = typeof req.query.project_id === "string" ? req.query.project_id.trim() : "";
+    const allProjects = await projectRepository.list();
+    const projectById = new Map(allProjects.map((p) => [p.id, p]));
+
+    let applications;
+    if (projectIdFilter) {
+      applications = await projectApplicationRepository.listByProject(projectIdFilter);
+    } else {
+      // 全件: 応募のある案件を新しい順に。件数規模が小さい前提の素朴な実装。
+      const lists = await Promise.all(
+        allProjects
+          .filter((p) => p.visibility_type !== "private_store")
+          .map((p) => projectApplicationRepository.listByProject(p.id))
+      );
+      applications = lists.flat().sort((a, b) => (a.applied_at < b.applied_at ? 1 : -1));
+    }
+
+    const rows = applications.map((a) => ({
+      application: a,
+      project: projectById.get(a.project_id) ?? null,
+    }));
+
+    res.render("admin/applications/index", {
+      title: "応募管理",
+      rows,
+      projects: allProjects.filter((p) => p.visibility_type !== "private_store"),
+      projectIdFilter: projectIdFilter || null,
+      msg: typeof req.query.msg === "string" ? req.query.msg : null,
+      err: typeof req.query.err === "string" ? req.query.err : null
+    });
+  },
+
+  /** 当選: respondent/assignment を確保し、当選Flexを送る。 */
+  async acceptApplication(req: Request, res: Response): Promise<void> {
+    const applicationId = routeParam(req, "id");
+    const backProject = typeof req.body?.back === "string" ? req.body.back : "";
+    const back = `/admin/applications${backProject ? `?project_id=${encodeURIComponent(backProject)}&` : "?"}`;
+
+    const result = await applicationService.accept(applicationId);
+    if (!result.ok) {
+      res.redirect(`${back}err=` + encodeURIComponent(
+        result.reason === "not_found" ? "応募が見つかりません" : "選考中の応募のみ当選にできます"
+      ));
+      return;
+    }
+
+    // 当選通知（失敗しても当選自体は成立させ、エラーはメッセージで知らせる）
+    let notified = true;
+    try {
+      const startUrl = buildProjectStartUrl(result.assignmentId);
+      await lineMessagingService.push(result.application.line_user_id, [
+        buildApplicationAcceptedFlex({
+          projectTitle: result.project.user_display_title || result.project.name,
+          rewardPoints: result.project.reward_points,
+          estimatedMinutes: (result.project as unknown as { estimated_minutes?: number | null }).estimated_minutes ?? null,
+          surveyUrl: startUrl.url,
+        }),
+      ]);
+    } catch (error) {
+      notified = false;
+      logger.warn("applications.accept: 当選通知の送信に失敗", { applicationId, error: String(error) });
+    }
+
+    res.redirect(`${back}msg=` + encodeURIComponent(
+      notified ? "当選にしました（LINE通知済み）" : "当選にしました（LINE通知は失敗。手動で連絡してください）"
+    ));
+  },
+
+  /** 落選: rejected にし、チェック時のみ落選Flexを送る。 */
+  async rejectApplication(req: Request, res: Response): Promise<void> {
+    const applicationId = routeParam(req, "id");
+    const backProject = typeof req.body?.back === "string" ? req.body.back : "";
+    const back = `/admin/applications${backProject ? `?project_id=${encodeURIComponent(backProject)}&` : "?"}`;
+    const notify = req.body?.notify === "1";
+    const note = bodyString(req.body?.note).trim() || null;
+
+    const result = await applicationService.reject(applicationId, note);
+    if (!result.ok) {
+      res.redirect(`${back}err=` + encodeURIComponent(
+        result.reason === "not_found" ? "応募が見つかりません" : "選考中の応募のみ落選にできます"
+      ));
+      return;
+    }
+
+    let suffix = "";
+    if (notify) {
+      try {
+        const project = await projectRepository.getById(result.application.project_id);
+        await lineMessagingService.push(result.application.line_user_id, [
+          buildApplicationRejectedFlex({
+            projectTitle: project.user_display_title || project.name,
+            projectsUrl: `${appEnv.APP_BASE_URL}/liff/projects`,
+          }),
+        ]);
+        suffix = "（LINE通知済み）";
+      } catch (error) {
+        suffix = "（LINE通知は失敗）";
+        logger.warn("applications.reject: 落選通知の送信に失敗", { applicationId, error: String(error) });
+      }
+    }
+    res.redirect(`${back}msg=` + encodeURIComponent(`落選にしました${suffix}`));
   }
 };
+
+/**
+ * 一意な店舗コード（entry_code）を自動生成する。
+ * - URL/QR で扱いやすい英数小文字（紛らわしい 0/o/1/l/i を除外）。
+ * - `st-` プレフィックス + 6 文字。DB の部分 unique index と衝突しないよう事前確認し再試行。
+ */
+async function generateUniqueEntryCode(): Promise<string> {
+  const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+  const makeCode = (): string => {
+    let s = "";
+    for (let i = 0; i < 6; i++) {
+      s += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    return `st-${s}`;
+  };
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const code = makeCode();
+    const existing = await projectRepository.findAnyByEntryCode(code);
+    if (!existing) return code;
+  }
+  // 極めて稀な衝突連続時のフォールバック（タイムスタンプで一意性を担保）
+  return `st-${Date.now().toString(36)}`;
+}
 
 /** 店舗流入用の専用URL。entry_code 未設定時は null。 */
 function buildStoreEntryUrl(entryCode: string | null | undefined): string | null {

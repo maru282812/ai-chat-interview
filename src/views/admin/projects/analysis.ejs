@@ -14,6 +14,84 @@
   </form>
 </div>
 
+<div class="card" style="margin-bottom:16px;">
+  <h2>統計エクスポート（外部集計ソフト向け）</h2>
+  <p class="muted" style="font-size:0.85em;">UTF-8 BOM + RFC4180。列は送付時マスター順、多重選択は 0/1 展開、AI深掘りは元設問へ統合。出力主キーは擬似匿名。</p>
+  <% const exBase = `/admin/projects/${project.id}/exports/stat`; %>
+  <p style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+    <label style="font-size:0.85em;"><input type="checkbox" id="ex-include-test" /> テスト回答を含む</label>
+    <label style="font-size:0.85em;"><input type="checkbox" id="ex-consented-only" /> 同意者のみ</label>
+  </p>
+  <p style="display:flex;flex-wrap:wrap;gap:8px;">
+    <a class="button-link" id="ex-wide" href="<%= exBase %>/respondents-wide.csv">respondents_wide.csv</a>
+    <a class="button-link" id="ex-long" href="<%= exBase %>/answers-long.csv">answers_long.csv</a>
+    <a class="button-link" href="<%= exBase %>/codebook.csv">codebook.csv</a>
+    <a class="button-link" href="<%= exBase %>/questionnaire-snapshot.json">questionnaire_snapshot.json</a>
+    <a class="button-link" id="ex-rand" href="<%= exBase %>/randomization-log.csv">randomization_log.csv</a>
+  </p>
+
+  <h2 style="margin-top:16px;">送付前チェック / 調査票の確定</h2>
+  <p class="muted" style="font-size:0.85em;">確定すると現在の設問構成を凍結（スナップショット）します。依存順違反などのエラーがあると確定はブロックされます。</p>
+  <p style="display:flex;gap:8px;">
+    <button type="button" class="button-link secondary" id="btn-validate">調査票を検証</button>
+    <button type="button" class="button-link primary" id="btn-snapshot">調査票を確定（スナップショット作成）</button>
+  </p>
+  <div id="validate-result" style="margin-top:8px;font-size:0.85em;"></div>
+</div>
+
+<script>
+(function () {
+  const base = "/admin/projects/<%= project.id %>";
+  function syncExportLinks() {
+    const params = new URLSearchParams();
+    if (document.getElementById("ex-include-test").checked) params.set("includeTest", "1");
+    if (document.getElementById("ex-consented-only").checked) params.set("consentedOnly", "1");
+    const qs = params.toString() ? ("?" + params.toString()) : "";
+    for (const [id, path] of [["ex-wide", "/respondents-wide.csv"], ["ex-long", "/answers-long.csv"], ["ex-rand", "/randomization-log.csv"]]) {
+      document.getElementById(id).href = base + "/exports/stat" + path + qs;
+    }
+  }
+  document.getElementById("ex-include-test").addEventListener("change", syncExportLinks);
+  document.getElementById("ex-consented-only").addEventListener("change", syncExportLinks);
+
+  function renderReport(report, prefix) {
+    const out = document.getElementById("validate-result");
+    const findings = (report && report.findings) || [];
+    const errors = findings.filter(f => f.level === "error");
+    const warnings = findings.filter(f => f.level === "warning");
+    let html = prefix + " エラー " + errors.length + " 件 / 警告 " + warnings.length + " 件";
+    if (findings.length) {
+      html += "<ul style='margin:6px 0;'>" + findings.map(f =>
+        "<li style='color:" + (f.level === "error" ? "#b00020" : "#8a5b00") + "'>[" + f.level + "] " +
+        (f.question_code ? (f.question_code + ": ") : "") + f.message + "</li>").join("") + "</ul>";
+    }
+    out.innerHTML = html;
+  }
+
+  document.getElementById("btn-validate").addEventListener("click", async () => {
+    document.getElementById("validate-result").textContent = "検証中...";
+    try {
+      const res = await fetch(base + "/validate");
+      renderReport(await res.json(), "検証結果:");
+    } catch (e) { document.getElementById("validate-result").textContent = "検証に失敗しました: " + e; }
+  });
+
+  document.getElementById("btn-snapshot").addEventListener("click", async () => {
+    if (!confirm("現在の設問構成を凍結してスナップショットを作成します。よろしいですか？")) return;
+    document.getElementById("validate-result").textContent = "確定中...";
+    try {
+      const res = await fetch(base + "/snapshot", { method: "POST" });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        renderReport(data.report, "確定しました（version " + data.snapshot_version + "）。");
+      } else {
+        renderReport(data.report, "エラーのため確定をブロックしました。");
+      }
+    } catch (e) { document.getElementById("validate-result").textContent = "確定に失敗しました: " + e; }
+  });
+})();
+</script>
+
 <section class="grid">
   <div class="card">
     <h2>Coverage</h2>

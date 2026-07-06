@@ -6,241 +6,144 @@
     <title><%= title %></title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
-    <style>
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
-        background: #f0f4f3;
-        min-height: 100vh;
-      }
-      .page-header {
-        background: #fff;
-        padding: 16px;
-        border-bottom: 1px solid #e8eeec;
-        position: sticky; top: 0; z-index: 10;
-      }
-      .page-header h1 { font-size: 17px; font-weight: 700; color: #1a2f2a; }
-
-      .tab-bar {
-        display: flex; gap: 0;
-        background: #fff;
-        border-bottom: 1px solid #e8eeec;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-      }
-      .tab-bar::-webkit-scrollbar { display: none; }
-      .tab {
-        flex-shrink: 0;
-        padding: 10px 16px;
-        font-size: 13px; font-weight: 600;
-        color: #60726f;
-        border-bottom: 2px solid transparent;
-        cursor: pointer;
-        white-space: nowrap;
-      }
-      .tab.active { color: #2ca87a; border-bottom-color: #2ca87a; }
-
-      .search-bar {
-        padding: 10px 16px;
-        background: #fff;
-      }
-      .search-input {
-        width: 100%;
-        padding: 9px 14px;
-        border: 1px solid #d8e3e0; border-radius: 20px;
-        font-size: 14px; color: #222;
-        background: #f8faf9;
-      }
-      .search-input:focus { outline: none; border-color: #2ca87a; }
-
-      .sort-bar {
-        display: flex; justify-content: flex-end; align-items: center;
-        padding: 8px 16px;
-        font-size: 12px; color: #60726f; gap: 6px;
-      }
-      .sort-btn {
-        background: none; border: 1px solid #d8e3e0;
-        border-radius: 6px; padding: 4px 10px;
-        font-size: 12px; cursor: pointer; color: #333;
-      }
-
-      .project-list { padding: 8px 16px; }
-      .project-card {
-        background: #fff;
-        border-radius: 14px;
-        padding: 16px;
-        margin-bottom: 10px;
-        box-shadow: 0 2px 6px rgba(0,0,0,.06);
-        cursor: pointer;
-        position: relative;
-      }
-      .project-card:active { opacity: 0.85; }
-
-      .card-header {
-        display: flex; justify-content: space-between; align-items: flex-start;
-        margin-bottom: 8px;
-      }
-      .card-title {
-        font-size: 15px; font-weight: 700; color: #1a2f2a;
-        flex: 1; padding-right: 8px; line-height: 1.4;
-      }
-      .save-btn {
-        background: none; border: none; cursor: pointer;
-        font-size: 22px; line-height: 1; flex-shrink: 0;
-        color: #ccc; padding: 0;
-      }
-      .save-btn.saved { color: #2ca87a; }
-
-      .card-tags {
-        display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;
-      }
-      .tag {
-        font-size: 11px; font-weight: 600;
-        padding: 3px 9px; border-radius: 20px;
-      }
-      .tag-new { background: #fff3e0; color: #c26d00; }
-      .tag-cat { background: #e8f5ef; color: #1a7a5a; }
-      .tag-type { background: #f0eef8; color: #5a3a9a; }
-
-      .card-meta {
-        display: flex; gap: 14px; font-size: 12px; color: #60726f;
-      }
-      .card-meta-item { display: flex; align-items: center; gap: 3px; }
-      .card-reward {
-        font-size: 16px; font-weight: 700; color: #2ca87a;
-        margin-top: 10px;
-      }
-
-      .card-footer {
-        display: flex; justify-content: space-between; align-items: center;
-        margin-top: 10px;
-        border-top: 1px solid #f0f4f3; padding-top: 10px;
-      }
-      .respondents-bar {
-        flex: 1; max-width: 140px; margin-right: 12px;
-      }
-      .respondents-bar-track { background: #e0ede9; border-radius: 4px; height: 5px; }
-      .respondents-bar-fill { background: #2ca87a; height: 100%; border-radius: 4px; }
-      .respondents-label { font-size: 11px; color: #60726f; margin-top: 3px; }
-      .deadline-label { font-size: 11px; color: #999; }
-
-      .empty-state {
-        text-align: center; padding: 60px 20px;
-        color: #60726f; font-size: 14px;
-      }
-      .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
-
-      #loading-overlay {
-        display: flex; justify-content: center; align-items: center;
-        padding: 60px 20px;
-      }
-      .spinner {
-        width: 28px; height: 28px;
-        border: 3px solid #e0ede9; border-top-color: #2ca87a;
-        border-radius: 50%; animation: spin 0.7s linear infinite;
-      }
-      @keyframes spin { to { transform: rotate(360deg); } }
-    </style>
+    <link rel="stylesheet" href="/public/hibi.css" />
   </head>
-  <body>
-    <div class="page-header">
-      <h1>案件を探す</h1>
+  <body class="hibi">
+    <div class="hb-shell">
+      <header class="hb-appbar">
+        <span class="hb-logo">Hibi</span>
+        <input class="hb-search" id="search-input" placeholder="キーワードで探す" />
+      </header>
+
+      <nav class="hb-chips" id="chip-bar">
+        <button class="hb-chip on" data-filter="all">すべて</button>
+        <button class="hb-chip" data-filter="cat:生活系">🍚 生活系</button>
+        <button class="hb-chip" data-filter="cat:仕事系">💼 仕事系</button>
+        <button class="hb-chip" data-filter="instant">⚡ 即回答OK</button>
+      </nav>
+
+      <section class="hb-progress" id="progress" style="display:none">
+        <div class="row"><span>💡 今月の応募数</span><span class="num"><b id="monthly-count">0</b><small> /<span id="monthly-reco">10</span>件</small></span></div>
+        <div class="bar"><i id="monthly-bar" style="width:0%"></i></div>
+      </section>
+
+      <div id="pick-area"></div>
+      <div class="hb-h" id="list-head" style="display:none">🆕 新着の案件</div>
+
+      <div class="hb-loading" id="loading-overlay">読み込み中…</div>
+      <main class="hb-cards" id="project-list" style="display:none"></main>
+
+      <button class="hb-fab" id="sort-fab">⇅ 新着順</button>
+
+      <nav class="hb-bottomnav">
+        <a class="on" href="#"><span class="i">🔍</span>探す</a>
+        <a id="nav-saved" href="#"><span class="i">☆</span>保存</a>
+        <a id="nav-interactions" href="#"><span class="i">📋</span>やりとり</a>
+        <a id="nav-mypage" href="#"><span class="i">👤</span>マイページ</a>
+      </nav>
     </div>
-
-    <div class="tab-bar" id="tab-bar">
-      <div class="tab active" data-cat="">すべて</div>
-      <div class="tab" data-cat="生活系">生活系</div>
-      <div class="tab" data-cat="仕事系">仕事系</div>
-      <div class="tab" data-cat="子育て">子育て</div>
-      <div class="tab" data-cat="健康">健康</div>
-      <div class="tab" data-cat="趣味">趣味</div>
-    </div>
-
-    <div class="search-bar">
-      <input class="search-input" type="search" id="search-input" placeholder="案件を検索..." />
-    </div>
-
-    <div class="sort-bar">
-      <span>並び替え:</span>
-      <button class="sort-btn active-sort" id="sort-new">新着順</button>
-      <button class="sort-btn" id="sort-reward">謝礼順</button>
-    </div>
-
-    <div id="loading-overlay"><div class="spinner"></div></div>
-    <div class="project-list" id="project-list" style="display:none"></div>
-
-    <%- include('../partials/liff-bottom-nav', { active: 'projects' }) %>
 
     <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
 
     <script>
     (() => {
+      'use strict';
       const d = JSON.parse(document.getElementById('initial-data').dataset.json || '{}');
       const { liffId, projectsDataUrl, projectDetailBaseUrl } = d;
+      document.getElementById('nav-saved').href = d.savedProjectsUrl || '#';
+      document.getElementById('nav-interactions').href = d.interactionsUrl || '#';
+      document.getElementById('nav-mypage').href = d.mypageUrl || '#';
 
       let idToken = null;
       let allProjects = [];
-      let currentCat = '';
-      let sortBy = 'new';
+      let filter = 'all';
       let searchText = '';
+      const SORTS = [
+        { key: 'new',      label: '⇅ 新着順' },
+        { key: 'reward',   label: '⇅ 報酬が高い順' },
+        { key: 'deadline', label: '⇅ 締切が近い順' },
+      ];
+      let sortIdx = 0;
 
       function esc(v) {
         return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
       }
-
       function daysAgo(iso) {
         if (!iso) return null;
-        const diff = Date.now() - new Date(iso).getTime();
-        return Math.floor(diff / 86400000);
+        return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+      }
+      function daysLeft(iso) {
+        if (!iso) return null;
+        const dd = Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
+        return dd < 0 ? null : dd;
+      }
+      function fmtBadges(p) {
+        const isNew = (daysAgo(p.created_at) ?? 99) <= 3;
+        const isAuto = p.apply_mode === 'auto';
+        const applied = !!p.application_status && p.application_status !== 'withdrawn';
+        const badges = [];
+        if (applied) badges.push('<span class="hb-badge done">応募済み</span>');
+        if (isNew) badges.push('<span class="hb-badge new">新着</span>');
+        badges.push(isAuto
+          ? '<span class="hb-badge ai">AIインタビュー</span>'
+          : '<span class="hb-badge fmt">' + esc(p.interview_format || 'インタビュー（選考あり）') + '</span>');
+        (p.tags || []).slice(0, 2).forEach(t => badges.push('<span class="hb-badge fmt">#' + esc(t) + '</span>'));
+        return badges.join('');
       }
 
-      function renderProjects(projects) {
+      function renderPick(p) {
+        const area = document.getElementById('pick-area');
+        if (!p) { area.innerHTML = ''; return; }
+        area.innerHTML = `
+          <a class="hb-pick" href="${esc(projectDetailBaseUrl)}/${esc(p.id)}">
+            <span class="lbl">✨ 注目の案件</span>
+            <h3>${esc(p.title)}</h3>
+            <div class="foot">
+              <span class="price">${(p.reward_points ?? 0).toLocaleString()}<small>pt${p.estimated_minutes ? '｜' + esc(String(p.estimated_minutes)) + '分' : ''}</small></span>
+              <span class="go">見る ›</span>
+            </div>
+          </a>`;
+      }
+
+      function renderProjects(list) {
         const listEl = document.getElementById('project-list');
         document.getElementById('loading-overlay').style.display = 'none';
         listEl.style.display = '';
+        document.getElementById('list-head').style.display = '';
 
-        if (projects.length === 0) {
-          listEl.innerHTML = `<div class="empty-state"><div class="icon">🔍</div><p>該当する案件がありません</p></div>`;
+        if (list.length === 0) {
+          listEl.innerHTML = '<div class="hb-empty"><div class="icon">🔍</div><p>該当する案件がありません</p></div>';
           return;
         }
 
-        listEl.innerHTML = projects.map(p => {
-          const isNew = (daysAgo(p.created_at) ?? 99) <= 3;
-          const fillPct = p.max_respondents ? Math.min(100, Math.round(((p.completed_count ?? 0) / p.max_respondents) * 100)) : null;
+        listEl.innerHTML = list.map(p => {
+          const left = daysLeft(p.recruit_deadline);
+          const isAuto = p.apply_mode === 'auto';
           return `
-            <div class="project-card" data-id="${esc(p.id)}">
-              <div class="card-header">
-                <div class="card-title">${esc(p.title)}</div>
-                <button class="save-btn ${p.is_saved ? 'saved' : ''}" data-id="${esc(p.id)}" title="${p.is_saved ? '保存済み' : '保存'}">
-                  ${p.is_saved ? '🔖' : '🏷️'}
-                </button>
+            <article class="hb-card" data-id="${esc(p.id)}">
+              <div class="pt ${isAuto ? 'hot' : ''}">
+                <small>${isAuto ? '⚡即回答' : '謝礼'}</small>
+                <b>${(p.reward_points ?? 0).toLocaleString()}<small>pt</small></b>
+                ${p.estimated_minutes ? `<div class="min">⏱ ${esc(String(p.estimated_minutes))}分</div>` : ''}
               </div>
-              <div class="card-tags">
-                ${isNew ? '<span class="tag tag-new">NEW</span>' : ''}
-                ${p.category ? `<span class="tag tag-cat">${esc(p.category)}</span>` : ''}
-              </div>
-              <div class="card-meta">
-                ${p.estimated_minutes ? `<span class="card-meta-item">⏱ 約${esc(String(p.estimated_minutes))}分</span>` : ''}
-              </div>
-              ${p.reward_points ? `<div class="card-reward">謝礼 ${p.reward_points.toLocaleString()}pt</div>` : ''}
-              ${fillPct !== null ? `
-              <div class="card-footer">
-                <div class="respondents-bar">
-                  <div class="respondents-bar-track"><div class="respondents-bar-fill" style="width:${fillPct}%"></div></div>
-                  <div class="respondents-label">${fillPct}% 埋まっています</div>
+              <div class="body">
+                <h3>${esc(p.title)}</h3>
+                <div class="hb-meta">${fmtBadges(p)}</div>
+                <div class="hb-foot">
+                  ${left !== null ? `<span class="days">あと<b>${left}</b>日</span>` : ''}
+                  <button class="hb-save ${p.is_saved ? 'saved' : ''}" data-id="${esc(p.id)}">${p.is_saved ? '★ 保存済' : '☆ 保存'}</button>
                 </div>
-              </div>` : ''}
-            </div>`;
+              </div>
+            </article>`;
         }).join('');
 
-        listEl.querySelectorAll('.project-card').forEach(card => {
+        listEl.querySelectorAll('.hb-card').forEach(card => {
           card.addEventListener('click', e => {
-            if (e.target.closest('.save-btn')) return;
+            if (e.target.closest('.hb-save')) return;
             window.location.href = `${projectDetailBaseUrl}/${card.dataset.id}`;
           });
         });
-
-        listEl.querySelectorAll('.save-btn').forEach(btn => {
+        listEl.querySelectorAll('.hb-save').forEach(btn => {
           btn.addEventListener('click', async e => {
             e.stopPropagation();
             const projectId = btn.dataset.id;
@@ -250,29 +153,39 @@
                 headers: { Authorization: `Bearer ${idToken}` }
               });
               const json = await res.json();
-              const saved = json.saved;
-              btn.textContent = saved ? '🔖' : '🏷️';
-              btn.className = `save-btn${saved ? ' saved' : ''}`;
+              btn.textContent = json.saved ? '★ 保存済' : '☆ 保存';
+              btn.className = `hb-save${json.saved ? ' saved' : ''}`;
               const proj = allProjects.find(p => p.id === projectId);
-              if (proj) proj.is_saved = saved;
-            } catch (err) {
-              console.error('save failed', err);
-            }
+              if (proj) proj.is_saved = json.saved;
+            } catch (err) { console.error('save failed', err); }
           });
         });
       }
 
       function applyFilters() {
         let list = allProjects;
-        if (currentCat) list = list.filter(p => p.category === currentCat);
+        if (filter.startsWith('cat:')) {
+          const cat = filter.slice(4);
+          list = list.filter(p => p.category === cat);
+        } else if (filter === 'instant') {
+          list = list.filter(p => p.apply_mode === 'auto');
+        }
         if (searchText) {
           const q = searchText.toLowerCase();
-          list = list.filter(p => p.title.toLowerCase().includes(q));
+          list = list.filter(p =>
+            String(p.title).toLowerCase().includes(q) ||
+            (p.tags || []).some(t => String(t).toLowerCase().includes(q)));
         }
-        if (sortBy === 'reward') {
-          list = [...list].sort((a, b) => (b.reward_points ?? 0) - (a.reward_points ?? 0));
-        }
-        renderProjects(list);
+        const sort = SORTS[sortIdx].key;
+        if (sort === 'reward') list = [...list].sort((a, b) => (b.reward_points ?? 0) - (a.reward_points ?? 0));
+        if (sort === 'deadline') list = [...list].sort((a, b) => {
+          const at = a.recruit_deadline ? new Date(a.recruit_deadline).getTime() : Infinity;
+          const bt = b.recruit_deadline ? new Date(b.recruit_deadline).getTime() : Infinity;
+          return at - bt;
+        });
+        // 先頭1件をヒーローに、残りをリストに（1件しかない場合はヒーローのみ）
+        renderPick(list[0] ?? null);
+        renderProjects(list.slice(1));
       }
 
       async function load() {
@@ -284,38 +197,39 @@
           const res = await fetch(projectsDataUrl, { headers: { Authorization: `Bearer ${idToken}` } });
           const data = await res.json();
           allProjects = data.projects || [];
+
+          const monthly = data.monthly_applications;
+          if (monthly) {
+            document.getElementById('progress').style.display = '';
+            document.getElementById('monthly-count').textContent = monthly.count;
+            document.getElementById('monthly-reco').textContent = monthly.recommended;
+            document.getElementById('monthly-bar').style.width =
+              Math.min(100, Math.round((monthly.count / monthly.recommended) * 100)) + '%';
+          }
           applyFilters();
         } catch (err) {
           document.getElementById('loading-overlay').style.display = 'none';
-          document.getElementById('project-list').style.display = '';
-          document.getElementById('project-list').innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><p>${esc(err.message || '読み込みに失敗しました')}</p></div>`;
+          const listEl = document.getElementById('project-list');
+          listEl.style.display = '';
+          listEl.innerHTML = `<div class="hb-empty"><div class="icon">⚠️</div><p>${esc(err.message || '読み込みに失敗しました')}</p></div>`;
         }
       }
 
-      document.getElementById('tab-bar').addEventListener('click', e => {
-        const tab = e.target.closest('.tab');
-        if (!tab) return;
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        currentCat = tab.dataset.cat;
+      document.getElementById('chip-bar').addEventListener('click', e => {
+        const chip = e.target.closest('.hb-chip');
+        if (!chip) return;
+        document.querySelectorAll('.hb-chip').forEach(c => c.classList.remove('on'));
+        chip.classList.add('on');
+        filter = chip.dataset.filter;
         applyFilters();
       });
-
       document.getElementById('search-input').addEventListener('input', e => {
         searchText = e.target.value.trim();
         applyFilters();
       });
-
-      document.getElementById('sort-new').addEventListener('click', () => {
-        sortBy = 'new';
-        document.getElementById('sort-new').classList.add('active-sort');
-        document.getElementById('sort-reward').classList.remove('active-sort');
-        applyFilters();
-      });
-      document.getElementById('sort-reward').addEventListener('click', () => {
-        sortBy = 'reward';
-        document.getElementById('sort-reward').classList.add('active-sort');
-        document.getElementById('sort-new').classList.remove('active-sort');
+      document.getElementById('sort-fab').addEventListener('click', () => {
+        sortIdx = (sortIdx + 1) % SORTS.length;
+        document.getElementById('sort-fab').textContent = SORTS[sortIdx].label;
         applyFilters();
       });
 

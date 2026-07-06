@@ -17,13 +17,14 @@
  *   - AI 深掘り（既存 conversationOrchestratorService に委譲）
  */
 
-import type { Question } from "../types/domain";
+import type { Question, QuestionOption } from "../types/domain";
 import type {
   DisplayTagsParsed,
   VisibilityCondition,
   PipingCondition,
   AnswerInsertion,
   DisableRule,
+  OptionSource,
   QuestionPageGroup,
   QuestionPage,
   AnswerContext,
@@ -373,4 +374,117 @@ export function filterVisibleQuestions(
   ctx: AnswerContext
 ): Question[] {
   return questions.filter((q) => isQuestionVisible(q, ctx));
+}
+
+// ------------------------------------------------------------------
+// 8. <carry> 選択肢の持ち越し（carry-forward）
+// ------------------------------------------------------------------
+
+/** ctx.answers[code] を「選択された value の配列」に正規化する（string / JSON配列 / 配列 いずれも許容）。 */
+function selectedValuesOf(ctx: AnswerContext, code: string): string[] {
+  const raw = ctx.answers[code.toLowerCase()];
+  if (raw == null) return [];
+  if (Array.isArray(raw)) return raw.map((v) => String(v));
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith("[")) {
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed.map((v) => String(v));
+      } catch {
+        /* JSON でなければ単一値として扱う */
+      }
+    }
+    return [String(raw)];
+  }
+  return [String(raw)];
+}
+
+/**
+ * optionSource（<carry q●●>）を評価し、持ち越し後の選択肢配列を返す。
+ * - mode="selected"  : 参照元で選ばれた value のみを、基底 options の並び順を保って残す。
+ * - mode="unselected": 参照元で選ばれなかった value のみを残す。
+ * - 参照元が未回答なら selected=空 / unselected=全件（＝まだ絞られていない状態）。
+ */
+export function applyCarryForward(
+  options: QuestionOption[],
+  source: OptionSource | undefined,
+  ctx: AnswerContext
+): QuestionOption[] {
+  if (!source) return options;
+  const selected = new Set(selectedValuesOf(ctx, source.fromQuestion));
+  if (source.mode === "unselected") {
+    return options.filter((o) => !selected.has(o.value));
+  }
+  // selected
+  return options.filter((o) => selected.has(o.value));
+}
+
+// ------------------------------------------------------------------
+// 9. 設問ビューの一括解決（サーバー権威の単一エントリポイント）
+// ------------------------------------------------------------------
+
+/** resolveQuestionView が返す、差し込み・持ち越し・disable 反映済みの選択肢。 */
+export type ResolvedOption = QuestionOption;
+
+/**
+ * 1設問について「表示可否・差し込み済みテキスト・加工済み選択肢」を1回で解決する。
+ * これを制御ロジックの唯一の正とし、クライアント(survey.ejs)・LINE会話の双方から使う。
+ *
+ * 適用順（選択肢）: carry-forward → disable → <ans> ラベル差し込み。
+ */
+export interface ResolvedQuestionView {
+  question_code: string;
+  visible: boolean;
+  questionText: string;
+  commentTop: string | null;
+  commentBottom: string | null;
+  options: ResolvedOption[];
+}
+
+export function resolveQuestionView(
+  question: Pick<
+    Question,
+    | "question_code"
+    | "question_text"
+    | "comment_top"
+    | "comment_bottom"
+    | "visibility_conditions"
+    | "display_tags_parsed"
+    | "question_config"
+  >,
+  ctx: AnswerContext
+): ResolvedQuestionView {
+  const parsed: DisplayTagsParsed | null = question.display_tags_parsed ?? null;
+  const insertions = parsed?.answerInsertions;
+
+  // --- テキスト系: <ans> 差し込み ---
+  const questionText = applyAnswerInsertions(question.question_text ?? "", insertions, ctx);
+  const commentTop =
+    question.comment_top == null ? null : applyAnswerInsertions(question.comment_top, insertions, ctx);
+  const commentBottom =
+    question.comment_bottom == null ? null : applyAnswerInsertions(question.comment_bottom, insertions, ctx);
+
+  // --- 選択肢: carry-forward → disable → <ans>(choice_label) ---
+  const baseOptions = question.question_config?.options ?? [];
+  const carried = applyCarryForward(baseOptions, parsed?.optionSource, ctx);
+
+  const enabled = filterEnabledChoices(
+    carried.map((o) => o.value),
+    parsed?.disableRules,
+    ctx
+  );
+
+  const options: ResolvedOption[] = carried
+    .filter((o) => enabled.has(o.value))
+    .map((o) => ({ ...o, label: applyAnswerInsertions(o.label, insertions, ctx) }));
+
+  return {
+    question_code: question.question_code,
+    visible: isQuestionVisible(question, ctx),
+    questionText,
+    commentTop,
+    commentBottom,
+    options,
+  };
 }

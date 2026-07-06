@@ -43,6 +43,10 @@ export const sessionRepository = {
         | "state_json"
         | "completed_at"
         | "last_activity_at"
+        | "randomization_seed"
+        | "display_order_json"
+        | "snapshot_id"
+        | "concept_order_json"
       >
     >
   ): Promise<Session> {

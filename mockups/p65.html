@@ -1,0 +1,43 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>65 プロフィール・タグ設定（仮）</title><link rel="stylesheet" href="base.css">
+<style>
+  .phone { padding-bottom: 96px; }
+  .prog { margin: 12px 16px 0; background: #fff; border-radius: 14px; padding: 14px; }
+  .prog .bar { height: 8px; background: #F0E6C8; border-radius: 4px; margin-top: 8px; overflow: hidden; }
+  .prog .bar i { display: block; height: 100%; width: 75%; background: #DFA02F; border-radius: 4px; }
+  .kv { display: flex; align-items: center; background: #fff; border-bottom: 1px solid #F5EDD6; padding: 15px 16px; font-size: 14px; }
+  .kv .k { width: 96px; color: var(--sub); flex-shrink: 0; font-size: 12.5px; }
+  .kv .v { font-weight: 600; }
+  .kv .v.empty { color: #C9911F; font-weight: 700; }
+  .kv::after { content: "›"; margin-left: auto; color: #ccc; font-size: 18px; }
+  .gh { padding: 18px 16px 8px; font-weight: 800; font-size: 13.5px; color: #A97814; }
+  .tagwrap { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 16px; }
+  .cta-fixed { background: #FFFdf6; }
+</style></head>
+<body class="t-hibi">
+<div class="phone">
+  <header class="appbar"><span class="icon">‹</span><b style="font-size:16px;flex:1;text-align:center">プロフィール・タグ設定</b><span></span></header>
+  <div class="prog">
+    <div style="display:flex;justify-content:space-between;font-size:13.5px;font-weight:800"><span>プロフィール充実度</span><span style="color:#A97814">75%</span></div>
+    <div class="bar"><i></i></div>
+    <div class="note mt8">あと2項目（職業・世帯構成）で80%。充実させると当選率が上がります。</div>
+  </div>
+  <div class="gh">基本情報</div>
+  <div style="border-radius:14px;overflow:hidden;margin:0 16px">
+    <div class="kv"><span class="k">ニックネーム</span><span class="v">ヨットさん</span></div>
+    <div class="kv"><span class="k">性別</span><span class="v">男性</span></div>
+    <div class="kv"><span class="k">生年月</span><span class="v">1978年1月</span></div>
+    <div class="kv"><span class="k">居住地</span><span class="v">東京都</span></div>
+    <div class="kv"><span class="k">職業</span><span class="v empty">＋ 未設定（当選率UP）</span></div>
+    <div class="kv"><span class="k">世帯構成</span><span class="v empty">＋ 未設定</span></div>
+  </div>
+  <div class="gh">興味のあるテーマ（タグ）</div>
+  <div class="tagwrap">
+    <span class="chip on">美容・コスメ</span><span class="chip on">ヘアケア</span><span class="chip on">介護</span>
+    <span class="chip">グルメ</span><span class="chip">子育て</span><span class="chip">旅行</span><span class="chip">ガジェット</span>
+    <span class="chip">健康・運動</span><span class="chip">投資・マネー</span><span class="chip">クルマ</span><span class="chip">ペット</span>
+  </div>
+  <p class="note px16 mt12">タグはおすすめ案件の表示・当選しやすさに使われます。</p>
+  <div class="cta-fixed"><a class="btn primary" href="p40.html">保存する</a></div>
+</div>
+</body></html>

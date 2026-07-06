@@ -6,7 +6,16 @@
       "Bash(git reset *)",
       "Bash(git clean *)",
       "Bash(xargs grep -l \"screening\\\\|スクリーニング\")",
-      "Bash(node scripts/runFitnessScreeningSimulation.cjs)"
+      "Bash(node scripts/runFitnessScreeningSimulation.cjs)",
+      "Bash(command -v psql)",
+      "Bash(command -v supabase)",
+      "Bash(supabase --version)",
+      "Bash(node -e \"try{require.resolve\\('pg'\\);console.log\\('pg available'\\)}catch\\(e\\){console.log\\('no pg'\\)}\")",
+      "Bash(npm i *)",
+      "Bash(node scripts/applyMigrations.mjs)",
+      "Bash(node -e \"import\\('dotenv/config'\\).then\\(\\(\\)=>{const u=new URL\\(process.env.SUPABASE_URL\\);const ref=u.hostname.split\\('.'\\)[0];console.log\\('host=',u.hostname\\);console.log\\('ref_len=',ref.length,'ref_prefix=',ref.slice\\(0,6\\)\\);}\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(SUPABASE_DB_REGION=ap-northeast-1 node scripts/applyMigrations.mjs)"
     ],
     "additionalDirectories": [
       "c:\\work\\ai-chat-interview",

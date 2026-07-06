@@ -1,0 +1,41 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>07 探す・ミニマル罫線型</title><link rel="stylesheet" href="base.css">
+<style>
+  body { --brand: #1a1a1a; --brand-weak: #f2f2f2; }
+  .appbar .logo { color: #1a1a1a; }
+  .tabs a.on { color: #1a1a1a; border-color: #1a1a1a; }
+  .card { border-bottom: 1px solid var(--line); padding: 20px 16px; }
+  .card h3 { font-weight: 600; }
+  .price { color: #1a1a1a; }
+  .badge.new { background: #1a1a1a; }
+  .btn-save { border-color: #ccc; color: #555; }
+  .sub-line { margin-top: 10px; font-size: 12.5px; color: var(--sub); display: flex; gap: 14px; }
+</style></head>
+<body>
+<div class="phone">
+  <header class="appbar"><span class="logo">Hibi</span><span class="search">キーワードで探す</span><span class="icon">🔔</span></header>
+  <nav class="tabs"><a class="on" href="#">すべて</a><a href="#">生活系</a><a href="#">仕事系</a><a href="#">検索</a></nav>
+  <main class="cards">
+    <article class="card">
+      <h3>結婚式の引き出物探しについてお伺いしたいです</h3>
+      <div class="sub-line"><span>インタビュー・90分</span><span>#顔出し必須 #既婚</span></div>
+      <div class="meta-line"><span class="badge new">新着</span><span class="price">7,260 pt</span></div>
+      <div class="sub-line"><span>あと13日</span><span>応募10人未満</span><button class="btn-save" style="margin-left:auto">☆ 保存</button></div>
+    </article>
+    <article class="card">
+      <h3>髪や頭皮の保水を意識されている方に話を聞きたい！</h3>
+      <div class="sub-line"><span>AIインタビュー・15分・即回答OK</span><span>#女性限定</span></div>
+      <div class="meta-line"><span class="price" style="margin-left:0">500 pt</span></div>
+      <div class="sub-line"><span>あと5日</span><button class="btn-save saved" style="margin-left:auto;background:#1a1a1a;border-color:#1a1a1a">★ 保存済</button></div>
+    </article>
+    <article class="card">
+      <h3>在宅介護でおしりふき等を使っている方へアンケート</h3>
+      <div class="sub-line"><span>アンケート・10分</span><span>#介護</span></div>
+      <div class="meta-line"><span class="price" style="margin-left:0">300 pt</span></div>
+      <div class="sub-line"><span>あと14日</span><button class="btn-save" style="margin-left:auto">☆ 保存</button></div>
+    </article>
+  </main>
+  <div class="fab" style="background:#1a1a1a">⇅ 新着順</div>
+  <nav class="bottomnav"><a class="on" href="#" style="color:#1a1a1a"><span class="i">🔍</span>探す</a><a href="p28.html"><span class="i">☆</span>保存</a><a href="p21.html"><span class="i">📋</span>やりとり</a><a href="p24.html"><span class="i">👤</span>マイページ</a></nav>
+</div>
+</body></html>

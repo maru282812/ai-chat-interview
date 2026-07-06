@@ -1,0 +1,117 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+const STATUS_LABELS = {
+  draft:     { label: '下書き',     color: '#999' },
+  ready:     { label: '配信準備',   color: '#c8851b' },
+  published: { label: '公開中',     color: '#2ca87a' },
+  paused:    { label: '一時停止',   color: '#c8851b' },
+  closed:    { label: '終了',       color: '#b14' },
+  archived:  { label: 'アーカイブ', color: '#999' }
+};
+function statusBadge(status) {
+  const s = STATUS_LABELS[status] || { label: status, color: '#999' };
+  return '<span style="display:inline-block;background:' + s.color + ';color:#fff;font-size:11px;padding:1px 7px;border-radius:3px">' + s.label + '</span>';
+}
+%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>📊 企業まとめ: <%= clientInfo.name %></h2>
+  <a href="<%= backUrl %>" class="btn-secondary" style="padding:4px 12px;font-size:13px">← 店舗専用アンケート一覧</a>
+</div>
+
+<% if (clientInfo.contact) { %>
+  <p class="muted" style="margin-bottom:1rem">連絡先: <%= clientInfo.contact %></p>
+<% } %>
+
+<!-- ============================================================ -->
+<!-- 合算サマリー（件数系(A)）                                     -->
+<!-- ============================================================ -->
+<section class="grid" style="margin-bottom:1.5rem">
+  <div class="card"><h3>紐付くアンケート</h3><p style="font-size:1.6rem;font-weight:700"><%= projectCount %></p></div>
+  <div class="card"><h3>合計 回答者数</h3><p style="font-size:1.6rem;font-weight:700"><%= totals.respondents %></p></div>
+  <div class="card"><h3>合計 完了数</h3><p style="font-size:1.6rem;font-weight:700"><%= totals.completed %></p></div>
+</section>
+<p class="muted" style="font-size:.85em;margin-bottom:1.5rem">
+  ※ ここは各アンケートの件数を単純合算した数値です。満足度など「意味の合算」は共通指標の設定が前提で、下の指標一覧が土台になります。
+</p>
+
+<!-- ============================================================ -->
+<!-- 配下アンケート一覧（created_at 昇順 = 将来の wave/シリーズ順）  -->
+<!-- ============================================================ -->
+<section style="margin-bottom:2rem">
+  <h3 style="margin-bottom:.5rem">この企業のアンケート</h3>
+  <% if (rows.length === 0) { %>
+    <div class="card" style="background:#fff6e5;border:1px solid #c8851b;color:#8a5a12;padding:10px 14px">
+      この企業にはまだアンケートが紐付いていません。店舗専用アンケート管理で案件に店舗（企業）を割り当ててください。
+    </div>
+  <% } else { %>
+    <table>
+      <thead>
+        <tr>
+          <!-- 将来ここに「シリーズ / 回(wave)」列を差し込める列構成にしてある（★予約③） -->
+          <th>アンケート</th>
+          <th>状態</th>
+          <th>公開区分</th>
+          <th style="text-align:right">回答者数</th>
+          <th style="text-align:right">完了数</th>
+          <th>納品物</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const r of rows) { %>
+        <tr>
+          <td>
+            <strong><%= r.project.user_display_title || r.project.name %></strong>
+            <div class="muted" style="font-size:11px"><%= r.project.created_at ? r.project.created_at.slice(0,10) : '' %></div>
+          </td>
+          <td><%- statusBadge(r.project.status) %></td>
+          <td><span class="muted" style="font-size:12px"><%= r.project.visibility_type === 'private_store' ? '店舗専用' : '公開' %></span></td>
+          <td style="text-align:right"><%= r.respondentCount %></td>
+          <td style="text-align:right"><%= r.completedCount %></td>
+          <td style="font-size:12px">
+            <a href="/admin/projects/<%= r.project.id %>/analysis">集計・分析</a>
+            ｜
+            <a href="/admin/projects/<%= r.project.id %>/exports/stat/respondents-wide.csv">wide</a>
+            <a href="/admin/projects/<%= r.project.id %>/exports/stat/answers-long.csv">long</a>
+            <a href="/admin/projects/<%= r.project.id %>/exports/stat/codebook.csv">codebook</a>
+          </td>
+        </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } %>
+</section>
+
+<!-- ============================================================ -->
+<!-- 横断集計できる指標（意味合算(B)の入口・実合算は将来Slice）      -->
+<!-- ============================================================ -->
+<section style="margin-bottom:2rem">
+  <h3 style="margin-bottom:.5rem">この企業で横断集計できる指標</h3>
+  <p class="muted" style="font-size:.85em;margin-bottom:.75rem">
+    各アンケートの設問に付けた<strong>共通指標</strong>を集めたものです。同じ指標を複数アンケートに付けておくと、
+    将来この企業全体での合算・店舗間比較・ビフォーアフターがここから出せるようになります（設問編集の「共通指標」で設定）。
+  </p>
+  <% if (metrics.length === 0) { %>
+    <div class="card" style="background:#f4f6f8;padding:10px 14px;color:#555">
+      まだ共通指標が設定されていません。設問編集画面の「共通指標（横断集計キー）」で、満足度・再来店意向などを設定してください。
+    </div>
+  <% } else { %>
+    <table>
+      <thead>
+        <tr><th>指標</th><th>コード</th><th style="text-align:right">使用アンケート数</th></tr>
+      </thead>
+      <tbody>
+        <% for (const m of metrics) { %>
+        <tr>
+          <td><strong><%= m.label %></strong></td>
+          <td><code style="font-size:12px"><%= m.code %></code></td>
+          <td style="text-align:right"><%= m.project_count %></td>
+        </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } %>
+</section>
+
+<%- include("../../partials/footer") %>

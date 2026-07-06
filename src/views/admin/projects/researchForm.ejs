@@ -237,6 +237,34 @@
           LIFF案件一覧に公開する
         </label>
         <label>
+          応募方式
+          <select name="apply_mode">
+            <option value="manual" <%= (project?.apply_mode ?? 'manual') === 'manual' ? "selected" : "" %>>手動選考（応募→管理者が当選/落選を決める）</option>
+            <option value="auto" <%= project?.apply_mode === 'auto' ? "selected" : "" %>>自動承認（応募と同時に回答開始できる・AI/アンケート向け）</option>
+          </select>
+        </label>
+        <label>
+          表示タグ（カンマ区切り）
+          <input type="text" name="tags" value="<%= (project?.tags || []).join(',') %>" placeholder="例: 顔出しなし,既婚,美容・コスメ" />
+        </label>
+        <label>
+          NG条件（1行1条件・詳細ページに赤枠表示）
+          <textarea name="ng_conditions" rows="2" placeholder="例: 美容業界に従事されている方"><%= project?.ng_conditions || '' %></textarea>
+        </label>
+        <label>
+          募集期限（過ぎると一覧非表示・応募不可）
+          <input type="datetime-local" name="recruit_deadline" value="<%= project?.recruit_deadline ? new Date(new Date(project.recruit_deadline).getTime() + 9*3600*1000).toISOString().slice(0,16) : '' %>" />
+          <span class="muted" style="font-size:11px">日本時間で入力</span>
+        </label>
+        <label>
+          実施形式の表示（詳細ページ用）
+          <input type="text" name="interview_format" value="<%= project?.interview_format || '' %>" placeholder="例: AIチャット（顔出しなし）/ Google Meet" />
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" name="randomize_question_order" value="true" <%= project?.randomize_question_order ? "checked" : "" %> />
+          設問をランダム表示する（回答者ごとに設問順を入替・依存順は自動保持）
+        </label>
+        <label>
           公開区分（店舗専用アンケート）
           <select name="visibility_type" id="visibility_type_select">
             <option value="public" <%= (project?.visibility_type ?? 'public') === 'public' ? "selected" : "" %>>通常案件（探す一覧に表示）</option>

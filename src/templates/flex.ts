@@ -313,3 +313,106 @@ export function buildNewProjectNotificationFlex(input: {
     ])
   };
 }
+
+export function buildApplicationAcceptedFlex(input: {
+  projectTitle: string;
+  rewardPoints?: number | null;
+  estimatedMinutes?: number | null;
+  surveyUrl: string;
+}): LineFlexMessage {
+  const meta: string[] = [];
+  if (input.rewardPoints) meta.push(`謝礼 ${input.rewardPoints}pt`);
+  if (input.estimatedMinutes) meta.push(`約${input.estimatedMinutes}分`);
+
+  return {
+    type: "flex",
+    altText: `【当選】${input.projectTitle}`,
+    contents: bubble([
+      {
+        type: "text",
+        text: "🎉 当選のお知らせ",
+        size: "sm",
+        color: "#0B7A75",
+        weight: "bold"
+      },
+      {
+        type: "text",
+        text: input.projectTitle,
+        size: "xl",
+        weight: "bold",
+        wrap: true
+      },
+      {
+        type: "text",
+        text: "ご応募いただいた案件に当選しました。以下から回答をはじめてください。",
+        size: "sm",
+        color: "#555555",
+        wrap: true
+      },
+      ...(meta.length > 0 ? [{
+        type: "text",
+        text: meta.join("  /  "),
+        size: "sm",
+        color: "#2ca87a",
+        wrap: true
+      }] : []),
+      {
+        type: "separator"
+      },
+      {
+        type: "button",
+        action: {
+          type: "uri",
+          label: "回答をはじめる",
+          uri: input.surveyUrl
+        },
+        style: "primary",
+        color: "#0B7A75"
+      }
+    ])
+  };
+}
+
+export function buildApplicationRejectedFlex(input: {
+  projectTitle: string;
+  projectsUrl: string;
+}): LineFlexMessage {
+  return {
+    type: "flex",
+    altText: `選考結果のお知らせ: ${input.projectTitle}`,
+    contents: bubble([
+      {
+        type: "text",
+        text: "選考結果のお知らせ",
+        size: "sm",
+        color: "#888888"
+      },
+      {
+        type: "text",
+        text: input.projectTitle,
+        size: "lg",
+        weight: "bold",
+        wrap: true
+      },
+      {
+        type: "text",
+        text: "厳正な選考の結果、今回はご参加を見送らせていただくことになりました。またの応募をお待ちしています。",
+        size: "sm",
+        color: "#555555",
+        wrap: true
+      },
+      {
+        type: "separator"
+      },
+      {
+        type: "button",
+        action: {
+          type: "uri",
+          label: "ほかの案件をさがす",
+          uri: input.projectsUrl
+        },
+        style: "secondary"
+      }
+    ])
+  };
+}

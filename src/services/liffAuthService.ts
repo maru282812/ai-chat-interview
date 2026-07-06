@@ -14,8 +14,24 @@ export interface VerifyIdTokenCtx {
   referer?: string;
 }
 
+/**
+ * テスト用 sentinel。Authorization/id_token がこの接頭辞のとき、非本番限定で
+ * 実 LINE 検証をスキップし `<lineUserId>` を本人として返す（testmaster run skill 用）。
+ */
+const TEST_TOKEN_PREFIX = "tmtest:";
+
 export const liffAuthService = {
   async verifyIdToken(idToken: string, ctx?: VerifyIdTokenCtx): Promise<VerifiedLiffUser> {
+    // テスト到達用 seam（非本番限定）: id_token 検証を要する「認証後の分岐」を testmaster の
+    // run skill から到達可能にする。Authorization: Bearer tmtest:<lineUserId>
+    // （または body の id_token に "tmtest:<lineUserId>"）を渡したときのみ、実 LINE 検証を
+    // スキップして固定ユーザーを返す。本番(NODE_ENV=production)では分岐に入らず完全に無効。
+    if (env.NODE_ENV !== "production" && idToken.trim().startsWith(TEST_TOKEN_PREFIX)) {
+      const userId = idToken.trim().slice(TEST_TOKEN_PREFIX.length) || "tmtest_user";
+      logger.warn("liffAuth.verifyIdToken.testSeam", { userId, path: ctx?.path });
+      return { userId, displayName: "TM Test User", pictureUrl: null };
+    }
+
     if (!env.LINE_LIFF_CHANNEL_ID) {
       logger.error("liffAuth.verifyIdToken.noChannelId", {
         hint: "LINE_LIFF_CHANNEL_ID must be the LINE Login channel ID (not the Messaging API channel ID)",

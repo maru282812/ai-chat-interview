@@ -51,6 +51,41 @@ adminRoutes.get(
   "/projects/:projectId/exports/expired.csv",
   asyncHandler(adminController.exportProjectExpiredAssignments)
 );
+// 統計向けエクスポート (§11)
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/respondents-wide.csv",
+  asyncHandler(adminController.exportStatRespondentsWide)
+);
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/answers-long.csv",
+  asyncHandler(adminController.exportStatAnswersLong)
+);
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/codebook.csv",
+  asyncHandler(adminController.exportStatCodebook)
+);
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/questionnaire-snapshot.json",
+  asyncHandler(adminController.exportStatSnapshot)
+);
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/randomization-log.csv",
+  asyncHandler(adminController.exportStatRandomizationLog)
+);
+// 送付前バリデーション (§4/§5/§6)
+adminRoutes.get(
+  "/projects/:projectId/validate",
+  asyncHandler(adminController.validateProjectSurvey)
+);
+// 調査票スナップショット 確定/一覧 (§1/§14)
+adminRoutes.post(
+  "/projects/:projectId/snapshot",
+  asyncHandler(adminController.createProjectSnapshot)
+);
+adminRoutes.get(
+  "/projects/:projectId/snapshots",
+  asyncHandler(adminController.listProjectSnapshots)
+);
 adminRoutes.get("/questions/:questionId/edit", asyncHandler(adminController.editQuestion));
 adminRoutes.post("/questions/:questionId", asyncHandler(adminController.updateQuestion));
 
@@ -82,6 +117,17 @@ adminRoutes.get("/projects/:projectId/page-groups",           asyncHandler(admin
 adminRoutes.post("/projects/:projectId/page-groups",          asyncHandler(adminController.createPageGroup));
 adminRoutes.post("/projects/:projectId/page-groups/:pageGroupId", asyncHandler(adminController.updatePageGroup));
 adminRoutes.post("/projects/:projectId/page-groups/:pageGroupId/delete", asyncHandler(adminController.deletePageGroup));
+// コンセプト・ローテーション（L1）
+adminRoutes.get("/projects/:projectId/concepts",                       asyncHandler(adminController.conceptsPage));
+adminRoutes.post("/projects/:projectId/concept-rotation",             asyncHandler(adminController.setConceptRotationMode));
+adminRoutes.post("/projects/:projectId/concepts",                     asyncHandler(adminController.createConcept));
+adminRoutes.post("/projects/:projectId/concepts/:conceptId",          asyncHandler(adminController.updateConcept));
+adminRoutes.post("/projects/:projectId/concepts/:conceptId/delete",   asyncHandler(adminController.deleteConcept));
+// ブロック自動設計（AI提案＋プレビュー）
+adminRoutes.get("/projects/:projectId/blocks",          asyncHandler(adminController.blockDesigner));
+adminRoutes.post("/projects/:projectId/blocks/suggest", asyncHandler(adminController.suggestBlocks));
+adminRoutes.post("/projects/:projectId/blocks/preview", asyncHandler(adminController.previewBlocks));
+adminRoutes.post("/projects/:projectId/blocks/apply",   asyncHandler(adminController.applyBlocks));
 
 // Tag API (formV3.ejs から呼び出される)
 adminRoutes.post("/api/parse-tags",    asyncHandler(adminController.parseTagsApi));
@@ -232,10 +278,17 @@ adminRoutes.get("/documents/:documentId/versions/new",            asyncHandler(a
 adminRoutes.post("/documents/:documentId/versions",               asyncHandler(adminController.createDocumentVersion));
 adminRoutes.get("/documents/:documentId/consent-audit",           asyncHandler(adminController.documentConsentAudit));
 
+// 応募管理（案件検索サイト）
+adminRoutes.get("/applications",                        asyncHandler(adminController.applications));
+adminRoutes.post("/applications/:id/accept",            asyncHandler(adminController.acceptApplication));
+adminRoutes.post("/applications/:id/reject",            asyncHandler(adminController.rejectApplication));
+
 // 店舗専用アンケート管理
 adminRoutes.get("/store-surveys",                       asyncHandler(adminController.storeSurveys));
+adminRoutes.get("/store-surveys/:projectId/flyer",      asyncHandler(adminController.storeSurveyFlyer));
 adminRoutes.post("/store-surveys/mark",                 asyncHandler(adminController.markProjectAsStore));
 adminRoutes.post("/store-surveys/:projectId",           asyncHandler(adminController.updateStoreSurvey));
+adminRoutes.get("/clients/:clientId/overview",          asyncHandler(adminController.clientOverview));
 adminRoutes.post("/store-clients",                      asyncHandler(adminController.createClient));
 adminRoutes.post("/store-clients/:clientId",            asyncHandler(adminController.updateClient));
 adminRoutes.post("/store-clients/:clientId/delete",     asyncHandler(adminController.deleteClient));

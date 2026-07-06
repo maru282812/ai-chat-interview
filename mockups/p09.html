@@ -1,0 +1,43 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>09 探す・締切強調型</title><link rel="stylesheet" href="base.css">
+<style>
+  .urgency { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+  .urgency .bar { flex: 1; height: 8px; background: #eceef1; border-radius: 4px; overflow: hidden; }
+  .urgency .bar i { display: block; height: 100%; border-radius: 4px; }
+  .u-high i { width: 85%; background: var(--danger); }
+  .u-mid i { width: 45%; background: #f5a623; }
+  .u-low i { width: 15%; background: #06c755; }
+  .urgency b { font-size: 12.5px; }
+  .deadline-badge { background: var(--danger-weak); color: var(--danger); border-radius: 8px; padding: 5px 10px; font-size: 12px; font-weight: 800; }
+</style></head>
+<body>
+<div class="phone">
+  <header class="appbar"><span class="logo">Hibi</span><span class="search">キーワードで探す</span><span class="icon">🔔</span></header>
+  <nav class="tabs"><a class="on" href="#">締切が近い</a><a href="#">すべて</a><a href="#">生活系</a><a href="#">仕事系</a></nav>
+  <main class="cards">
+    <article class="card">
+      <div class="meta-line" style="margin:0 0 10px"><span class="deadline-badge">⏰ 残り2日・あと3枠</span><span class="badge instant">即回答OK</span></div>
+      <h3>髪や頭皮の保水を意識されている方に話を聞きたい！</h3>
+      <div class="meta-line"><span class="badge ai">AIインタビュー</span><span class="price">500<small>pt｜15分</small></span></div>
+      <div class="urgency u-high"><b>募集枠 12/15人</b><span class="bar"><i></i></span></div>
+      <div class="foot"><button class="btn-save" style="margin-left:auto">☆ 保存する</button></div>
+    </article>
+    <article class="card">
+      <div class="meta-line" style="margin:0 0 10px"><span class="deadline-badge" style="background:#fff3d6;color:#b07a00">⏰ 残り5日</span></div>
+      <h3>目・目元悩みのある30代女性にお話を聞きたい</h3>
+      <div class="meta-line"><span class="badge ai">AIインタビュー</span><span class="price">500<small>pt｜20分</small></span></div>
+      <div class="urgency u-mid"><b>募集枠 9/20人</b><span class="bar"><i></i></span></div>
+      <div class="foot"><button class="btn-save saved" style="margin-left:auto">★ 保存済み</button></div>
+    </article>
+    <article class="card">
+      <div class="meta-line" style="margin:0 0 10px"><span class="deadline-badge" style="background:#eef1f3;color:#789">あと13日</span><span class="badge new">新着</span></div>
+      <h3>結婚式の引き出物探しについてお伺いしたいです</h3>
+      <div class="meta-line"><span class="badge fmt">インタビュー</span><span class="price">7,260<small>pt｜90分</small></span></div>
+      <div class="urgency u-low"><b>募集枠 1/5人</b><span class="bar"><i></i></span></div>
+      <div class="foot"><button class="btn-save" style="margin-left:auto">☆ 保存する</button></div>
+    </article>
+  </main>
+  <div class="fab">⇅ 締切順</div>
+  <nav class="bottomnav"><a class="on" href="#"><span class="i">🔍</span>探す</a><a href="p28.html"><span class="i">☆</span>保存</a><a href="p21.html"><span class="i">📋</span>やりとり</a><a href="p24.html"><span class="i">👤</span>マイページ</a></nav>
+</div>
+</body></html>

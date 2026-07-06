@@ -1,0 +1,196 @@
+<%- include("../../partials/header", { title }) %>
+
+<div class="card stack">
+  <div class="actions-row" style="justify-content:space-between;">
+    <h1 style="margin:0;">ブロック自動設計</h1>
+    <div style="display:flex;gap:8px;">
+      <a class="button-link secondary" href="/admin/projects/<%= project.id %>/page-groups">ブロック一覧</a>
+      <a class="button-link secondary" href="/admin/projects/<%= project.id %>/questions">設問一覧へ戻る</a>
+    </div>
+  </div>
+  <p class="muted">プロジェクト: <strong><%= project.name %></strong>（対象設問 <%= questions.length %> 問）</p>
+
+  <!-- 操作バー -->
+  <div class="card subtle-card" style="background:#f3f9f8;border:1px solid #cfe3df;padding:12px;">
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+      <label>ブロック数
+        <select id="block-count">
+          <option value="0">自動（AIが判定）</option>
+          <% for (let i = 2; i <= Math.max(2, Math.min(10, questions.length)); i++) { %>
+            <option value="<%= i %>"><%= i %> 個</option>
+          <% } %>
+        </select>
+      </label>
+      <button type="button" class="button-link primary" id="btn-suggest">🤖 AIでブロック分け</button>
+      <button type="button" class="button-link secondary" id="btn-add-block">＋ 空ブロック追加</button>
+      <span id="suggest-status" class="muted" style="font-size:12px;"></span>
+    </div>
+    <p class="helper-text" style="margin:6px 0 0;font-size:11px;">AIが設問を内容で束ねた案を作ります。タイトル・順序・割当・ランダム化を下で調整し、最後に保存してください。依存関係（前問参照等）はランダム化しても順序が保たれます。</p>
+  </div>
+
+  <!-- エディタ -->
+  <div id="editor"></div>
+
+  <!-- 未割当 -->
+  <h3 style="margin-top:12px;">未割当の設問</h3>
+  <div id="unassigned" style="font-size:13px;"></div>
+
+  <!-- プレビュー -->
+  <hr style="border:none;border-top:1px solid #d8e3e0;margin:12px 0;" />
+  <div class="actions-row" style="gap:10px;align-items:center;">
+    <h2 style="margin:0;">回答者プレビュー</h2>
+    <label>人数 <input type="number" id="preview-n" value="3" min="1" max="10" style="width:60px;" /></label>
+    <button type="button" class="button-link secondary" id="btn-preview">表示順をプレビュー</button>
+  </div>
+  <div id="preview-result" style="font-size:13px;margin-top:8px;"></div>
+
+  <!-- 保存 -->
+  <div style="margin-top:16px;display:flex;gap:8px;align-items:center;">
+    <button type="button" class="button-link primary" id="btn-save">この内容で保存</button>
+    <span id="save-status" class="muted" style="font-size:12px;"></span>
+  </div>
+  <p class="helper-text" style="font-size:11px;">保存すると既存のブロック(ページグループ)を作り直し、設問の割当と並び順を設計どおりに更新します。</p>
+</div>
+
+<script>
+(function () {
+  const PROJECT_ID = "<%= project.id %>";
+  const QUESTIONS = <%- JSON.stringify(questions.map(q => ({ id: q.id, code: q.question_code, text: q.question_text, page_group_id: q.page_group_id, sort_order: q.sort_order }))) %>;
+  const PAGE_GROUPS = <%- JSON.stringify(pageGroups.map(pg => ({ id: pg.id, title: pg.title, sort_order: pg.sort_order, is_randomizable: !!pg.is_randomizable, randomize_within: !!pg.randomize_within, fix_within: !!pg.fix_within }))) %>;
+  const qById = new Map(QUESTIONS.map(q => [q.id, q]));
+
+  // 初期状態: 既存ページグループから復元
+  let state = { blocks: [] };
+  function initFromExisting() {
+    const blocks = PAGE_GROUPS.slice().sort((a,b) => a.sort_order - b.sort_order).map(pg => ({
+      id: pg.id, title: pg.title || "ブロック", is_randomizable: pg.is_randomizable,
+      randomize_within: pg.randomize_within, fix_within: pg.fix_within,
+      question_ids: QUESTIONS.filter(q => q.page_group_id === pg.id).sort((a,b)=>a.sort_order-b.sort_order).map(q => q.id)
+    }));
+    state.blocks = blocks;
+  }
+  initFromExisting();
+
+  function assignedIds() { return new Set(state.blocks.flatMap(b => b.question_ids)); }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
+  function planFromState() {
+    return { blocks: state.blocks.map(b => ({ id: b.id || null, title: b.title, is_randomizable: !!b.is_randomizable, randomize_within: !!b.randomize_within, fix_within: !!b.fix_within, question_ids: b.question_ids.slice() })) };
+  }
+
+  function render() {
+    const editor = document.getElementById("editor");
+    editor.innerHTML = state.blocks.map((b, bi) => {
+      const blockOptions = state.blocks.map((bb, j) => `<option value="${j}" ${j===bi?'selected':''}>${esc(bb.title)||('ブロック'+(j+1))}</option>`).join("");
+      const rows = b.question_ids.map((qid, qi) => {
+        const q = qById.get(qid); if (!q) return "";
+        return `<tr>
+          <td style="padding:4px;width:70px;"><strong>${esc(q.code)}</strong></td>
+          <td style="padding:4px;">${esc((q.text||'').slice(0,50))}</td>
+          <td style="padding:4px;white-space:nowrap;">
+            <button type="button" onclick="BD.qUp(${bi},${qi})">↑</button>
+            <button type="button" onclick="BD.qDown(${bi},${qi})">↓</button>
+            <select onchange="BD.qMove(${bi},${qi},this.value)">${blockOptions}</select>
+          </td>
+        </tr>`;
+      }).join("");
+      return `<div class="card" style="border:1px solid #d8e3e0;margin-bottom:10px;padding:10px;">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;">
+          <div style="display:flex;gap:6px;align-items:center;">
+            <strong>P${bi+1}</strong>
+            <input type="text" value="${esc(b.title)}" onchange="BD.setTitle(${bi},this.value)" placeholder="ブロック名" />
+            <button type="button" onclick="BD.blockUp(${bi})">▲</button>
+            <button type="button" onclick="BD.blockDown(${bi})">▼</button>
+            <button type="button" class="button-link danger" style="font-size:11px;" onclick="BD.removeBlock(${bi})">削除</button>
+          </div>
+          <div style="font-size:12px;display:flex;gap:10px;">
+            <label><input type="checkbox" ${b.is_randomizable?'checked':''} onchange="BD.setFlag(${bi},'is_randomizable',this.checked)"/> ページ間</label>
+            <label><input type="checkbox" ${b.randomize_within?'checked':''} onchange="BD.setFlag(${bi},'randomize_within',this.checked)"/> ページ内</label>
+            <label><input type="checkbox" ${b.fix_within?'checked':''} onchange="BD.setFlag(${bi},'fix_within',this.checked)"/> 固定</label>
+          </div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;margin-top:6px;">${rows || '<tr><td class="muted" style="padding:4px;">設問なし</td></tr>'}</table>
+      </div>`;
+    }).join("") || '<p class="muted">ブロックがありません。「AIでブロック分け」または「空ブロック追加」から作成してください。</p>';
+
+    const assigned = assignedIds();
+    const un = QUESTIONS.filter(q => !assigned.has(q.id));
+    document.getElementById("unassigned").innerHTML = un.length === 0 ? '<span class="muted">なし</span>' :
+      un.map(q => {
+        const opts = state.blocks.map((bb,j)=>`<option value="${j}">${esc(bb.title)||('ブロック'+(j+1))}</option>`).join("");
+        return `<div style="margin:2px 0;"><strong>${esc(q.code)}</strong> ${esc((q.text||'').slice(0,40))}
+          ${state.blocks.length ? `<select onchange="BD.assign('${q.id}',this.value)"><option value="">割当先…</option>${opts}</select>` : ''}</div>`;
+      }).join("");
+  }
+
+  const BD = {
+    setTitle(bi, v) { state.blocks[bi].title = v; },
+    setFlag(bi, key, v) { state.blocks[bi][key] = v; if (key==='fix_within' && v) state.blocks[bi].randomize_within=false; if (key==='randomize_within'&&v) state.blocks[bi].fix_within=false; render(); },
+    blockUp(bi) { if (bi>0){ [state.blocks[bi-1],state.blocks[bi]]=[state.blocks[bi],state.blocks[bi-1]]; render(); } },
+    blockDown(bi) { if (bi<state.blocks.length-1){ [state.blocks[bi+1],state.blocks[bi]]=[state.blocks[bi],state.blocks[bi+1]]; render(); } },
+    removeBlock(bi) { state.blocks.splice(bi,1); render(); },
+    qUp(bi,qi) { const a=state.blocks[bi].question_ids; if(qi>0){[a[qi-1],a[qi]]=[a[qi],a[qi-1]];render();} },
+    qDown(bi,qi) { const a=state.blocks[bi].question_ids; if(qi<a.length-1){[a[qi+1],a[qi]]=[a[qi],a[qi+1]];render();} },
+    qMove(bi,qi,toStr) { const to=parseInt(toStr,10); if(to===bi)return; const [id]=state.blocks[bi].question_ids.splice(qi,1); state.blocks[to].question_ids.push(id); render(); },
+    assign(id,toStr) { if(toStr==='')return; state.blocks[parseInt(toStr,10)].question_ids.push(id); render(); }
+  };
+  window.BD = BD;
+
+  document.getElementById("btn-add-block").addEventListener("click", () => {
+    state.blocks.push({ id:null, title:"ブロック"+(state.blocks.length+1), is_randomizable:false, randomize_within:false, fix_within:false, question_ids:[] });
+    render();
+  });
+
+  document.getElementById("btn-suggest").addEventListener("click", async () => {
+    const count = parseInt(document.getElementById("block-count").value,10) || 0;
+    const status = document.getElementById("suggest-status");
+    status.textContent = "AIが考えています...";
+    try {
+      const res = await fetch(`/admin/projects/${PROJECT_ID}/blocks/suggest`, {
+        method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ count })
+      });
+      const data = await res.json();
+      state.blocks = (data.plan.blocks||[]).map(b => ({ id:null, title:b.title, is_randomizable:!!b.is_randomizable, randomize_within:!!b.randomize_within, fix_within:!!b.fix_within, question_ids:(b.question_ids||[]).filter(id=>qById.has(id)) }));
+      status.textContent = data.source === "ai" ? "AI提案を反映しました（保存前に調整可）" : "AIが使えなかったため均等分割で提案しました";
+      render();
+    } catch(e) { status.textContent = "提案に失敗: " + e; }
+  });
+
+  document.getElementById("btn-preview").addEventListener("click", async () => {
+    const n = parseInt(document.getElementById("preview-n").value,10) || 3;
+    const out = document.getElementById("preview-result");
+    out.textContent = "計算中...";
+    try {
+      const res = await fetch(`/admin/projects/${PROJECT_ID}/blocks/preview`, {
+        method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ plan: planFromState(), n })
+      });
+      const data = await res.json();
+      out.innerHTML = (data.respondents||[]).map((r,i) =>
+        `<div style="margin:4px 0;padding:6px;border:1px solid #eee;border-radius:6px;">
+          <strong>回答者${i+1}</strong> <span class="muted">(${esc(r.seed)})</span><br/>
+          ブロック順: ${r.block_order.map(esc).join(" → ")}<br/>
+          設問順: ${r.question_codes.map(esc).join(" , ")}
+        </div>`).join("");
+    } catch(e) { out.textContent = "プレビュー失敗: " + e; }
+  });
+
+  document.getElementById("btn-save").addEventListener("click", async () => {
+    if (!confirm("既存のブロックを作り直し、設問の割当と並び順を保存します。よろしいですか？")) return;
+    const status = document.getElementById("save-status");
+    status.textContent = "保存中...";
+    try {
+      const res = await fetch(`/admin/projects/${PROJECT_ID}/blocks/apply`, {
+        method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ plan: planFromState() })
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        status.textContent = `保存しました（${data.blockCount}ブロック・${data.assignedCount}問）。ブロック一覧へ移動します...`;
+        setTimeout(() => { window.location.href = `/admin/projects/${PROJECT_ID}/page-groups`; }, 900);
+      } else { status.textContent = "保存に失敗しました"; }
+    } catch(e) { status.textContent = "保存に失敗: " + e; }
+  });
+
+  render();
+})();
+</script>
+
+<%- include("../../partials/footer") %>

@@ -273,6 +273,10 @@ export interface Project {
   name: string;
   /** USERに表示するタイトル。未設定時は name にフォールバックする */
   user_display_title?: string | null;
+  /** コンセプト・ローテーション方式（L1・migration 070）: off|latin|full */
+  concept_rotation_mode?: import("../lib/latinSquare").ConceptRotationMode;
+  /** 設問順ランダマイズの簡単トグル（パターン1・migration 071）。ブロック不要。 */
+  randomize_question_order?: boolean;
   client_name: string | null;
   objective: string | null;
   status: ProjectStatus;
@@ -313,6 +317,48 @@ export interface Project {
   entry_code: string | null;
   /** 企業/店舗マスタへの参照（任意） (Migration 064) */
   client_id: UUID | null;
+  /** 検索サイト表示タグ（#顔出し必須 等）(Migration 072) */
+  tags?: string[];
+  /** NG条件（自由記述・改行区切り表示）(Migration 072) */
+  ng_conditions?: string | null;
+  /** 募集期限。超過案件は一覧非表示・応募拒否 (Migration 072) */
+  recruit_deadline?: string | null;
+  /** 応募方式: manual=管理者選考 / auto=応募と同時にassignment発行して即回答 (Migration 072) */
+  apply_mode?: ProjectApplyMode;
+  /** 実施形式の表示用テキスト（AIチャット/Google Meet等）(Migration 072) */
+  interview_format?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 応募方式 (Migration 072) */
+export type ProjectApplyMode = "manual" | "auto";
+
+/** 応募ステータス (Migration 072) */
+export type ProjectApplicationStatus =
+  | "applied"
+  | "accepted"
+  | "rejected"
+  | "withdrawn"
+  | "expired";
+
+/**
+ * 案件への応募 (Migration 072)。
+ * 応募＝assignment発行のリクエスト。発行判断は常にサーバー側
+ * （apply_mode='auto' は applicationService が即時発行、'manual' は管理者の当選操作）。
+ * line_user_id と respondent_id を併記する（将来の非LINE認証でも uuid 側で辿れる規律）。
+ */
+export interface ProjectApplication {
+  id: UUID;
+  project_id: UUID;
+  line_user_id: string;
+  respondent_id: UUID | null;
+  status: ProjectApplicationStatus;
+  assignment_id: UUID | null;
+  /** 管理者用メモ（選考理由等） */
+  note: string | null;
+  applied_at: string;
+  decided_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -320,6 +366,12 @@ export interface Project {
 export interface QuestionOption {
   value: string;
   label: string;
+  /** 「その他」等で自由記述欄を出すか（記述あり/なし・L3）。 */
+  allow_free_text?: boolean;
+  /** true の場合、選択すると同一設問の他選択肢を全解除する排他選択肢（特になし/わからない/該当なし/その他）。 */
+  exclusive?: boolean;
+  /** 特定の選択肢とだけ排他にする value(=label) の配列。B↔[C,D] のような部分排他。評価は双方向（無向）。 */
+  exclusive_with?: string[];
   imageUrl?: string;
   /** 複数画像（画像付きマトリクス行や画像カード複数画像対応） */
   imageUrls?: string[];
@@ -409,6 +461,25 @@ export interface QuestionExtractionConfig {
   extracted_branch_enabled?: boolean;
 }
 
+/** 選択肢グループ（果物/服/動物 のような群）。 */
+export interface OptionGroup {
+  label?: string;
+  /** この群に属する選択肢 value */
+  values: string[];
+}
+
+/** 選択肢ランダム化設定（L3）。 */
+export interface OptionRandomizationConfig {
+  /** 選択肢順をランダム化するか */
+  enabled?: boolean;
+  /** 固定する選択肢 value（「その他」「特になし」等のアンカー）。元の位置を保持する。 */
+  anchored_values?: string[];
+  /** 選択肢グループ（定義があれば群単位で扱う） */
+  groups?: OptionGroup[];
+  /** 群の順序もランダム化するか */
+  randomize_groups?: boolean;
+}
+
 export interface QuestionConfig {
   options?: QuestionOption[];
   matrix_cols?: QuestionOption[];
@@ -438,6 +509,8 @@ export interface QuestionConfig {
   /** 設問文に付ける画像パッケージ */
   question_text_image?: QuestionTextImage;
   meta?: QuestionMeta;
+  /** 選択肢ランダム化設定（L3・選択肢順/グループ/アンカー固定）。 */
+  option_randomization?: OptionRandomizationConfig;
   extraction?: QuestionExtractionConfig | null;
   conversationControl?: {
     probeIntent?: string;
@@ -499,6 +572,18 @@ export interface QuestionMeta {
   probe_config?: QuestionProbeConfig;
   completion_conditions?: QuestionCompletionCondition[];
   render_style?: QuestionRenderStyle;
+  /** 統計エクスポート用クリーニングメタの上書き (codebook.ts CleaningOverride)。任意。 */
+  cleaning?: Record<string, unknown>;
+  /** 明示的な設問間依存（surveyValidation 用）。任意。 */
+  dependencies?: Array<Record<string, unknown>>;
+  /**
+   * 共通指標コード（canonical metric）。複数アンケート横断の合算・比較の突き合わせキー。任意。
+   * 語彙は metricCatalog.ts（推奨カタログ＋自由入力可・[a-z0-9_]+ 正規化）。
+   * 例: "satisfaction" | "revisit_intent" | "nps" | "awareness_channel"
+   */
+  metric_code?: string;
+  /** 指標の集計方向。ランキング/ビフォーアフターでの良し悪し判定に使う。任意。 */
+  metric_direction?: "higher_is_better" | "lower_is_better" | "neutral";
 }
 
 export interface Question {
@@ -549,6 +634,12 @@ export interface QuestionPageGroup {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  /** このページ(ブロック)自体をページ間ランダム化の対象にするか（§3・migration 069）。 */
+  is_randomizable?: boolean;
+  /** ページ(ブロック)内の設問順をランダム化するか（§3）。 */
+  randomize_within?: boolean;
+  /** ページ(ブロック)内の設問順を固定する（randomize_within より優先・§3）。 */
+  fix_within?: boolean;
 }
 
 export interface PendingNextQuestionCache {
@@ -585,6 +676,33 @@ export interface Respondent {
   created_at: string;
   updated_at: string;
   current_rank?: Rank | null;
+  /** テスト回答フラグ（統計エクスポート §17・migration 067）。既定 false。 */
+  is_test?: boolean;
+}
+
+/** コンセプト（統計エクスポート §3 L1・migration 070）。同一アンケートを複数コンセプト分回答させる単位。 */
+export interface ProjectConcept {
+  id: UUID;
+  project_id: UUID;
+  concept_code: string;
+  title: string | null;
+  description: string | null;
+  master_order: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 調査票スナップショット（統計エクスポート §1/§14・migration 068）。 */
+export interface QuestionnaireSnapshot {
+  id: UUID;
+  project_id: UUID;
+  version: number;
+  wave_code: string | null;
+  snapshot_hash: string;
+  definition_json: Record<string, unknown>;
+  is_active: boolean;
+  created_at: string;
 }
 
 export interface ProjectAssignment {
@@ -760,6 +878,14 @@ export interface Session {
   started_at: string;
   completed_at: string | null;
   last_activity_at: string;
+  /** ランダム化シード（再現性・§22・migration 069）。 */
+  randomization_seed?: string | null;
+  /** 実表示順 { question_id: position }（§3・migration 069）。 */
+  display_order_json?: Record<string, number> | null;
+  /** 回答時点の調査票スナップショット（§1・migration 068）。 */
+  snapshot_id?: string | null;
+  /** 割り当てられたコンセプト提示順（L1・migration 070）。 */
+  concept_order_json?: string[] | null;
 }
 
 export interface Message {
@@ -780,6 +906,8 @@ export interface Answer {
   answer_role: AnswerRole;
   parent_answer_id: UUID | null;
   normalized_answer: Record<string, unknown> | null;
+  /** どのコンセプトに対する回答か（L1・migration 070）。単一コンセプトなら null。 */
+  concept_code?: string | null;
   created_at: string;
 }
 

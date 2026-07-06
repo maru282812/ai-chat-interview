@@ -1,0 +1,38 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>27 マイページ・ポイント残高強調型</title><link rel="stylesheet" href="base.css">
+<style>
+  .balance { background: linear-gradient(160deg,#2b3a67,#3d5183); color: #fff; padding: 26px 16px; }
+  .balance .k { font-size: 12px; opacity: .8; }
+  .balance .v { font-size: 40px; font-weight: 900; margin-top: 4px; }
+  .balance .v small { font-size: 16px; font-weight: 600; }
+  .balance .row { display: flex; gap: 10px; margin-top: 16px; }
+  .balance .btn { flex: 1; padding: 12px; font-size: 14px; border-radius: 10px; }
+  .hist { padding: 4px 16px 16px; }
+  .hrow { display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); padding: 13px 0; font-size: 13.5px; }
+  .hrow .plus { color: #06a04a; font-weight: 800; } .hrow .minus { color: var(--danger); font-weight: 800; }
+  .hrow small { display: block; color: var(--sub); font-size: 11px; margin-top: 2px; }
+</style></head>
+<body>
+<div class="phone">
+  <header class="appbar"><span class="logo">Hibi</span><b style="font-size:16px;flex:1;text-align:center">マイページ</b><span class="icon">⚙</span></header>
+  <div class="balance">
+    <div class="k">保有ポイント</div>
+    <div class="v">2,300<small> pt</small></div>
+    <div class="row"><a class="btn" style="background:#fff;color:#2b3a67" href="#">🎁 ギフトに交換</a><a class="btn" style="background:rgba(255,255,255,.18);color:#fff" href="#">履歴を見る</a></div>
+  </div>
+  <div class="px16" style="padding-top:14px"><div class="sec-title">最近の履歴</div></div>
+  <div class="hist">
+    <div class="hrow"><span>在宅介護のアンケート 完了<small>6/28</small></span><span class="plus">+300 pt</span></div>
+    <div class="hrow"><span>ヘアケアAIインタビュー 完了<small>6/25</small></span><span class="plus">+500 pt</span></div>
+    <div class="hrow"><span>Amazonギフト券に交換<small>6/20</small></span><span class="minus">-1,000 pt</span></div>
+    <div class="hrow"><span>会員登録ボーナス<small>6/18</small></span><span class="plus">+100 pt</span></div>
+  </div>
+  <nav class="menu">
+    <a href="#">プロフィール・タグ設定</a>
+    <a href="#">通知設定</a>
+    <a href="#">ご利用ガイド・FAQ・各種規約</a>
+    <a class="danger" href="#">退会する</a>
+  </nav>
+  <nav class="bottomnav"><a href="p01.html"><span class="i">🔍</span>探す</a><a href="p28.html"><span class="i">☆</span>保存</a><a href="p21.html"><span class="i">📋</span>やりとり</a><a class="on" href="#"><span class="i">👤</span>マイページ</a></nav>
+</div>
+</body></html>

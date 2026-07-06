@@ -5,6 +5,16 @@ import { HttpError } from "../lib/http";
 import { logger } from "../lib/logger";
 import { getProjectResearchSettings } from "../lib/projectResearch";
 import { normalizeQuestionMeta } from "../lib/questionMetadata";
+import { findExclusionViolation } from "../lib/optionExclusion";
+import { isQuestionVisible } from "../lib/questionEngine";
+import {
+  answerValueForContext,
+  buildAnswerContext,
+  computeNextView,
+  resolveOrderedRenderSet,
+  resumeView,
+  selectPhaseQuestions,
+} from "../services/surveyFlowService";
 import { userProfileRepository, type UserProfileUpsertInput } from "../repositories/userProfileRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { projectFavoriteRepository } from "../repositories/projectFavoriteRepository";
@@ -24,12 +34,17 @@ import { personalityService } from "../services/personalityService";
 import { postService } from "../services/postService";
 import { respondentService } from "../services/respondentService";
 import { screeningService } from "../services/screeningService";
+import { surveyOrderingService } from "../services/surveyOrderingService";
+import { conceptService } from "../services/conceptService";
 import type { Gender, MaritalStatus, RantTag } from "../types/domain";
+import type { AnswerContext } from "../types/questionSchema";
 import { runPostCompleteProcess } from "../services/postCompleteService";
 import { rantTagRepository } from "../repositories/rantTagRepository";
 import { postRepository } from "../repositories/postRepository";
 import { dailySurveyService } from "../services/dailySurveyService";
 import { storeEntryService } from "../services/storeEntryService";
+import { applicationService, isRecruitClosed } from "../services/applicationService";
+import { projectApplicationRepository } from "../repositories/projectApplicationRepository";
 import { dailySurveyRepository } from "../repositories/dailySurveyRepository";
 import { userStreakService } from "../services/userStreakService";
 import { userBadgeService } from "../services/userBadgeService";
@@ -164,6 +179,45 @@ function bearerToken(req: Request): string {
   return header.slice("Bearer ".length).trim();
 }
 
+/**
+ * 書込み系エンドポイント（回答送信 / 完了 / 画像アップロード / スクリーニング判定）の所有者検証。
+ * verifyIdentity と同じ規則で LIFF ID token を検証し assignment.user_id と一致させる。
+ * これが無いと session_id / assignment_id(UUID) を知る第三者が他人の回答を書き換え・完了できる（IDOR）。
+ * supabase は service_role 接続で RLS が効かないため、この照合がアプリ層の唯一の砦。
+ *
+ * - LIFF未構成/開発skip経路（liffAuthAvailable=false）では検証を省略し従来どおり回答継続を妨げない。
+ * - assignment.user_id 未設定は本番のみ 403、非本番は許容（verifyIdentity と同挙動）。
+ * - トークンは Authorization: Bearer <id_token> または body.id_token を受理。tmtest: seam も透過。
+ */
+async function verifyAssignmentOwnerOrThrow(req: Request, assignmentId: string): Promise<void> {
+  const liffConfig = getSurveyLiffConfig();
+  if (!liffConfig.liffAuthAvailable) {
+    return;
+  }
+  if (!assignmentId) {
+    throw new HttpError(400, "assignment_id が必要です。");
+  }
+  const header = req.headers.authorization;
+  const bearer = header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
+  const token = bearer || stringValue((req.body as { id_token?: unknown })?.id_token).trim();
+  if (!token) {
+    throw new HttpError(401, "認証情報を確認できませんでした。LINEから開き直してください。");
+  }
+  const verified = await liffAuthService.verifyIdToken(token, { path: req.path });
+  const assignment = await projectAssignmentRepository.getById(assignmentId);
+  if (!assignment.user_id) {
+    if (env.NODE_ENV === "production") {
+      logger.warn("verifyOwner.noLineUserId.blocked", { assignmentId, path: req.path });
+      throw new HttpError(403, "本人確認に失敗しました。LINEアプリ内から開き直してください。");
+    }
+    return;
+  }
+  if (assignment.user_id !== verified.userId) {
+    logger.warn("verifyOwner.mismatch", { assignmentId, path: req.path });
+    throw new HttpError(403, "本人確認に失敗しました。LINEアプリ内から開き直してください。");
+  }
+}
+
 function stringValue(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -172,6 +226,13 @@ function stringValue(value: unknown): string {
     return String(value[0] ?? "");
   }
   return "";
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** uuid 型カラムへ直接渡る id の形式検証。形式不正は DB に渡す前に存在しない扱い（404）にする。 */
+function isUuid(value: string): boolean {
+  return UUID_RE.test(value);
 }
 
 function resolveMenuActionKey(value: unknown, fallback: string): string {
@@ -645,8 +706,14 @@ export const liffController = {
       });
       return;
     }
+    if (!isUuid(assignmentId)) throw new HttpError(404, "アンケートが見つかりません。");
 
-    const liffConfig = getSurveyLiffConfig();
+    // テスト到達用 seam（非本番限定）: 503「LIFF設定不足」分岐を env 改変なしで再現する。
+    // ヘッダ x-test-auth-required:1 または ?__test_auth_required=1 のときのみ有効。本番では無視。
+    const forceAuthConfigMissing =
+      env.NODE_ENV !== "production" &&
+      (req.get("x-test-auth-required") === "1" || req.query.__test_auth_required === "1");
+    const liffConfig = getSurveyLiffConfig({ forceAuthConfigMissing });
 
     logger.info("survey.page.liffConfig", {
       assignmentId,
@@ -771,24 +838,30 @@ export const liffController = {
       });
     }
 
-    // スクリーニング質問の有無でレンダリング対象を切り替える
-    const allVisible = questions.filter(q => !q.is_hidden);
-    const screeningQuestions = allVisible.filter(q => q.question_role === "screening");
-    const screeningConfigEnabled = project.screening_config?.enabled === true;
-    const hasScreeningQuestions = screeningQuestions.length > 0 && screeningConfigEnabled;
-    const screeningJudged = !!session.state_json?.screening_result;
-
-    let renderQuestions: typeof questions;
-    let surveyPhase: "screening" | "main";
-    if (hasScreeningQuestions && !screeningJudged) {
-      // スクリーニング未判定: スクリーニング設問のみ表示
-      renderQuestions = screeningQuestions;
-      surveyPhase = "screening";
-    } else {
-      // スクリーニング不要 or 通過済み: メイン設問（非スクリーニング）のみ表示
-      renderQuestions = allVisible.filter(q => q.question_role !== "screening");
-      surveyPhase = "main";
+    // L1 コンセプト・ローテーション: 初回に提示順を確定して保存（rotation 有効時のみ・additive）。
+    try {
+      const rotationMode = project.concept_rotation_mode ?? "off";
+      if (rotationMode !== "off" && !session.concept_order_json) {
+        const respondents = await respondentRepository.listByProject(project.id);
+        const ordered = [...respondents].sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+        const respondentIndex = Math.max(0, ordered.findIndex(r => r.id === assignment.respondent_id));
+        const order = await conceptService.resolveOrder({ projectId: project.id, respondentIndex, mode: rotationMode });
+        if (order.length > 1) {
+          await sessionRepository.update(session.id, { concept_order_json: order });
+          session = { ...session, concept_order_json: order };
+        }
+      }
+    } catch (err) {
+      logger.warn("[surveyPage] concept order assign skipped", { assignmentId, error: String(err) });
     }
+
+    // スクリーニング質問の有無でレンダリング対象を切り替える（フロー系エンドポイントと同一ロジックを共有）
+    const phaseSelection = selectPhaseQuestions(questions, {
+      screeningEnabled: project.screening_config?.enabled === true,
+      screeningJudged: !!session.state_json?.screening_result,
+    });
+    let renderQuestions: typeof questions = phaseSelection.questions;
+    const surveyPhase: "screening" | "main" = phaseSelection.phase;
 
     // アサインメントを started に更新
     if (
@@ -804,6 +877,24 @@ export const liffController = {
       void incrementCampaignCount(assignment.id, "started_count").catch(() => {});
     }
 
+    // §3 ブロック(ページ)ランダム化: メイン設問フェーズのみ、回答者ごとの表示順を確定して反映する。
+    // ランダム化未設定なら従来どおり（変更なし）。失敗しても回答継続を妨げない。
+    let orderedPageGroups = pageGroups;
+    if (surveyPhase === "main") {
+      try {
+        const reordered = await surveyOrderingService.resolveOrder({
+          session,
+          project,
+          questions: renderQuestions,
+          pageGroups,
+        });
+        renderQuestions = reordered.questions;
+        orderedPageGroups = reordered.pageGroups;
+      } catch (err) {
+        logger.warn("[surveyPage] ordering skipped", { assignmentId, error: String(err) });
+      }
+    }
+
     const DEFAULT_FAIL_MSG = "今回はご参加いただけませんでした。またの機会にご協力をお願いします。";
     const renderData = {
       title: project.user_display_title || project.name,
@@ -814,7 +905,7 @@ export const liffController = {
         display_mode: project.display_mode ?? "survey_question",
       },
       questions: renderQuestions,
-      pageGroups,
+      pageGroups: orderedPageGroups,
       sessionId: session.id,
       assignmentId: assignment.id,
       displayMode: project.display_mode ?? "survey_question",
@@ -824,9 +915,12 @@ export const liffController = {
       liffAuthAvailable: liffConfig.liffAuthAvailable,
       authRequired: liffConfig.authRequired,
       skipAllowed: liffConfig.skipAllowed,
-      // 店舗専用アンケート完了後に「通常案件を見る」CTA を出すための判定（希望者のみ誘導）
+      // 店舗専用アンケート完了後に「Hibi会員になって参加同意する」CTA を出すための判定（希望者のみ誘導）
       isStoreSurvey: project.visibility_type === "private_store",
       projectsUrl: "/liff/projects",
+      // 店舗回答者をグローバル必須書類の同意フローへ通し、正式な Hibi 会員に昇格させる導線。
+      // 既に同意済みなら consent ページが即マイページへリダイレクトする（冪等）。
+      memberJoinUrl: "/liff/consent?mode=initial&redirect=/liff/mypage",
     };
 
     logger.info("[surveyPage] before render survey.ejs", {
@@ -958,12 +1052,45 @@ export const liffController = {
       return;
     }
 
+    // 所有者検証（IDOR 防止）: 回答は本人の assignment のみ書き込める
+    await verifyAssignmentOwnerOrThrow(req, stringValue(req.body.assignment_id).trim());
+
     const session = await sessionRepository.getById(sessionId);
     console.log("ASSIGNMENT_STATE", { session_id: session.id, project_id: session.project_id, status: session.status });
 
-    const question = await questionRepository.getByProjectAndCode(session.project_id, questionCode);
+    // 進行制御の唯一の正はサーバー（plan §Phase1）。案件全設問と既存回答を読み、
+    // ①この設問がそもそも表示条件を満たすか（可視性ゲート）②回答後に出す次設問、をサーバーで決める。
+    const questions = await questionRepository.listByProject(session.project_id);
+    const question = questions.find((q) => q.question_code === questionCode)
+      ?? (await questionRepository.getByProjectAndCode(session.project_id, questionCode));
     if (!question) {
       res.status(404).json({ ok: false, error: `質問コードが見つかりません: ${questionCode}` });
+      return;
+    }
+
+    // 排他制御 (multi_choice): フロント制御を直叩きで回避した不正な組み合わせをサーバ側で拒否する。
+    if (question.question_type === "multi_choice" && Array.isArray(answerValue)) {
+      const options = question.question_config?.options ?? [];
+      const violation = findExclusionViolation(answerValue.map((v) => String(v)), options);
+      if (violation) {
+        res.status(400).json({
+          ok: false,
+          error: `同時に選択できない選択肢が含まれています（「${violation[0]}」と「${violation[1]}」）。`,
+        });
+        return;
+      }
+    }
+
+    // 可視性ゲート: 既存回答から組んだ ctx でこの設問が visibility_conditions を満たさないなら拒否（§3-2）。
+    // 条件が無い設問（大多数）は isQuestionVisible=true で常に通過する。
+    const priorAnswers = await answerRepository.listBySession(sessionId);
+    const priorCtx = buildAnswerContext(questions, priorAnswers);
+    if (!isQuestionVisible(question, priorCtx)) {
+      logger.warn("submitSurveyAnswer.hiddenQuestionBlocked", { sessionId, questionCode });
+      res.status(409).json({
+        ok: false,
+        error: "この設問は現在の回答条件では表示対象外です。画面を開き直してください。",
+      });
       return;
     }
 
@@ -978,18 +1105,90 @@ export const liffController = {
         ? (normalizedAnswerRaw as Record<string, unknown>)
         : null;
 
-    await answerRepository.create({
+    // 同一設問への再回答は上書き（重複行を作らない）
+    await answerRepository.upsertPrimary({
       session_id: sessionId,
       question_id: question.id,
       answer_text: answerText,
       free_text_answer: freeTextRaw,
-      answer_role: "primary",
       normalized_answer: normalizedAnswer ?? undefined,
     });
 
     await sessionRepository.update(sessionId, { current_question_id: question.id });
 
-    res.json({ ok: true });
+    // 次設問をサーバーで解決して返す（Phase2 でクライアントはこれを描画する。現行クライアントは無視して従来動作）。
+    // NOTE: クライアントは配列をカンマ結合した文字列で送るため、型ベースで array/scalar を復元する。
+    const ctxValue = answerValueForContext(question.question_type, answerText);
+    const nextCtx: AnswerContext = {
+      answers: { ...priorCtx.answers, [questionCode.toLowerCase()]: ctxValue },
+    };
+    const branchPayload: Record<string, unknown> = { ...(normalizedAnswer ?? {}) };
+    if (Array.isArray(ctxValue)) {
+      if (branchPayload.values === undefined) branchPayload.values = ctxValue;
+    } else if (branchPayload.value === undefined) {
+      branchPayload.value = ctxValue;
+    }
+
+    // 次設問はクライアントと同一の集合・順序（フェーズ絞り込み＋ランダム化）で解決する。
+    const project = await projectRepository.getById(session.project_id);
+    const pageGroups = await questionPageGroupRepository.listByProject(session.project_id);
+    const renderSet = await resolveOrderedRenderSet({
+      session,
+      project,
+      questions,
+      pageGroups,
+      screeningEnabled: project.screening_config?.enabled === true,
+      screeningJudged: Boolean(session.state_json?.screening_result),
+    });
+    const next = computeNextView({
+      questions: renderSet.questions,
+      ctx: nextCtx,
+      fromQuestion: question,
+      normalizedAnswer: branchPayload,
+    });
+
+    res.json({ ok: true, next });
+  },
+
+  /**
+   * 初回ロード・再開用: 未回答かつ可視な最初の設問の解決済みビューを返す（Phase2 クライアントが消費）。
+   * 送付済み回答から ctx を再構築し、クライアントと同一集合・順序で resumeView する。読み取り専用。
+   */
+  async getSurveyNext(req: Request, res: Response): Promise<void> {
+    const assignmentId = stringValue(req.params.assignmentId).trim();
+    const sessionId = stringValue(req.query.session_id).trim();
+    if (!sessionId) {
+      res.status(400).json({ ok: false, error: "session_id は必須です。" });
+      return;
+    }
+    await verifyAssignmentOwnerOrThrow(req, assignmentId);
+
+    const session = await sessionRepository.getById(sessionId);
+    const project = await projectRepository.getById(session.project_id);
+    const questions = await questionRepository.listByProject(session.project_id);
+    const pageGroups = await questionPageGroupRepository.listByProject(session.project_id);
+    const answers = await answerRepository.listBySession(sessionId);
+
+    const ctx = buildAnswerContext(questions, answers);
+    const renderSet = await resolveOrderedRenderSet({
+      session,
+      project,
+      questions,
+      pageGroups,
+      screeningEnabled: project.screening_config?.enabled === true,
+      screeningJudged: Boolean(session.state_json?.screening_result),
+    });
+
+    const byId = new Map(questions.map((q) => [q.id, q] as const));
+    const answeredCodes = new Set<string>();
+    for (const a of answers) {
+      if (a.answer_role && a.answer_role !== "primary") continue;
+      const q = byId.get(a.question_id);
+      if (q) answeredCodes.add(q.question_code);
+    }
+
+    const next = resumeView(renderSet.questions, ctx, answeredCodes);
+    res.json({ ok: true, next });
   },
 
   async uploadRespondentImage(req: Request, res: Response): Promise<void> {
@@ -1013,6 +1212,10 @@ export const liffController = {
       res.status(400).json({ ok: false, error: "session_id と assignment_id は必須です。" });
       return;
     }
+
+    // 所有者検証（IDOR 防止）: 画像は本人の assignment にのみ紐付けられる
+    await verifyAssignmentOwnerOrThrow(req, assignmentId);
+
     if (!base64Data) {
       res.status(400).json({ ok: false, error: "data (base64) は必須です。" });
       return;
@@ -1094,6 +1297,10 @@ export const liffController = {
       res.status(400).json({ ok: false, error: "assignment_id は必須です。" });
       return;
     }
+    if (!isUuid(assignmentId)) throw new HttpError(404, "アンケートが見つかりません。");
+
+    // 所有者検証（IDOR 防止）: 完了確定・ポイント付与は本人のみ発火できる
+    await verifyAssignmentOwnerOrThrow(req, assignmentId);
 
     const assignment = await projectAssignmentRepository.getById(assignmentId);
 
@@ -1158,12 +1365,6 @@ export const liffController = {
       completed_at: now,
     });
 
-    // キャンペーン完了カウントアップ（非同期・エラーは無視）
-    void incrementCampaignCount(assignmentId, "completed_count").catch(() => {});
-
-    // DB更新完了後すぐにレスポンスを返し、重い後処理は非同期で実行する
-    res.json({ ok: true, alreadyCompleted: false });
-
     if (!session) {
       logger.warn("completeSurveyByAssignment.noSession", {
         assignmentId,
@@ -1171,18 +1372,31 @@ export const liffController = {
       });
     }
 
-    void runPostCompleteProcess({
-      assignmentId,
-      session,
-      respondent,
-      project,
-      lineUserId: assignment.user_id,
-    }).catch((err: unknown) => {
-      logger.error("completeSurveyByAssignment.postComplete.unhandled", {
+    // ポイント付与＋LINE完了通知は「レスポンスを返す前に」確実に実行する。
+    // Vercel 等のサーバーレスではレスポンス後の非同期処理が関数の凍結で
+    // 打ち切られうるため、fire-and-forget にしない。runPostCompleteProcess は
+    // べき等（同一 session に project_completion があれば二重付与しない）なので
+    // await しても安全。通知失敗などで throw しても、assignment は既に完了済みなので
+    // ok を返しつつログに残す。
+    try {
+      await runPostCompleteProcess({
+        assignmentId,
+        session,
+        respondent,
+        project,
+        lineUserId: assignment.user_id,
+      });
+    } catch (err: unknown) {
+      logger.error("completeSurveyByAssignment.postComplete.failed", {
         assignmentId,
         error: String(err),
       });
-    });
+    }
+
+    // キャンペーン完了カウントも配信上限判定に効くため await（非致命・失敗は無視）
+    await incrementCampaignCount(assignmentId, "completed_count").catch(() => {});
+
+    res.json({ ok: true, alreadyCompleted: false });
   },
 
   async chatMessage(req: Request, res: Response): Promise<void> {
@@ -1583,6 +1797,10 @@ export const liffController = {
       res.status(400).json({ ok: false, error: "assignment_id と session_id は必須です。" });
       return;
     }
+    if (!isUuid(assignmentId)) throw new HttpError(404, "アンケートが見つかりません。");
+
+    // 所有者検証（IDOR 防止）: スクリーニング判定は本人のみ実行できる
+    await verifyAssignmentOwnerOrThrow(req, assignmentId);
 
     const [assignment, session] = await Promise.all([
       projectAssignmentRepository.getById(assignmentId),
@@ -1729,6 +1947,7 @@ export const liffController = {
     const body = req.body as Record<string, unknown>;
 
     if (!surveyId) throw new HttpError(400, "surveyId は必須です。");
+    if (!isUuid(surveyId)) throw new HttpError(404, "アンケートが見つかりません。");
 
     const deliveryId = stringValue(body.deliveryId).trim();
     const rawAnswers = Array.isArray(body.answers) ? body.answers : [];
@@ -1834,6 +2053,7 @@ export const liffController = {
     const liffId = process.env.LINE_LIFF_ID_MYPAGE || process.env.LINE_LIFF_ID || null;
     const projectId = stringValue(req.params.id).trim();
     if (!projectId) throw new HttpError(400, "案件IDが指定されていません。");
+    if (!isUuid(projectId)) throw new HttpError(404, "案件が見つかりません。");
     res.render("liff/project-detail", {
       title: "案件詳細",
       initialData: {
@@ -1841,6 +2061,10 @@ export const liffController = {
         projectId,
         dataUrl: `/liff/projects/${projectId}/data`,
         favoriteUrl: `/liff/projects/${projectId}/favorite`,
+        applyUrl: `/liff/projects/${projectId}/apply`,
+        withdrawUrl: `/liff/projects/${projectId}/withdraw`,
+        consentCheckUrl: "/liff/consent-check",
+        consentPageUrl: "/liff/consent",
         surveyBaseUrl: "/liff/survey",
         projectsUrl: "/liff/projects",
         savedProjectsUrl: "/liff/saved-projects",
@@ -1928,9 +2152,11 @@ export const liffController = {
     const lineUserId = verifiedUser.userId;
     const category = stringValue(req.query.category).trim() || null;
 
-    const [projects, favoritedIds] = await Promise.all([
+    const [projects, favoritedIds, appliedMap, monthly] = await Promise.all([
       projectRepository.listDiscoverable(),
       projectFavoriteRepository.getFavoritedProjectIds(lineUserId),
+      projectApplicationRepository.getAppliedProjectIds(lineUserId),
+      applicationService.getMonthlySummary(lineUserId),
     ]);
 
     const filtered = category ? projects.filter(p => (p as unknown as Record<string, unknown>).category === category) : projects;
@@ -1945,9 +2171,14 @@ export const liffController = {
       thumbnail_url: (p as unknown as Record<string, unknown>).display_thumbnail_url ?? null,
       created_at: p.created_at,
       is_saved: favoritedIds.has(p.id),
+      tags: p.tags ?? [],
+      apply_mode: p.apply_mode ?? "manual",
+      recruit_deadline: p.recruit_deadline ?? null,
+      interview_format: p.interview_format ?? null,
+      application_status: appliedMap.get(p.id) ?? null,
     }));
 
-    res.json({ ok: true, projects: items });
+    res.json({ ok: true, projects: items, monthly_applications: monthly });
   },
 
   async getProjectDetailData(req: Request, res: Response): Promise<void> {
@@ -1956,10 +2187,12 @@ export const liffController = {
     const projectId = stringValue(req.params.id).trim();
 
     if (!projectId) throw new HttpError(400, "案件IDが指定されていません。");
+    if (!isUuid(projectId)) throw new HttpError(404, "案件が見つかりません。");
 
-    const [project, isSaved] = await Promise.all([
+    const [project, isSaved, myApplication] = await Promise.all([
       projectRepository.getDiscoverableById(projectId),
       projectFavoriteRepository.isFavorited(lineUserId, projectId),
+      projectApplicationRepository.findByProjectAndUser(projectId, lineUserId),
     ]);
 
     if (!project) throw new HttpError(404, "案件が見つかりませんでした。");
@@ -1998,11 +2231,74 @@ export const liffController = {
         thumbnail_url: (project as unknown as Record<string, unknown>).display_thumbnail_url ?? null,
         objective: project.objective ?? null,
         created_at: project.created_at,
+        tags: project.tags ?? [],
+        ng_conditions: project.ng_conditions ?? null,
+        apply_mode: project.apply_mode ?? "manual",
+        recruit_deadline: project.recruit_deadline ?? null,
+        interview_format: project.interview_format ?? null,
+        recruit_closed: isRecruitClosed(project),
       },
       is_saved: isSaved,
       my_assignment: myAssignment,
+      my_application: myApplication
+        ? { id: myApplication.id, status: myApplication.status, assignment_id: myApplication.assignment_id }
+        : null,
       completed_count: completedCount ?? 0,
     });
+  },
+
+  /**
+   * 案件への応募。応募＝assignment発行のリクエストであり、発行判断はサーバー側。
+   * auto案件: respondent/assignment を冪等確保して即回答URLを返す。
+   * manual案件: applied で選考待ち。
+   */
+  async applyToProject(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const lineUserId = verifiedUser.userId;
+    const projectId = stringValue(req.params.id).trim();
+    if (!projectId) throw new HttpError(400, "案件IDが指定されていません。");
+    if (!isUuid(projectId)) throw new HttpError(404, "案件が見つかりません。");
+
+    const result = await applicationService.apply(projectId, lineUserId, verifiedUser.displayName ?? null);
+
+    if (!result.ok) {
+      const map: Record<string, { status: number; message: string }> = {
+        not_found: { status: 404, message: "この案件は現在応募できません。" },
+        closed: { status: 409, message: "募集期限を過ぎています。" },
+        full: { status: 409, message: "募集人数に達したため応募を締め切りました。" },
+        duplicate: { status: 409, message: "この案件にはすでに応募済みです。" },
+      };
+      const e = map[result.reason] ?? { status: 400, message: "応募できませんでした。" };
+      res.status(e.status).json({ ok: false, reason: result.reason, error: e.message });
+      return;
+    }
+
+    if (result.mode === "auto") {
+      res.json({
+        ok: true,
+        mode: "auto",
+        application_status: "accepted",
+        assignment_id: result.assignmentId,
+        survey_url: `/liff/survey/${encodeURIComponent(result.assignmentId)}`,
+      });
+      return;
+    }
+
+    res.json({ ok: true, mode: "manual", application_status: "applied" });
+  },
+
+  /** 応募取り消し（選考中のみ） */
+  async withdrawApplication(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const projectId = stringValue(req.params.id).trim();
+    if (!projectId || !isUuid(projectId)) throw new HttpError(404, "案件が見つかりません。");
+
+    const result = await applicationService.withdraw(projectId, verifiedUser.userId);
+    if (!result.ok) {
+      res.status(409).json({ ok: false, error: "取り消せる応募がありません（選考中のみ取り消せます）。" });
+      return;
+    }
+    res.json({ ok: true });
   },
 
   async toggleProjectFavorite(req: Request, res: Response): Promise<void> {
@@ -2010,6 +2306,7 @@ export const liffController = {
     const lineUserId = verifiedUser.userId;
     const projectId = stringValue(req.params.id).trim();
     if (!projectId) throw new HttpError(400, "案件IDが指定されていません。");
+    if (!isUuid(projectId)) throw new HttpError(404, "案件が見つかりません。");
 
     const result = await projectFavoriteRepository.toggle(lineUserId, projectId);
     res.json({ ok: true, saved: result.saved });
@@ -2091,23 +2388,31 @@ export const liffController = {
     const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
     const lineUserId = verifiedUser.userId;
 
-    const respondents = await respondentRepository.listByLineUserId(lineUserId);
-    if (respondents.length === 0) {
-      res.json({ ok: true, pending: [], in_progress: [], completed: [] });
+    const [respondents, myApplications] = await Promise.all([
+      respondentRepository.listByLineUserId(lineUserId),
+      projectApplicationRepository.listByUser(lineUserId),
+    ]);
+    if (respondents.length === 0 && myApplications.length === 0) {
+      res.json({ ok: true, applications: [], pending: [], in_progress: [], completed: [] });
       return;
     }
 
     const { supabase } = await import("../config/supabase");
     const respondentIds = respondents.map(r => r.id);
 
-    const { data: assignments } = await supabase
-      .from("project_assignments")
-      .select("id, project_id, respondent_id, status, assigned_at, started_at, completed_at, expired_at, deadline")
-      .in("respondent_id", respondentIds)
-      .order("assigned_at", { ascending: false })
-      .limit(100);
+    const { data: assignments } = respondentIds.length > 0
+      ? await supabase
+          .from("project_assignments")
+          .select("id, project_id, respondent_id, status, assigned_at, started_at, completed_at, expired_at, deadline")
+          .in("respondent_id", respondentIds)
+          .order("assigned_at", { ascending: false })
+          .limit(100)
+      : { data: [] };
 
-    const projectIds = [...new Set(((assignments ?? []) as { project_id: string }[]).map(a => a.project_id))];
+    const projectIds = [...new Set([
+      ...((assignments ?? []) as { project_id: string }[]).map(a => a.project_id),
+      ...myApplications.map(a => a.project_id),
+    ])];
     const { data: projects } = projectIds.length > 0
       ? await supabase.from("projects").select("id, name, user_display_title, reward_points, estimated_minutes").in("id", projectIds)
       : { data: [] };
@@ -2139,7 +2444,24 @@ export const liffController = {
     const inProgress = all.filter(a => a.status === "started");
     const done       = all.filter(a => ["completed", "expired", "cancelled"].includes(a.status));
 
-    res.json({ ok: true, pending, in_progress: inProgress, completed: done });
+    // 応募中/落選（assignment未発行の応募）。当選済み（accepted）は assignment 側の pending に出る。
+    const applications = myApplications
+      .filter(a => a.status === "applied" || a.status === "rejected")
+      .map(a => {
+        const p = projectMap[a.project_id] as Record<string, unknown> | undefined;
+        return {
+          application_id: a.id,
+          project_id: a.project_id,
+          title: p ? String(p.user_display_title || p.name || "") : "不明",
+          reward_points: p?.reward_points ?? null,
+          estimated_minutes: p?.estimated_minutes ?? null,
+          status: a.status,
+          applied_at: a.applied_at,
+          decided_at: a.decided_at,
+        };
+      });
+
+    res.json({ ok: true, applications, pending, in_progress: inProgress, completed: done });
   },
 
   // ============================================================
@@ -2207,6 +2529,24 @@ export const liffController = {
       { source: "liff", ipAddress, userAgent }
     );
 
+    // 会員化（グローバル必須書類にすべて同意）が成立したら、会員化前に完了して
+    // 保留されていたアンケート完了ポイントをまとめて付与する。
+    // サーバーレスでレスポンス後の処理が打ち切られないよう、レスポンス前に await する。
+    // ポイント付与はべき等（付与済みは二重付与しない）なので await して安全。
+    try {
+      const pending = await consentService.getPendingGlobalConsents(verifiedUser.userId);
+      if (pending.length === 0) {
+        // 未同意の必須書類が残っていなければ＝会員化成立
+        const { awardDeferredCompletionsForMember } = await import("../services/postCompleteService");
+        await awardDeferredCompletionsForMember(verifiedUser.userId);
+      }
+    } catch (err) {
+      logger.warn("submitConsents.awardDeferred.failed", {
+        lineUserId: verifiedUser.userId,
+        error: String(err),
+      });
+    }
+
     res.json({ ok: true, recorded: body.items.length });
   },
 
@@ -2238,6 +2578,8 @@ export const liffController = {
     const { documentRepository } = await import("../repositories/documentRepository");
     const docId = stringValue(req.params.documentId ?? "").trim();
     const versionId = typeof req.query.version_id === "string" ? req.query.version_id : null;
+
+    if (!isUuid(docId)) throw new HttpError(404, "書類が見つかりません");
 
     const doc = await documentRepository.getById(docId);
     if (!doc || !doc.is_active) throw new HttpError(404, "書類が見つかりません");
@@ -2314,6 +2656,7 @@ export const liffController = {
       res.status(400).json({ ok: false, error: "id が必要です" });
       return;
     }
+    if (!isUuid(requestId)) throw new HttpError(404, "交換申請が見つかりません。");
 
     try {
       const canceled = await pointExchangeService.cancelExchange(requestId, lineUserId);
