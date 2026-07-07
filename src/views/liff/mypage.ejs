@@ -480,7 +480,7 @@
               </div>
               <div class="form-group">
                 <label>生年月日<span class="required">必須</span></label>
-                <input class="form-control" type="date" name="birth_date" value="${esc(p.birth_date)}" required />
+                <input class="form-control" type="date" name="birth_date" value="${esc(p.birth_date) || '2000-01-01'}" max="${new Date().toISOString().slice(0,10)}" required />
               </div>
               <div class="form-group">
                 <label>性別<span class="required">必須</span></label>
@@ -1033,7 +1033,7 @@
               </div>
               <div class="form-group">
                 <label>生年月日</label>
-                <input class="form-control" type="date" name="birth_date" value="${esc(p.birth_date)}" />
+                <input class="form-control" type="date" name="birth_date" value="${esc(p.birth_date) || '2000-01-01'}" max="${new Date().toISOString().slice(0,10)}" />
               </div>
               <div class="form-group">
                 <label>都道府県</label>
