@@ -684,16 +684,28 @@ export const liffController = {
     // liff.state は LIFF SDK がリダイレクト時に付与するエンコード済みクエリ文字列。
     // 例: ?liff.state=%3Fassignment_id%3Dxxx → assignment_id=xxx を展開して取得する。
     let liffStateAssignmentId: string | undefined;
+    let liffStateEntryCode: string | undefined;
     const liffState = stringValue(req.query["liff.state"] ?? "");
     if (liffState) {
       try {
         const params = new URLSearchParams(liffState.startsWith("?") ? liffState.slice(1) : liffState);
         liffStateAssignmentId = params.get("assignment_id") ?? undefined;
+        liffStateEntryCode = params.get("entry_code") ?? undefined;
       } catch {
         // parse failure → fall through
       }
     }
     const assignmentId = stringValue(req.params.assignmentId ?? liffStateAssignmentId ?? req.query.assignment_id ?? "");
+
+    // 店舗QR（https://liff.line.me/{id}?entry_code=xxx）は SURVEY LIFF の endpoint に
+    // liff.state で着地する。entry_code のみの流入は店舗入口へ引き継ぐ。
+    // NOTE: liff.state をリダイレクト先に残すと SDK の二次リダイレクトで endpoint へ
+    // 戻されループするため、entry_code だけを取り出して捨てる。
+    const entryCode = stringValue(req.query.entry_code ?? liffStateEntryCode ?? "").trim();
+    if (!assignmentId && entryCode) {
+      res.redirect(302, `/liff/store?entry_code=${encodeURIComponent(entryCode)}`);
+      return;
+    }
     if (!assignmentId) {
       // 利用者向けに分かりやすいメッセージを返す
       res.status(400).render("liff/survey", {

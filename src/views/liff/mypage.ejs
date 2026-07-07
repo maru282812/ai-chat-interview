@@ -707,7 +707,7 @@
         const exchangeBtnHtml = hasPending
           ? `<div class="btn-exchange-pending">申請中（承認をお待ちください）</div>`
           : canExchange
-            ? `<button id="btn-do-exchange" class="btn-exchange">500pt を交換申請する</button>`
+            ? `<button id="btn-do-exchange" class="btn-exchange">ポイントを交換申請する</button>`
             : `<button class="btn-exchange" disabled>500pt に達したら交換できます</button>`;
 
         // 交換履歴
@@ -863,25 +863,38 @@
       function showExchangeConfirm(available, cachedData) {
         const UNIT = 500;
         const count = Math.floor(available / UNIT);
-        // 申請口数は常に1口（1度に500ptのみ）
-        const pts = UNIT;
+        // 500pt刻みで保有上限まで選択できる（500pt = 500円分）
+        const optionsHtml = Array.from({ length: count }, (_, i) => {
+          const p = (i + 1) * UNIT;
+          return `<option value="${p}">${p.toLocaleString()}pt（${p.toLocaleString()}円分）</option>`;
+        }).join("");
         const overlay = document.createElement("div");
         overlay.className = "confirm-overlay";
         overlay.innerHTML = `
           <div class="confirm-sheet">
-            <div class="confirm-title">500pt を交換申請する</div>
+            <div class="confirm-title">ポイントを交換申請する</div>
             <div class="confirm-body">
-              500pt を <strong>Amazonギフト等</strong> と交換申請します。<br>
+              交換するポイントを選択してください（500pt＝500円分）。<br>
+              <select id="exchange-points" style="width:100%;margin:10px 0;padding:10px;font-size:15px;border:1px solid #d5e0de;border-radius:8px;background:#fff">
+                ${optionsHtml}
+              </select>
+              選択したポイントを <strong>Amazonギフト等</strong> と交換申請します。<br>
               申請後、管理者が確認・承認後にギフトURLをLINEでお送りします。<br><br>
               <strong>申請後はキャンセル可能</strong>ですが、承認後はキャンセルできません。
             </div>
             <p id="confirm-status" class="status-msg"></p>
             <div class="confirm-btns">
               <button id="confirm-cancel" class="btn btn-secondary" style="flex:1">閉じる</button>
-              <button id="confirm-ok"     class="btn btn-primary"   style="flex:2">申請する（500pt）</button>
+              <button id="confirm-ok"     class="btn btn-primary"   style="flex:2">申請する（${UNIT}pt）</button>
             </div>
           </div>`;
         document.body.appendChild(overlay);
+
+        const selectEl = overlay.querySelector("#exchange-points");
+        const okBtnEl  = overlay.querySelector("#confirm-ok");
+        selectEl.addEventListener("change", () => {
+          okBtnEl.textContent = `申請する（${Number(selectEl.value).toLocaleString()}pt）`;
+        });
 
         overlay.querySelector("#confirm-cancel").addEventListener("click", () => overlay.remove());
         overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
@@ -889,6 +902,7 @@
         overlay.querySelector("#confirm-ok").addEventListener("click", async () => {
           const okBtn  = overlay.querySelector("#confirm-ok");
           const stEl   = overlay.querySelector("#confirm-status");
+          const pts    = Number(selectEl.value) || UNIT;
           okBtn.disabled = true;
           stEl.textContent = "申請中...";
           stEl.className = "status-msg";

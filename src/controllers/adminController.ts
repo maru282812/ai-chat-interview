@@ -6254,6 +6254,13 @@ export const adminController = {
     });
   },
 
+  /** ヘッダーの通知バッジ用: 申請中(pending)の交換申請件数を返す */
+  async pendingExchangeCount(_req: Request, res: Response): Promise<void> {
+    const { pointExchangeRepository } = await import("../repositories/pointExchangeRepository");
+    const count = await pointExchangeRepository.countPending();
+    res.json({ count });
+  },
+
   async approveExchange(req: Request, res: Response): Promise<void> {
     const { pointExchangeRepository } = await import("../repositories/pointExchangeRepository");
     const { pointExchangeAuditLogRepository } = await import("../repositories/pointExchangeAuditLogRepository");
@@ -7900,9 +7907,21 @@ async function generateUniqueEntryCode(): Promise<string> {
   return `st-${Date.now().toString(36)}`;
 }
 
-/** 店舗流入用の専用URL。entry_code 未設定時は null。 */
+/**
+ * 店舗流入用の専用URL。entry_code 未設定時は null。
+ * LIFF 恒久URL（liff.line.me）を優先する。サイト直URLだと LINE の QR リーダーから
+ * 開いたとき LIFF ブラウザではなく in-app ブラウザで開き、Web ログイン
+ * （LINE⇄サイトのリダイレクト往復）が必須になってループ事故の温床になるため。
+ * liff.line.me 経由なら LIFF ブラウザがログイン済みで開き、リダイレクト自体が発生しない。
+ * 着地はLIFF endpoint となるため、entry_code は liffController 側の liff.state 配管で
+ * /liff/store へ引き継ぐ。
+ */
 function buildStoreEntryUrl(entryCode: string | null | undefined): string | null {
   if (!entryCode) return null;
+  const liffId = appEnv.LINE_LIFF_ID_SURVEY ?? appEnv.LINE_LIFF_ID;
+  if (liffId) {
+    return `https://liff.line.me/${liffId}?entry_code=${encodeURIComponent(entryCode)}`;
+  }
   return `${appEnv.APP_BASE_URL}/liff/store?entry_code=${encodeURIComponent(entryCode)}`;
 }
 

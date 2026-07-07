@@ -295,6 +295,7 @@ adminRoutes.post("/store-clients/:clientId/delete",     asyncHandler(adminContro
 
 // 交換申請管理
 adminRoutes.get("/exchange-requests",                             asyncHandler(adminController.exchangeRequestsPage));
+adminRoutes.get("/exchange-requests/pending-count",               asyncHandler(adminController.pendingExchangeCount));
 adminRoutes.post("/exchange-requests/:id/approve",                asyncHandler(adminController.approveExchange));
 adminRoutes.post("/exchange-requests/:id/reject",                 asyncHandler(adminController.rejectExchange));
 adminRoutes.post("/exchange-requests/:id/fulfill",                asyncHandler(adminController.fulfillExchange));
