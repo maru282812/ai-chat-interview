@@ -2469,7 +2469,10 @@ export const liffController = {
   // ============================================================
 
   async consentPage(req: Request, res: Response): Promise<void> {
-    const liffId = env.LINE_LIFF_ID ?? "";
+    // 同意画面はマイページ導線の一部。他のLIFFページと同様に MYPAGE をフォールバックの
+    // 先頭に置く（LINE_LIFF_ID は未設定運用のため、これが無いと liffId が空になり
+    // クライアントで「LIFF IDが設定されていません」になる）。
+    const liffId = env.LINE_LIFF_ID_MYPAGE ?? env.LINE_LIFF_ID ?? "";
     const mode = (req.query.mode as string) || "initial";
     const projectId = (req.query.project_id as string) || "";
     // オープンリダイレクト防止: 内部 LIFF パスのみ許可（外部URL・スキーム付きは既定値に倒す）
