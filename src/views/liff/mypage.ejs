@@ -1218,7 +1218,11 @@
           if (await ensureGlobalConsent()) return;
 
           const res = await fetch(profileUrl, { headers: { Authorization: `Bearer ${idToken}` } });
-          if (!res.ok) throw new Error("情報の取得に失敗しました。");
+          if (!res.ok) {
+            let detail = "";
+            try { detail = (await res.json()).detail || ""; } catch (_e) {}
+            throw new Error("情報の取得に失敗しました。" + (detail ? "（" + detail + "）" : "") + `[${res.status}]`);
+          }
           const data = await res.json();
 
           const forceSetup = mode === "initial_setup";

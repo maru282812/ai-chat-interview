@@ -65,6 +65,25 @@
       throw new Error('認証トークンを取得できませんでした。もう一度お試しください。');
     }
 
+    // IDトークン失効対策。
+    // LIFF は getIDToken() を自動更新しないため、ログインセッション(isLoggedIn)は
+    // 残ったまま IDトークンだけ失効すると、上の未ログイン分岐に入らず失効トークンを
+    // 使い続けてしまう（サーバー検証が 401 TOKEN_EXPIRED になり、LINEから開き直しても
+    // セッションが生きているため直らない）。ここで exp を検査し、失効（間近）なら
+    // 一度だけ再ログインして新しい IDトークンを取得する。
+    try {
+      var decoded = liff.getDecodedIDToken();
+      var nowSec = Math.floor(Date.now() / 1000);
+      if (decoded && decoded.exp && decoded.exp <= nowSec + 30) {
+        _log('id token expired – recovering via re-login', { exp: decoded.exp, now: nowSec });
+        if (handleTokenExpired()) return null; // logout+login でリダイレクト中
+        // リトライ上限に達した場合は失効トークンのまま送信し、サーバー判定に委ねる
+      } else {
+        // 有効なトークンを取得できたので失効リトライガードを解除（次回の失効時に再回復可能に）
+        try { sessionStorage.removeItem('liff_token_expired_retry'); } catch (_e) {}
+      }
+    } catch (_e) { /* decode 失敗時はそのまま送信しサーバー判定に委ねる */ }
+
     _log('auth ok', { isInClient: isInClient });
     return token;
   }
