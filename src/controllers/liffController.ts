@@ -618,13 +618,14 @@ export const liffController = {
     const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
     const lineUserId = verifiedUser.userId;
 
-    const [profile, respondents, ranks, streakRow, earnedAwards, badgeDefs] = await Promise.all([
+    const [profile, respondents, ranks, streakRow, earnedAwards, badgeDefs, pointBalance] = await Promise.all([
       userProfileRepository.getByLineUserId(lineUserId),
       respondentRepository.listByLineUserId(lineUserId),
       rankRepository.list(),
       userStreakService.getStreak(lineUserId).catch(() => null),
       userBadgeService.listEarned(lineUserId).catch(() => []),
       userBadgeService.listAllDefinitions().catch(() => []),
+      userPointService.getBalance(lineUserId).catch(() => null),
     ]);
     const badgeDefMap = new Map(badgeDefs.map(d => [d.badge_code, d]));
     const awardedBadges = earnedAwards.map(a => ({
@@ -639,9 +640,14 @@ export const liffController = {
     const primaryRespondent = typedRespondents.sort((a, b) => b.total_points - a.total_points)[0] ?? null;
     const completedCount = typedRespondents.filter(r => r.status === "completed").length;
 
-    const totalPoints = primaryRespondent?.total_points ?? 0;
+    // 「現在のポイント」は正準の user_points 残高を表示する。
+    // respondents.total_points はレガシー（旧集計）。user_points 行が無い/0 の旧データは
+    // 従来どおり respondent 合計へフォールバックし、既存挙動を壊さない。
+    const respondentPoints = primaryRespondent?.total_points ?? 0;
+    const totalPoints = (pointBalance?.available_points ?? 0) || respondentPoints;
+    const rankPoints = (pointBalance?.lifetime_points ?? 0) || respondentPoints;
     const currentRank = primaryRespondent?.current_rank ?? null;
-    const nextRank = ranks.find(r => r.min_points > totalPoints && r.min_points > (currentRank?.min_points ?? -1)) ?? null;
+    const nextRank = ranks.find(r => r.min_points > rankPoints && r.min_points > (currentRank?.min_points ?? -1)) ?? null;
 
     const recentTransactions = primaryRespondent
       ? (await pointTransactionRepository.listByRespondent(primaryRespondent.id)).slice(0, 5)
