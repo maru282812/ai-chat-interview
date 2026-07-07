@@ -67,6 +67,15 @@ export const pointExchangeRepository = {
     return (data ?? []) as PointExchangeRequest[];
   },
 
+  async countPending(): Promise<number> {
+    const { count, error } = await supabase
+      .from(TABLE)
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending");
+    throwIfError(error);
+    return count ?? 0;
+  },
+
   async getPendingByUser(lineUserId: string): Promise<PointExchangeRequest | null> {
     const { data, error } = await supabase
       .from(TABLE)

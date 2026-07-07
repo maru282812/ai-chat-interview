@@ -16,6 +16,69 @@
     try { console.log('[LiffAuth] ' + msg, data || {}); } catch (_e) {}
   }
 
+  // LINE Login の戻りで付与される OAuth パラメータ。redirectUri に残したまま
+  // 再ログインすると戻りURLに code/state が二重に付き、SDK の検証が失敗し続けて
+  // LINE⇄サイトの無限リダイレクトループになるため、ログイン前に必ず除去する。
+  var OAUTH_RESPONSE_PARAMS = ['code', 'state', 'error', 'error_description', 'liffClientId', 'liffRedirectUri'];
+  // ログイン試行回数を URL で持ち回るパラメータ。WebView がストレージを保持しない
+  // 環境（QR流入の in-app ブラウザ等）でもループガードが機能するよう、storage ではなく
+  // redirectUri 自体に埋め込む。
+  var RETRY_PARAM = 'liff_retry';
+  var MAX_LOGIN_ATTEMPTS = 2;
+
+  function _sanitizedUrl() {
+    try {
+      var u = new URL(location.href);
+      for (var i = 0; i < OAUTH_RESPONSE_PARAMS.length; i++) {
+        u.searchParams.delete(OAUTH_RESPONSE_PARAMS[i]);
+      }
+      return u;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function _loginAttemptCount() {
+    try {
+      return parseInt(new URL(location.href).searchParams.get(RETRY_PARAM) || '0', 10) || 0;
+    } catch (_e) {
+      return 0;
+    }
+  }
+
+  /**
+   * ループガード付き LINE Login リダイレクト。
+   * redirectUri から前回の OAuth 残渣を除去し、試行回数を URL パラメータで持ち回る。
+   * @returns {boolean} true = リダイレクト開始 / false = 試行上限（呼び出し側でエラー表示）
+   */
+  function loginWithGuard() {
+    var attempt = _loginAttemptCount();
+    if (attempt >= MAX_LOGIN_ATTEMPTS) {
+      _log('login loop guard tripped', { attempt: attempt });
+      return false;
+    }
+    var redirectUri = location.href;
+    var u = _sanitizedUrl();
+    if (u) {
+      u.searchParams.set(RETRY_PARAM, String(attempt + 1));
+      redirectUri = u.toString();
+    }
+    _log('redirecting to LINE Login', { attempt: attempt + 1, redirectUri: redirectUri });
+    liff.login({ redirectUri: redirectUri });
+    return true;
+  }
+
+  /** 認証成功後にアドレスバーから OAuth 残渣とリトライカウンタを消す */
+  function _clearLoginResidue() {
+    try {
+      var u = _sanitizedUrl();
+      if (!u) return;
+      u.searchParams.delete(RETRY_PARAM);
+      var next = u.toString();
+      if (next !== location.href) history.replaceState(null, '', next);
+    } catch (_e) { /* noop */ }
+  }
+
   /**
    * LIFF初期化 + 未ログイン時はLINE Loginへリダイレクト。
    * スマホLINE内: LIFF認証 → IDトークン取得
@@ -55,8 +118,9 @@
     });
 
     if (!isLoggedIn) {
-      _log('not logged in – redirecting to LINE Login', { redirectUri: location.href });
-      liff.login({ redirectUri: location.href });
+      if (!loginWithGuard()) {
+        throw new Error('LINEログインを完了できませんでした。LINEアプリでQRコードを読み取り直すか、しばらくしてからもう一度お試しください。');
+      }
       return null;
     }
 
@@ -85,6 +149,7 @@
     } catch (_e) { /* decode 失敗時はそのまま送信しサーバー判定に委ねる */ }
 
     _log('auth ok', { isInClient: isInClient });
+    _clearLoginResidue();
     return token;
   }
 
@@ -114,8 +179,8 @@
     }
     sessionStorage.setItem(KEY, '1');
     try { liff.logout(); } catch (_e) {}
-    liff.login({ redirectUri: location.href });
-    return true;
+    // OAuth 残渣を除去した redirectUri ＋ 試行上限つきで再ログイン（無限ループ防止）
+    return loginWithGuard();
   }
 
   /**
@@ -139,6 +204,7 @@
     getCurrentAuthToken:  getCurrentAuthToken,
     requireLoginIfNeeded: requireLoginIfNeeded,
     handleTokenExpired:   handleTokenExpired,
+    loginWithGuard:       loginWithGuard,
     closeOrBack:          closeOrBack,
   };
 }());

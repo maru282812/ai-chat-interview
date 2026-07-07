@@ -6,6 +6,7 @@
   <title><%= project?.user_display_title || project?.name || 'アンケート' %></title>
   <% if (locals.liffId) { %>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <%- include('../partials/liff-auth') %>
   <% } %>
   <style>
     * { box-sizing: border-box; }
@@ -503,8 +504,11 @@
         url: location.href,
         ua: navigator.userAgent.slice(0, 150),
       });
-      // redirectUri を渡して assignment_id / session_id をログイン後も保持する
-      liff.login({ redirectUri: location.href });
+      // ループガード付きで LINE Login へ（OAuth残渣を除去した redirectUri で
+      // assignment_id / session_id を保持。試行上限超過時はエラー表示で停止）
+      if (!window.LiffAuth || !LiffAuth.loginWithGuard()) {
+        showAuthError('login_loop');
+      }
       return;
     }
 
@@ -592,6 +596,7 @@
       identity_mismatch: 'このアンケートはご本人専用です。<br>配信されたLINEアカウントから開いてください。',
       token_failed:      BASE_MSG,
       liff_init_failed:  BASE_MSG,
+      login_loop:        'LINEログインを完了できませんでした。<br>LINEアプリでリンクを開き直すか、しばらくしてからもう一度お試しください。',
     };
     const msg = messages[code] || BASE_MSG;
     console.error('[survey] showAuthError', code);

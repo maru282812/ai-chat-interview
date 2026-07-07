@@ -8,6 +8,26 @@ export const liffRoutes = Router();
 // リッチメニュー等の https://liff.line.me/{id}/projects 形式のディープリンクが
 // そのまま各ページに解決される。無印(パス無し)で開かれたら「探す」へ送る。
 liffRoutes.get("/", (req, res) => {
+  // 店舗QR（liff.line.me/{id}?entry_code=xxx）の着地。endpoint が /liff の LIFF 構成でも
+  // 店舗入口へ解決できるよう、query / liff.state から entry_code を拾って引き継ぐ。
+  // liff.state をリダイレクト先に残すと SDK の二次リダイレクトで endpoint へ戻され
+  // ループするため、entry_code だけを取り出して捨てる。
+  const entryCode = (() => {
+    const direct = typeof req.query.entry_code === "string" ? req.query.entry_code.trim() : "";
+    if (direct) return direct;
+    const liffState = typeof req.query["liff.state"] === "string" ? req.query["liff.state"] : "";
+    if (!liffState) return "";
+    try {
+      const params = new URLSearchParams(liffState.startsWith("?") ? liffState.slice(1) : liffState);
+      return (params.get("entry_code") ?? "").trim();
+    } catch {
+      return "";
+    }
+  })();
+  if (entryCode) {
+    res.redirect(302, `/liff/store?entry_code=${encodeURIComponent(entryCode)}`);
+    return;
+  }
   const qs = req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "";
   res.redirect(302, `/liff/projects${qs}`);
 });
