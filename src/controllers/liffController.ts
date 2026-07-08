@@ -201,8 +201,20 @@ async function verifyAssignmentOwnerOrThrow(req: Request, assignmentId: string):
   const bearer = header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
   const token = bearer || stringValue((req.body as { id_token?: unknown })?.id_token).trim();
   if (!token) {
-    throw new HttpError(401, "認証情報を確認できませんでした。LINEから開き直してください。");
+    // トークン未送信の扱いを survey ページの認証ゲート(authRequired)と一致させる。
+    // ・authRequired=true（LIFF_AUTH_REQUIRED=true）: ページは必ず ID トークンを取得して
+    //   添付するので、欠如は異常＝401（クライアントは再ログインで回復できる）。
+    // ・authRequired=false（skip 運用）: ページは LIFF 認証をスキップしトークンを取得も
+    //   送信もしない設計。ここで一律 401 にすると liffAuthAvailable=true（LIFF設定済）の
+    //   環境で /survey/answer・/complete が常に 401 になり「完了処理が失敗しました」が
+    //   必ず出る（回答は非ブロッキングで握り潰され、完了だけ露出）。ページと同じ基準で
+    //   認証を要求せず所有者検証をスキップし、回答完了を妨げない。
+    if (liffConfig.authRequired) {
+      throw new HttpError(401, "認証情報を確認できませんでした。LINEから開き直してください。");
+    }
+    return;
   }
+  // トークンがあれば authRequired の値に関わらず検証し、本人以外の回答/完了を遮断する（IDOR 防止）。
   const verified = await liffAuthService.verifyIdToken(token, { path: req.path });
   const assignment = await projectAssignmentRepository.getById(assignmentId);
   if (!assignment.user_id) {
