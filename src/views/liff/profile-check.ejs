@@ -411,6 +411,11 @@
 
         const submitLabel = isFirstTime ? "登録して回答を開始する" : "保存して回答を開始する";
 
+        // 生年月日ピッカーの既定値。空のときは今日(未来)ではなく 2000-01-01 から
+        // カレンダーが開くようにする。max=今日 で未来日の入力も抑止する。
+        const birthValue = p.birth_date || "2000-01-01";
+        const birthMax = new Date().toISOString().slice(0, 10);
+
         show(`
           ${backButtonHtml}
           ${headerHtml}
@@ -424,7 +429,7 @@
               </div>
               <div class="form-group">
                 <label>生年月日<span class="required">必須</span></label>
-                <input class="form-control" type="date" name="birth_date" value="${esc(p.birth_date)}" required />
+                <input class="form-control" type="date" name="birth_date" value="${esc(birthValue)}" max="${esc(birthMax)}" required />
               </div>
               <div class="form-group">
                 <label>性別<span class="required">必須</span></label>

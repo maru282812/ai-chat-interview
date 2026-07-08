@@ -796,8 +796,12 @@ export const liffController = {
       return;
     }
 
-    // プロフィール確認: user_id が判明しており、かつ今セッションでまだ確認していない場合はプロフィール確認画面へ誘導する
-    if (assignment.user_id && !sessionForCheck?.state_json?.mypage_confirmed_at) {
+    // プロフィール確認: user_id が判明しており、かつ今セッションでまだ確認していない場合はプロフィール確認画面へ誘導する。
+    // ただし店舗専用アンケート（private_store）は「非会員のまま基本情報なしで即回答」が設計なので
+    // 回答前の基本情報入力・利用規約同意ゲートはかけない。基本情報と同意は完了後の
+    // 「Hibiに参加する（会員登録）」CTA に進んだ希望者だけが会員化フローで入力する。
+    const isStoreSurveyEntry = project.visibility_type === "private_store";
+    if (!isStoreSurveyEntry && assignment.user_id && !sessionForCheck?.state_json?.mypage_confirmed_at) {
       logger.info("[surveyPage] branch=profileCheckRedirect", { assignmentId });
       // session_id が空のまま渡すと confirm-mypage が 400 になり無限リダイレクトになるため、
       // セッションが未作成の場合はここで先行作成する
