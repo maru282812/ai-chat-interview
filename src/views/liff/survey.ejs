@@ -242,6 +242,45 @@
     .complete-title  { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
     .complete-sub    { font-size: 14px; color: #60726f; }
 
+    /* ---- 店舗アンケート完了後の Hibi 参加 CTA ---- */
+    .join-card {
+      background: linear-gradient(160deg, #f0faf5 0%, #ffffff 62%);
+      border: 1px solid #cdeadd; border-radius: 18px;
+      padding: 22px 20px; text-align: center;
+      box-shadow: 0 6px 20px rgba(44,168,122,.12);
+    }
+    .join-badge {
+      display: inline-block; font-size: 12px; font-weight: 700;
+      color: #1f8a5f; letter-spacing: .04em; margin-bottom: 8px;
+    }
+    .join-title {
+      font-size: 18px; font-weight: 700; color: #14352a;
+      line-height: 1.45; margin: 0 0 16px;
+    }
+    .join-benefits {
+      list-style: none; padding: 0; margin: 0 0 18px; text-align: left;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .join-benefits li {
+      display: flex; align-items: flex-start; gap: 10px;
+      font-size: 13.5px; color: #33514a; line-height: 1.5;
+    }
+    .join-benefits b { color: #14352a; }
+    .join-emoji {
+      flex-shrink: 0; width: 28px; height: 28px; border-radius: 9px;
+      background: #e3f5ec; display: inline-flex; align-items: center;
+      justify-content: center; font-size: 15px;
+    }
+    .join-btn {
+      width: 100%; padding: 15px; font-size: 16px; margin: 0;
+      box-shadow: 0 4px 12px rgba(44,168,122,.28);
+    }
+    .join-note { font-size: 11.5px; color: #7a8c88; line-height: 1.6; margin: 10px 0 0; }
+    .join-skip {
+      margin-top: 12px; background: none; border: none;
+      color: #839490; font-size: 13px; text-decoration: underline; cursor: pointer;
+    }
+
     /* ---- ページモード ---- */
     .page-header { padding: 12px 0; margin-bottom: 8px; }
     .page-title  { font-size: 17px; font-weight: 700; margin: 0; }
@@ -398,17 +437,8 @@
         <button id="btnCloseLiff" class="btn-next" style="min-width:160px;">LINEに戻る</button>
         <p id="completeCloseTip" style="display:none;font-size:13px;color:#60726f;margin-top:8px;">アンケートは完了しました。この画面を閉じてください。</p>
       </div>
-      <div id="storeSurveyCta" style="margin-top:20px;display:none;border-top:1px solid #e3ecea;padding-top:18px;">
-        <p style="font-size:14px;font-weight:600;color:#1a2f2a;margin-bottom:6px;">Hibiの他のアンケートにも参加しませんか？</p>
-        <p style="font-size:13px;color:#60726f;line-height:1.7;margin-bottom:14px;">
-          ご参加いただくと、今後Hibiから配信されるアンケート・インタビューに回答してポイントを貯められます。
-          ご利用には利用規約等への同意（無料の会員登録）が必要です。
-        </p>
-        <a id="btnJoinHibi" class="btn-next" style="display:inline-block;text-decoration:none;min-width:200px;">Hibiに参加する（会員登録）</a>
-        <div style="margin-top:10px;">
-          <button id="btnSkipJoin" type="button" class="btn-back" style="display:inline-block;">今はしない</button>
-        </div>
-      </div>
+      <!-- 店舗専用アンケート完了後の Hibi 参加 CTA。中身は buildStoreJoinCtaHtml() で描画する -->
+      <div id="storeSurveyCta" style="margin-top:24px;display:none;"></div>
       <p id="completeError" style="display:none;color:#e53e3e;font-size:14px;margin-top:12px;">完了処理に失敗しました。時間をおいて再度お試しください。</p>
     </div>
   </div>
@@ -441,6 +471,38 @@
   const PROJECTS_URL    = <%- JSON.stringify(locals.projectsUrl || '/liff/projects') %>;
   // 店舗回答後にグローバル同意フローへ通して正式な Hibi 会員へ昇格させる導線（同意済みなら即マイページへ）
   const MEMBER_JOIN_URL = <%- JSON.stringify(locals.memberJoinUrl || '/liff/consent?mode=initial&redirect=/liff/mypage') %>;
+
+  // 店舗専用アンケート完了後に出す「Hibiに参加する」CTA の中身を生成する。
+  // survey_question(showComplete) と interview_chat(finalizeChatCompletion) の両経路で共用し、
+  // 文言・レイアウトが片方だけ古くなる事故を防ぐ。回答者が「またアンケートに答えたい」と
+  // 思えるよう、報酬（ポイント→ギフト）・手軽さ・貢献感をベネフィットとして提示する。
+  function buildStoreJoinCtaHtml() {
+    return ''
+      + '<div class="join-card">'
+      +   '<div class="join-badge">＼ スキマ時間でポイ活 ／</div>'
+      +   '<p class="join-title">アンケートに答えて<br>コツコツ、ポイ活しよう。</p>'
+      +   '<ul class="join-benefits">'
+      +     '<li><span class="join-emoji">🪙</span><span>回答するたび<b>ポイントGET</b>＝毎日つづけるほど貯まる</span></li>'
+      +     '<li><span class="join-emoji">🎁</span><span>貯めたポイントは<b>ギフト券などに交換</b>できます</span></li>'
+      +     '<li><span class="join-emoji">⏱️</span><span><b>スマホで数分</b>、通勤・休憩のスキマ時間でOK</span></li>'
+      +   '</ul>'
+      +   '<a class="btn-next join-btn" data-role="join-hibi" style="text-decoration:none;">無料でポイ活を始める</a>'
+      +   '<p class="join-note">登録は無料。利用規約等への同意のみで、いつでも退会できます。</p>'
+      +   '<button type="button" class="join-skip" data-role="skip-join">今はしない</button>'
+      + '</div>';
+  }
+
+  // buildStoreJoinCtaHtml() を差し込んだコンテナに参加リンクとスキップ挙動を配線する。
+  function wireStoreJoinCta(container) {
+    const joinLink = container.querySelector('[data-role="join-hibi"]');
+    // href はテキスト連結ではなく setAttribute で確実に付与（MEMBER_JOIN_URL 欠落時の href="undefined" を避ける）
+    if (joinLink) joinLink.setAttribute('href', MEMBER_JOIN_URL);
+    const skip = container.querySelector('[data-role="skip-join"]');
+    if (skip) skip.addEventListener('click', () => {
+      const card = container.querySelector('.join-card') || container;
+      card.style.display = 'none';
+    });
+  }
 
   // 本人確認済みの LIFF ID token。書込み系API（回答/完了/画像/判定）に添付して所有者検証を通す。
   let AUTH_ID_TOKEN = null;
@@ -1845,17 +1907,13 @@
           completeCloseTip.style.display = '';
         }
 
-        // 店舗専用アンケートのときだけ「Hibiに参加する（会員登録）」CTA を表示（希望者のみ）
+        // 店舗専用アンケートのときだけ「Hibiに参加する」CTA を表示（希望者のみ）。
+        // グローバル同意フローへ誘導し、同意後 /liff/mypage 着地で正式な Hibi 会員になる。
         if (IS_STORE_SURVEY) {
           const storeCta = document.getElementById('storeSurveyCta');
-          const btnJoinHibi = document.getElementById('btnJoinHibi');
-          const btnSkipJoin = document.getElementById('btnSkipJoin');
-          if (storeCta && btnJoinHibi) {
-            // グローバル同意フローへ。同意後 /liff/mypage 着地で正式な Hibi 会員になる。
-            btnJoinHibi.href = MEMBER_JOIN_URL;
-            if (btnSkipJoin) {
-              btnSkipJoin.addEventListener('click', () => { storeCta.style.display = 'none'; });
-            }
+          if (storeCta) {
+            storeCta.innerHTML = buildStoreJoinCtaHtml();
+            wireStoreJoinCta(storeCta);
             storeCta.style.display = 'block';
           }
         }
@@ -2366,20 +2424,13 @@
         }
         chatMessages.appendChild(closeBtnWrap);
 
-        // 店舗専用アンケートのときだけ「Hibiに参加する（会員登録）」CTA を表示（希望者のみ）
+        // 店舗専用アンケートのときだけ「Hibiに参加する」CTA を表示（希望者のみ）。
+        // showComplete() と同じ buildStoreJoinCtaHtml() を使い、文言・レイアウトを両経路で統一する。
         if (IS_STORE_SURVEY) {
           const cta = document.createElement('div');
-          cta.style.cssText = 'margin-top:20px;border-top:1px solid #e3ecea;padding-top:18px;text-align:center;';
-          cta.innerHTML =
-            '<p style="font-size:14px;font-weight:600;color:#1a2f2a;margin-bottom:6px;">Hibiの他のアンケートにも参加しませんか？</p>' +
-            '<p style="font-size:13px;color:#60726f;line-height:1.7;margin-bottom:14px;">ご参加いただくと、今後Hibiから配信されるアンケート・インタビューに回答してポイントを貯められます。ご利用には利用規約等への同意（無料の会員登録）が必要です。</p>' +
-            '<a class="btn-next" style="display:inline-block;text-decoration:none;min-width:200px;">Hibiに参加する（会員登録）</a>' +
-            '<div style="margin-top:10px;"><button type="button" class="btn-back" data-role="chat-skip-join">今はしない</button></div>';
-          // href はテキスト連結ではなく setAttribute で確実に付与（MEMBER_JOIN_URL 欠落時の href="undefined" を避ける）
-          const joinLink = cta.querySelector('a.btn-next');
-          if (joinLink) joinLink.setAttribute('href', MEMBER_JOIN_URL);
-          const skip = cta.querySelector('[data-role="chat-skip-join"]');
-          if (skip) skip.addEventListener('click', () => { cta.style.display = 'none'; });
+          cta.style.cssText = 'margin-top:20px;';
+          cta.innerHTML = buildStoreJoinCtaHtml();
+          wireStoreJoinCta(cta);
           chatMessages.appendChild(cta);
         }
         chatMessages.scrollTop = chatMessages.scrollHeight;
