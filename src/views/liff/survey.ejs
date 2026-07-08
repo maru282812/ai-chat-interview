@@ -447,7 +447,15 @@
   // 書込み系 fetch 用の共通ヘッダ。トークンがあれば Authorization を付ける。
   function apiHeaders() {
     const h = { 'Content-Type': 'application/json' };
-    if (AUTH_ID_TOKEN) h['Authorization'] = 'Bearer ' + AUTH_ID_TOKEN;
+    // LIFF は getIDToken() を自動更新しないため init 時に掴んだ AUTH_ID_TOKEN が
+    // 長い回答中に失効しうる。書込み系APIごとに最新トークンを取り直す
+    // （LiffAuth 経由で liff.getIDToken() のライブ値、無ければ init 時の値）。
+    let token = AUTH_ID_TOKEN;
+    try {
+      const live = window.LiffAuth && LiffAuth.getCurrentAuthToken && LiffAuth.getCurrentAuthToken();
+      if (live) token = live;
+    } catch (_e) { /* liff 未初期化などは AUTH_ID_TOKEN にフォールバック */ }
+    if (token) h['Authorization'] = 'Bearer ' + token;
     return h;
   }
 
@@ -1265,6 +1273,17 @@
     const progressBar = document.getElementById('progressBar');
     const completeScreen = document.getElementById('completeScreen');
 
+    // 完了処理が IDトークン失効(401)で失敗し、再ログインして戻ってきた場合は、
+    // アンケートを最初から再表示せず、完了確定(サーバー側で idempotent)だけを
+    // 新しいトークンで再実行する。回答は既にサーバー保存済みのため再入力不要。
+    if (SESSION_ID && ASSIGNMENT_ID &&
+        sessionStorage.getItem('survey_complete_resume') === ASSIGNMENT_ID) {
+      sessionStorage.removeItem('survey_complete_resume');
+      console.info('[survey] resuming completion after re-auth');
+      showComplete();
+      return;
+    }
+
     // ---- 次へボタン押下前のバリデーション（表示中の設問のみ検証） ----
     function validateCurrentView() {
       try {
@@ -1779,7 +1798,19 @@
           headers: apiHeaders(),
           body: JSON.stringify({ session_id: SESSION_ID }),
         });
-        if (!resp.ok) throw new Error('complete API error');
+        if (!resp.ok) {
+          // IDトークン失効(401)なら、一度だけ再ログインして新トークンで完了を再実行する。
+          // 再ログイン後は survey_complete_resume フラグで戻り先を完了確定に直行させる。
+          let code = '';
+          try { code = (await resp.json()).error || ''; } catch (_e) {}
+          console.error('[survey] complete failed', { status: resp.status, code });
+          if (resp.status === 401 && window.LiffAuth && LiffAuth.handleTokenExpired) {
+            try { sessionStorage.setItem('survey_complete_resume', ASSIGNMENT_ID); } catch (_e) {}
+            if (LiffAuth.handleTokenExpired()) return; // logout+login でリダイレクト中
+            try { sessionStorage.removeItem('survey_complete_resume'); } catch (_e) {}
+          }
+          throw new Error('complete API error: ' + resp.status);
+        }
 
         completeActions.style.display = 'block';
         const inLiff = window.liff && typeof liff.isInClient === 'function' && liff.isInClient();
