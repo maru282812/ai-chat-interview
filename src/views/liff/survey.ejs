@@ -2230,42 +2230,7 @@
         chatAnswerArea.innerHTML = '';
         chatTextRow.style.display = 'none';
         chatNextRow.style.display = 'none';
-        (async () => {
-          try {
-            const resp = await fetch('/liff/survey/' + ASSIGNMENT_ID + '/complete', {
-              method: 'POST',
-              headers: apiHeaders(),
-              body: JSON.stringify({ session_id: SESSION_ID }),
-            });
-            if (!resp.ok) throw new Error('complete API error');
-
-            const closeBtnWrap = document.createElement('div');
-            closeBtnWrap.style.cssText = 'text-align:center;margin-top:16px;';
-            const inLiff = window.liff && typeof liff.isInClient === 'function' && liff.isInClient();
-            if (inLiff) {
-              const closeBtn = document.createElement('button');
-              closeBtn.className = 'btn-next';
-              closeBtn.style.minWidth = '160px';
-              closeBtn.textContent = 'LINEに戻る';
-              closeBtn.addEventListener('click', () => { liff.closeWindow(); });
-              closeBtnWrap.appendChild(closeBtn);
-            } else {
-              const tip = document.createElement('p');
-              tip.style.cssText = 'font-size:13px;color:#60726f;';
-              tip.textContent = 'アンケートは完了しました。この画面を閉じてください。';
-              closeBtnWrap.appendChild(tip);
-            }
-            chatMessages.appendChild(closeBtnWrap);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-          } catch(e) {
-            console.error('complete failed', e);
-            const errWrap = document.createElement('p');
-            errWrap.style.cssText = 'color:#e53e3e;font-size:14px;text-align:center;margin-top:12px;';
-            errWrap.textContent = '完了処理に失敗しました。時間をおいて再度お試しください。';
-            chatMessages.appendChild(errWrap);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-          }
-        })();
+        finalizeChatCompletion();
         return;
       }
 
@@ -2359,6 +2324,85 @@
     chatInput.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatAnswer(); }
     });
+
+    // ---- 完了確定（interview_chat）----
+    // survey_question の showComplete() と対になる完了処理。サーバー保存済みの回答に対して
+    // /complete を叩き、店舗専用アンケートなら「Hibiに参加する（会員登録）」CTA を出す。
+    // IDトークン失効(401)は一度だけ再ログインし survey_complete_resume で戻り先を完了確定に直行させる。
+    async function finalizeChatCompletion() {
+      try {
+        const resp = await fetch('/liff/survey/' + ASSIGNMENT_ID + '/complete', {
+          method: 'POST',
+          headers: apiHeaders(),
+          body: JSON.stringify({ session_id: SESSION_ID }),
+        });
+        if (!resp.ok) {
+          let code = '';
+          try { code = (await resp.json()).error || ''; } catch (_e) {}
+          console.error('[survey] chat complete failed', { status: resp.status, code });
+          if (resp.status === 401 && window.LiffAuth && LiffAuth.handleTokenExpired) {
+            try { sessionStorage.setItem('survey_complete_resume', ASSIGNMENT_ID); } catch (_e) {}
+            if (LiffAuth.handleTokenExpired()) return; // logout+login でリダイレクト中
+            try { sessionStorage.removeItem('survey_complete_resume'); } catch (_e) {}
+          }
+          throw new Error('complete API error: ' + resp.status);
+        }
+
+        const closeBtnWrap = document.createElement('div');
+        closeBtnWrap.style.cssText = 'text-align:center;margin-top:16px;';
+        const inLiff = window.liff && typeof liff.isInClient === 'function' && liff.isInClient();
+        if (inLiff) {
+          const closeBtn = document.createElement('button');
+          closeBtn.className = 'btn-next';
+          closeBtn.style.minWidth = '160px';
+          closeBtn.textContent = 'LINEに戻る';
+          closeBtn.addEventListener('click', () => { liff.closeWindow(); });
+          closeBtnWrap.appendChild(closeBtn);
+        } else {
+          const tip = document.createElement('p');
+          tip.style.cssText = 'font-size:13px;color:#60726f;';
+          tip.textContent = 'アンケートは完了しました。この画面を閉じてください。';
+          closeBtnWrap.appendChild(tip);
+        }
+        chatMessages.appendChild(closeBtnWrap);
+
+        // 店舗専用アンケートのときだけ「Hibiに参加する（会員登録）」CTA を表示（希望者のみ）
+        if (IS_STORE_SURVEY) {
+          const cta = document.createElement('div');
+          cta.style.cssText = 'margin-top:20px;border-top:1px solid #e3ecea;padding-top:18px;text-align:center;';
+          cta.innerHTML =
+            '<p style="font-size:14px;font-weight:600;color:#1a2f2a;margin-bottom:6px;">Hibiの他のアンケートにも参加しませんか？</p>' +
+            '<p style="font-size:13px;color:#60726f;line-height:1.7;margin-bottom:14px;">ご参加いただくと、今後Hibiから配信されるアンケート・インタビューに回答してポイントを貯められます。ご利用には利用規約等への同意（無料の会員登録）が必要です。</p>' +
+            '<a class="btn-next" style="display:inline-block;text-decoration:none;min-width:200px;">Hibiに参加する（会員登録）</a>' +
+            '<div style="margin-top:10px;"><button type="button" class="btn-back" data-role="chat-skip-join">今はしない</button></div>';
+          // href はテキスト連結ではなく setAttribute で確実に付与（MEMBER_JOIN_URL 欠落時の href="undefined" を避ける）
+          const joinLink = cta.querySelector('a.btn-next');
+          if (joinLink) joinLink.setAttribute('href', MEMBER_JOIN_URL);
+          const skip = cta.querySelector('[data-role="chat-skip-join"]');
+          if (skip) skip.addEventListener('click', () => { cta.style.display = 'none'; });
+          chatMessages.appendChild(cta);
+        }
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      } catch(e) {
+        console.error('complete failed', e);
+        const errWrap = document.createElement('p');
+        errWrap.style.cssText = 'color:#e53e3e;font-size:14px;text-align:center;margin-top:12px;';
+        errWrap.textContent = '完了処理に失敗しました。時間をおいて再度お試しください。';
+        chatMessages.appendChild(errWrap);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+    }
+
+    // 完了確定が IDトークン失効(401)で失敗し再ログインして戻った場合、チャットを最初から
+    // 出さず完了確定だけを新トークンで再実行する（回答はサーバー保存済みのため再入力不要）。
+    if (SESSION_ID && ASSIGNMENT_ID &&
+        sessionStorage.getItem('survey_complete_resume') === ASSIGNMENT_ID) {
+      sessionStorage.removeItem('survey_complete_resume');
+      console.info('[survey] resuming chat completion after re-auth');
+      addBubble('ご回答ありがとうございました。アンケートが完了しました。', 'ai');
+      finalizeChatCompletion();
+      return;
+    }
 
     try {
       console.log('[survey] askCurrentQuestion start, visibleQs=', visibleQs.length);
