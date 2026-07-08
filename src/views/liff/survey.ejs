@@ -529,6 +529,29 @@
     try {
       idToken = liff.getIDToken();
       if (!idToken) throw new Error('getIDToken returned null');
+
+      // IDトークン失効対策（liff-auth.ejs の initLiffOrWebAuth と同じ規則）。
+      // survey.ejs は独自 init のため initLiffOrWebAuth を経由せず、失効exp検査も
+      // 失効リトライガード(liff_token_expired_retry)の解除も従来ここで一切行われず、
+      // ①回答に時間がかかるとロード時のトークンが完了時までに失効し /complete が401
+      // ②KEY が別画面(store-entry/consent)や前回の回復で立ったまま残ると、完了時の
+      //   401リカバリ(handleTokenExpired)が即 false を返し回復不能=「完了処理に失敗」
+      //   →storeSurveyCtaもresp.ok後表示のため会員化CTAごと出ない、という不具合になる。
+      // ここで失効(間近)なら一度だけ先回り再ログインし、有効ならガードを解除して
+      // 完了時の失効で必ず一度リカバリできる状態へ戻す。
+      try {
+        const decoded = liff.getDecodedIDToken && liff.getDecodedIDToken();
+        const nowSec = Math.floor(Date.now() / 1000);
+        if (decoded && decoded.exp && decoded.exp <= nowSec + 30) {
+          console.warn('[survey] id token expired at load – recovering via re-login');
+          if (window.LiffAuth && LiffAuth.handleTokenExpired && LiffAuth.handleTokenExpired()) return; // リダイレクト中
+          // リトライ上限到達時は失効トークンのまま継続しサーバー判定(401→完了時リカバリ)に委ねる
+        } else {
+          try { sessionStorage.removeItem('liff_token_expired_retry'); } catch (_e) {}
+        }
+      } catch (_e) { /* decode 失敗時はそのまま継続 */ }
+
+      idToken = liff.getIDToken() || idToken; // 先回り回復に非該当なら取得済みトークンを使用
       AUTH_ID_TOKEN = idToken; // 以降の書込み系APIに添付
       console.info('[survey] ID token acquired');
     } catch (e) {
