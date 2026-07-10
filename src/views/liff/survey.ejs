@@ -1043,11 +1043,13 @@
   // ピル型チップの checkbox。既存 .card-item クリック配線（トグル＋排他＋collectChoiceVal）を再利用し、
   // 保存形式は checkbox リストと完全一致（該当のみの配列）。決定は既存の「次へ」ボタン。
   function buildChipSelectHtml(q, choices, exclAttrs) {
-    const items = choices.map(c => `<label class="card-item chip-item">
+    // 注意: チップは <label> ではなく <div>。<label> だとネイティブのラベル→checkbox トグルと
+    // 共通 .card-item クリック配線の input.checked 反転が二重発火して相殺され、選択できなくなる。
+    const items = choices.map(c => `<div class="card-item chip-item">
       <input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" ${exclAttrs(c)} style="display:none" />
       <span class="card-item-title">${esc(c.label)}</span>
       ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" onclick="event.stopPropagation();" style="margin-top:6px;width:100%;box-sizing:border-box;" />` : ''}
-    </label>`).join('');
+    </div>`).join('');
     return `<div class="answer-chips" data-type="multi">${items}</div>`;
   }
 
@@ -1064,7 +1066,7 @@
     return `<div class="answer-bigslider" data-code="${esc(q.question_code)}">
       <div class="bigslider-value"><span class="bigslider-label">スライドして選択してください</span></div>
       <input type="range" class="bigslider-range" min="0" max="${n - 1}" step="1" value="${mid}"
-        data-code="${esc(q.question_code)}" data-values='${values}' data-labels='${labels}' />
+        data-values='${values}' data-labels='${labels}' />
       <div class="bigslider-ends"><span>${first}</span><span>${last}</span></div>
     </div>`;
   }
