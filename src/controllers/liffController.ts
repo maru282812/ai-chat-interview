@@ -15,6 +15,7 @@ import {
   resumeView,
   selectPhaseQuestions,
 } from "../services/surveyFlowService";
+import { resolveAnswerPresentation } from "../lib/answerPresentation";
 import { userProfileRepository, type UserProfileUpsertInput } from "../repositories/userProfileRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { projectFavoriteRepository } from "../repositories/projectFavoriteRepository";
@@ -929,6 +930,23 @@ export const liffController = {
       }
     }
 
+    // 回答UIプリセット（migration 075）を各設問に同梱してクライアントへ渡す。
+    // 表示パターンはサーバー権威で解決する（クライアントは presentation.pattern を見て描画するだけ）。
+    // 初回レンダリング時点の選択肢数で解決するため、carry-forward で選択肢が絞られる設問の
+    // 件数依存フォールバック（carousel>8 等）は基底件数での近似となる（描画に致命的な差はない）。
+    const answerUiPreset = project.answer_ui_preset ?? "standard";
+    const questionsForClient = renderQuestions.map((q) => ({
+      ...q,
+      presentation: resolveAnswerPresentation(
+        {
+          question_type: q.question_type,
+          question_text: q.question_text,
+          question_config: q.question_config,
+        },
+        answerUiPreset,
+      ),
+    }));
+
     const DEFAULT_FAIL_MSG = "今回はご参加いただけませんでした。またの機会にご協力をお願いします。";
     const renderData = {
       title: project.user_display_title || project.name,
@@ -938,7 +956,8 @@ export const liffController = {
         name: project.user_display_title || project.name,
         display_mode: project.display_mode ?? "survey_question",
       },
-      questions: renderQuestions,
+      questions: questionsForClient,
+      answerUiPreset,
       pageGroups: orderedPageGroups,
       sessionId: session.id,
       assignmentId: assignment.id,
@@ -1179,6 +1198,7 @@ export const liffController = {
       ctx: nextCtx,
       fromQuestion: question,
       normalizedAnswer: branchPayload,
+      answerUiPreset: project.answer_ui_preset ?? "standard",
     });
 
     res.json({ ok: true, next });
@@ -1221,7 +1241,7 @@ export const liffController = {
       if (q) answeredCodes.add(q.question_code);
     }
 
-    const next = resumeView(renderSet.questions, ctx, answeredCodes);
+    const next = resumeView(renderSet.questions, ctx, answeredCodes, project.answer_ui_preset ?? "standard");
     res.json({ ok: true, next });
   },
 

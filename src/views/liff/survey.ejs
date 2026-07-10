@@ -108,6 +108,20 @@
     .card-extra-img  { width: calc(50% - 2px); height: 60px; object-fit: cover; border-radius: 4px; }
     .choice-desc { font-size: 12px; color: #60726f; line-height: 1.3; display: block; }
     .choice-extra-imgs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+
+    /* ---- 回答UIプリセット: タップ確定系（tap_cards / big_split・migration 075） ---- */
+    .answer-tap { display: flex; flex-direction: column; gap: 12px; }
+    .answer-tap .tap-item {
+      padding: 18px 16px; border: 2px solid #d8e3e0; border-radius: 14px;
+      background: #fff; cursor: pointer; transition: all 0.12s; align-items: center;
+      gap: 6px; -webkit-tap-highlight-color: transparent;
+    }
+    .answer-tap .tap-item:active { transform: scale(0.98); }
+    .answer-tap .tap-item.selected { border-color: #2ca87a; background: #e8f7f0; box-shadow: 0 0 0 3px rgba(44,168,122,0.15); }
+    .answer-tap .tap-item .card-item-title { font-size: 16px; }
+    /* big_split: 残り画面を大きく使う2分割の巨大タップ */
+    .answer-split .tap-item { min-height: 96px; justify-content: center; font-size: 17px; }
+    .answer-split .tap-item .card-item-title { font-size: 18px; }
     .choice-extra-img  { height: 60px; width: auto; max-width: 100%; object-fit: cover; border-radius: 4px; }
 
     /* ---- image_upload ---- */
@@ -892,6 +906,26 @@
   }
 
   // ---- 回答 UI HTML 生成（タイプ別、チャットモードからも呼び出す） ----
+  // ---- 回答UIプリセット: タップ確定系レンダラ（tap_cards / big_split・migration 075）----
+  // single_choice を大型タップUIで描画する。radio と同一の name/value を用いるため
+  // 既存の .card-item クリック配線・collectChoiceVal・保存形式（single_choice のスカラー値）を
+  // そのまま再利用でき、保存内容は radio リストと完全一致する。data-autoadvance で自動遷移。
+  function buildTapChoiceHtml(q, choices, pattern) {
+    const layoutClass = pattern === 'big_split' ? 'answer-split' : 'answer-tapcards';
+    const items = choices.map(c => {
+      const other = c.allow_free_text
+        ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" onclick="event.stopPropagation();" style="margin-top:8px;width:100%;box-sizing:border-box;" />`
+        : '';
+      return `<label class="card-item tap-item">
+        <input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" style="display:none" />
+        <span class="card-item-title">${esc(c.label)}</span>
+        ${c.description ? `<span class="card-item-desc">${esc(c.description)}</span>` : ''}
+        ${other}
+      </label>`;
+    }).join('');
+    return `<div class="answer-tap ${layoutClass}" data-type="single" data-autoadvance="1">${items}</div>`;
+  }
+
   function buildAnswerInputHtml(q, showSubmitButton = false) {
     const parsed = q.display_tags_parsed || {};
     const qType = q.question_type;
@@ -968,8 +1002,16 @@
             </label>`;
           }).join('') + `</div>`;
       } else {
-        inputHtml = `<div class="${choiceClass}" data-type="single">` +
-          choices.map(c => choiceListItem(`<input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />`, c)).join('') + `</div>`;
+        // 回答UIプリセット（migration 075）: presentation.pattern で描画を出し分ける。
+        // tap_cards / big_split は radio と同一 name/value を使うため保存形式は radio と完全一致。
+        // 未該当は従来の radio リスト（formal＝現行そのまま）にフォールバック。
+        const pattern = q.presentation && q.presentation.pattern;
+        if (pattern === 'tap_cards' || pattern === 'big_split') {
+          inputHtml = buildTapChoiceHtml(q, choices, pattern);
+        } else {
+          inputHtml = `<div class="${choiceClass}" data-type="single">` +
+            choices.map(c => choiceListItem(`<input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />`, c)).join('') + `</div>`;
+        }
       }
     } else if (qType === 'multi_choice') {
       console.log('[survey] render_type: multi_choice | choices:', choices.length);
@@ -1499,6 +1541,19 @@
         });
       }
 
+      // ---- タップ確定系（tap_cards / big_split）の自動遷移（survey_question のみ・migration 075）----
+      // 単一選択でタップ確定した直後に「次へ」相当の遷移を発火する。btnNext.click() を再利用するため
+      // 検証・保存・probe・分岐は既存経路そのまま。「その他」記述カードは入力待ちのため対象外。
+      function maybeAutoAdvance(card, input) {
+        if (DISPLAY_MODE !== 'survey_question') return;
+        if (!input || input.type !== 'radio') return;
+        const container = card.closest('[data-autoadvance="1"]');
+        if (!container) return;
+        if (card.querySelector('.other-text-input')) return;
+        if (btnNext.disabled) return;
+        setTimeout(() => { if (!btnNext.disabled) btnNext.click(); }, 180);
+      }
+
       // ---- 画像カードグリッド（click で label 全体を選択） ----
       questionArea.querySelectorAll('.card-item').forEach(card => {
         card.addEventListener('click', (e) => {
@@ -1536,6 +1591,7 @@
           }
           answerCtx.answers[q.question_code.toLowerCase()] = collectChoiceVal(q);
           checkNextEnabled();
+          maybeAutoAdvance(card, input);
         });
       });
 
