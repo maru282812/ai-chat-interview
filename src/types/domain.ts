@@ -73,7 +73,15 @@ export type QuestionType =
   // 画像付きテキスト
   | "text_with_image"
   // SD法
-  | "sd";
+  | "sd"
+  // 新設問形式（migration 075）
+  | "pairwise"
+  | "ranking_top_n"
+  | "point_allocation"
+  | "image_heatmap";
+
+/** 回答UIプリセット（migration 075）。casual=A(スワイプ)/standard=B(タップ)/formal=C(従来型)。 */
+export type AnswerUiPreset = "casual" | "standard" | "formal";
 export type AnswerRole = "primary" | "ai_probe";
 export type ExtractionMode = "none" | "single_object" | "multi_object";
 export type ExtractionTarget = "post_answer" | "post_session";
@@ -325,6 +333,8 @@ export interface Project {
   recruit_deadline?: string | null;
   /** 応募方式: manual=管理者選考 / auto=応募と同時にassignment発行して即回答 (Migration 072) */
   apply_mode?: ProjectApplyMode;
+  /** 回答UIプリセット casual=A(スワイプ)/standard=B(タップ)/formal=C(従来型) (Migration 075)。未設定は standard 扱い。 */
+  answer_ui_preset?: AnswerUiPreset;
   /** 実施形式の表示用テキスト（AIチャット/Google Meet等）(Migration 072) */
   interview_format?: string | null;
   created_at: string;
@@ -480,6 +490,44 @@ export interface OptionRandomizationConfig {
   randomize_groups?: boolean;
 }
 
+/** 回答UI表示パターンの設問単位上書き（migration 075）。 */
+export interface QuestionPresentationConfig {
+  /** 表示パターン名の明示指定（空=プリセット準拠）。例: swipe_card / tap_cards / carousel ... */
+  pattern?: string;
+  /** 順序尺度として扱う single_choice（casual=絵文字フェイス / standard=ビッグスライダー）。 */
+  scale?: boolean;
+  /** 0–100 のビッグスライダーとして扱う single_choice（保存は {value:number}）。 */
+  slider?: boolean;
+  /** face_scale の絵文字上書き（先頭→末尾の順）。 */
+  icons?: string[];
+}
+
+/** pairwise（ペアワイズ連打）設定（migration 075）。 */
+export interface PairwiseConfig {
+  /** 提示する対戦回数（省略時は ceil(nC2 * 0.6)、上限 nC2）。 */
+  rounds?: number;
+}
+
+/** ranking_top_n（表彰台ランキング）設定（migration 075）。 */
+export interface RankingConfig {
+  /** 上位何位まで選ばせるか（1..3、デフォルト3）。 */
+  top_n?: number;
+}
+
+/** point_allocation（ポイント配分）設定（migration 075）。 */
+export interface AllocationConfig {
+  /** 配分する合計ポイント（デフォルト100）。 */
+  total?: number;
+}
+
+/** image_heatmap（画像タップ）設定（migration 075）。 */
+export interface HeatmapConfig {
+  /** タップ対象画像URL。 */
+  image_url: string;
+  /** 最大タップ数（1..5、デフォルト1）。 */
+  max_taps?: number;
+}
+
 export interface QuestionConfig {
   options?: QuestionOption[];
   matrix_cols?: QuestionOption[];
@@ -511,6 +559,16 @@ export interface QuestionConfig {
   meta?: QuestionMeta;
   /** 選択肢ランダム化設定（L3・選択肢順/グループ/アンカー固定）。 */
   option_randomization?: OptionRandomizationConfig;
+  /** 回答UI表示パターンの設問単位上書き（migration 075）。プロジェクトプリセットより優先。 */
+  presentation?: QuestionPresentationConfig;
+  /** pairwise（ペアワイズ）設定（migration 075・question_type='pairwise'）。 */
+  pairwise?: PairwiseConfig;
+  /** ranking_top_n（表彰台ランキング）設定（migration 075）。 */
+  ranking?: RankingConfig;
+  /** point_allocation（ポイント配分）設定（migration 075）。 */
+  allocation?: AllocationConfig;
+  /** image_heatmap（画像タップ）設定（migration 075）。 */
+  heatmap?: HeatmapConfig;
   extraction?: QuestionExtractionConfig | null;
   conversationControl?: {
     probeIntent?: string;

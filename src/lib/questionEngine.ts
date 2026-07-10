@@ -17,7 +17,8 @@
  *   - AI 深掘り（既存 conversationOrchestratorService に委譲）
  */
 
-import type { Question, QuestionOption } from "../types/domain";
+import type { AnswerUiPreset, Question, QuestionOption } from "../types/domain";
+import { type AnswerPresentation, resolveAnswerPresentation } from "./answerPresentation";
 import type {
   DisplayTagsParsed,
   VisibilityCondition,
@@ -440,6 +441,11 @@ export interface ResolvedQuestionView {
   commentTop: string | null;
   commentBottom: string | null;
   options: ResolvedOption[];
+  /**
+   * 回答UI表示パターン（migration 075）。projectPreset を渡した場合のみ算出。
+   * carry-forward / disable 反映後の実選択肢数でフォールバック判定する。
+   */
+  presentation?: AnswerPresentation;
 }
 
 export function resolveQuestionView(
@@ -447,13 +453,15 @@ export function resolveQuestionView(
     Question,
     | "question_code"
     | "question_text"
+    | "question_type"
     | "comment_top"
     | "comment_bottom"
     | "visibility_conditions"
     | "display_tags_parsed"
     | "question_config"
   >,
-  ctx: AnswerContext
+  ctx: AnswerContext,
+  projectPreset?: AnswerUiPreset | null
 ): ResolvedQuestionView {
   const parsed: DisplayTagsParsed | null = question.display_tags_parsed ?? null;
   const insertions = parsed?.answerInsertions;
@@ -479,6 +487,21 @@ export function resolveQuestionView(
     .filter((o) => enabled.has(o.value))
     .map((o) => ({ ...o, label: applyAnswerInsertions(o.label, insertions, ctx) }));
 
+  // 表示パターンの解決（projectPreset を渡した呼び出しのみ）。
+  // フォールバック判定は差し込み・持ち越し反映後の実選択肢数で行う。
+  const presentation =
+    projectPreset === undefined
+      ? undefined
+      : resolveAnswerPresentation(
+          {
+            question_type: question.question_type,
+            question_text: questionText,
+            question_config: question.question_config ?? null,
+          },
+          projectPreset,
+          options.length
+        );
+
   return {
     question_code: question.question_code,
     visible: isQuestionVisible(question, ctx),
@@ -486,5 +509,6 @@ export function resolveQuestionView(
     commentTop,
     commentBottom,
     options,
+    presentation,
   };
 }
