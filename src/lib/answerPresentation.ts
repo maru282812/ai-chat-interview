@@ -24,6 +24,8 @@ export interface AnswerPresentation {
   preset: AnswerUiPreset;
   /** 自動フォールバック（降格）が発生したか。 */
   fallback_applied: boolean;
+  /** pairwise（duel）のとき、サーバー生成の対戦ペアと seed（再現性のため）。 */
+  pairwise?: { pairs: Array<[string, string]>; seed: number };
 }
 
 export const DEFAULT_PRESET: AnswerUiPreset = "standard";

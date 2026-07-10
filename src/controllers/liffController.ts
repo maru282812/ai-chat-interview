@@ -16,6 +16,7 @@ import {
   selectPhaseQuestions,
 } from "../services/surveyFlowService";
 import { resolveAnswerPresentation } from "../lib/answerPresentation";
+import { generatePairwisePairs, isNewAnswerType, validateNewTypeAnswer } from "../lib/answerTypes";
 import { userProfileRepository, type UserProfileUpsertInput } from "../repositories/userProfileRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { projectFavoriteRepository } from "../repositories/projectFavoriteRepository";
@@ -1130,6 +1131,33 @@ export const liffController = {
           ok: false,
           error: `同時に選択できない選択肢が含まれています（「${violation[0]}」と「${violation[1]}」）。`,
         });
+        return;
+      }
+    }
+
+    // 新設問形式（migration 075）のサーバー権威バリデーション。
+    // クライアントは answer_value に JSON 文字列で構造化回答を送る（保存形式は matrix と同じ慣例）。
+    if (isNewAnswerType(question.question_type)) {
+      let parsed: unknown;
+      try {
+        parsed = typeof answerValue === "string" ? JSON.parse(answerValue) : answerValue;
+      } catch {
+        res.status(400).json({ ok: false, error: "回答データの形式が不正です。" });
+        return;
+      }
+      const expectedRounds =
+        question.question_type === "pairwise"
+          ? generatePairwisePairs(
+              (question.question_config?.options ?? []).map((o) => String(o.value)),
+              question.question_config?.pairwise?.rounds,
+              question.question_code,
+            ).pairs.length
+          : undefined;
+      const result = validateNewTypeAnswer(question.question_type, question.question_config ?? null, parsed, {
+        expectedRounds,
+      });
+      if (!result.ok) {
+        res.status(400).json({ ok: false, error: result.error });
         return;
       }
     }

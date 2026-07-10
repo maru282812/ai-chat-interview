@@ -19,6 +19,7 @@
 
 import type { AnswerUiPreset, Question, QuestionOption } from "../types/domain";
 import { type AnswerPresentation, resolveAnswerPresentation } from "./answerPresentation";
+import { generatePairwisePairs } from "./answerTypes";
 import type {
   DisplayTagsParsed,
   VisibilityCondition,
@@ -489,7 +490,7 @@ export function resolveQuestionView(
 
   // 表示パターンの解決（projectPreset を渡した呼び出しのみ）。
   // フォールバック判定は差し込み・持ち越し反映後の実選択肢数で行う。
-  const presentation =
+  let presentation =
     projectPreset === undefined
       ? undefined
       : resolveAnswerPresentation(
@@ -501,6 +502,16 @@ export function resolveQuestionView(
           projectPreset,
           options.length
         );
+
+  // pairwise（duel）は対戦ペアをサーバーで決定的に生成して同梱する（再現性のため seed 付き）。
+  if (presentation && presentation.pattern === "duel") {
+    const plan = generatePairwisePairs(
+      options.map((o) => o.value),
+      question.question_config?.pairwise?.rounds,
+      question.question_code
+    );
+    presentation = { ...presentation, pairwise: plan };
+  }
 
   return {
     question_code: question.question_code,
