@@ -60,6 +60,7 @@ interface ProjectMutationInput {
   client_id?: string | null;
   concept_rotation_mode?: 'off' | 'latin' | 'full';
   randomize_question_order?: boolean;
+  answer_ui_preset?: import("../types/domain").AnswerUiPreset;
 }
 
 type ProjectUpdateInput = Partial<ProjectMutationInput>;
