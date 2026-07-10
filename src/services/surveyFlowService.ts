@@ -19,7 +19,7 @@ import {
   type ResolvedQuestionView,
 } from "../lib/questionEngine";
 import { surveyOrderingService } from "./surveyOrderingService";
-import type { Answer, Project, Question, QuestionPageGroup, Session } from "../types/domain";
+import type { AnswerUiPreset, Answer, Project, Question, QuestionPageGroup, Session } from "../types/domain";
 import type { AnswerContext } from "../types/questionSchema";
 
 /** 配列（複数選択）として ctx に格納すべき設問タイプ。 */
@@ -96,6 +96,8 @@ export function computeNextView(input: {
   ctx: AnswerContext;
   fromQuestion: Question;
   normalizedAnswer: Record<string, unknown>;
+  /** 回答UIプリセット（migration 075）。渡すと presentation を同梱する。 */
+  answerUiPreset?: AnswerUiPreset | null;
 }): ResolvedQuestionView | null {
   const ordered = orderedVisibleUniverse(input.questions);
 
@@ -111,7 +113,7 @@ export function computeNextView(input: {
     candidate = advancePastInvisible(fromIndex + 1, ordered, input.ctx);
   }
 
-  return candidate ? resolveQuestionView(candidate, input.ctx) : null;
+  return candidate ? resolveQuestionView(candidate, input.ctx, input.answerUiPreset) : null;
 }
 
 // ------------------------------------------------------------------
@@ -177,13 +179,14 @@ export async function resolveOrderedRenderSet(input: {
 export function resumeView(
   questions: Question[],
   ctx: AnswerContext,
-  answeredCodes: Set<string>
+  answeredCodes: Set<string>,
+  answerUiPreset?: AnswerUiPreset | null
 ): ResolvedQuestionView | null {
   const ordered = orderedVisibleUniverse(questions);
   for (const q of ordered) {
     if (answeredCodes.has(q.question_code)) continue;
     if (!isQuestionVisible(q, ctx)) continue;
-    return resolveQuestionView(q, ctx);
+    return resolveQuestionView(q, ctx, answerUiPreset);
   }
   return null;
 }

@@ -1258,6 +1258,9 @@ interface QuestionFormValues {
   matrix_col_extra_image_urls: string[];
   matrix_col_descriptions: string[];
   matrix_header_mode: string;
+  presentation_pattern: string;
+  presentation_scale: boolean;
+  presentation_slider: boolean;
   display_format: string;
   grid_cols: string;
   image_upload_max_count: string;
@@ -1528,6 +1531,10 @@ function buildQuestionFormValues(
       return [];
     })(),
     matrix_header_mode: overrides.matrix_header_mode ?? (question?.question_config?.matrix_header_mode ?? "normal"),
+    // 回答UI表示パターンの設問単位上書き（migration 075）
+    presentation_pattern: overrides.presentation_pattern ?? (question?.question_config?.presentation?.pattern ?? ""),
+    presentation_scale: overrides.presentation_scale ?? (question?.question_config?.presentation?.scale ?? false),
+    presentation_slider: overrides.presentation_slider ?? (question?.question_config?.presentation?.slider ?? false),
     display_format: overrides.display_format ?? (question?.question_config?.display_format ?? "list"),
     grid_cols: overrides.grid_cols ?? String(question?.question_config?.grid_cols ?? "2"),
     image_upload_max_count: overrides.image_upload_max_count ?? String(question?.question_config?.image_upload_config?.max_count ?? ""),
@@ -1626,6 +1633,9 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     matrix_col_extra_image_urls: bodyStringArray(req.body.matrix_col_extra_image_urls).map((s) => s.trim()),
     matrix_col_descriptions: bodyStringArray(req.body.matrix_col_descriptions).map((d) => d.trim()),
     matrix_header_mode: bodyString(req.body.matrix_header_mode) || "normal",
+    presentation_pattern: bodyString(req.body.presentation_pattern),
+    presentation_scale: req.body.presentation_scale === "true" || req.body.presentation_scale === "on",
+    presentation_slider: req.body.presentation_slider === "true" || req.body.presentation_slider === "on",
     display_format: bodyString(req.body.display_format) || "list",
     grid_cols: bodyString(req.body.grid_cols) || "2",
     image_upload_max_count: bodyString(req.body.image_upload_max_count),
@@ -2022,6 +2032,23 @@ function buildQuestionConfigFromRequest(
     };
   } else {
     delete questionConfig.extraction;
+  }
+
+  // 回答UI表示パターンの設問単位上書き（migration 075）。空=プロジェクトのプリセット準拠。
+  // 既存 presentation.icons は UI 非対象のため保持する。
+  const presPattern = bodyString(req.body.presentation_pattern).trim();
+  const presScale = req.body.presentation_scale === "true" || req.body.presentation_scale === "on";
+  const presSlider = req.body.presentation_slider === "true" || req.body.presentation_slider === "on";
+  const existingIcons = existing?.presentation?.icons;
+  if (presPattern || presScale || presSlider || (Array.isArray(existingIcons) && existingIcons.length > 0)) {
+    const presentation: NonNullable<NonNullable<Question["question_config"]>["presentation"]> = {};
+    if (presPattern) presentation.pattern = presPattern;
+    if (presScale) presentation.scale = true;
+    if (presSlider) presentation.slider = true;
+    if (Array.isArray(existingIcons) && existingIcons.length > 0) presentation.icons = existingIcons;
+    questionConfig.presentation = presentation;
+  } else {
+    delete questionConfig.presentation;
   }
 
   return questionConfig;
@@ -2603,6 +2630,11 @@ export const adminController = {
         screening_last_question_order: existing.screening_last_question_order ?? null,
         is_discoverable: req.body.is_discoverable === "true" || req.body.is_discoverable === "on",
         randomize_question_order: req.body.randomize_question_order === "true" || req.body.randomize_question_order === "on",
+        answer_ui_preset: (["casual", "standard", "formal"] as const).includes(
+          bodyString(req.body.answer_ui_preset) as "casual" | "standard" | "formal",
+        )
+          ? (bodyString(req.body.answer_ui_preset) as "casual" | "standard" | "formal")
+          : "standard",
         category: bodyString(req.body.category) || null,
         estimated_minutes: parseOptionalInteger(req.body.estimated_minutes) ?? null,
         max_respondents: parseOptionalInteger(req.body.max_respondents) ?? null,

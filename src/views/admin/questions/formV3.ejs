@@ -495,6 +495,33 @@
               value="<%= safeForm.grid_cols || '2' %>" style="width:60px;" />
           </label>
         </div>
+
+        <!-- 回答UI表示パターンの上書き（migration 075・survey_question モードのみ適用） -->
+        <div style="margin-top:12px;padding-top:10px;border-top:1px dashed #d8e3e0;">
+          <label style="font-size:13px;display:block;">
+            表示パターンの上書き（空＝プロジェクトのプリセット準拠）
+            <select name="presentation_pattern" style="margin-top:4px;">
+              <option value="" <%= !safeForm.presentation_pattern ? 'selected' : '' %>>プリセットに従う</option>
+              <option value="swipe_card"  <%= safeForm.presentation_pattern === 'swipe_card'  ? 'selected' : '' %>>swipe_card（2択スワイプ）</option>
+              <option value="big_split"   <%= safeForm.presentation_pattern === 'big_split'   ? 'selected' : '' %>>big_split（2分割ビッグタップ）</option>
+              <option value="carousel"    <%= safeForm.presentation_pattern === 'carousel'    ? 'selected' : '' %>>carousel（カードカルーセル）</option>
+              <option value="tap_cards"   <%= safeForm.presentation_pattern === 'tap_cards'   ? 'selected' : '' %>>tap_cards（大型タップカード）</option>
+              <option value="face_scale"  <%= safeForm.presentation_pattern === 'face_scale'  ? 'selected' : '' %>>face_scale（絵文字フェイス）</option>
+              <option value="big_slider"  <%= safeForm.presentation_pattern === 'big_slider'  ? 'selected' : '' %>>big_slider（ビッグスライダー）</option>
+              <option value="sort_swipe"  <%= safeForm.presentation_pattern === 'sort_swipe'  ? 'selected' : '' %>>sort_swipe（スワイプ振り分け・複数選択）</option>
+              <option value="chip_select" <%= safeForm.presentation_pattern === 'chip_select' ? 'selected' : '' %>>chip_select（チップ選択・複数選択）</option>
+            </select>
+          </label>
+          <label style="display:block;margin-top:6px;font-size:13px;">
+            <input type="checkbox" name="presentation_scale" value="true" <%= safeForm.presentation_scale ? 'checked' : '' %> />
+            順序尺度として扱う（casual=絵文字フェイス / standard=スライダー）
+          </label>
+          <label style="display:block;margin-top:4px;font-size:13px;">
+            <input type="checkbox" name="presentation_slider" value="true" <%= safeForm.presentation_slider ? 'checked' : '' %> />
+            スライダーで回答（single_choice の順序選択）
+          </label>
+          <p class="helper-text" style="font-size:11px;margin:6px 0 0;">保存形式はパターンに関わらず不変です。survey_page / チャット型には影響しません。</p>
+        </div>
       </div>
 
       <!-- 複数選択制約 -->

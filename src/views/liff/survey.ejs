@@ -108,6 +108,108 @@
     .card-extra-img  { width: calc(50% - 2px); height: 60px; object-fit: cover; border-radius: 4px; }
     .choice-desc { font-size: 12px; color: #60726f; line-height: 1.3; display: block; }
     .choice-extra-imgs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+
+    /* ---- 回答UIプリセット: タップ確定系（tap_cards / big_split・migration 075） ---- */
+    .answer-tap { display: flex; flex-direction: column; gap: 12px; }
+    .answer-tap .tap-item {
+      padding: 18px 16px; border: 2px solid #d8e3e0; border-radius: 14px;
+      background: #fff; cursor: pointer; transition: all 0.12s; align-items: center;
+      gap: 6px; -webkit-tap-highlight-color: transparent;
+    }
+    .answer-tap .tap-item:active { transform: scale(0.98); }
+    .answer-tap .tap-item.selected { border-color: #2ca87a; background: #e8f7f0; box-shadow: 0 0 0 3px rgba(44,168,122,0.15); }
+    .answer-tap .tap-item .card-item-title { font-size: 16px; }
+    /* big_split: 残り画面を大きく使う2分割の巨大タップ */
+    .answer-split .tap-item { min-height: 96px; justify-content: center; font-size: 17px; }
+    .answer-split .tap-item .card-item-title { font-size: 18px; }
+
+    /* face_scale: 横並び絵文字フェイス */
+    .answer-facescale { display: flex; gap: 8px; justify-content: space-between; }
+    .answer-facescale .face-item {
+      flex: 1; padding: 12px 4px; border: 2px solid #d8e3e0; border-radius: 12px;
+      background: #fff; cursor: pointer; transition: all 0.12s; align-items: center; gap: 4px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .answer-facescale .face-item.selected { border-color: #2ca87a; background: #e8f7f0; }
+    .answer-facescale .face-emoji { font-size: 26px; line-height: 1; }
+    .answer-facescale .card-item-title { font-size: 11px; }
+
+    /* chip_select: ピル型チップ */
+    .answer-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .answer-chips .chip-item {
+      padding: 9px 16px; border: 2px solid #d8e3e0; border-radius: 999px;
+      background: #fff; cursor: pointer; transition: all 0.12s; flex-direction: row;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .answer-chips .chip-item.selected { border-color: #2ca87a; background: #e8f7f0; }
+    .answer-chips .chip-item .card-item-title { font-size: 14px; }
+
+    /* big_slider */
+    .answer-bigslider { padding: 8px 4px; }
+    .bigslider-value { text-align: center; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+    .bigslider-label { font-size: 18px; font-weight: 700; color: #2ca87a; }
+    .bigslider-range { width: 100%; margin: 14px 0 6px; accent-color: #2ca87a; height: 28px; }
+    .bigslider-ends { display: flex; justify-content: space-between; font-size: 12px; color: #60726f; }
+
+    /* swipe_card / sort_swipe 共通のデッキ */
+    .answer-swipe, .answer-sortswipe { display: flex; flex-direction: column; align-items: stretch; }
+    .swipe-deck, .sort-deck { position: relative; height: 190px; margin: 4px 0 12px; }
+    .swipe-card, .sort-card {
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 8px; text-align: center;
+      border: 2px solid #d8e3e0; border-radius: 16px; background: #fff; padding: 16px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.06); cursor: grab; user-select: none; touch-action: pan-y;
+    }
+    .swipe-back { position: absolute; inset: 0; border: 2px solid #e4ecea; border-radius: 16px; background: #fff; }
+    .swipe-back1 { transform: translateY(8px) scale(0.97); }
+    .swipe-back2 { transform: translateY(16px) scale(0.94); }
+    .swipe-card-hint { font-size: 14px; color: #60726f; }
+    .sort-title { font-size: 18px; font-weight: 700; }
+    .sort-desc, .carousel-desc { font-size: 12px; color: #60726f; }
+    .sort-done { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #2ca87a; }
+    .swipe-btns, .sort-btns { display: flex; gap: 10px; }
+    .swipe-btn, .sort-btn {
+      flex: 1; padding: 13px; border: 2px solid #2ca87a; border-radius: 12px;
+      background: #fff; color: #2ca87a; font-size: 15px; font-weight: 600; cursor: pointer;
+    }
+    .sort-btn.sort-yes { background: #2ca87a; color: #fff; }
+    .sort-btn.sort-no { border-color: #d88; color: #c55; }
+    .swipe-tip { font-size: 12px; color: #90a29e; text-align: center; margin: 8px 0 0; }
+    .sort-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .sort-chip { font-size: 11px; color: #60726f; padding: 3px 8px; border-radius: 999px; background: #eef4f2; }
+    .sort-chip.active { background: #2ca87a; color: #fff; }
+    .sort-chip.done { text-decoration: line-through; opacity: 0.6; }
+    .sort-chip.done.yes { text-decoration: none; opacity: 1; background: #d6efe4; color: #1f7a57; }
+
+    /* carousel */
+    .answer-carousel { display: flex; flex-direction: column; }
+    .carousel-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .carousel-chip {
+      min-width: 30px; height: 30px; border-radius: 8px; border: 1px solid #d8e3e0;
+      background: #fff; font-size: 12px; color: #60726f; cursor: pointer;
+    }
+    .carousel-chip.active { background: #2ca87a; color: #fff; border-color: #2ca87a; }
+    .carousel-viewport { position: relative; min-height: 150px; }
+    .carousel-card {
+      display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
+      border: 2px solid #d8e3e0; border-radius: 16px; background: #fff; padding: 18px 16px;
+      cursor: grab; user-select: none; touch-action: pan-y;
+    }
+    .carousel-img { max-width: 100%; height: 110px; object-fit: cover; border-radius: 10px; }
+    .carousel-title { font-size: 17px; font-weight: 700; }
+    .carousel-count { font-size: 12px; color: #90a29e; }
+    .carousel-pick { margin-top: 6px; padding: 10px 22px; border: none; border-radius: 10px; background: #2ca87a; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+    .carousel-dots { display: flex; gap: 6px; justify-content: center; margin-top: 10px; }
+    .carousel-dot { width: 8px; height: 8px; border-radius: 50%; background: #d8e3e0; }
+    .carousel-dot.active { background: #2ca87a; }
+
+    /* matrix_rows: 1行1画面 */
+    .matrix-progress { font-size: 12px; color: #90a29e; text-align: center; margin-bottom: 8px; }
+    .matrix-row-q { font-size: 16px; font-weight: 700; text-align: center; margin: 0 0 12px; }
+    .matrix-cells .matrix-cell { padding: 14px 12px; }
+    .matrix-cells .matrix-cell.selected { border-color: #2ca87a; background: #e8f7f0; }
+    .matrix-row-next { margin-top: 12px; width: 100%; padding: 12px; border: 2px solid #2ca87a; border-radius: 10px; background: #fff; color: #2ca87a; font-size: 15px; font-weight: 600; cursor: pointer; }
+    .matrix-done { text-align: center; color: #2ca87a; font-size: 14px; padding: 16px 0; }
     .choice-extra-img  { height: 60px; width: auto; max-width: 100%; object-fit: cover; border-radius: 4px; }
 
     /* ---- image_upload ---- */
@@ -892,6 +994,218 @@
   }
 
   // ---- 回答 UI HTML 生成（タイプ別、チャットモードからも呼び出す） ----
+  // ---- 回答UIプリセット: タップ確定系レンダラ（tap_cards / big_split・migration 075）----
+  // single_choice を大型タップUIで描画する。radio と同一の name/value を用いるため
+  // 既存の .card-item クリック配線・collectChoiceVal・保存形式（single_choice のスカラー値）を
+  // そのまま再利用でき、保存内容は radio リストと完全一致する。data-autoadvance で自動遷移。
+  function buildTapChoiceHtml(q, choices, pattern) {
+    const layoutClass = pattern === 'big_split' ? 'answer-split' : 'answer-tapcards';
+    const items = choices.map(c => {
+      const other = c.allow_free_text
+        ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" onclick="event.stopPropagation();" style="margin-top:8px;width:100%;box-sizing:border-box;" />`
+        : '';
+      return `<label class="card-item tap-item">
+        <input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" style="display:none" />
+        <span class="card-item-title">${esc(c.label)}</span>
+        ${c.description ? `<span class="card-item-desc">${esc(c.description)}</span>` : ''}
+        ${other}
+      </label>`;
+    }).join('');
+    return `<div class="answer-tap ${layoutClass}" data-type="single" data-autoadvance="1">${items}</div>`;
+  }
+
+  // ---- face_scale（絵文字フェイス・single_choice の順序尺度・migration 075）----
+  // 横並びの絵文字ボタン。radio と同一 name/value のため保存形式は single_choice のスカラーで一致。
+  function faceIconsFor(n) {
+    if (n === 2) return ['👎', '👍'];
+    if (n === 3) return ['😕', '😐', '🙂'];
+    if (n === 4) return ['😫', '😕', '🙂', '😍'];
+    if (n === 5) return ['😫', '😕', '😐', '🙂', '😍'];
+    const five = ['😫', '😕', '😐', '🙂', '😍'];
+    return Array.from({ length: n }, (_, i) => five[n <= 1 ? 2 : Math.round(i / (n - 1) * 4)]);
+  }
+  function buildFaceScaleHtml(q, choices) {
+    const cfg = q.question_config || {};
+    const custom = cfg.presentation && Array.isArray(cfg.presentation.icons) ? cfg.presentation.icons : null;
+    const defaults = faceIconsFor(choices.length);
+    const items = choices.map((c, i) => {
+      const icon = (custom && custom[i]) || defaults[i] || '•';
+      return `<label class="card-item face-item">
+        <input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" style="display:none" />
+        <span class="face-emoji">${esc(icon)}</span>
+        <span class="card-item-title">${esc(c.label)}</span>
+      </label>`;
+    }).join('');
+    return `<div class="answer-facescale" data-type="single" data-autoadvance="1">${items}</div>`;
+  }
+
+  // ---- chip_select（チップ選択・multi_choice の標準プリセット・migration 075）----
+  // ピル型チップの checkbox。既存 .card-item クリック配線（トグル＋排他＋collectChoiceVal）を再利用し、
+  // 保存形式は checkbox リストと完全一致（該当のみの配列）。決定は既存の「次へ」ボタン。
+  function buildChipSelectHtml(q, choices, exclAttrs) {
+    // 注意: チップは <label> ではなく <div>。<label> だとネイティブのラベル→checkbox トグルと
+    // 共通 .card-item クリック配線の input.checked 反転が二重発火して相殺され、選択できなくなる。
+    const items = choices.map(c => `<div class="card-item chip-item">
+      <input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" ${exclAttrs(c)} style="display:none" />
+      <span class="card-item-title">${esc(c.label)}</span>
+      ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" onclick="event.stopPropagation();" style="margin-top:6px;width:100%;box-sizing:border-box;" />` : ''}
+    </div>`).join('');
+    return `<div class="answer-chips" data-type="multi">${items}</div>`;
+  }
+
+  // ---- big_slider（ビッグスライダー・single_choice の順序尺度を標準プリセットで・migration 075）----
+  // 選択肢を等間隔に並べたスライダー。確定時に選択肢 value を emit するため保存形式は single_choice で一致。
+  // 値の格納はレンジ操作時に bindInputEvents 側で answerCtx へ直接セット（決定は既存「次へ」）。
+  function buildBigSliderHtml(q, choices) {
+    const n = choices.length;
+    const mid = Math.floor((n - 1) / 2);
+    const values = JSON.stringify(choices.map(c => c.value));
+    const labels = JSON.stringify(choices.map(c => c.label));
+    const first = choices[0] ? esc(choices[0].label) : '';
+    const last = choices[n - 1] ? esc(choices[n - 1].label) : '';
+    return `<div class="answer-bigslider" data-code="${esc(q.question_code)}">
+      <div class="bigslider-value"><span class="bigslider-label">スライドして選択してください</span></div>
+      <input type="range" class="bigslider-range" min="0" max="${n - 1}" step="1" value="${mid}"
+        data-values='${values}' data-labels='${labels}' />
+      <div class="bigslider-ends"><span>${first}</span><span>${last}</span></div>
+    </div>`;
+  }
+
+  // ---- swipe_card（2択スワイプ・casual single_choice・migration 075）----
+  // 左スワイプ=選択肢1 / 右スワイプ=選択肢2（options 並び順）。左右ボタン・タップでも回答可。
+  // 確定時に選択肢 value を emit（single_choice スカラーで保存形式一致）＋自動遷移。
+  function buildSwipeCardHtml(q, choices) {
+    if (choices.length < 2) return buildTapChoiceHtml(q, choices, 'tap_cards');
+    const c0 = choices[0], c1 = choices[1];
+    return `<div class="answer-swipe" data-code="${esc(q.question_code)}"
+        data-v0="${esc(c0.value)}" data-v1="${esc(c1.value)}">
+      <div class="swipe-deck">
+        <div class="swipe-back swipe-back2"></div>
+        <div class="swipe-back swipe-back1"></div>
+        <div class="swipe-card">
+          <span class="swipe-card-hint">◀ ${esc(c0.label)}　／　${esc(c1.label)} ▶</span>
+        </div>
+      </div>
+      <div class="swipe-btns">
+        <button type="button" class="swipe-btn" data-dir="left"><span>${esc(c0.label)}</span></button>
+        <button type="button" class="swipe-btn" data-dir="right"><span>${esc(c1.label)}</span></button>
+      </div>
+      <p class="swipe-tip">カードを左右にスワイプ（タップでもOK）</p>
+    </div>`;
+  }
+
+  // ---- carousel（カード・カルーセル・casual single_choice 3件以上・migration 075）----
+  // 上部ミニ一覧ストリップ＋中央1枚カード＋下部ドット。横スワイプで前後、「これにする」で確定＋自動遷移。
+  function buildCarouselHtml(q, choices) {
+    const strip = choices.map((c, i) => `<button type="button" class="carousel-chip" data-i="${i}">${i + 1}</button>`).join('');
+    const cards = choices.map((c, i) => {
+      const img = c.imageUrl ? `<img class="carousel-img" src="${esc(c.imageUrl)}" alt="" loading="lazy" onerror="this.style.display='none'" />` : '';
+      const other = c.allow_free_text
+        ? `<input type="text" class="other-text-input carousel-other" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" onclick="event.stopPropagation();" style="margin-top:8px;width:100%;box-sizing:border-box;" />`
+        : '';
+      return `<div class="carousel-card" data-i="${i}" data-val="${esc(c.value)}" style="${i === 0 ? '' : 'display:none;'}">
+        ${img}
+        <span class="carousel-title">${esc(c.title || c.label)}</span>
+        ${c.description ? `<span class="carousel-desc">${esc(c.description)}</span>` : ''}
+        <span class="carousel-count">${i + 1} / ${choices.length}</span>
+        ${other}
+        <button type="button" class="carousel-pick">これにする</button>
+      </div>`;
+    }).join('');
+    const dots = choices.map((_c, i) => `<span class="carousel-dot${i === 0 ? ' active' : ''}" data-i="${i}"></span>`).join('');
+    return `<div class="answer-carousel" data-code="${esc(q.question_code)}">
+      <div class="carousel-strip">${strip}</div>
+      <div class="carousel-viewport">${cards}</div>
+      <div class="carousel-dots">${dots}</div>
+    </div>`;
+  }
+
+  // ---- sort_swipe（スワイプ振り分け・casual multi_choice・migration 075）----
+  // 1選択肢=1カードに分解し、右=該当 / 左=非該当で全件判定。保存形式は multi_choice（該当のみの配列）で一致。
+  // 排他選択肢（「特になし」等）はデッキから除外（全カード左＝空配列＝非該当全選択と等価）。
+  function buildSortSwipeHtml(q, choices) {
+    const deck = choices.filter(c => !c.exclusive);
+    const strip = deck.map((c, i) => `<span class="sort-chip" data-i="${i}">${esc(c.label)}</span>`).join('');
+    const cards = deck.map((c, i) => `<div class="sort-card" data-i="${i}" data-val="${esc(c.value)}" style="${i === 0 ? '' : 'display:none;'}">
+        <span class="sort-title">${esc(c.label)}</span>
+        ${c.description ? `<span class="sort-desc">${esc(c.description)}</span>` : ''}
+      </div>`).join('');
+    return `<div class="answer-sortswipe" data-code="${esc(q.question_code)}" data-total="${deck.length}">
+      <div class="sort-strip">${strip}</div>
+      <div class="sort-deck">${cards}
+        <div class="sort-done" style="display:none;">振り分け完了。次へ進みます…</div>
+      </div>
+      <div class="sort-btns">
+        <button type="button" class="sort-btn sort-no" data-dir="left">興味なし ✕</button>
+        <button type="button" class="sort-btn sort-yes" data-dir="right">◯ あてはまる</button>
+      </div>
+      <p class="swipe-tip">右=あてはまる / 左=あてはまらない（ボタンでもOK）</p>
+    </div>`;
+  }
+
+  // ---- 水平ドラッグ（スワイプ）検出。touch/mouse 両対応・60px でコミット ----
+  function attachHorizontalDrag(el, onCommit) {
+    let startX = null, dx = 0, dragging = false;
+    const THRESHOLD = 60;
+    function down(x) { startX = x; dx = 0; dragging = true; el.style.transition = 'none'; }
+    function move(x) {
+      if (!dragging || startX === null) return;
+      dx = x - startX;
+      el.style.transform = `translateX(${dx}px) rotate(${dx / 22}deg)`;
+      el.style.opacity = String(Math.max(0.5, 1 - Math.abs(dx) / 400));
+    }
+    function up() {
+      if (!dragging) return;
+      dragging = false;
+      el.style.transition = 'transform .2s ease, opacity .2s ease';
+      if (Math.abs(dx) >= THRESHOLD) {
+        const dir = dx < 0 ? 'left' : 'right';
+        el.style.transform = `translateX(${dx < 0 ? -700 : 700}px) rotate(${dx / 10}deg)`;
+        el.style.opacity = '0';
+        onCommit(dir);
+      } else {
+        el.style.transform = '';
+        el.style.opacity = '';
+      }
+      startX = null; dx = 0;
+    }
+    el.addEventListener('touchstart', e => down(e.touches[0].clientX), { passive: true });
+    el.addEventListener('touchmove', e => move(e.touches[0].clientX), { passive: true });
+    el.addEventListener('touchend', up);
+    el.addEventListener('mousedown', e => {
+      down(e.clientX);
+      const mm = ev => move(ev.clientX);
+      const mu = () => { up(); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); };
+      document.addEventListener('mousemove', mm);
+      document.addEventListener('mouseup', mu);
+    });
+  }
+
+  // ---- matrix_rows（行分解・casual/standard の matrix・migration 075）----
+  // 1行=1画面。入力名 mq_<code>_<ri> を従来と同一にすることで既存の収集配線・保存形式を再利用する。
+  function buildMatrixRowsHtml(q) {
+    const cfg = q.question_config || {};
+    const rows = cfg.matrix_rows || cfg.options || [];
+    const colObjects = (cfg.matrix_cols || []).map(c => typeof c === 'string' ? { label: c } : c);
+    const isMulti = q.question_type === 'matrix_multi';
+    const screens = rows.map((row, ri) => {
+      const cells = colObjects.map((col, ci) => `<label class="card-item matrix-cell">
+        <input type="${isMulti ? 'checkbox' : 'radio'}" name="mq_${esc(q.question_code)}_${ri}" value="${ci}" style="display:none" />
+        <span class="card-item-title">${esc(col.label || String(ci + 1))}</span>
+      </label>`).join('');
+      return `<div class="matrix-row-screen" data-ri="${ri}" style="${ri === 0 ? '' : 'display:none;'}">
+        <p class="matrix-row-q">${esc(row.label || ('項目' + (ri + 1)))}</p>
+        <div class="answer-tap matrix-cells">${cells}</div>
+        ${isMulti ? `<button type="button" class="matrix-row-next">次の項目へ →</button>` : ''}
+      </div>`;
+    }).join('');
+    return `<div class="answer-matrixrows" data-code="${esc(q.question_code)}" data-total="${rows.length}" data-multi="${isMulti ? '1' : '0'}">
+      <div class="matrix-progress"></div>
+      ${screens}
+      <div class="matrix-done" style="display:none;">全項目に回答しました</div>
+    </div>`;
+  }
+
   function buildAnswerInputHtml(q, showSubmitButton = false) {
     const parsed = q.display_tags_parsed || {};
     const qType = q.question_type;
@@ -968,8 +1282,26 @@
             </label>`;
           }).join('') + `</div>`;
       } else {
-        inputHtml = `<div class="${choiceClass}" data-type="single">` +
-          choices.map(c => choiceListItem(`<input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />`, c)).join('') + `</div>`;
+        // 回答UIプリセット（migration 075）: presentation.pattern で描画を出し分ける。
+        // tap_cards / big_split は radio と同一 name/value を使うため保存形式は radio と完全一致。
+        // 未該当は従来の radio リスト（formal＝現行そのまま）にフォールバック。
+        // 回答UIプリセットは spec 上「1問1画面」の survey_question 専用。
+        // survey_page（複数設問/ページ）では従来描画のままにする。
+        const pattern = DISPLAY_MODE === 'survey_question' && q.presentation ? q.presentation.pattern : null;
+        if (pattern === 'tap_cards' || pattern === 'big_split') {
+          inputHtml = buildTapChoiceHtml(q, choices, pattern);
+        } else if (pattern === 'face_scale') {
+          inputHtml = buildFaceScaleHtml(q, choices);
+        } else if (pattern === 'big_slider') {
+          inputHtml = buildBigSliderHtml(q, choices);
+        } else if (pattern === 'swipe_card') {
+          inputHtml = buildSwipeCardHtml(q, choices);
+        } else if (pattern === 'carousel') {
+          inputHtml = buildCarouselHtml(q, choices);
+        } else {
+          inputHtml = `<div class="${choiceClass}" data-type="single">` +
+            choices.map(c => choiceListItem(`<input type="radio" name="q_${esc(q.question_code)}" value="${esc(c.value)}" />`, c)).join('') + `</div>`;
+        }
       }
     } else if (qType === 'multi_choice') {
       console.log('[survey] render_type: multi_choice | choices:', choices.length);
@@ -994,8 +1326,15 @@
             </label>`;
           }).join('') + `</div>`;
       } else {
-        inputHtml = `<div class="${choiceClass}" data-type="multi">` +
-          choices.map(c => choiceListItem(`<input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" ${exclAttrs(c)} />`, c)).join('') + `</div>`;
+        const mpattern = DISPLAY_MODE === 'survey_question' && q.presentation ? q.presentation.pattern : null;
+        if (mpattern === 'chip_select') {
+          inputHtml = buildChipSelectHtml(q, choices, exclAttrs);
+        } else if (mpattern === 'sort_swipe') {
+          inputHtml = buildSortSwipeHtml(q, choices);
+        } else {
+          inputHtml = `<div class="${choiceClass}" data-type="multi">` +
+            choices.map(c => choiceListItem(`<input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" ${exclAttrs(c)} />`, c)).join('') + `</div>`;
+        }
       }
     } else if (['numeric', 'sd'].includes(qType)) {
       if (cfg.options && cfg.options.length > 0) {
@@ -1030,6 +1369,11 @@
           (minLabel || maxLabel ? `<div style="display:flex;justify-content:space-between;margin-top:4px;">${minLabel}${maxLabel}</div>` : '');
       }
     } else if (['matrix_single','matrix_multi','matrix_mixed'].includes(qType)) {
+      // 行分解（matrix_rows・migration 075）: survey_question のみ、1行=1画面で回答。
+      // 入力名 mq_<code>_<ri> は従来と同一のため、既存のマトリクス収集配線・保存形式（{行:列}）は不変。
+      if (DISPLAY_MODE === 'survey_question' && q.presentation && q.presentation.pattern === 'matrix_rows') {
+        return buildAnswerLayout(q, buildMatrixRowsHtml(q), false);
+      }
       const matrixRows = (q.question_config?.matrix_rows || q.question_config?.options || []);
       const colObjects = (q.question_config?.matrix_cols || []).map(c => typeof c === 'string' ? { label: c, value: c } : c);
       const cols = colObjects.map(c => c.label || c);
@@ -1499,6 +1843,19 @@
         });
       }
 
+      // ---- タップ確定系（tap_cards / big_split）の自動遷移（survey_question のみ・migration 075）----
+      // 単一選択でタップ確定した直後に「次へ」相当の遷移を発火する。btnNext.click() を再利用するため
+      // 検証・保存・probe・分岐は既存経路そのまま。「その他」記述カードは入力待ちのため対象外。
+      function maybeAutoAdvance(card, input) {
+        if (DISPLAY_MODE !== 'survey_question') return;
+        if (!input || input.type !== 'radio') return;
+        const container = card.closest('[data-autoadvance="1"]');
+        if (!container) return;
+        if (card.querySelector('.other-text-input')) return;
+        if (btnNext.disabled) return;
+        setTimeout(() => { if (!btnNext.disabled) btnNext.click(); }, 180);
+      }
+
       // ---- 画像カードグリッド（click で label 全体を選択） ----
       questionArea.querySelectorAll('.card-item').forEach(card => {
         card.addEventListener('click', (e) => {
@@ -1516,6 +1873,7 @@
           }
           answerCtx.answers[q.question_code.toLowerCase()] = collectChoiceVal(q);
           checkNextEnabled();
+          maybeAutoAdvance(card, input);
         });
       });
 
@@ -1538,6 +1896,167 @@
           checkNextEnabled();
         });
       });
+
+      // ---- 回答UIプリセット: インタラクティブ系レンダラの配線（migration 075）----
+      // big_slider / swipe_card / carousel / sort_swipe は answerCtx へ直接値を格納する。
+      // 保存形式は single_choice=スカラー / multi_choice=配列 で従来と一致。
+      (function wirePresentationPatterns() {
+        const pattern = q.presentation && q.presentation.pattern;
+        if (!pattern) return;
+        const qCode = q.question_code;
+
+        function commitSingleAndAdvance(value) {
+          answerCtx.answers[qCode.toLowerCase()] = value;
+          checkNextEnabled();
+          if (DISPLAY_MODE === 'survey_question' && !btnNext.disabled) {
+            setTimeout(() => { if (!btnNext.disabled) btnNext.click(); }, 200);
+          }
+        }
+
+        // big_slider: レンジ操作で選択肢 value を確定（決定は既存「次へ」）
+        const slider = questionArea.querySelector(`.answer-bigslider[data-code="${qCode}"]`);
+        if (slider) {
+          const range = slider.querySelector('.bigslider-range');
+          const labelEl = slider.querySelector('.bigslider-label');
+          let values = [], labels = [];
+          try { values = JSON.parse(range.getAttribute('data-values') || '[]'); } catch (_e) {}
+          try { labels = JSON.parse(range.getAttribute('data-labels') || '[]'); } catch (_e) {}
+          let touched = false;
+          range.addEventListener('input', () => {
+            touched = true;
+            const i = parseInt(range.value, 10) || 0;
+            if (labelEl) labelEl.textContent = labels[i] || '';
+            answerCtx.answers[qCode.toLowerCase()] = values[i];
+            checkNextEnabled();
+          });
+        }
+
+        // swipe_card: 左=選択肢1 / 右=選択肢2（ドラッグ・ボタン両対応）
+        const swipe = questionArea.querySelector(`.answer-swipe[data-code="${qCode}"]`);
+        if (swipe) {
+          const v0 = swipe.getAttribute('data-v0');
+          const v1 = swipe.getAttribute('data-v1');
+          const card = swipe.querySelector('.swipe-card');
+          const commitDir = (dir) => commitSingleAndAdvance(dir === 'left' ? v0 : v1);
+          if (card) attachHorizontalDrag(card, commitDir);
+          swipe.querySelectorAll('.swipe-btn').forEach(btn => {
+            btn.addEventListener('click', () => commitDir(btn.getAttribute('data-dir')));
+          });
+        }
+
+        // carousel: 横スワイプで前後移動・「これにする」で確定
+        const carousel = questionArea.querySelector(`.answer-carousel[data-code="${qCode}"]`);
+        if (carousel) {
+          const cards = [...carousel.querySelectorAll('.carousel-card')];
+          const dots = [...carousel.querySelectorAll('.carousel-dot')];
+          const chips = [...carousel.querySelectorAll('.carousel-chip')];
+          let idx = 0;
+          function show(i) {
+            idx = Math.max(0, Math.min(cards.length - 1, i));
+            cards.forEach((c, k) => { c.style.display = k === idx ? '' : 'none'; c.style.transform = ''; c.style.opacity = ''; });
+            dots.forEach((d, k) => d.classList.toggle('active', k === idx));
+            chips.forEach((ch, k) => ch.classList.toggle('active', k === idx));
+          }
+          chips.forEach(ch => ch.addEventListener('click', () => show(parseInt(ch.getAttribute('data-i'), 10))));
+          cards.forEach(cardEl => {
+            // ドラッグはカード選択ではなく前後ナビゲーション（左=次・右=前）
+            attachHorizontalDrag(cardEl, (dir) => {
+              cardEl.style.transition = ''; cardEl.style.transform = ''; cardEl.style.opacity = '';
+              show(dir === 'left' ? idx + 1 : idx - 1);
+            });
+            const pick = cardEl.querySelector('.carousel-pick');
+            if (pick) pick.addEventListener('click', () => {
+              let val = cardEl.getAttribute('data-val');
+              const other = cardEl.querySelector('.carousel-other');
+              if (other && other.value.trim()) val = other.value.trim();
+              commitSingleAndAdvance(val);
+            });
+          });
+          show(0);
+        }
+
+        // sort_swipe: 各カードを右=該当/左=非該当で振り分け、全件後に確定
+        const sort = questionArea.querySelector(`.answer-sortswipe[data-code="${qCode}"]`);
+        if (sort) {
+          const cards = [...sort.querySelectorAll('.sort-card')];
+          const chips = [...sort.querySelectorAll('.sort-chip')];
+          const doneEl = sort.querySelector('.sort-done');
+          const selected = [];
+          let idx = 0;
+          // multi は「1件も該当なし」も有効回答になり得るため、開始時に空配列を格納
+          answerCtx.answers[qCode.toLowerCase()] = [];
+          function show(i) {
+            idx = i;
+            cards.forEach((c, k) => { c.style.display = k === idx ? '' : 'none'; c.style.transform = ''; c.style.opacity = ''; });
+            chips.forEach((ch, k) => ch.classList.toggle('active', k === idx));
+          }
+          function decide(dir) {
+            const card = cards[idx];
+            if (!card) return;
+            if (dir === 'right') selected.push(card.getAttribute('data-val'));
+            const chip = chips[idx];
+            if (chip) { chip.classList.add('done'); if (dir === 'right') chip.classList.add('yes'); }
+            answerCtx.answers[qCode.toLowerCase()] = selected.slice();
+            if (idx + 1 < cards.length) {
+              show(idx + 1);
+            } else {
+              cards.forEach(c => { c.style.display = 'none'; });
+              if (doneEl) doneEl.style.display = '';
+              checkNextEnabled();
+              if (DISPLAY_MODE === 'survey_question' && isQuestionAnswered(q) && !btnNext.disabled) {
+                setTimeout(() => { if (!btnNext.disabled) btnNext.click(); }, 320);
+              }
+            }
+          }
+          cards.forEach(cardEl => attachHorizontalDrag(cardEl, decide));
+          sort.querySelectorAll('.sort-btn').forEach(btn => btn.addEventListener('click', () => decide(btn.getAttribute('data-dir'))));
+          show(0);
+        }
+
+        // matrix_rows: 1行=1画面。セル選択→既存 mq_ 収集を change 発火で駆動し、次の行へ進む
+        const mrows = questionArea.querySelector(`.answer-matrixrows[data-code="${qCode}"]`);
+        if (mrows) {
+          const total = parseInt(mrows.getAttribute('data-total'), 10) || 0;
+          const screens = [...mrows.querySelectorAll('.matrix-row-screen')];
+          const progress = mrows.querySelector('.matrix-progress');
+          const doneEl = mrows.querySelector('.matrix-done');
+          let ri = 0;
+          function showRow(i) {
+            ri = Math.max(0, Math.min(total - 1, i));
+            screens.forEach((s, k) => { s.style.display = k === ri ? '' : 'none'; });
+            if (progress) progress.textContent = `項目 ${ri + 1} / ${total}`;
+          }
+          function advanceRow() {
+            if (ri + 1 < total) { showRow(ri + 1); }
+            else {
+              screens.forEach(s => { s.style.display = 'none'; });
+              if (doneEl) doneEl.style.display = '';
+              if (progress) progress.textContent = `${total} / ${total}`;
+            }
+          }
+          mrows.querySelectorAll('.matrix-cell').forEach(cell => {
+            cell.addEventListener('click', (e) => {
+              if (e.target.tagName === 'INPUT') return;
+              const input = cell.querySelector('input');
+              if (!input) return;
+              const screen = cell.closest('.matrix-row-screen');
+              if (input.type === 'radio') {
+                if (screen) screen.querySelectorAll('.matrix-cell').forEach(c => c.classList.remove('selected'));
+                input.checked = true;
+                cell.classList.add('selected');
+                input.dispatchEvent(new Event('change', { bubbles: true })); // 既存のマトリクス収集を駆動
+                setTimeout(advanceRow, 180);
+              } else {
+                input.checked = !input.checked;
+                cell.classList.toggle('selected', input.checked);
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            });
+          });
+          mrows.querySelectorAll('.matrix-row-next').forEach(btn => btn.addEventListener('click', advanceRow));
+          showRow(0);
+        }
+      })();
 
       // ---- image_upload ----
       const uploadArea = questionArea.querySelector(`.upload-area[data-code="${q.question_code}"]`);
