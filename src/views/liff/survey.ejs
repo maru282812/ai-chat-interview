@@ -202,6 +202,14 @@
     .carousel-dots { display: flex; gap: 6px; justify-content: center; margin-top: 10px; }
     .carousel-dot { width: 8px; height: 8px; border-radius: 50%; background: #d8e3e0; }
     .carousel-dot.active { background: #2ca87a; }
+
+    /* matrix_rows: 1行1画面 */
+    .matrix-progress { font-size: 12px; color: #90a29e; text-align: center; margin-bottom: 8px; }
+    .matrix-row-q { font-size: 16px; font-weight: 700; text-align: center; margin: 0 0 12px; }
+    .matrix-cells .matrix-cell { padding: 14px 12px; }
+    .matrix-cells .matrix-cell.selected { border-color: #2ca87a; background: #e8f7f0; }
+    .matrix-row-next { margin-top: 12px; width: 100%; padding: 12px; border: 2px solid #2ca87a; border-radius: 10px; background: #fff; color: #2ca87a; font-size: 15px; font-weight: 600; cursor: pointer; }
+    .matrix-done { text-align: center; color: #2ca87a; font-size: 14px; padding: 16px 0; }
     .choice-extra-img  { height: 60px; width: auto; max-width: 100%; object-fit: cover; border-radius: 4px; }
 
     /* ---- image_upload ---- */
@@ -1171,6 +1179,31 @@
     });
   }
 
+  // ---- matrix_rows（行分解・casual/standard の matrix・migration 075）----
+  // 1行=1画面。入力名 mq_<code>_<ri> を従来と同一にすることで既存の収集配線・保存形式を再利用する。
+  function buildMatrixRowsHtml(q) {
+    const cfg = q.question_config || {};
+    const rows = cfg.matrix_rows || cfg.options || [];
+    const colObjects = (cfg.matrix_cols || []).map(c => typeof c === 'string' ? { label: c } : c);
+    const isMulti = q.question_type === 'matrix_multi';
+    const screens = rows.map((row, ri) => {
+      const cells = colObjects.map((col, ci) => `<label class="card-item matrix-cell">
+        <input type="${isMulti ? 'checkbox' : 'radio'}" name="mq_${esc(q.question_code)}_${ri}" value="${ci}" style="display:none" />
+        <span class="card-item-title">${esc(col.label || String(ci + 1))}</span>
+      </label>`).join('');
+      return `<div class="matrix-row-screen" data-ri="${ri}" style="${ri === 0 ? '' : 'display:none;'}">
+        <p class="matrix-row-q">${esc(row.label || ('項目' + (ri + 1)))}</p>
+        <div class="answer-tap matrix-cells">${cells}</div>
+        ${isMulti ? `<button type="button" class="matrix-row-next">次の項目へ →</button>` : ''}
+      </div>`;
+    }).join('');
+    return `<div class="answer-matrixrows" data-code="${esc(q.question_code)}" data-total="${rows.length}" data-multi="${isMulti ? '1' : '0'}">
+      <div class="matrix-progress"></div>
+      ${screens}
+      <div class="matrix-done" style="display:none;">全項目に回答しました</div>
+    </div>`;
+  }
+
   function buildAnswerInputHtml(q, showSubmitButton = false) {
     const parsed = q.display_tags_parsed || {};
     const qType = q.question_type;
@@ -1334,6 +1367,11 @@
           (minLabel || maxLabel ? `<div style="display:flex;justify-content:space-between;margin-top:4px;">${minLabel}${maxLabel}</div>` : '');
       }
     } else if (['matrix_single','matrix_multi','matrix_mixed'].includes(qType)) {
+      // 行分解（matrix_rows・migration 075）: survey_question のみ、1行=1画面で回答。
+      // 入力名 mq_<code>_<ri> は従来と同一のため、既存のマトリクス収集配線・保存形式（{行:列}）は不変。
+      if (DISPLAY_MODE === 'survey_question' && q.presentation && q.presentation.pattern === 'matrix_rows') {
+        return buildAnswerLayout(q, buildMatrixRowsHtml(q), false);
+      }
       const matrixRows = (q.question_config?.matrix_rows || q.question_config?.options || []);
       const colObjects = (q.question_config?.matrix_cols || []).map(c => typeof c === 'string' ? { label: c, value: c } : c);
       const cols = colObjects.map(c => c.label || c);
@@ -1971,6 +2009,50 @@
           cards.forEach(cardEl => attachHorizontalDrag(cardEl, decide));
           sort.querySelectorAll('.sort-btn').forEach(btn => btn.addEventListener('click', () => decide(btn.getAttribute('data-dir'))));
           show(0);
+        }
+
+        // matrix_rows: 1行=1画面。セル選択→既存 mq_ 収集を change 発火で駆動し、次の行へ進む
+        const mrows = questionArea.querySelector(`.answer-matrixrows[data-code="${qCode}"]`);
+        if (mrows) {
+          const total = parseInt(mrows.getAttribute('data-total'), 10) || 0;
+          const screens = [...mrows.querySelectorAll('.matrix-row-screen')];
+          const progress = mrows.querySelector('.matrix-progress');
+          const doneEl = mrows.querySelector('.matrix-done');
+          let ri = 0;
+          function showRow(i) {
+            ri = Math.max(0, Math.min(total - 1, i));
+            screens.forEach((s, k) => { s.style.display = k === ri ? '' : 'none'; });
+            if (progress) progress.textContent = `項目 ${ri + 1} / ${total}`;
+          }
+          function advanceRow() {
+            if (ri + 1 < total) { showRow(ri + 1); }
+            else {
+              screens.forEach(s => { s.style.display = 'none'; });
+              if (doneEl) doneEl.style.display = '';
+              if (progress) progress.textContent = `${total} / ${total}`;
+            }
+          }
+          mrows.querySelectorAll('.matrix-cell').forEach(cell => {
+            cell.addEventListener('click', (e) => {
+              if (e.target.tagName === 'INPUT') return;
+              const input = cell.querySelector('input');
+              if (!input) return;
+              const screen = cell.closest('.matrix-row-screen');
+              if (input.type === 'radio') {
+                if (screen) screen.querySelectorAll('.matrix-cell').forEach(c => c.classList.remove('selected'));
+                input.checked = true;
+                cell.classList.add('selected');
+                input.dispatchEvent(new Event('change', { bubbles: true })); // 既存のマトリクス収集を駆動
+                setTimeout(advanceRow, 180);
+              } else {
+                input.checked = !input.checked;
+                cell.classList.toggle('selected', input.checked);
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            });
+          });
+          mrows.querySelectorAll('.matrix-row-next').forEach(btn => btn.addEventListener('click', advanceRow));
+          showRow(0);
         }
       })();
 
