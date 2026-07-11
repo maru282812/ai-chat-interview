@@ -678,6 +678,8 @@ function renderProjectResearchForm(
     screeningQuestions?: import("../types/domain").Question[];
     promptPackages?: import("../repositories/promptPackageRepository").PromptPackage[];
     packageFallbackWarning?: import("../repositories/promptPackageRepository").PromptPackageVersion | null;
+    /** エラー再描画時にフォーム送信値の選択パッケージバージョンを維持する */
+    selectedPromptPackageVersionId?: string | null;
   }
 ): void {
   const projectForm = buildProjectForm(input.project, input.projectFormOverrides ?? {});
@@ -703,6 +705,7 @@ function renderProjectResearchForm(
     profileConditionsState: parseProfileConditionsForRender(allConditions),
     promptPackages: input.promptPackages ?? [],
     packageFallbackWarning: input.packageFallbackWarning ?? null,
+    selectedPromptPackageVersionId: input.selectedPromptPackageVersionId ?? null,
   });
 }
 
@@ -2443,10 +2446,14 @@ export const adminController = {
   },
 
   async newProject(_req: Request, res: Response): Promise<void> {
+    // 新規作成時からパッケージを選択できるよう一覧を渡す（既定選択はビュー側で公開中バージョンを持つ先頭パッケージ）
+    const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
+    const promptPackages = await promptPackageRepository.list().catch(() => []);
     renderProjectResearchForm(res, {
       title: "新規プロジェクト作成",
       project: null,
-      action: "/admin/projects"
+      action: "/admin/projects",
+      promptPackages,
     });
   },
 
@@ -2534,6 +2541,7 @@ export const adminController = {
         errorMessage: getProjectRenderErrorMessage(error, "プロジェクトの作成に失敗しました。"),
         statusCode: getProjectRenderStatusCode(error),
         promptPackages,
+        selectedPromptPackageVersionId: bodyString(req.body.ai_prompt_package_version_id).trim() || null,
       });
     }
   },
@@ -2720,6 +2728,7 @@ export const adminController = {
         screeningConditions: updateErrorConditions,
         screeningQuestions: updateErrorScreeningQuestions,
         promptPackages: updateErrorPromptPackages,
+        selectedPromptPackageVersionId: bodyString(req.body.ai_prompt_package_version_id).trim() || null,
       });
     }
   },
