@@ -16,6 +16,45 @@
     try { console.log('[LiffAuth] ' + msg, data || {}); } catch (_e) {}
   }
 
+  // --- 体感時間の計測（計測フェーズ専用・挙動非干渉） ---------------------
+  // サーバーログに映らないクライアント側ウォーターフォール（SDKダウンロード＋liff.init）を
+  // 回収する。モバイルの LINE 内ブラウザは DevTools が無いため、sendBeacon で
+  // /liff/perf-beacon に送ってサーバーログに出す。目星が付いたら本ブロックごと撤去可。
+  var _perf = { initMs: 0, sdkReadyMs: 0, reported: false };
+  function _now() { try { return performance.now(); } catch (_e) { return 0; } }
+  function _sdkReadyMs() {
+    try {
+      var e = performance.getEntriesByType('resource')
+        .filter(function (r) { return String(r.name).indexOf('sdk.js') >= 0; })[0];
+      return e ? Math.round(e.responseEnd * 10) / 10 : 0;
+    } catch (_e) { return 0; }
+  }
+  function reportPerf(page, extra) {
+    if (_perf.reported) return;
+    _perf.reported = true;
+    extra = extra || {};
+    var body = {
+      page: page || location.pathname,
+      sdkReadyMs: _perf.sdkReadyMs || _sdkReadyMs(),
+      initMs: _perf.initMs,
+      authTotalMs: _now(),
+      totalMs: _now(),
+      dataMs: typeof extra.dataMs === 'number' ? extra.dataMs : undefined,
+      renderMs: typeof extra.renderMs === 'number' ? extra.renderMs : undefined,
+      inClient: (function () { try { return liff.isInClient(); } catch (_e) { return undefined; } })(),
+    };
+    _log('perf', body);
+    try {
+      var json = JSON.stringify(body);
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/liff/perf-beacon', new Blob([json], { type: 'application/json' }));
+      } else {
+        fetch('/liff/perf-beacon', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: json, keepalive: true });
+      }
+    } catch (_e) { /* 計測がページを壊さないことを最優先 */ }
+  }
+  // ----------------------------------------------------------------------
+
   // LINE Login の戻りで付与される OAuth パラメータ。redirectUri に残したまま
   // 再ログインすると戻りURLに code/state が二重に付き、SDK の検証が失敗し続けて
   // LINE⇄サイトの無限リダイレクトループになるため、ログイン前に必ず除去する。
@@ -102,7 +141,10 @@
     }
 
     if (!_initialized) {
+      var _initStart = _now();
       await liff.init({ liffId: liffId });
+      _perf.initMs = Math.round((_now() - _initStart) * 10) / 10;
+      _perf.sdkReadyMs = _sdkReadyMs();
       _initialized = true;
     }
 
@@ -150,6 +192,10 @@
 
     _log('auth ok', { isInClient: isInClient });
     _clearLoginResidue();
+    // 認証完了時点で SDK＋init の内訳を自動でビーコン送信（ページ側が reportPerf を
+    // 呼ばなくても最低限クライアント側ウォーターフォールが測れるように）。
+    // ページ側が dataMs/renderMs 付きで先に呼べばそちらが優先される（reported ガード）。
+    setTimeout(function () { reportPerf(location.pathname); }, 1500);
     return token;
   }
 
@@ -206,6 +252,7 @@
     handleTokenExpired:   handleTokenExpired,
     loginWithGuard:       loginWithGuard,
     closeOrBack:          closeOrBack,
+    reportPerf:           reportPerf,
   };
 }());
 </script>

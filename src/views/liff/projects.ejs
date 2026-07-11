@@ -194,8 +194,10 @@
           if (!token) return;
           idToken = token;
 
+          const _fetchStart = performance.now();
           const res = await fetch(projectsDataUrl, { headers: { Authorization: `Bearer ${idToken}` } });
           const data = await res.json();
+          const _dataMs = performance.now() - _fetchStart;
           allProjects = data.projects || [];
 
           const monthly = data.monthly_applications;
@@ -206,7 +208,9 @@
             document.getElementById('monthly-bar').style.width =
               Math.min(100, Math.round((monthly.count / monthly.recommended) * 100)) + '%';
           }
+          const _renderStart = performance.now();
           applyFilters();
+          try { LiffAuth.reportPerf('/liff/projects', { dataMs: _dataMs, renderMs: performance.now() - _renderStart }); } catch (_e) {}
         } catch (err) {
           document.getElementById('loading-overlay').style.display = 'none';
           const listEl = document.getElementById('project-list');

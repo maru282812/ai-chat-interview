@@ -2,6 +2,7 @@ import path from "path";
 import express from "express";
 import { env } from "./config/env";
 import { adminAuthMiddleware } from "./middleware/adminAuth";
+import { perfTiming } from "./middleware/perfTiming";
 import { errorHandler } from "./lib/http";
 import { adminRoutes } from "./routes/adminRoutes";
 import { liffRoutes } from "./routes/liffRoutes";
@@ -38,7 +39,7 @@ export function createApp() {
   app.use("/webhooks", webhookRoutes);
   app.use("/api/cron", cronRoutes);
   app.use("/admin", adminAuthMiddleware, adminRoutes);
-  app.use("/liff", liffRoutes);
+  app.use("/liff", perfTiming, liffRoutes);
 
   app.get("/", (_req, res) => {
     res.redirect("/admin");
