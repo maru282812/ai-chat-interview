@@ -1659,12 +1659,26 @@ export async function runAdminToolPrompt(params: AdminToolPromptParams): Promise
   }
   messages.push({ role: "user", content: params.userPrompt });
 
+  // gpt-5 系 reasoning モデルは chat.completions で max_tokens と temperature(≠1) を
+  // 受け付けない（max_completion_tokens が必須）。OPENAI_TOOL_MODEL の設定値だけで
+  // 管理ツール系 AI が全滅しないよう、モデル系統でパラメータを切り替える。
+  const isGpt5Family = /^gpt-5/.test(env.OPENAI_TOOL_MODEL);
   const response = await openai.chat.completions.create({
     model: env.OPENAI_TOOL_MODEL,
     messages,
-    temperature: params.temperature,
-    max_tokens: params.maxTokens,
     response_format: { type: "json_object" },
+    ...(isGpt5Family
+      ? {
+          // reasoning トークンが出力予算を食い潰して本文が空にならないよう余裕を持たせる。
+          // reasoning_effort は世代間の共通値 "low" を使う（"minimal" は gpt-5.4 で不可、
+          // "none" は初代 gpt-5 で不可）。
+          max_completion_tokens: params.maxTokens + 1024,
+          reasoning_effort: "low" as const,
+        }
+      : {
+          temperature: params.temperature,
+          max_tokens: params.maxTokens,
+        }),
   });
 
   const text = response.choices[0]?.message?.content ?? "{}";
