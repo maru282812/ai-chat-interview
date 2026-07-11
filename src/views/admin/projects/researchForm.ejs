@@ -681,7 +681,11 @@
       <%
         // 新規プロジェクトはパッケージ運用を既定にする（プロンプト本文はパッケージ画面で一元管理）
         const currentPromptMode = project ? (project.ai_prompt_mode || 'custom') : 'package';
-        const currentPackageVersionId = (project && project.ai_prompt_package_version_id) ? project.ai_prompt_package_version_id : '';
+        let currentPackageVersionId = (project && project.ai_prompt_package_version_id) ? project.ai_prompt_package_version_id : '';
+        // エラー再描画時はフォーム送信値を優先（選択が消えないように）
+        if (!currentPackageVersionId && locals.selectedPromptPackageVersionId) {
+          currentPackageVersionId = locals.selectedPromptPackageVersionId;
+        }
         // 選択可能（published / archived）バージョンを持つパッケージのみ
         const selectablePackages = (promptPackages || []).filter(p => Array.isArray(p.selectable_versions) && p.selectable_versions.length > 0);
         // 現在選択中のバージョンからパッケージ・バージョンを逆引き
@@ -690,6 +694,17 @@
         for (const p of selectablePackages) {
           const v = p.selectable_versions.find(v => v.id === currentPackageVersionId);
           if (v) { currentPkg = p; currentVersion = v; break; }
+        }
+        // 新規作成時は公開中バージョンを持つ先頭パッケージを既定選択する（標準が入った状態で変更可能にする）
+        let isDefaultPreselect = false;
+        if (!project && !currentPkg) {
+          const defaultPkg = selectablePackages.find(p => p.selectable_versions.some(v => v.status === 'published'));
+          if (defaultPkg) {
+            currentPkg = defaultPkg;
+            currentVersion = defaultPkg.selectable_versions.find(v => v.status === 'published');
+            currentPackageVersionId = currentVersion.id;
+            isDefaultPreselect = true;
+          }
         }
         // Phase 6-B: 個別オーバーライド（policy のみ）
         const currentOverridePolicy = (project && project.ai_prompt_overrides_json && project.ai_prompt_overrides_json.policy)
@@ -700,8 +715,11 @@
 
       <!-- Phase 8: 現在適用中のAIプロンプト状態パネル（プロジェクト画面は参照と選択のみ） -->
       <div style="border:1px solid #c8dcd6;border-radius:10px;padding:14px 16px;background:#fff;margin-bottom:12px">
-        <h3 style="margin:0 0 10px;font-size:14px;font-weight:700">現在適用中のAIプロンプト</h3>
+        <h3 style="margin:0 0 10px;font-size:14px;font-weight:700"><%= isDefaultPreselect ? '作成時に適用されるAIプロンプト' : '現在適用中のAIプロンプト' %></h3>
         <% if (currentPromptMode === 'package' && currentPkg && currentVersion) { %>
+          <% if (isDefaultPreselect) { %>
+            <p style="margin:0 0 10px;font-size:12px;color:#60726f">標準として公開中のパッケージを既定で選択しています。変更する場合は下の「適用するプロンプトパッケージ」で選び直してください。</p>
+          <% } %>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;font-size:13px">
             <div><span class="muted">モード</span><br><strong>プロンプトパッケージ</strong></div>
             <div><span class="muted">パッケージ</span><br><strong><%= currentPkg.name %></strong></div>
@@ -1053,6 +1071,10 @@ function setupResearchPromptFilter() {
 setupResearchPromptFilter();
 
 // Phase G/B: package モードでバージョン未選択のまま送信しようとした場合に明確に警告する
+// 新規作成はサーバー側（resolvePackageVersionIdFromRequest の blockIfUnselected）が
+// 選択可能パッケージの存在時に 400 で必ず拒否するため、「OK＝続行」の confirm ではなく
+// 送信前にブロックして選択を促す（サーバーとクライアントの判定を一致させる）。
+var IS_NEW_PROJECT = <%= project ? 'false' : 'true' %>;
 function confirmPromptPackageSelection() {
   syncPromptMode();
   var hidden = document.getElementById('ai_prompt_mode_hidden');
@@ -1060,6 +1082,13 @@ function confirmPromptPackageSelection() {
   var versionSelect = document.querySelector('[name="ai_prompt_package_version_id"]');
   var versionId = versionSelect ? (versionSelect.value || '').trim() : '';
   if (versionId) return true;
+  if (IS_NEW_PROJECT && typeof PKG_DATA !== 'undefined' && PKG_DATA.length > 0) {
+    window.alert(
+      'プロンプトパッケージ（公開バージョン）が未選択のため作成できません。\n' +
+      '「5. AIプロンプト設定」でパッケージとバージョンを選択してください。'
+    );
+    return false;
+  }
   return window.confirm(
     'プロンプトパッケージのバージョンが未選択です。\n' +
     'このまま保存すると、公開済みパッケージを割り当てるまで既定プロンプト（BASE）で動作します。\n\n' +
