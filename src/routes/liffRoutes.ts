@@ -1,8 +1,29 @@
 import { Router } from "express";
 import { liffController } from "../controllers/liffController";
 import { asyncHandler } from "../lib/http";
+import { logger } from "../lib/logger";
 
 export const liffRoutes = Router();
+
+// クライアント側の体感時間ビーコン（計測フェーズ専用・DB書込みなし・認証不要）。
+// モバイルの LINE 内ブラウザは DevTools が使えないため、SDKダウンロード＋liff.init など
+// サーバーログに映らないクライアント側ウォーターフォールを sendBeacon で回収して
+// Vercel ログに出す。挙動には一切影響しない。数値の目星が付いたら撤去してよい。
+liffRoutes.post("/perf-beacon", (req, res) => {
+  const b = (req.body ?? {}) as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 10) / 10 : undefined);
+  logger.info("perf.liff.client", {
+    page: typeof b.page === "string" ? b.page.slice(0, 80) : undefined,
+    sdkReadyMs: num(b.sdkReadyMs), // ページ読込開始→LIFF SDK 実行可能まで（CDN DL 相当）
+    initMs: num(b.initMs), //         liff.init() の所要（LINE 往復含む）
+    authTotalMs: num(b.authTotalMs), // 認証完了まで（sdkReady+init+ログイン判定）
+    dataMs: num(b.dataMs), //          データ fetch 往復
+    renderMs: num(b.renderMs), //      DOM 描画
+    totalMs: num(b.totalMs), //        ページ読込開始→初期表示完了
+    inClient: typeof b.inClient === "boolean" ? b.inClient : undefined,
+  });
+  res.status(204).end();
+});
 
 // サイトの玄関。LIFF endpoint を {APP_BASE_URL}/liff に設定すると、
 // リッチメニュー等の https://liff.line.me/{id}/projects 形式のディープリンクが
