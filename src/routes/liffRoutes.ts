@@ -28,6 +28,28 @@ liffRoutes.get("/", (req, res) => {
     res.redirect(302, `/liff/store?entry_code=${encodeURIComponent(entryCode)}`);
     return;
   }
+
+  // 案件配信の「回答を開始する」（liff.line.me/{id}?assignment_id=xxx）の着地。
+  // endpoint が /liff の LIFF 構成では liff.state 内に assignment_id が入るため、
+  // ここで拾わないと下の「探す」リダイレクトで assignment_id が捨てられ回答画面に到達できない。
+  // entry_code 同様、liff.state はループ防止のため引き継がず assignment_id だけ取り出す。
+  const assignmentId = (() => {
+    const direct = typeof req.query.assignment_id === "string" ? req.query.assignment_id.trim() : "";
+    if (direct) return direct;
+    const liffState = typeof req.query["liff.state"] === "string" ? req.query["liff.state"] : "";
+    if (!liffState) return "";
+    try {
+      const params = new URLSearchParams(liffState.startsWith("?") ? liffState.slice(1) : liffState);
+      return (params.get("assignment_id") ?? "").trim();
+    } catch {
+      return "";
+    }
+  })();
+  if (assignmentId) {
+    res.redirect(302, `/liff/survey?assignment_id=${encodeURIComponent(assignmentId)}`);
+    return;
+  }
+
   const qs = req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "";
   res.redirect(302, `/liff/projects${qs}`);
 });
