@@ -289,8 +289,22 @@
         `);
       }
 
-      // セッション確認 → next へ遷移
+      // セッション確認 → next へ遷移。
+      // 確認完了の書込みは遷移先 surveyPage がレンダリング前に行う（mypage_confirm_session）。
+      // 旧方式（POST /session/confirm-mypage を待ってから遷移）はサーバー往復が1回多く、
+      // タップ後の体感が約1秒以上遅くなるため、next がある通常フローでは即遷移する。
+      // next が無いエッジケースのみ旧方式のPOSTで確認してから遷移する。
       async function confirmAndGoToSurvey() {
+        if (next && sessionId) {
+          try {
+            const url = new URL(next, window.location.origin);
+            url.searchParams.set("mypage_confirm_session", sessionId);
+            window.location.href = url.pathname + url.search;
+            return;
+          } catch (e) {
+            console.warn("confirm redirect build failed – falling back to POST", e);
+          }
+        }
         if (confirmMypageUrl && sessionId) {
           try {
             await fetch(confirmMypageUrl, {

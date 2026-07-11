@@ -781,10 +781,13 @@ export const liffController = {
 
     const assignment = await projectAssignmentRepository.getById(assignmentId);
 
-    const project = await projectRepository.getById(assignment.project_id);
-
-    // アクティブなセッションを先に取得してフロー分岐に利用する
-    let sessionForCheck = await sessionRepository.getActiveByRespondent(assignment.respondent_id, project.id);
+    // project とアクティブセッションは両方 assignment のみに依存するため並行取得する
+    // （getActiveByRespondent の project_id は assignment.project_id と同一値）。
+    const [project, sessionForCheckInitial] = await Promise.all([
+      projectRepository.getById(assignment.project_id),
+      sessionRepository.getActiveByRespondent(assignment.respondent_id, assignment.project_id),
+    ]);
+    let sessionForCheck = sessionForCheckInitial;
 
     // スクリーニング対象外（fall）: 既に fail 判定済みの場合は対象外画面を返す
     if (sessionForCheck?.state_json?.screening_result === "fail") {
@@ -815,6 +818,31 @@ export const liffController = {
     // 回答前の基本情報入力・利用規約同意ゲートはかけない。基本情報と同意は完了後の
     // 「Hibiに参加する（会員登録）」CTA に進んだ希望者だけが会員化フローで入力する。
     const isStoreSurveyEntry = project.visibility_type === "private_store";
+
+    // profile-check の「この内容で回答を開始する」からの遷移（mypage_confirm_session）。
+    // 確認完了の書込みを別POST（confirm-mypage）で待たせず遷移URLに同乗させ、ここで
+    // レンダリング前に書き込む＝タップ後のサーバー往復を1回削減する。
+    // 権限面は既存 POST /liff/session/confirm-mypage（session_id のみで書込み可）と同等以上
+    // （assignment_id と一致する session_id の両方が必要）。session が一致しない・既に確認済みの
+    // 場合は無視され、従来どおり下のゲートで profile-check へ誘導される（安全側に退化）。
+    const confirmSessionId = stringValue(req.query.mypage_confirm_session).trim();
+    if (
+      !isStoreSurveyEntry &&
+      assignment.user_id &&
+      sessionForCheck &&
+      confirmSessionId &&
+      confirmSessionId === sessionForCheck.id &&
+      !sessionForCheck.state_json?.mypage_confirmed_at
+    ) {
+      const confirmedState = {
+        ...sessionForCheck.state_json,
+        mypage_confirmed_at: new Date().toISOString(),
+      };
+      await sessionRepository.update(sessionForCheck.id, { state_json: confirmedState });
+      sessionForCheck = { ...sessionForCheck, state_json: confirmedState };
+      logger.info("[surveyPage] mypage confirmed inline", { assignmentId, sessionId: sessionForCheck.id });
+    }
+
     if (!isStoreSurveyEntry && assignment.user_id && !sessionForCheck?.state_json?.mypage_confirmed_at) {
       logger.info("[surveyPage] branch=profileCheckRedirect", { assignmentId });
       // session_id が空のまま渡すと confirm-mypage が 400 になり無限リダイレクトになるため、
@@ -858,8 +886,10 @@ export const liffController = {
       return;
     }
 
-    const questions = await questionRepository.listByProject(project.id);
-    const pageGroups = await questionPageGroupRepository.listByProject(project.id);
+    const [questions, pageGroups] = await Promise.all([
+      questionRepository.listByProject(project.id),
+      questionPageGroupRepository.listByProject(project.id),
+    ]);
 
     // アクティブなセッションを探す、なければ作成（上で既に取得済みの場合は再利用）
     let session = sessionForCheck;
@@ -1106,15 +1136,31 @@ export const liffController = {
       return;
     }
 
-    // 所有者検証（IDOR 防止）: 回答は本人の assignment のみ書き込める
-    await verifyAssignmentOwnerOrThrow(req, stringValue(req.body.assignment_id).trim());
-
-    const session = await sessionRepository.getById(sessionId);
+    // 所有者検証（IDOR 防止）と独立リード（session・既存回答）を並行実行する。
+    // Promise.all だと「認証エラーより先に session 404 が漏れる」レースが起きるため、
+    // allSettled で全結果を受けてから認証エラーを最優先で投げる（既存のエラー応答順を保存）。
+    const [ownerResult, sessionResult, priorAnswersResult] = await Promise.allSettled([
+      verifyAssignmentOwnerOrThrow(req, stringValue(req.body.assignment_id).trim()),
+      sessionRepository.getById(sessionId),
+      answerRepository.listBySession(sessionId),
+    ]);
+    if (ownerResult.status === "rejected") throw ownerResult.reason;
+    if (sessionResult.status === "rejected") throw sessionResult.reason;
+    if (priorAnswersResult.status === "rejected") throw priorAnswersResult.reason;
+    const session = sessionResult.value;
+    const priorAnswers = priorAnswersResult.value;
     console.log("ASSIGNMENT_STATE", { session_id: session.id, project_id: session.project_id, status: session.status });
 
     // 進行制御の唯一の正はサーバー（plan §Phase1）。案件全設問と既存回答を読み、
     // ①この設問がそもそも表示条件を満たすか（可視性ゲート）②回答後に出す次設問、をサーバーで決める。
-    const questions = await questionRepository.listByProject(session.project_id);
+    // project / pageGroups は「次設問解決」で使う読み取り専用データ。従来は書込み後に直列取得
+    // していたが、内容は同一なのでここで questions と並行に取得する（バリデーション失敗時は
+    // 読み損になるだけで無害）。
+    const [questions, project, pageGroups] = await Promise.all([
+      questionRepository.listByProject(session.project_id),
+      projectRepository.getById(session.project_id),
+      questionPageGroupRepository.listByProject(session.project_id),
+    ]);
     const question = questions.find((q) => q.question_code === questionCode)
       ?? (await questionRepository.getByProjectAndCode(session.project_id, questionCode));
     if (!question) {
@@ -1164,7 +1210,6 @@ export const liffController = {
 
     // 可視性ゲート: 既存回答から組んだ ctx でこの設問が visibility_conditions を満たさないなら拒否（§3-2）。
     // 条件が無い設問（大多数）は isQuestionVisible=true で常に通過する。
-    const priorAnswers = await answerRepository.listBySession(sessionId);
     const priorCtx = buildAnswerContext(questions, priorAnswers);
     if (!isQuestionVisible(question, priorCtx)) {
       logger.warn("submitSurveyAnswer.hiddenQuestionBlocked", { sessionId, questionCode });
@@ -1211,8 +1256,7 @@ export const liffController = {
     }
 
     // 次設問はクライアントと同一の集合・順序（フェーズ絞り込み＋ランダム化）で解決する。
-    const project = await projectRepository.getById(session.project_id);
-    const pageGroups = await questionPageGroupRepository.listByProject(session.project_id);
+    // project / pageGroups は冒頭で並行取得済み。
     const renderSet = await resolveOrderedRenderSet({
       session,
       project,
@@ -1243,13 +1287,23 @@ export const liffController = {
       res.status(400).json({ ok: false, error: "session_id は必須です。" });
       return;
     }
-    await verifyAssignmentOwnerOrThrow(req, assignmentId);
+    // 所有者検証と独立リードを並行実行（submitSurveyAnswer と同じ理由で認証エラーを最優先で投げる）
+    const [ownerResult, sessionResult, answersResult] = await Promise.allSettled([
+      verifyAssignmentOwnerOrThrow(req, assignmentId),
+      sessionRepository.getById(sessionId),
+      answerRepository.listBySession(sessionId),
+    ]);
+    if (ownerResult.status === "rejected") throw ownerResult.reason;
+    if (sessionResult.status === "rejected") throw sessionResult.reason;
+    if (answersResult.status === "rejected") throw answersResult.reason;
+    const session = sessionResult.value;
+    const answers = answersResult.value;
 
-    const session = await sessionRepository.getById(sessionId);
-    const project = await projectRepository.getById(session.project_id);
-    const questions = await questionRepository.listByProject(session.project_id);
-    const pageGroups = await questionPageGroupRepository.listByProject(session.project_id);
-    const answers = await answerRepository.listBySession(sessionId);
+    const [project, questions, pageGroups] = await Promise.all([
+      projectRepository.getById(session.project_id),
+      questionRepository.listByProject(session.project_id),
+      questionPageGroupRepository.listByProject(session.project_id),
+    ]);
 
     const ctx = buildAnswerContext(questions, answers);
     const renderSet = await resolveOrderedRenderSet({

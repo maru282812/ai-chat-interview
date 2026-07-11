@@ -20,6 +20,19 @@ export interface VerifyIdTokenCtx {
  */
 const TEST_TOKEN_PREFIX = "tmtest:";
 
+/**
+ * 検証成功の短期キャッシュ。回答フローは設問ごとに同一トークンで verify を呼ぶため、
+ * そのたびに api.line.me へ往復すると1回答あたり数百msが認証だけで消える。
+ * - キーはトークン文字列そのもの: 別ユーザー・再ログイン後の新トークンは必ず再検証される。
+ * - 成功のみキャッシュ: 失敗(401等)は従来どおり毎回 LINE に問い合わせる。
+ * - 緩和されるのは「失効直後のトークンを最長 TTL 秒受け入れる」ことだけで、
+ *   本人性の証明（IDOR 防止）は変わらない。TTL は短く保つこと。
+ * - サーバーレスではインスタンスごとのメモリなので、上限超過は挿入順で間引く。
+ */
+const VERIFY_CACHE_TTL_MS = 60_000;
+const VERIFY_CACHE_MAX_ENTRIES = 500;
+const verifyCache = new Map<string, { user: VerifiedLiffUser; expiresAt: number }>();
+
 export const liffAuthService = {
   async verifyIdToken(idToken: string, ctx?: VerifyIdTokenCtx): Promise<VerifiedLiffUser> {
     // テスト到達用 seam（非本番限定）: id_token 検証を要する「認証後の分岐」を testmaster の
@@ -42,6 +55,11 @@ export const liffAuthService = {
     const normalizedToken = idToken.trim();
     if (!normalizedToken) {
       throw new HttpError(401, "NO_ID_TOKEN");
+    }
+
+    const cached = verifyCache.get(normalizedToken);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.user;
     }
 
     const payload = new URLSearchParams({
@@ -117,10 +135,19 @@ export const liffAuthService = {
 
     logger.info("liffAuth.verifyIdToken.success", { userId: data.sub });
 
-    return {
+    const user: VerifiedLiffUser = {
       userId: data.sub,
       displayName: data.name ?? null,
       pictureUrl: data.picture ?? null
     };
+
+    // 成功のみキャッシュ。上限超過は挿入順（Map の先頭＝最古）から間引く。
+    if (verifyCache.size >= VERIFY_CACHE_MAX_ENTRIES) {
+      const oldestKey = verifyCache.keys().next().value;
+      if (oldestKey !== undefined) verifyCache.delete(oldestKey);
+    }
+    verifyCache.set(normalizedToken, { user, expiresAt: Date.now() + VERIFY_CACHE_TTL_MS });
+
+    return user;
   }
 };
