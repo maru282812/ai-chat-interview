@@ -50,6 +50,10 @@ export const liffAuthService = {
     });
 
     let response: globalThis.Response;
+    // LINE の verify エンドポイントへの往復時間を単独で計測する。ほぼ全 LIFF データ
+    // エンドポイントが1回ずつ verify を呼ぶため、この1箇所のログで「認証往復コスト」を
+    // 全エンドポイント横断で分離できる（perfTiming の総時間から引けば DB＋描画が残差）。
+    const verifyStart = process.hrtime.bigint();
     try {
       response = await fetch("https://api.line.me/oauth2/v2.1/verify", {
         method: "POST",
@@ -59,9 +63,18 @@ export const liffAuthService = {
         body: payload.toString()
       });
     } catch (err) {
-      logger.error("liffAuth.verifyIdToken.fetchFailed", { error: String(err) });
+      logger.error("liffAuth.verifyIdToken.fetchFailed", {
+        error: String(err),
+        durMs: Math.round(Number(process.hrtime.bigint() - verifyStart) / 1e5) / 10,
+        path: ctx?.path,
+      });
       throw new HttpError(503, "LINE token verification is unavailable");
     }
+    logger.info("liffAuth.verifyIdToken.timing", {
+      durMs: Math.round(Number(process.hrtime.bigint() - verifyStart) / 1e5) / 10,
+      status: response.status,
+      path: ctx?.path,
+    });
 
     if (!response.ok) {
       let bodyText = "";
