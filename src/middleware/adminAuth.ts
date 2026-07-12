@@ -21,5 +21,7 @@ export const adminAuthMiddleware: RequestHandler = (req, res, next) => {
     return;
   }
 
+  // 監査ログ（export_jobs 等）の実施者記録用
+  res.locals.adminUser = username;
   next();
 };

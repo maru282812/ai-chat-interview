@@ -42,6 +42,7 @@ import { assignmentService, type AssignmentRuleFilter } from "../services/assign
 import { projectRepository } from "../repositories/projectRepository";
 import { clientRepository } from "../repositories/clientRepository";
 import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
+import { exportJobRepository } from "../repositories/exportJobRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
 import { questionRepository } from "../repositories/questionRepository";
 import { collectClientMetrics } from "../lib/aggregationScope";
@@ -3263,43 +3264,103 @@ export const adminController = {
     };
   },
 
+  // 監査ログ (改修指示_集計アプリ連携 指示④・migration 076/077)。生成成功後・レスポンス前に await。
+  async recordStatExport(
+    res: Response,
+    projectId: string,
+    exportType: string,
+    filters: Record<string, unknown> = {}
+  ): Promise<void> {
+    await exportJobRepository.create({
+      project_id: projectId,
+      export_type: exportType,
+      filters_json: filters,
+      exported_by: (res.locals.adminUser as string | undefined) ?? null
+    });
+  },
+
   async exportStatRespondentsWide(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
-    adminController.sendStatCsv(
-      res,
-      "respondents_wide.csv",
-      await statExportService.respondentsWideCsv(projectId, adminController.statExportOptions(req))
-    );
+    const options = adminController.statExportOptions(req);
+    const csv = await statExportService.respondentsWideCsv(projectId, options);
+    await adminController.recordStatExport(res, projectId, "respondents_wide", { ...options });
+    adminController.sendStatCsv(res, "respondents_wide.csv", csv);
   },
 
   async exportStatAnswersLong(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
-    adminController.sendStatCsv(
-      res,
-      "answers_long.csv",
-      await statExportService.answersLongCsv(projectId, adminController.statExportOptions(req))
-    );
+    const options = adminController.statExportOptions(req);
+    const csv = await statExportService.answersLongCsv(projectId, options);
+    await adminController.recordStatExport(res, projectId, "answers_long", { ...options });
+    adminController.sendStatCsv(res, "answers_long.csv", csv);
   },
 
   async exportStatCodebook(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
-    adminController.sendStatCsv(res, "codebook.csv", await statExportService.codebookCsv(projectId));
+    const csv = await statExportService.codebookCsv(projectId);
+    await adminController.recordStatExport(res, projectId, "codebook");
+    adminController.sendStatCsv(res, "codebook.csv", csv);
   },
 
   async exportStatSnapshot(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
+    const json = await statExportService.questionnaireSnapshotJson(projectId);
+    await adminController.recordStatExport(res, projectId, "questionnaire_snapshot");
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Content-Disposition", "attachment; filename=questionnaire_snapshot.json");
-    res.send(await statExportService.questionnaireSnapshotJson(projectId));
+    res.send(json);
   },
 
   async exportStatRandomizationLog(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
-    adminController.sendStatCsv(
-      res,
-      "randomization_log.csv",
-      await statExportService.randomizationLogCsv(projectId, adminController.statExportOptions(req))
-    );
+    const options = adminController.statExportOptions(req);
+    const csv = await statExportService.randomizationLogCsv(projectId, options);
+    await adminController.recordStatExport(res, projectId, "randomization_log", { ...options });
+    adminController.sendStatCsv(res, "randomization_log.csv", csv);
+  },
+
+  // ------------------------------------------------------------------
+  // ロウデータ（Freeasy水準）出力。docs/plan-rawdata-export.md。
+  // ------------------------------------------------------------------
+  rawdataExportOptions(req: Request): {
+    excludeTest: boolean;
+    consentedOnly: boolean;
+    consentDocType?: string;
+    mode: "code" | "label";
+    statuses: string[];
+    includeProbe: boolean;
+  } {
+    const statuses = bodyString(req.query.statuses)
+      .split(",")
+      .map((status) => status.trim())
+      .filter(Boolean);
+    return {
+      ...adminController.statExportOptions(req),
+      mode: bodyString(req.query.mode) === "label" ? "label" : "code",
+      statuses: statuses.length > 0 ? statuses : ["completed"],
+      includeProbe: bodyString(req.query.includeProbe) !== "0"
+    };
+  },
+
+  async exportRawdata(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const options = adminController.rawdataExportOptions(req);
+    const csv = await statExportService.rawdataCsv(projectId, options);
+    await adminController.recordStatExport(res, projectId, "rawdata", { ...options });
+    adminController.sendStatCsv(res, "rawdata.csv", csv);
+  },
+
+  async exportRawdataLayout(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const options = adminController.rawdataExportOptions(req);
+    const csv = await statExportService.rawdataLayoutCsv(projectId, options);
+    await adminController.recordStatExport(res, projectId, "rawdata_layout", { includeProbe: options.includeProbe });
+    adminController.sendStatCsv(res, "rawdata-layout.csv", csv);
+  },
+
+  async statExportStatusCounts(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    res.json({ counts: await statExportService.statusCounts(projectId) });
   },
 
   // 送付前バリデーション (§4/§5/§6/§13)。JSONでレポートを返す。

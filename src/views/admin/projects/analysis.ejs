@@ -92,6 +92,85 @@
 })();
 </script>
 
+<div class="card" style="margin-bottom:16px;">
+  <h2>ロウデータ出力（Freeasy水準）</h2>
+  <p class="muted" style="font-size:0.85em;">
+    Freeasy式列命名（q1 / q1c1 / q1t1 / q1s1 …）＋設問別回答時刻＋属性列（性別/年齢/都道府県/職業/業種/未既婚/子供）。
+    列の意味はレイアウトデータで引けます。含めるステータスは件数を見て手動選択（既定は完了のみ）。
+  </p>
+  <div id="rd-counts" style="font-size:0.9em;margin-bottom:8px;">件数を読み込み中...</div>
+  <p style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-size:0.85em;">
+    <span>
+      出力タイプ:
+      <label><input type="radio" name="rd-mode" value="code" checked /> コード出力</label>
+      <label><input type="radio" name="rd-mode" value="label" /> 回答値出力</label>
+    </span>
+    <label><input type="checkbox" id="rd-include-probe" checked /> AI深掘り列を含む</label>
+    <label><input type="checkbox" id="rd-include-test" /> テスト回答を含む</label>
+  </p>
+  <p style="display:flex;flex-wrap:wrap;gap:8px;">
+    <a class="button-link" id="rd-csv" href="<%= exBase %>/rawdata.csv">rawdata.csv</a>
+    <a class="button-link secondary" id="rd-layout" href="<%= exBase %>/rawdata-layout.csv">rawdata-layout.csv（レイアウトデータ）</a>
+  </p>
+</div>
+
+<script>
+(function () {
+  const base = "/admin/projects/<%= project.id %>/exports/stat";
+  const countsEl = document.getElementById("rd-counts");
+  const STATUS_LABELS = { completed: "完了", partial: "途中までの回答", abandoned: "離脱", not_started: "未開始" };
+
+  function selectedStatuses() {
+    return [...document.querySelectorAll(".rd-status:checked")].map((el) => el.value);
+  }
+
+  function syncRawdataLinks() {
+    const params = new URLSearchParams();
+    const mode = document.querySelector('input[name="rd-mode"]:checked');
+    if (mode && mode.value === "label") params.set("mode", "label");
+    const statuses = selectedStatuses();
+    if (statuses.length > 0) params.set("statuses", statuses.join(","));
+    if (!document.getElementById("rd-include-probe").checked) params.set("includeProbe", "0");
+    if (document.getElementById("rd-include-test").checked) params.set("includeTest", "1");
+    document.getElementById("rd-csv").href = base + "/rawdata.csv?" + params.toString();
+    const layoutParams = new URLSearchParams();
+    if (!document.getElementById("rd-include-probe").checked) layoutParams.set("includeProbe", "0");
+    document.getElementById("rd-layout").href = base + "/rawdata-layout.csv" + (layoutParams.toString() ? "?" + layoutParams.toString() : "");
+  }
+
+  async function loadCounts() {
+    try {
+      const res = await fetch(base + "/status-counts");
+      const data = await res.json();
+      const counts = (data && data.counts) || [];
+      if (counts.length === 0) {
+        countsEl.textContent = "回答がまだありません。";
+        return;
+      }
+      countsEl.innerHTML = counts.map((entry) => {
+        const label = STATUS_LABELS[entry.status] || entry.status;
+        const checked = entry.status === "completed" ? "checked" : "";
+        const test = entry.test_count > 0 ? "（別途テスト " + entry.test_count + " 件）" : "";
+        return '<label style="margin-right:16px;"><input type="checkbox" class="rd-status" value="' + entry.status + '" ' + checked + " /> " +
+          "【" + entry.sta_code + "】" + label + " <strong>" + entry.count + "</strong> 件" + test + "</label>";
+      }).join("");
+      for (const el of document.querySelectorAll(".rd-status")) {
+        el.addEventListener("change", syncRawdataLinks);
+      }
+      syncRawdataLinks();
+    } catch (e) {
+      countsEl.textContent = "件数の取得に失敗しました: " + e;
+    }
+  }
+
+  for (const el of document.querySelectorAll('input[name="rd-mode"], #rd-include-probe, #rd-include-test')) {
+    el.addEventListener("change", syncRawdataLinks);
+  }
+  syncRawdataLinks();
+  loadCounts();
+})();
+</script>
+
 <section class="grid">
   <div class="card">
     <h2>Coverage</h2>
