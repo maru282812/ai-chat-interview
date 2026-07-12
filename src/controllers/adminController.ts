@@ -3363,6 +3363,12 @@ export const adminController = {
     res.json({ counts: await statExportService.statusCounts(projectId) });
   },
 
+  /** エクスポート監査ログ（export_jobs・migration 076/077）の履歴表示。 */
+  async statExportHistory(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    res.json({ jobs: await exportJobRepository.listByProject(projectId) });
+  },
+
   // 送付前バリデーション (§4/§5/§6/§13)。JSONでレポートを返す。
   async validateProjectSurvey(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");

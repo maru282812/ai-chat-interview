@@ -236,7 +236,8 @@ test("rawdata: 属性列のコード化（code/label両モード）", () => {
     occupation: "会社員",
     industry: "小売",
     marital_status: "married",
-    has_children: true
+    has_children: true,
+    household_income: "200_400"
   };
   const codeRow = buildRawdataRows(ASSIGNMENTS, [makeRespondent({ profile })])[0]!;
   assert.equal(codeRow.SEX, 2);
@@ -244,18 +245,32 @@ test("rawdata: 属性列のコード化（code/label両モード）", () => {
   assert.equal(codeRow.PRE, 13);
   assert.equal(codeRow.JOB, "会社員");
   assert.equal(codeRow.MAR, 2);
+  assert.equal(codeRow.INC, 2);
   assert.equal(codeRow.CHI, 1);
 
   const labelRow = buildRawdataRows(ASSIGNMENTS, [makeRespondent({ profile })], { mode: "label" })[0]!;
   assert.equal(labelRow.SEX, "女性");
   assert.equal(labelRow.PRE, "東京都");
   assert.equal(labelRow.MAR, "既婚");
+  assert.equal(labelRow.INC, "200〜400万円未満");
   assert.equal(labelRow.CHI, "あり");
 
   // プロフィール未登録は空欄
   const noProfile = buildRawdataRows(ASSIGNMENTS, [makeRespondent()])[0]!;
   assert.equal(noProfile.SEX, "");
   assert.equal(noProfile.AGE, "");
+  assert.equal(noProfile.INC, "");
+});
+
+test("rawdata: 回答環境列（UserAgent/IPAddress・未収集は空欄）", () => {
+  const withEnv = makeRespondent({ user_agent: "Mozilla/5.0 (iPhone)", ip_address: "203.0.113.1" });
+  const row = buildRawdataRows(ASSIGNMENTS, [withEnv])[0]!;
+  assert.equal(row.UserAgent, "Mozilla/5.0 (iPhone)");
+  assert.equal(row.IPAddress, "203.0.113.1");
+
+  const withoutEnv = buildRawdataRows(ASSIGNMENTS, [makeRespondent()])[0]!;
+  assert.equal(withoutEnv.UserAgent, "");
+  assert.equal(withoutEnv.IPAddress, "");
 });
 
 test("computeAge: 誕生日前後で満年齢が変わる", () => {
@@ -288,11 +303,14 @@ test("layout: 全列の意味・コード表が引ける", () => {
   assert.equal(q5s1.length, 3);
   assert.ok(String(q5s1[0]!.column_role).includes("味"));
 
-  // メタ・属性
+  // メタ・属性・回答環境
   assert.ok(byColumn.has("MID"));
   assert.equal(byColumn.get("STA")!.length, 4);
   assert.equal(byColumn.get("SEX")!.length, 4);
   assert.ok(byColumn.has("PRE"));
+  assert.equal(byColumn.get("INC")!.length, 10);
+  assert.ok(byColumn.has("UserAgent"));
+  assert.ok(byColumn.has("IPAddress"));
 });
 
 test("statusCounts: ステータス別件数とテスト別掲", () => {

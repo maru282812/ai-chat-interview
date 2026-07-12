@@ -25,6 +25,9 @@ export const sessionRepository = {
     status: SessionStatus;
     summary?: string | null;
     state_json?: SessionState | null;
+    /** 回答環境（不正検出・migration 078）。LIFF セッションのみ渡す。 */
+    user_agent?: string | null;
+    ip_address?: string | null;
   }): Promise<Session> {
     const { data, error } = await supabase.from("sessions").insert(input).select("*").single();
     throwIfError(error);

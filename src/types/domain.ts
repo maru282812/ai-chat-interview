@@ -808,6 +808,8 @@ export interface UserProfile {
   has_children: boolean | null;
   children_ages: number[];
   household_composition: string[];
+  /** 世帯年収（コード文字列・migration 078）。選択肢は lib/rawdataExport.ts の INCOME_CODES が正。 */
+  household_income?: string | null;
   // Phase2-A 追加カラム
   profile_completed: boolean;
   profile_completed_at: string | null;
@@ -944,6 +946,9 @@ export interface Session {
   snapshot_id?: string | null;
   /** 割り当てられたコンセプト提示順（L1・migration 070）。 */
   concept_order_json?: string[] | null;
+  /** 回答環境（不正検出・ロウデータ出力用・migration 078）。LIFF セッションのみ記録。 */
+  user_agent?: string | null;
+  ip_address?: string | null;
 }
 
 export interface Message {

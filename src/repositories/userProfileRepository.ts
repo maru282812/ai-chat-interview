@@ -17,6 +17,7 @@ export interface UserProfileUpsertInput {
   has_children?: boolean | null;
   children_ages?: number[];
   household_composition?: string[];
+  household_income?: string | null;
   profile_completed?: boolean;
   profile_completed_at?: string | null;
   notification_ok?: boolean;

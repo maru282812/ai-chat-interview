@@ -50,11 +50,16 @@ export interface RawdataProfileInput {
   industry: string | null;
   marital_status: string | null;
   has_children: boolean | null;
+  /** 世帯年収コード（migration 078・INCOME_CODES が正）。 */
+  household_income?: string | null;
 }
 
 /** ExportRespondent に属性を付けた拡張（wide/long は profile を読まないため凍結契約に影響しない）。 */
 export interface RawdataRespondent extends ExportRespondent {
   profile?: RawdataProfileInput | null;
+  /** 回答環境（sessions.user_agent / ip_address・migration 078・LIFF セッションのみ）。 */
+  user_agent?: string | null;
+  ip_address?: string | null;
 }
 
 export type RawdataMode = "code" | "label";
@@ -372,6 +377,20 @@ export const MARITAL_CODES: Record<string, { code: number; label: string }> = {
   widowed: { code: 4, label: "死別" }
 };
 
+/** 世帯年収（migration 078）。プロフィール入力（mypage.ejs）・parseIncome と対応。 */
+export const INCOME_CODES: Record<string, { code: number; label: string }> = {
+  under_200: { code: 1, label: "200万円未満" },
+  "200_400": { code: 2, label: "200〜400万円未満" },
+  "400_600": { code: 3, label: "400〜600万円未満" },
+  "600_800": { code: 4, label: "600〜800万円未満" },
+  "800_1000": { code: 5, label: "800〜1,000万円未満" },
+  "1000_1500": { code: 6, label: "1,000〜1,500万円未満" },
+  "1500_2000": { code: 7, label: "1,500〜2,000万円未満" },
+  over_2000: { code: 8, label: "2,000万円以上" },
+  unknown: { code: 98, label: "わからない" },
+  no_answer: { code: 99, label: "答えたくない" }
+};
+
 /** JIS X 0401 都道府県コード。 */
 export const PREFECTURE_CODES: Record<string, number> = {
   北海道: 1, 青森県: 2, 岩手県: 3, 宮城県: 4, 秋田県: 5, 山形県: 6, 福島県: 7,
@@ -420,6 +439,9 @@ function writeAttributeCells(row: ExportRow, respondent: RawdataRespondent, mode
 
   const marital = profile?.marital_status ? MARITAL_CODES[profile.marital_status] : undefined;
   row.MAR = marital ? (mode === "label" ? marital.label : marital.code) : "";
+
+  const income = profile?.household_income ? INCOME_CODES[profile.household_income] : undefined;
+  row.INC = income ? (mode === "label" ? income.label : income.code) : "";
 
   row.CHI =
     profile?.has_children === true ? (mode === "label" ? "あり" : 1)
@@ -485,6 +507,10 @@ export function buildRawdataRows(
         const state = determineResponseState(group, respondent);
         writeQuestionCells(row, assignment, group, state, mode);
       }
+
+      // 回答環境（不正検出・LIFF セッションのみ記録・migration 078）
+      row.UserAgent = respondent.user_agent ?? "";
+      row.IPAddress = respondent.ip_address ?? "";
 
       writeAttributeCells(row, respondent, mode);
       return row;
@@ -600,6 +626,10 @@ export function buildRawdataLayoutRows(assignments: QAssignment[]): ExportRow[] 
     }
   }
 
+  // 回答環境
+  rows.push(layoutRow("UserAgent", "", "", "", "回答環境ブラウザ（LIFFセッションのみ・不正検出用）", "", "", "LINEチャット経由は空欄"));
+  rows.push(layoutRow("IPAddress", "", "", "", "回答元IPアドレス（LIFFセッションのみ・不正検出用）", "", "", "LINEチャット経由は空欄"));
+
   // 属性列
   for (const [key, entry] of Object.entries(SEX_CODES)) {
     rows.push(layoutRow("SEX", "", "", "", "性別（プロフィール）", entry.code, `${entry.label}（${key}）`, ""));
@@ -610,6 +640,9 @@ export function buildRawdataLayoutRows(assignments: QAssignment[]): ExportRow[] 
   rows.push(layoutRow("BUS", "", "", "", "業種（プロフィール）", "", "", "コード未定義・ラベルのまま出力"));
   for (const [key, entry] of Object.entries(MARITAL_CODES)) {
     rows.push(layoutRow("MAR", "", "", "", "未既婚（プロフィール）", entry.code, `${entry.label}（${key}）`, ""));
+  }
+  for (const [key, entry] of Object.entries(INCOME_CODES)) {
+    rows.push(layoutRow("INC", "", "", "", "世帯年収（プロフィール）", entry.code, `${entry.label}（${key}）`, "未登録は空欄"));
   }
   rows.push(layoutRow("CHI", "", "", "", "子供の有無（プロフィール）", "1=あり / 2=なし", "", "未登録は空欄"));
 

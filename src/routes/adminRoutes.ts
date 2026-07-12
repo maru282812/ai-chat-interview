@@ -85,6 +85,10 @@ adminRoutes.get(
   "/projects/:projectId/exports/stat/status-counts",
   asyncHandler(adminController.statExportStatusCounts)
 );
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/history",
+  asyncHandler(adminController.statExportHistory)
+);
 // 送付前バリデーション (§4/§5/§6)
 adminRoutes.get(
   "/projects/:projectId/validate",

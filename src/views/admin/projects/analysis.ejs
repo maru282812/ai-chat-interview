@@ -108,10 +108,12 @@
     <label><input type="checkbox" id="rd-include-probe" checked /> AI深掘り列を含む</label>
     <label><input type="checkbox" id="rd-include-test" /> テスト回答を含む</label>
   </p>
-  <p style="display:flex;flex-wrap:wrap;gap:8px;">
+  <p style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
     <a class="button-link" id="rd-csv" href="<%= exBase %>/rawdata.csv">rawdata.csv</a>
     <a class="button-link secondary" id="rd-layout" href="<%= exBase %>/rawdata-layout.csv">rawdata-layout.csv（レイアウトデータ）</a>
+    <button type="button" class="button-link secondary" id="rd-history-btn">出力履歴</button>
   </p>
+  <div id="rd-history" style="display:none;font-size:0.85em;margin-top:8px;"></div>
 </div>
 
 <script>
@@ -168,6 +170,32 @@
   }
   syncRawdataLinks();
   loadCounts();
+
+  // 出力履歴（export_jobs 監査ログ）
+  document.getElementById("rd-history-btn").addEventListener("click", async () => {
+    const box = document.getElementById("rd-history");
+    if (box.style.display !== "none") {
+      box.style.display = "none";
+      return;
+    }
+    box.style.display = "";
+    box.textContent = "読み込み中...";
+    try {
+      const res = await fetch(base + "/history");
+      const data = await res.json();
+      const jobs = (data && data.jobs) || [];
+      if (jobs.length === 0) {
+        box.textContent = "出力履歴はまだありません。";
+        return;
+      }
+      box.innerHTML = "<table style='width:100%;'><thead><tr><th>日時</th><th>種類</th><th>実施者</th><th>フィルタ</th></tr></thead><tbody>" +
+        jobs.map((job) => "<tr><td>" + new Date(job.exported_at).toLocaleString("ja-JP") + "</td><td>" + job.export_type + "</td><td>" +
+          (job.exported_by || "-") + "</td><td style='color:#888;'>" + JSON.stringify(job.filters_json || {}) + "</td></tr>").join("") +
+        "</tbody></table>";
+    } catch (e) {
+      box.textContent = "履歴の取得に失敗しました: " + e;
+    }
+  });
 })();
 </script>
 

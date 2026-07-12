@@ -193,13 +193,17 @@ async function loadExportData(
         occupation: profile.occupation,
         industry: profile.industry,
         marital_status: profile.marital_status,
-        has_children: profile.has_children
+        has_children: profile.has_children,
+        household_income: profile.household_income ?? null
       });
     }
   }
 
   const exportRespondents: RawdataRespondent[] = selected.map(({ respondent, session }) => ({
     profile: options.withProfiles ? profileByLineUser.get(respondent.line_user_id) ?? null : undefined,
+    // 回答環境（migration 078・LIFF セッションのみ記録・未適用DBでは undefined → null）
+    user_agent: session.user_agent ?? null,
+    ip_address: session.ip_address ?? null,
     respondent_key: respondent.id,
     session_id: session.id,
     response_status: mapResponseStatus(session.status),

@@ -855,6 +855,9 @@ export const liffController = {
           current_question_id: firstQuestion?.id ?? null,
           current_phase: "question",
           status: "active",
+          // 回答環境の記録（不正検出・ロウデータ UserAgent/IPAddress 列・migration 078）
+          user_agent: (req.headers["user-agent"] ?? "").toString().slice(0, 300) || null,
+          ip_address: (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || null,
         });
       }
       const currentUrl = `/liff/survey?assignment_id=${encodeURIComponent(assignmentId)}`;
@@ -901,6 +904,9 @@ export const liffController = {
         current_question_id: firstQuestion?.id ?? null,
         current_phase: "question",
         status: "active",
+        // 回答環境の記録（不正検出・ロウデータ UserAgent/IPAddress 列・migration 078）
+        user_agent: (req.headers["user-agent"] ?? "").toString().slice(0, 300) || null,
+        ip_address: (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || null,
       });
     }
 
@@ -1791,6 +1797,16 @@ export const liffController = {
       return null;
     }
 
+    // 世帯年収（migration 078）。許容値は lib/rawdataExport.ts の INCOME_CODES が正。
+    function parseIncome(v: unknown): string | null {
+      const s = stringValue(v).trim();
+      const allowed = [
+        "under_200", "200_400", "400_600", "600_800", "800_1000",
+        "1000_1500", "1500_2000", "over_2000", "unknown", "no_answer"
+      ];
+      return allowed.includes(s) ? s : null;
+    }
+
     const input: UserProfileUpsertInput = {
       nickname: stringValue(body.nickname).trim() || null,
       birth_date: parseDate(body.birth_date),
@@ -1804,7 +1820,8 @@ export const liffController = {
       marital_status: parseMaritalStatus(body.marital_status),
       has_children: parseBool(body.has_children),
       children_ages: parseIntArray(body.children_ages),
-      household_composition: parseStringArray(body.household_composition)
+      household_composition: parseStringArray(body.household_composition),
+      household_income: parseIncome(body.household_income)
     };
 
     const profile = await userProfileRepository.upsert(verifiedUser.userId, input);
