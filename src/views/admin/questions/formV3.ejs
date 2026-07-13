@@ -144,6 +144,43 @@
     </section>
   <% } %>
 
+  <% if (typeof rawdataInfo !== "undefined" && rawdataInfo) { %>
+  <section style="background:#f6f9f8;border:1px solid #d8e3e0;border-radius:10px;padding:10px 14px;font-size:12.5px;">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+      <strong>ロウデータ列:</strong>
+      <span style="font-family:monospace;"><%= rawdataInfo.summary %></span>
+      <% if (rawdataInfo.snapshotConfirmed) { %>
+        <span class="tag" style="background:#0b7a75;color:#fff;">✓ 確定済み（q<%= rawdataInfo.q_number %> 固定）</span>
+      <% } else { %>
+        <span class="tag" style="background:#8a5b00;color:#fff;">暫定 q<%= rawdataInfo.q_number %>（調査票確定まで変わる可能性）</span>
+      <% } %>
+      <% if (rawdataInfo.columns.length > 1) { %>
+        <button type="button" id="rd-cols-toggle" class="button-link secondary" style="font-size:11px;padding:2px 8px;">列の対応を表示</button>
+      <% } %>
+    </div>
+    <% if (rawdataInfo.columns.length > 1) { %>
+    <div id="rd-cols" style="display:none;margin-top:8px;">
+      <table style="font-size:12px;">
+        <thead><tr><th>列名</th><th>対応</th></tr></thead>
+        <tbody>
+          <% for (const col of rawdataInfo.columns) { %>
+            <tr><td style="font-family:monospace;"><%= col.name %></td><td><%= col.label %></td></tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+    <script>
+      document.getElementById("rd-cols-toggle")?.addEventListener("click", function () {
+        const box = document.getElementById("rd-cols");
+        const open = box.style.display !== "none";
+        box.style.display = open ? "none" : "";
+        this.textContent = open ? "列の対応を表示" : "列の対応を隠す";
+      });
+    </script>
+    <% } %>
+  </section>
+  <% } %>
+
   <!-- ============================================================ -->
   <!-- タブナビ                                                      -->
   <!-- ============================================================ -->

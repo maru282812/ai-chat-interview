@@ -1699,6 +1699,13 @@ function renderQuestionForm(
     statusCode?: number;
     prevQuestion?: { id: string; question_code: string } | null;
     nextQuestion?: { id: string; question_code: string } | null;
+    /** ロウデータ列の対応（編集時のみ・q番号/列サマリ/列対応と確定状態） */
+    rawdataInfo?: {
+      q_number: number;
+      summary: string;
+      columns: { name: string; label: string }[];
+      snapshotConfirmed: boolean;
+    } | null;
   }
 ): void {
   if (typeof input.statusCode === "number") {
@@ -1711,6 +1718,7 @@ function renderQuestionForm(
     question: input.question,
     action: input.action,
     form: input.formValues,
+    rawdataInfo: input.rawdataInfo ?? null,
     availableQuestions: input.availableQuestions.filter(
       (candidate) => !candidate.is_hidden || candidate.id === input.question?.id
     ),
@@ -2738,7 +2746,9 @@ export const adminController = {
     const projectId = routeParam(req, "projectId");
     const project = await projectRepository.getById(projectId);
     const questions = await adminService.listQuestions(projectId);
-    res.render("admin/questions/indexDesigner", { title: "質問一覧", project, questions });
+    // ロウデータ列の対応表示（導出に失敗しても一覧自体は落とさない）
+    const rawdataIndex = await statExportService.rawdataColumnIndex(projectId).catch(() => null);
+    res.render("admin/questions/indexDesigner", { title: "質問一覧", project, questions, rawdataIndex });
   },
 
   async newQuestion(req: Request, res: Response): Promise<void> {
@@ -2843,6 +2853,9 @@ export const adminController = {
     const nextQ = currentIndex !== -1 && currentIndex < availableQuestions.length - 1 ? availableQuestions[currentIndex + 1] : undefined;
     const prevQuestion = prevQ ? { id: prevQ.id, question_code: prevQ.question_code } : null;
     const nextQuestion = nextQ ? { id: nextQ.id, question_code: nextQ.question_code } : null;
+    // ロウデータ列の対応（導出に失敗しても編集画面は落とさない）
+    const rawdataIndex = await statExportService.rawdataColumnIndex(question.project_id).catch(() => null);
+    const rawdataEntry = rawdataIndex?.byQuestionId[question.id];
     renderQuestionForm(res, {
       title: "質問編集",
       project,
@@ -2854,6 +2867,9 @@ export const adminController = {
       successMessage: resolveNoticeMessage(req.query.notice),
       prevQuestion,
       nextQuestion,
+      rawdataInfo: rawdataEntry
+        ? { ...rawdataEntry, snapshotConfirmed: rawdataIndex?.snapshotConfirmed ?? false }
+        : null,
     });
   },
 

@@ -5,6 +5,7 @@ import type { ExportAnswerGroup, ExportRespondent } from "../lib/statExport";
 import {
   type RawdataRespondent,
   assignQNumbers,
+  buildRawdataColumnIndex,
   buildRawdataLayoutRows,
   buildRawdataRows,
   buildStatusCounts,
@@ -311,6 +312,28 @@ test("layout: 全列の意味・コード表が引ける", () => {
   assert.equal(byColumn.get("INC")!.length, 10);
   assert.ok(byColumn.has("UserAgent"));
   assert.ok(byColumn.has("IPAddress"));
+});
+
+test("columnIndex: 設問→ロウデータ列の対応（圧縮表記・列対応）", () => {
+  const index = buildRawdataColumnIndex(ASSIGNMENTS);
+
+  // SA は q1 のみ
+  assert.equal(index.get(Q_SINGLE.id)!.q_number, 1);
+  assert.equal(index.get(Q_SINGLE.id)!.summary, "q1");
+
+  // MA 3肢は圧縮＋その他テキスト
+  assert.equal(index.get(Q_MULTI.id)!.summary, "q2c1〜q2c3・q2t1");
+  const maCols = index.get(Q_MULTI.id)!.columns;
+  assert.equal(maCols.find((col) => col.name === "q2c3")!.label, "C");
+
+  // 自由記述は t列
+  assert.equal(index.get(Q_TEXT.id)!.summary, "q4t1");
+
+  // マトリクス single 2行は列挙・multi 3列は圧縮
+  assert.equal(index.get(Q_MATRIX_S.id)!.summary, "q5s1・q5s2");
+  assert.equal(index.get(Q_MATRIX_M.id)!.summary, "q6s1c1〜q6s1c3");
+  const matrixCols = index.get(Q_MATRIX_M.id)!.columns;
+  assert.equal(matrixCols.find((col) => col.name === "q6s1c2")!.label, "朝 × 米");
 });
 
 test("statusCounts: ステータス別件数とテスト別掲", () => {
