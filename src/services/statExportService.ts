@@ -18,10 +18,12 @@ import {
   toCsvRfc4180
 } from "../lib/statExport";
 import {
+  type RawdataColumnInfo,
   type RawdataMode,
   type RawdataRespondent,
   type StatusCount,
   assignQNumbers,
+  buildRawdataColumnIndex,
   buildRawdataLayoutRows,
   buildRawdataRows,
   buildStatusCounts
@@ -311,5 +313,26 @@ export const statExportService = {
   async statusCounts(projectId: string): Promise<StatusCount[]> {
     const { respondents } = await loadExportData(projectId, {});
     return buildStatusCounts(respondents);
+  },
+
+  /**
+   * 設問一覧/編集画面用: question_id → ロウデータ列の対応。
+   * 採番はエクスポート本体と同じ assignQNumbers を使うため画面とCSVで食い違わない。
+   * snapshotConfirmed=false の間は q番号が設問の追加・並べ替えで変わりうる（暫定）。
+   */
+  async rawdataColumnIndex(projectId: string): Promise<{
+    byQuestionId: Record<string, RawdataColumnInfo>;
+    snapshotConfirmed: boolean;
+  }> {
+    const questions = await questionRepository.listByProject(projectId);
+    const [variables, active] = await Promise.all([
+      snapshotService.resolveCodebook(projectId, questions),
+      snapshotService.getActive(projectId)
+    ]);
+    const assignments = assignQNumbers(variables, questions);
+    return {
+      byQuestionId: Object.fromEntries(buildRawdataColumnIndex(assignments)),
+      snapshotConfirmed: Boolean(active)
+    };
   }
 };

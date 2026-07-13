@@ -17,11 +17,23 @@
   </div>
 </div>
 
+<% if (rawdataIndex) { %>
+  <p class="muted" style="margin-top:12px;font-size:0.85em;">
+    ロウデータ列（q番号）:
+    <% if (rawdataIndex.snapshotConfirmed) { %>
+      <span class="tag" style="background:#0b7a75;color:#fff;">✓ 調査票確定済み（q番号は固定）</span>
+    <% } else { %>
+      <span class="tag" style="background:#8a5b00;color:#fff;">暫定（設問の追加・並べ替えで変わります。分析ページで「調査票を確定」すると固定されます）</span>
+    <% } %>
+  </p>
+<% } %>
+
 <table style="margin-top: 16px;">
   <thead>
     <tr>
       <th>Order</th>
       <th>Code</th>
+      <th>ロウデータ列</th>
       <th>Type</th>
       <th>Role</th>
       <th>AI Probe</th>
@@ -37,6 +49,14 @@
       <tr>
         <td><%= row.question.sort_order %></td>
         <td><strong><%= row.question.question_code %></strong></td>
+        <td>
+          <% const rd = rawdataIndex ? rawdataIndex.byQuestionId[row.question.id] : null; %>
+          <% if (rd) { %>
+            <span style="font-family:monospace;font-size:0.9em;"><%= rd.summary %></span>
+          <% } else { %>
+            <span class="muted">-</span>
+          <% } %>
+        </td>
         <td><%= row.question.question_type %></td>
         <td><span class="tag"><%= row.question.question_role %></span></td>
         <td><%= row.question.ai_probe_enabled ? "ON" : "OFF" %></td>

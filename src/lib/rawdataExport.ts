@@ -650,6 +650,100 @@ export function buildRawdataLayoutRows(assignments: QAssignment[]): ExportRow[] 
 }
 
 // ============================================================
+// 管理画面向け: 設問→ロウデータ列の対応（設問一覧/編集画面の表示用）
+// ============================================================
+
+const DATA_COLUMN_KINDS = new Set<ColumnKind>([
+  "sa", "ma_flag", "free_text", "numeric", "matrix_sa", "matrix_flag", "raw_json"
+]);
+
+export interface RawdataColumnDetail {
+  name: string;
+  /** その列が何か（選択肢ラベル・マトリクス行×列 等） */
+  label: string;
+}
+
+export interface RawdataColumnInfo {
+  q_number: number;
+  /** 圧縮表記（例: "q2c1〜q2c4・q2t1"） */
+  summary: string;
+  /** 列ごとの対応（編集画面の逆引き用） */
+  columns: RawdataColumnDetail[];
+}
+
+function columnDetailLabel(column: ColumnSpec): string {
+  switch (column.kind) {
+    case "sa":
+      return "単一選択（コード=選択肢位置）";
+    case "ma_flag":
+      return column.option?.label ?? "";
+    case "free_text":
+      return "自由記述・その他";
+    case "numeric":
+      return "数値";
+    case "matrix_sa":
+      return `行: ${column.rowLabel ?? ""}`;
+    case "matrix_flag":
+      return `${column.rowLabel ?? ""} × ${column.option?.label ?? ""}`;
+    case "raw_json":
+      return "生値";
+    default:
+      return "";
+  }
+}
+
+/** データ列名を圧縮表記にする（連続するフラグ列は "q2c1〜q2c4" に畳む）。 */
+function summarizeColumnNames(columns: ColumnSpec[]): string {
+  const parts: string[] = [];
+  let run: string[] = [];
+  let runKind: ColumnKind | null = null;
+
+  const flush = () => {
+    if (run.length === 0) {
+      return;
+    }
+    if (run.length <= 2) {
+      parts.push(...run);
+    } else {
+      parts.push(`${run[0]}〜${run[run.length - 1]}`);
+    }
+    run = [];
+    runKind = null;
+  };
+
+  for (const column of columns) {
+    const collapsible = column.kind === "ma_flag" || column.kind === "matrix_flag" || column.kind === "matrix_sa";
+    if (collapsible && column.kind === runKind) {
+      run.push(column.name);
+      continue;
+    }
+    flush();
+    if (collapsible) {
+      run = [column.name];
+      runKind = column.kind;
+    } else {
+      parts.push(column.name);
+    }
+  }
+  flush();
+  return parts.join("・");
+}
+
+/** question_id → q番号・列サマリ・列対応表。設問一覧/編集画面が使う。 */
+export function buildRawdataColumnIndex(assignments: QAssignment[]): Map<string, RawdataColumnInfo> {
+  const index = new Map<string, RawdataColumnInfo>();
+  for (const assignment of assignments) {
+    const dataColumns = assignment.columns.filter((column) => DATA_COLUMN_KINDS.has(column.kind));
+    index.set(assignment.variable.question_id, {
+      q_number: assignment.qNumber,
+      summary: summarizeColumnNames(dataColumns),
+      columns: dataColumns.map((column) => ({ name: column.name, label: columnDetailLabel(column) }))
+    });
+  }
+  return index;
+}
+
+// ============================================================
 // ステータス別件数（出力画面の件数パネル用）
 // ============================================================
 
