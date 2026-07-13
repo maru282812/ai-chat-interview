@@ -29,6 +29,8 @@ import {
   normalizeMetricDirection
 } from "../lib/metricCatalog";
 import { getProjectResearchSettings, parseLineSeparatedList } from "../lib/projectResearch";
+import { jstDateString, previewQueueAssignments, slotKey } from "../lib/dailyQueue";
+import { DEFAULT_RAWDATA_STATUSES } from "../lib/rawdataExport";
 import { csvService } from "../services/csvService";
 import { statExportService } from "../services/statExportService";
 import { snapshotService } from "../services/snapshotService";
@@ -191,6 +193,33 @@ function bodyStringArray(value: unknown): string[] {
     return [value];
   }
   return [];
+}
+
+function parseAnswerUiPreset(value: unknown): "casual" | "standard" | "formal" {
+  return value === "standard" || value === "formal" ? value : "casual";
+}
+
+/**
+ * デイリーアンケート作成/編集フォームの「配信タイミング」を反映する（migration 079）。
+ * placement=queue ならキュー末尾へ、placement=date なら日付×枠へ固定、それ以外は据え置き。
+ */
+async function applyDailySurveyPlacement(
+  surveyId: string,
+  b: Record<string, string>,
+): Promise<void> {
+  const placement = b.placement ?? "";
+  if (placement === "queue") {
+    await dailySurveyService.enqueue(surveyId);
+    return;
+  }
+  if (placement === "date") {
+    const date = b.scheduled_date ?? "";
+    const slot = b.slot === "evening" ? "evening" : "morning";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new HttpError(400, "配信日を指定してください。");
+    }
+    await dailySurveyService.assignToSlot(surveyId, date, slot);
+  }
 }
 
 
@@ -3335,6 +3364,19 @@ export const adminController = {
     adminController.sendStatCsv(res, "randomization_log.csv", csv);
   },
 
+  /** 集計アプリ（ai-report）向け3点セット（wide/long/codebook）の zip 一括DL。 */
+  async exportStatBundleZip(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const options = adminController.statExportOptions(req);
+    const zip = await statExportService.analysisBundleZip(projectId, options);
+    await adminController.recordStatExport(res, projectId, "stat_bundle_zip", { ...options });
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename=statexport_${stamp}.zip`);
+    res.setHeader("Content-Length", String(zip.length));
+    res.send(zip);
+  },
+
   // ------------------------------------------------------------------
   // ロウデータ（Freeasy水準）出力。docs/plan-rawdata-export.md。
   // ------------------------------------------------------------------
@@ -3345,6 +3387,7 @@ export const adminController = {
     mode: "code" | "label";
     statuses: string[];
     includeProbe: boolean;
+    includePii: boolean;
   } {
     const statuses = bodyString(req.query.statuses)
       .split(",")
@@ -3353,8 +3396,11 @@ export const adminController = {
     return {
       ...adminController.statExportOptions(req),
       mode: bodyString(req.query.mode) === "label" ? "label" : "code",
-      statuses: statuses.length > 0 ? statuses : ["completed"],
-      includeProbe: bodyString(req.query.includeProbe) !== "0"
+      // 未完了行も既定で含める（クリーニング裁定は集計アプリ側で行うため）
+      statuses: statuses.length > 0 ? statuses : DEFAULT_RAWDATA_STATUSES,
+      includeProbe: bodyString(req.query.includeProbe) !== "0",
+      // UserAgent / IPAddress は個人情報のため明示指定時のみ出力
+      includePii: bodyString(req.query.includePii) === "1"
     };
   },
 
@@ -3370,7 +3416,10 @@ export const adminController = {
     const projectId = routeParam(req, "projectId");
     const options = adminController.rawdataExportOptions(req);
     const csv = await statExportService.rawdataLayoutCsv(projectId, options);
-    await adminController.recordStatExport(res, projectId, "rawdata_layout", { includeProbe: options.includeProbe });
+    await adminController.recordStatExport(res, projectId, "rawdata_layout", {
+      includeProbe: options.includeProbe,
+      includePii: options.includePii
+    });
     adminController.sendStatCsv(res, "rawdata-layout.csv", csv);
   },
 
@@ -5358,12 +5407,116 @@ export const adminController = {
   // デイリーアンケート管理
   // ============================================================
 
+  /**
+   * デイリーアンケートの配信計画画面（カレンダー＋キューの2ペイン・migration 079）。
+   * カレンダーの「(自動)」表示は queue の並びから計算した見込みで、DB には書かない。
+   */
   async dailySurveys(req: Request, res: Response): Promise<void> {
-    const surveys = await dailySurveyService.list();
+    const today = jstDateString();
+    const month = queryString(req.query.month).trim() || today.slice(0, 7); // YYYY-MM
+    const [y, m] = month.split("-").map(Number);
+    const year = y ?? Number(today.slice(0, 4));
+    const monthIndex = (m ?? Number(today.slice(5, 7))) - 1;
+
+    const firstDate = new Date(Date.UTC(year, monthIndex, 1)).toISOString().slice(0, 10);
+    const lastDay = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+    const lastDate = new Date(Date.UTC(year, monthIndex, lastDay)).toISOString().slice(0, 10);
+
+    let eveningAutofillEnabled = false;
+    try {
+      eveningAutofillEnabled = (await notificationSchedulerService.getSettings())
+        .evening_autofill_enabled;
+    } catch {
+      // 設定行が無い場合は「夜枠は補充しない」扱いで続行する
+    }
+
+    const { queued, scheduled, unplanned } = await dailySurveyService.getPlanningData(
+      firstDate,
+      lastDate
+    );
+
+    // 日付固定済みの枠（slot 未指定＝手動即時配信の分は枠を占有しない）
+    const occupiedSlots = new Set<string>();
+    const scheduledBySlot: Record<string, (typeof scheduled)[number]> = {};
+    for (const s of scheduled) {
+      if (!s.scheduled_date || !s.slot) continue;
+      const key = slotKey(s.scheduled_date, s.slot);
+      occupiedSlots.add(key);
+      scheduledBySlot[key] = s;
+    }
+
+    // 今日以降の見込み（キューを消費する順序）を計算する。過去日には出さない。
+    const preview = previewQueueAssignments({
+      startDate: today,
+      days: 60,
+      queueIds: queued.map((s) => s.id),
+      occupiedSlots,
+      eveningAutofillEnabled
+    });
+    const previewTitles: Record<string, string> = {};
+    for (const [key, id] of preview) {
+      const s = queued.find((q) => q.id === id);
+      if (s) previewTitles[key] = s.title;
+    }
+
+    const prevMonth = new Date(Date.UTC(year, monthIndex - 1, 1)).toISOString().slice(0, 7);
+    const nextMonth = new Date(Date.UTC(year, monthIndex + 1, 1)).toISOString().slice(0, 7);
+
     res.render("admin/daily-surveys/index", {
       title: "デイリーアンケート",
-      surveys
+      today,
+      month,
+      prevMonth,
+      nextMonth,
+      firstWeekday: new Date(Date.UTC(year, monthIndex, 1)).getUTCDay(),
+      lastDay,
+      queued,
+      unplanned,
+      scheduledBySlot,
+      previewTitles,
+      eveningAutofillEnabled
     });
+  },
+
+  /** キューの並べ替え（ドラッグ）。 */
+  async reorderDailySurveyQueue(req: Request, res: Response): Promise<void> {
+    const body = req.body as { ids?: unknown };
+    const ids = Array.isArray(body.ids) ? body.ids.filter((v): v is string => typeof v === "string") : [];
+    await dailySurveyService.reorderQueue(ids);
+    res.json({ ok: true });
+  },
+
+  /** カレンダーの日付×枠へ固定する（ドラッグ）。 */
+  async scheduleDailySurvey(req: Request, res: Response): Promise<void> {
+    const surveyId = routeParam(req, "surveyId");
+    const body = req.body as { date?: unknown; slot?: unknown };
+    const date = typeof body.date === "string" ? body.date : "";
+    const slot = body.slot === "morning" || body.slot === "evening" ? body.slot : null;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !slot) {
+      throw new HttpError(400, "date（YYYY-MM-DD）と slot（morning|evening）は必須です。");
+    }
+    try {
+      await dailySurveyService.assignToSlot(surveyId, date, slot);
+    } catch (e) {
+      // 同じ日の同じ枠は unique index（uq_daily_surveys_date_slot）で弾かれる。
+      // ドラッグ操作から呼ばれるので、UI がそのまま出せるメッセージにして返す。
+      if (String(e).includes("23505") || String(e).includes("uq_daily_surveys_date_slot")) {
+        throw new HttpError(409, "この枠にはすでに別のアンケートが入っています。");
+      }
+      throw e;
+    }
+    res.json({ ok: true });
+  },
+
+  /** キューへ戻す / キューへ積む。 */
+  async enqueueDailySurvey(req: Request, res: Response): Promise<void> {
+    const surveyId = routeParam(req, "surveyId");
+    await dailySurveyService.enqueue(surveyId);
+    if ((req.headers.accept ?? "").includes("application/json")) {
+      res.json({ ok: true });
+      return;
+    }
+    res.redirect("/admin/daily-surveys");
   },
 
   async newDailySurvey(req: Request, res: Response): Promise<void> {
@@ -5394,10 +5547,11 @@ export const adminController = {
       reward_min_points: Number(b.reward_min_points ?? 3),
       reward_max_points: Number(b.reward_max_points ?? 20),
       target_segment_id: b.target_segment_id || null,
-      scheduled_at: b.scheduled_at || null,
       expires_at: b.expires_at || null,
-      notification_template_id: b.notification_template_id || null
+      notification_template_id: b.notification_template_id || null,
+      answer_ui_preset: parseAnswerUiPreset(b.answer_ui_preset)
     });
+    await applyDailySurveyPlacement(survey.id, b);
     res.redirect(`/admin/daily-surveys/${survey.id}`);
   },
 
@@ -5431,10 +5585,11 @@ export const adminController = {
       reward_min_points: Number(b.reward_min_points ?? 3),
       reward_max_points: Number(b.reward_max_points ?? 20),
       target_segment_id: b.target_segment_id || null,
-      scheduled_at: b.scheduled_at || null,
       expires_at: b.expires_at || null,
-      notification_template_id: b.notification_template_id || null
+      notification_template_id: b.notification_template_id || null,
+      answer_ui_preset: parseAnswerUiPreset(b.answer_ui_preset)
     });
+    await applyDailySurveyPlacement(surveyId, b);
     res.redirect(`/admin/daily-surveys/${surveyId}`);
   },
 
@@ -5690,7 +5845,14 @@ export const adminController = {
     const settings = await notificationSchedulerService.getSettings();
     const flash = req.query.saved ? "設定を保存しました" : null;
     const jobResult = req.query.job
-      ? { job: req.query.job as string, sent: Number(req.query.sent ?? 0), failed: Number(req.query.failed ?? 0), total: Number(req.query.total ?? 0) }
+      ? {
+          job: req.query.job as string,
+          sent: Number(req.query.sent ?? 0),
+          failed: Number(req.query.failed ?? 0),
+          total: Number(req.query.total ?? 0),
+          survey: queryString(req.query.survey) || null,
+          reason: queryString(req.query.reason) || null
+        }
       : null;
     res.render("admin/scheduler-settings/index", {
       title: "通知スケジューラ設定",
@@ -5708,6 +5870,7 @@ export const adminController = {
       morning_time: b.morning_time || "08:00",
       evening_enabled: b.evening_enabled === "1",
       evening_time: b.evening_time || "18:00",
+      evening_autofill_enabled: b.evening_autofill_enabled === "1",
       reminder_enabled: b.reminder_enabled === "1",
       reminder_time: b.reminder_time || "20:00"
     });
@@ -5720,9 +5883,15 @@ export const adminController = {
     if (job === "morning") result = await notificationSchedulerService.runDailyMorning();
     else if (job === "evening") result = await notificationSchedulerService.runDailyEvening();
     else result = await notificationSchedulerService.runUnansweredReminder();
-    res.redirect(
-      `/admin/scheduler-settings?job=${result.job}&sent=${result.sent}&failed=${result.failed}&total=${result.total}`
-    );
+    const params = new URLSearchParams({
+      job: result.job,
+      sent: String(result.sent),
+      failed: String(result.failed),
+      total: String(result.total)
+    });
+    if (result.survey_title) params.set("survey", result.survey_title);
+    if (result.reason) params.set("reason", result.reason);
+    res.redirect(`/admin/scheduler-settings?${params.toString()}`);
   },
 
   // ============================================================

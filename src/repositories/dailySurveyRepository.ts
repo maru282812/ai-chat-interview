@@ -1,19 +1,37 @@
 import { supabase } from "../config/supabase";
+import type { DailySlot } from "../lib/dailyQueue";
 import { requireData, throwIfError } from "./baseRepository";
+
+export type DailySurveyStatus =
+  | "draft"
+  | "queued"
+  | "scheduled"
+  | "active"
+  | "paused"
+  | "completed";
 
 export interface DailySurvey {
   id: string;
   title: string;
   description: string | null;
-  status: "draft" | "scheduled" | "active" | "paused" | "completed";
+  status: DailySurveyStatus;
   reward_type: "fixed" | "random";
   reward_points: number;
   reward_min_points: number;
   reward_max_points: number;
   target_segment_id: string | null;
+  /** @deprecated migration 079 以降 cron は参照しない。日付固定は scheduled_date + slot。 */
   scheduled_at: string | null;
   expires_at: string | null;
   notification_template_id: string | null;
+  /** キュー内の並び順（status='queued' のときのみ入る）。 */
+  queue_position: number | null;
+  /** 日付固定された配信日（JST・YYYY-MM-DD）。 */
+  scheduled_date: string | null;
+  /** 日付固定された枠。 */
+  slot: DailySlot | null;
+  /** 回答UIプリセット（デイリーは既定 casual＝タップ/スワイプ系）。 */
+  answer_ui_preset: "casual" | "standard" | "formal";
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -51,6 +69,19 @@ export interface DailySurveyWithStats extends DailySurvey {
   answer_rate: number;
 }
 
+export interface DailySurveyWithQuestionCount extends DailySurvey {
+  question_count: number;
+}
+
+/** `daily_survey_questions(count)` を同梱した select の結果を平す。 */
+function withQuestionCount(rows: unknown): DailySurveyWithQuestionCount[] {
+  return ((rows ?? []) as unknown[]).map((row) => {
+    const r = row as Record<string, unknown>;
+    const count = (r.daily_survey_questions as Array<{ count: number }> | null)?.[0]?.count ?? 0;
+    return { ...(r as unknown as DailySurvey), question_count: Number(count) };
+  });
+}
+
 export interface DailySurveyCreateInput {
   title: string;
   description?: string | null;
@@ -63,6 +94,10 @@ export interface DailySurveyCreateInput {
   scheduled_at?: string | null;
   expires_at?: string | null;
   notification_template_id?: string | null;
+  queue_position?: number | null;
+  scheduled_date?: string | null;
+  slot?: DailySlot | null;
+  answer_ui_preset?: DailySurvey["answer_ui_preset"];
   created_by?: string | null;
 }
 
@@ -142,6 +177,162 @@ export const dailySurveyRepository = {
       .update({ status, updated_at: new Date().toISOString() })
       .eq("id", id);
     throwIfError(error);
+  },
+
+  // ── キュー / 日付スロット（migration 079）─────────────────────────
+
+  /** キュー（status='queued'）を並び順で返す。 */
+  async listQueued(): Promise<DailySurveyWithQuestionCount[]> {
+    const { data, error } = await supabase
+      .from("daily_surveys")
+      .select("*, daily_survey_questions(count)")
+      .eq("status", "queued")
+      .order("queue_position", { ascending: true, nullsFirst: false });
+    throwIfError(error);
+    return withQuestionCount(data);
+  },
+
+  /** 日付固定されたアンケートを期間で返す（カレンダー表示用）。 */
+  async listScheduledBetween(
+    fromDate: string,
+    toDate: string
+  ): Promise<DailySurveyWithQuestionCount[]> {
+    const { data, error } = await supabase
+      .from("daily_surveys")
+      .select("*, daily_survey_questions(count)")
+      .gte("scheduled_date", fromDate)
+      .lte("scheduled_date", toDate)
+      .order("scheduled_date", { ascending: true });
+    throwIfError(error);
+    return withQuestionCount(data);
+  },
+
+  /** その日のその枠に固定されたアンケート（無ければ null）。 */
+  async getByDateSlot(date: string, slot: DailySlot): Promise<DailySurvey | null> {
+    const { data, error } = await supabase
+      .from("daily_surveys")
+      .select("*")
+      .eq("scheduled_date", date)
+      .eq("slot", slot)
+      .maybeSingle();
+    throwIfError(error);
+    return (data as DailySurvey | null) ?? null;
+  },
+
+  /** 日付固定されておらずキューにも居ないもの（下書き・停止中・完了）。 */
+  async listUnplanned(): Promise<DailySurveyWithQuestionCount[]> {
+    const { data, error } = await supabase
+      .from("daily_surveys")
+      .select("*, daily_survey_questions(count)")
+      .is("scheduled_date", null)
+      .neq("status", "queued")
+      .order("created_at", { ascending: false });
+    throwIfError(error);
+    return withQuestionCount(data);
+  },
+
+  /** キュー末尾の次の位置。 */
+  async nextQueuePosition(): Promise<number> {
+    const { data, error } = await supabase
+      .from("daily_surveys")
+      .select("queue_position")
+      .eq("status", "queued")
+      .order("queue_position", { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+    throwIfError(error);
+    const last = (data as { queue_position: number | null } | null)?.queue_position ?? 0;
+    return last + 10;
+  },
+
+  /** キューへ積む（日付固定は外す）。 */
+  async enqueue(id: string, position: number): Promise<void> {
+    const { error } = await supabase
+      .from("daily_surveys")
+      .update({
+        status: "queued",
+        queue_position: position,
+        scheduled_date: null,
+        slot: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+    throwIfError(error);
+  },
+
+  /** 日付×枠に固定する（キューからは抜ける）。 */
+  async assignToSlot(id: string, date: string, slot: DailySlot, expiresAt: string | null): Promise<void> {
+    const update: Record<string, unknown> = {
+      status: "scheduled",
+      scheduled_date: date,
+      slot,
+      queue_position: null,
+      updated_at: new Date().toISOString(),
+    };
+    if (expiresAt) update.expires_at = expiresAt;
+    const { error } = await supabase.from("daily_surveys").update(update).eq("id", id);
+    throwIfError(error);
+  },
+
+  /** 配信開始（当日の枠を active にする）。 */
+  async markActive(id: string, date: string, slot: DailySlot, expiresAt: string | null): Promise<void> {
+    const update: Record<string, unknown> = {
+      status: "active",
+      scheduled_date: date,
+      slot,
+      queue_position: null,
+      updated_at: new Date().toISOString(),
+    };
+    if (expiresAt) update.expires_at = expiresAt;
+    const { error } = await supabase.from("daily_surveys").update(update).eq("id", id);
+    throwIfError(error);
+  },
+
+  /** キューの並びを一括保存する。 */
+  async saveQueueOrder(positions: Array<{ id: string; queue_position: number }>): Promise<void> {
+    for (const p of positions) {
+      const { error } = await supabase
+        .from("daily_surveys")
+        .update({ queue_position: p.queue_position, updated_at: new Date().toISOString() })
+        .eq("id", p.id)
+        .eq("status", "queued");
+      throwIfError(error);
+    }
+  },
+
+  /** 回答期限を過ぎた active を completed に落とす（active が居座って再配信されるのを防ぐ）。 */
+  async completeExpired(nowIso: string): Promise<number> {
+    const { data, error } = await supabase
+      .from("daily_surveys")
+      .update({ status: "completed", updated_at: nowIso })
+      .eq("status", "active")
+      .not("expires_at", "is", null)
+      .lt("expires_at", nowIso)
+      .select("id");
+    throwIfError(error);
+    return ((data ?? []) as unknown[]).length;
+  },
+
+  /** その日に配信中のアンケート（LIFF の「今日の1問」用）。 */
+  async listActiveOnDate(date: string): Promise<DailySurvey[]> {
+    const { data, error } = await supabase
+      .from("daily_surveys")
+      .select("*")
+      .eq("status", "active")
+      .eq("scheduled_date", date)
+      .order("slot", { ascending: true });
+    throwIfError(error);
+    return (data ?? []) as DailySurvey[];
+  },
+
+  /** すでに delivery レコードを持つユーザー（＝送信済み or 回答済み）。再 push を避けるために使う。 */
+  async listDeliveredUserIds(surveyId: string): Promise<Set<string>> {
+    const { data, error } = await supabase
+      .from("daily_survey_deliveries")
+      .select("line_user_id")
+      .eq("survey_id", surveyId);
+    throwIfError(error);
+    return new Set(((data ?? []) as Array<{ line_user_id: string }>).map((r) => r.line_user_id));
   },
 
   // ── questions ──────────────────────────────────────────────────

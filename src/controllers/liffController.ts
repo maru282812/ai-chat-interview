@@ -16,6 +16,7 @@ import {
   selectPhaseQuestions,
 } from "../services/surveyFlowService";
 import { resolveAnswerPresentation } from "../lib/answerPresentation";
+import { jstDateString } from "../lib/dailyQueue";
 import { generatePairwisePairs, isNewAnswerType, validateNewTypeAnswer } from "../lib/answerTypes";
 import { userProfileRepository, type UserProfileUpsertInput } from "../repositories/userProfileRepository";
 import { projectRepository } from "../repositories/projectRepository";
@@ -2094,6 +2095,85 @@ export const liffController = {
     });
   },
 
+  /**
+   * 「今日の1問」。案件一覧の最上部にカードを出すために使う（docs/plan-daily-survey-queue.md Phase 2）。
+   *
+   * 返すのは「今日その枠で配信中（status=active かつ scheduled_date=今日）」かつ
+   * 「このユーザーがまだ回答していない」もの（0〜2件）。どれを見せるかはサーバーが決め、
+   * クライアントから survey_id を指定して未配信のものを開くことはできない。
+   */
+  async getTodayDailySurveys(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const lineUserId = verifiedUser.userId;
+    const today = jstDateString();
+
+    const surveys = await dailySurveyRepository.listActiveOnDate(today);
+    if (surveys.length === 0) {
+      res.json({ ok: true, items: [] });
+      return;
+    }
+
+    const { supabase } = await import("../config/supabase");
+    const items: unknown[] = [];
+
+    for (const survey of surveys) {
+      const { data: deliveryRow } = await supabase
+        .from("daily_survey_deliveries")
+        .select("id, status")
+        .eq("survey_id", survey.id)
+        .eq("line_user_id", lineUserId)
+        .maybeSingle();
+
+      const delivery = deliveryRow as { id: string; status: string } | null;
+      if (delivery?.status === "answered") continue; // 回答済みは出さない
+
+      const questions = await dailySurveyService.listQuestions(survey.id);
+      if (questions.length === 0) continue; // 設問が無いものは出さない
+
+      // サイトから来た人には配信レコードが無いので、ここで作る（LINE から来た人は既にある）。
+      // user_profiles が未作成のユーザー（FK 違反）などで失敗しても、案件一覧の表示は
+      // 止めない。カードを出さないだけにする。
+      let finalDelivery = delivery;
+      try {
+        if (!finalDelivery) {
+          finalDelivery = await dailySurveyRepository.upsertDelivery({
+            survey_id: survey.id,
+            line_user_id: lineUserId,
+            status: "opened",
+          });
+        } else if (finalDelivery.status === "sent" || finalDelivery.status === "pending") {
+          await dailySurveyRepository.markDeliveryStatus(finalDelivery.id, "opened");
+        }
+      } catch (e) {
+        logger.warn("dailyToday.delivery.skip", {
+          surveyId: survey.id,
+          lineUserId,
+          error: String(e),
+        });
+        continue;
+      }
+
+      items.push({
+        survey: {
+          id: survey.id,
+          title: survey.title,
+          description: survey.description,
+          slot: survey.slot,
+          reward_type: survey.reward_type,
+          reward_points: survey.reward_points,
+          reward_min_points: survey.reward_min_points,
+          reward_max_points: survey.reward_max_points,
+          answer_ui_preset: survey.answer_ui_preset,
+        },
+        questions,
+        delivery: { id: finalDelivery.id },
+        answerUrl: `/liff/daily-survey/${survey.id}/answer`,
+      });
+    }
+
+    res.json({ ok: true, items });
+  },
+
   async submitDailySurveyAnswer(req: Request, res: Response): Promise<void> {
     const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
     const surveyId = stringValue(req.params.surveyId).trim();
@@ -2107,6 +2187,19 @@ export const liffController = {
 
     if (!deliveryId) throw new HttpError(400, "deliveryId は必須です。");
     if (rawAnswers.length === 0) throw new HttpError(400, "回答が含まれていません。");
+
+    // deliveryId が本人・当該アンケートのものであることを確認する。
+    // これが無いと、他人の配信レコード ID を渡して回答済みにしたり
+    // ポイント付与の参照先を書き換えたりできてしまう。
+    const { supabase } = await import("../config/supabase");
+    const { data: ownedRow } = await supabase
+      .from("daily_survey_deliveries")
+      .select("id")
+      .eq("id", deliveryId)
+      .eq("survey_id", surveyId)
+      .eq("line_user_id", verifiedUser.userId)
+      .maybeSingle();
+    if (!ownedRow) throw new HttpError(403, "この回答を受け付けられません。");
 
     const answers = rawAnswers as Array<{ questionId: string; answerValue: unknown }>;
 
@@ -2293,6 +2386,7 @@ export const liffController = {
         liffId,
         projectsDataUrl: "/liff/projects-data",
         projectDetailBaseUrl: "/liff/projects",
+        dailyTodayUrl: "/liff/daily-surveys-today",
         savedProjectsUrl: "/liff/saved-projects",
         interactionsUrl: "/liff/interactions",
         mypageUrl: "/liff/mypage",

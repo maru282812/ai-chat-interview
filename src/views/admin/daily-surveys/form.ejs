@@ -42,6 +42,24 @@
       <input type="number" name="reward_max_points" value="<%= survey?.reward_max_points ?? 20 %>" min="1" max="9999" style="width:80px">
       <span class="muted"> pt</span>
     </div>
+
+    <div class="form-group">
+      <label>回答UI</label>
+      <select name="answer_ui_preset">
+        <option value="casual" <%= (!survey || survey.answer_ui_preset === 'casual') ? 'selected' : '' %>>
+          かんたん（スワイプ・タップ中心）
+        </option>
+        <option value="standard" <%= survey?.answer_ui_preset === 'standard' ? 'selected' : '' %>>
+          標準（大きめのタップカード）
+        </option>
+        <option value="formal" <%= survey?.answer_ui_preset === 'formal' ? 'selected' : '' %>>
+          かっちり（ラジオ・チェックボックス）
+        </option>
+      </select>
+      <p class="muted" style="font-size:12px;margin-top:4px">
+        デイリーは既定で「かんたん」。設問文が長い・選択肢が多い場合は自動でタップ型に落ちます。
+      </p>
+    </div>
   </div>
 
   <div class="card" style="margin-bottom:1rem">
@@ -74,17 +92,52 @@
       </select>
     </div>
 
-    <div class="form-group" style="display:flex;gap:24px;flex-wrap:wrap">
-      <div>
-        <label>配信予定日時</label>
-        <input type="datetime-local" name="scheduled_at"
-               value="<%= survey?.scheduled_at ? survey.scheduled_at.slice(0,16) : '' %>">
+    <div class="form-group">
+      <label>配信タイミング</label>
+      <%
+        // 既に日付固定されているものは「日付を指定」、キュー待ちは「キューに積む」を初期選択にする。
+        // 下書き・停止中・完了は「変更しない」＝一覧の未配置に残す。
+        const placementDefault = !survey ? 'queue'
+          : survey.scheduled_date ? 'date'
+          : survey.status === 'queued' ? 'queue'
+          : 'none';
+      %>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:400">
+          <input type="radio" name="placement" value="queue" <%= placementDefault === 'queue' ? 'checked' : '' %>
+                 onchange="togglePlacement(this.value)">
+          <span>キューに積む<span class="muted">（順番が来たら自動で配信される）</span></span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-weight:400">
+          <input type="radio" name="placement" value="date" <%= placementDefault === 'date' ? 'checked' : '' %>
+                 onchange="togglePlacement(this.value)">
+          <span>日付を指定<span class="muted">（この日のこの枠に固定する）</span></span>
+        </label>
+        <% if (mode === 'edit' && placementDefault === 'none') { %>
+        <label style="display:flex;align-items:center;gap:8px;font-weight:400">
+          <input type="radio" name="placement" value="none" checked onchange="togglePlacement(this.value)">
+          <span>まだ配信しない<span class="muted">（一覧の「未配置」に置いたまま）</span></span>
+        </label>
+        <% } %>
       </div>
-      <div>
-        <label>回答期限</label>
-        <input type="datetime-local" name="expires_at"
-               value="<%= survey?.expires_at ? survey.expires_at.slice(0,16) : '' %>">
+
+      <div id="placement_date" style="display:none;margin-top:10px;padding-left:26px">
+        <input type="date" name="scheduled_date"
+               value="<%= survey?.scheduled_date || '' %>">
+        <select name="slot" style="margin-left:8px">
+          <option value="morning" <%= survey?.slot !== 'evening' ? 'selected' : '' %>>朝の枠</option>
+          <option value="evening" <%= survey?.slot === 'evening' ? 'selected' : '' %>>夜の枠</option>
+        </select>
       </div>
+    </div>
+
+    <div class="form-group">
+      <label>回答期限</label>
+      <input type="datetime-local" name="expires_at"
+             value="<%= survey?.expires_at ? survey.expires_at.slice(0,16) : '' %>">
+      <p class="muted" style="font-size:12px;margin-top:4px">
+        未指定なら<strong>配信日の 23:59（JST）</strong>が入ります。期限を過ぎた配信は自動で「完了」になります。
+      </p>
     </div>
   </div>
 
@@ -248,6 +301,11 @@ function toggleOptionsField(val) {
     ['single_choice','multiple_choice'].includes(val) ? '' : 'none';
 }
 toggleOptionsField(document.getElementById('qtype_select')?.value ?? 'single_choice');
+
+function togglePlacement(val) {
+  document.getElementById('placement_date').style.display = val === 'date' ? '' : 'none';
+}
+togglePlacement(document.querySelector('input[name="placement"]:checked')?.value ?? 'queue');
 
 function openEditQuestion(id, text, type, attrKey, sortOrder, optionsJson) {
   document.getElementById('editQuestionForm').action =

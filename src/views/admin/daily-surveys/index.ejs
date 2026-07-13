@@ -1,17 +1,145 @@
 <%- include("../../partials/header", { title }) %>
 
+<%
+  const statusLabel = { draft:'下書き', queued:'キュー待ち', scheduled:'配信予約', active:'配信中', paused:'停止中', completed:'完了' };
+  const statusClass = { draft:'', queued:'badge-blue', scheduled:'badge-blue', active:'badge-green', paused:'badge-yellow', completed:'badge-gray' };
+  const slotLabel = { morning:'朝', evening:'夜' };
+  const monthLabel = month.replace('-', '年') + '月';
+  const weekdays = ['日','月','火','水','木','金','土'];
+  // カレンダーのセルを 1 日目の曜日ぶんだけ空白で埋めてから並べる
+  const leading = firstWeekday;
+  const cells = [];
+  for (let i = 0; i < leading; i++) cells.push(null);
+  for (let d = 1; d <= lastDay; d++) {
+    cells.push(month + '-' + String(d).padStart(2, '0'));
+  }
+  while (cells.length % 7 !== 0) cells.push(null);
+%>
+
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
   <h2>デイリーアンケート</h2>
-  <a href="/admin/daily-surveys/new" class="btn">＋ 新規作成</a>
+  <div style="display:flex;gap:8px;align-items:center">
+    <a href="/admin/scheduler-settings" class="btn-secondary">配信時刻の設定</a>
+    <a href="/admin/daily-surveys/new" class="btn">＋ 新規作成</a>
+  </div>
 </div>
 
-<% const statusLabel = { draft:'下書き', scheduled:'配信予約', active:'配信中', paused:'停止中', completed:'完了' }; %>
-<% const statusClass = { draft:'', scheduled:'badge-blue', active:'badge-green', paused:'badge-yellow', completed:'badge-gray' }; %>
+<div class="card" style="margin-bottom:1rem;background:#f7fbf9;border-left:4px solid #2ca87a">
+  <p style="font-size:13px;line-height:1.7;margin:0">
+    キューの<strong>上から順に 1 日 1 件</strong>、朝の枠へ自動で配信されます。
+    特定の日に出したいものは<strong>カレンダーの枠へドラッグ</strong>して固定してください。
+    <% if (eveningAutofillEnabled) { %>
+      夜の枠も<strong>自動補充が有効</strong>です（1 日 2 件）。
+    <% } else { %>
+      夜の枠は自動補充が<strong>無効</strong>です（ドラッグで固定した分だけ配信されます）。
+      1 日 2 件にするには<a href="/admin/scheduler-settings">スケジューラ設定</a>で有効にしてください。
+    <% } %>
+  </p>
+</div>
 
-<% if (surveys.length === 0) { %>
-  <div class="card" style="text-align:center;padding:2rem">
-    <p class="muted">デイリーアンケートがありません</p>
-    <a href="/admin/daily-surveys/new" class="btn" style="margin-top:1rem">＋ 最初のアンケートを作成</a>
+<div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+
+  <!-- ───────────── カレンダー ───────────── -->
+  <div class="card" style="flex:1 1 620px;min-width:520px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <a href="/admin/daily-surveys?month=<%= prevMonth %>" class="btn-secondary" style="padding:4px 12px">←</a>
+      <h3 style="margin:0"><%= monthLabel %></h3>
+      <a href="/admin/daily-surveys?month=<%= nextMonth %>" class="btn-secondary" style="padding:4px 12px">→</a>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">
+      <% for (const w of weekdays) { %>
+        <div style="text-align:center;font-size:12px;font-weight:700;color:#777;padding:4px 0"><%= w %></div>
+      <% } %>
+
+      <% for (const date of cells) { %>
+        <% if (!date) { %>
+          <div></div>
+        <% } else { %>
+          <%
+            const isToday = date === today;
+            const isPast  = date < today;
+            const day = Number(date.slice(8));
+          %>
+          <div style="border:1px solid <%= isToday ? '#2ca87a' : '#e3e8e6' %>;border-radius:6px;padding:4px;min-height:82px;background:<%= isPast ? '#fafafa' : '#fff' %>">
+            <div style="font-size:11px;font-weight:700;color:<%= isToday ? '#2ca87a' : '#999' %>;margin-bottom:3px">
+              <%= day %><% if (isToday) { %> 今日<% } %>
+            </div>
+
+            <% for (const slot of ['morning','evening']) { %>
+              <%
+                const key = date + ':' + slot;
+                const fixed = scheduledBySlot[key];
+                const predicted = previewTitles[key];
+              %>
+              <div class="slot-cell" data-date="<%= date %>" data-slot="<%= slot %>"
+                   style="border:1px dashed #d8e3e0;border-radius:4px;padding:2px 4px;margin-bottom:2px;min-height:24px;font-size:10px;line-height:1.3">
+                <span style="color:#aaa;font-weight:700"><%= slotLabel[slot] %></span>
+                <% if (fixed) { %>
+                  <div class="cal-item" draggable="true" data-id="<%= fixed.id %>"
+                       style="background:#e8f5ef;border-radius:3px;padding:2px 4px;margin-top:1px;cursor:grab;color:#1a7a5a;font-weight:600"
+                       title="<%= fixed.title %>（<%= statusLabel[fixed.status] %>）">
+                    <%= fixed.title.length > 10 ? fixed.title.slice(0,10) + '…' : fixed.title %>
+                  </div>
+                <% } else if (predicted) { %>
+                  <div style="color:#b0bdb9;margin-top:1px;font-style:italic" title="キューから自動で入る見込み">
+                    自動: <%= predicted.length > 8 ? predicted.slice(0,8) + '…' : predicted %>
+                  </div>
+                <% } %>
+              </div>
+            <% } %>
+          </div>
+        <% } %>
+      <% } %>
+    </div>
+
+    <p class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">
+      <span style="font-style:italic">自動: xxx</span> はキューの並びから計算した<strong>見込み</strong>です（保存されません）。
+      キューを並べ替えると変わります。枠へドラッグすると確定します。
+    </p>
+  </div>
+
+  <!-- ───────────── キュー ───────────── -->
+  <div class="card" style="flex:0 0 300px">
+    <h3 style="margin:0 0 4px">配信キュー（<%= queued.length %>件）</h3>
+    <p class="muted" style="font-size:12px;margin-bottom:10px">上から順に配信されます。ドラッグで並べ替え。</p>
+
+    <% if (queued.length === 0) { %>
+      <div id="queue-list" style="min-height:60px;border:2px dashed #d8e3e0;border-radius:6px;padding:12px;text-align:center">
+        <p class="muted" style="font-size:12px;margin:0">キューが空です。<br>配信されるものがありません。</p>
+      </div>
+    <% } else { %>
+      <div id="queue-list">
+        <% queued.forEach((s, i) => { %>
+          <div class="queue-item" draggable="true" data-id="<%= s.id %>"
+               style="display:flex;align-items:center;gap:8px;border:1px solid #e3e8e6;border-radius:6px;padding:8px;margin-bottom:6px;background:#fff;cursor:grab">
+            <span style="color:#ccc;font-size:14px">⠿</span>
+            <span class="queue-num" style="font-size:11px;font-weight:700;color:#2ca87a;min-width:16px"><%= i + 1 %></span>
+            <div style="flex:1;min-width:0">
+              <a href="/admin/daily-surveys/<%= s.id %>" style="font-size:13px;font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><%= s.title %></a>
+              <span class="muted" style="font-size:11px">
+                <%= s.reward_type === 'fixed' ? s.reward_points + 'pt' : s.reward_min_points + '〜' + s.reward_max_points + 'pt' %>
+                ・<%= s.question_count ?? 0 %>問
+              </span>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+    <% } %>
+
+    <p id="queue-status" class="muted" style="font-size:11px;min-height:16px;margin-top:6px"></p>
+  </div>
+</div>
+
+<!-- ───────────── その他（キューにも日付にも載っていないもの） ───────────── -->
+<h3 style="margin:1.5rem 0 .5rem">未配置（<%= unplanned.length %>件）</h3>
+<p class="muted" style="font-size:12px;margin-bottom:.75rem">
+  下書き・停止中・完了。<strong>キューに積むまで配信されません。</strong>
+</p>
+
+<% if (unplanned.length === 0) { %>
+  <div class="card" style="text-align:center;padding:1.5rem">
+    <p class="muted" style="margin:0">未配置のアンケートはありません</p>
   </div>
 <% } else { %>
 <table>
@@ -21,14 +149,12 @@
       <th>ステータス</th>
       <th>報酬</th>
       <th>設問数</th>
-      <th>配信数</th>
-      <th>配信予定日時</th>
       <th>作成日</th>
       <th>操作</th>
     </tr>
   </thead>
   <tbody>
-    <% for (const s of surveys) { %>
+    <% for (const s of unplanned) { %>
     <tr>
       <td>
         <a href="/admin/daily-surveys/<%= s.id %>"><strong><%= s.title %></strong></a>
@@ -36,11 +162,7 @@
           <br><span class="muted" style="font-size:12px"><%= s.description %></span>
         <% } %>
       </td>
-      <td>
-        <span class="badge <%= statusClass[s.status] || '' %>">
-          <%= statusLabel[s.status] || s.status %>
-        </span>
-      </td>
+      <td><span class="badge <%= statusClass[s.status] || '' %>"><%= statusLabel[s.status] || s.status %></span></td>
       <td>
         <% if (s.reward_type === 'fixed') { %>
           <strong><%= s.reward_points %></strong> pt
@@ -48,28 +170,14 @@
           <strong><%= s.reward_min_points %>〜<%= s.reward_max_points %></strong> pt
         <% } %>
       </td>
-      <td style="text-align:center"><%= s.question_count %></td>
-      <td style="text-align:center"><%= s.delivery_count %></td>
-      <td>
-        <% if (s.scheduled_at) { %>
-          <span class="muted"><%= new Date(s.scheduled_at).toLocaleString('ja-JP') %></span>
-        <% } else { %>
-          <span class="muted">-</span>
-        <% } %>
-      </td>
+      <td style="text-align:center"><%= s.question_count ?? 0 %></td>
       <td><span class="muted"><%= new Date(s.created_at).toLocaleDateString('ja-JP') %></span></td>
       <td style="white-space:nowrap">
         <a href="/admin/daily-surveys/<%= s.id %>">詳細</a>
         <a href="/admin/daily-surveys/<%= s.id %>/edit" style="margin-left:8px">編集</a>
-        <% if (s.status === 'draft' || s.status === 'paused') { %>
-          <form method="post" action="/admin/daily-surveys/<%= s.id %>/status/activate" style="display:inline;margin-left:8px">
-            <button type="submit" class="btn" style="padding:2px 10px;font-size:12px">配信開始</button>
-          </form>
-        <% } else if (s.status === 'active') { %>
-          <form method="post" action="/admin/daily-surveys/<%= s.id %>/status/pause" style="display:inline;margin-left:8px">
-            <button type="submit" class="btn-secondary" style="padding:2px 10px;font-size:12px">停止</button>
-          </form>
-        <% } %>
+        <form method="post" action="/admin/daily-surveys/<%= s.id %>/enqueue" style="display:inline;margin-left:8px">
+          <button type="submit" class="btn" style="padding:2px 10px;font-size:12px">キューに積む</button>
+        </form>
         <form method="post" action="/admin/daily-surveys/<%= s.id %>/delete"
               style="display:inline;margin-left:8px"
               onsubmit="return confirm('「<%= s.title %>」を削除しますか？')">
@@ -81,5 +189,112 @@
   </tbody>
 </table>
 <% } %>
+
+<script>
+(() => {
+  const statusEl = document.getElementById('queue-status');
+  const queueList = document.getElementById('queue-list');
+  let draggedId = null;
+
+  function say(msg, isError) {
+    statusEl.textContent = msg;
+    statusEl.style.color = isError ? '#c0392b' : '#2ca87a';
+  }
+
+  async function post(url, body) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body ?? {})
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || '保存に失敗しました');
+    }
+    return res.json();
+  }
+
+  // ---- ドラッグ元（キュー内・カレンダー内の両方）----
+  for (const el of document.querySelectorAll('.queue-item, .cal-item')) {
+    el.addEventListener('dragstart', (e) => {
+      draggedId = el.dataset.id;
+      e.dataTransfer.effectAllowed = 'move';
+      el.style.opacity = '0.4';
+    });
+    el.addEventListener('dragend', () => { el.style.opacity = ''; });
+  }
+
+  // ---- カレンダーの枠へドロップ = 日付固定 ----
+  for (const cell of document.querySelectorAll('.slot-cell')) {
+    cell.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      cell.style.background = '#e8f5ef';
+    });
+    cell.addEventListener('dragleave', () => { cell.style.background = ''; });
+    cell.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      cell.style.background = '';
+      if (!draggedId) return;
+      try {
+        await post('/admin/daily-surveys/' + draggedId + '/schedule', {
+          date: cell.dataset.date,
+          slot: cell.dataset.slot
+        });
+        location.reload();
+      } catch (err) {
+        say(err.message, true);
+      }
+    });
+  }
+
+  // ---- キューへドロップ = キューへ戻す / 並べ替え ----
+  if (queueList) {
+    queueList.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      const after = itemAfter(queueList, e.clientY);
+      const dragging = queueList.querySelector('.queue-item[style*="opacity"]');
+      if (!dragging) return; // カレンダーからのドラッグは並べ替えしない
+      if (after == null) queueList.appendChild(dragging);
+      else queueList.insertBefore(dragging, after);
+    });
+
+    queueList.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      if (!draggedId) return;
+      const inQueue = [...queueList.querySelectorAll('.queue-item')].some((el) => el.dataset.id === draggedId);
+      try {
+        if (!inQueue) {
+          // カレンダーから外してキュー末尾へ
+          await post('/admin/daily-surveys/' + draggedId + '/enqueue');
+          location.reload();
+          return;
+        }
+        const ids = [...queueList.querySelectorAll('.queue-item')].map((el) => el.dataset.id);
+        await post('/admin/daily-surveys/queue/reorder', { ids });
+        renumber();
+        say('キューの順番を保存しました');
+      } catch (err) {
+        say(err.message, true);
+      }
+    });
+  }
+
+  function renumber() {
+    [...queueList.querySelectorAll('.queue-item .queue-num')].forEach((el, i) => {
+      el.textContent = String(i + 1);
+    });
+  }
+
+  /** ドロップ位置より下にある最初の要素を返す（並べ替えの挿入先）。 */
+  function itemAfter(container, y) {
+    const items = [...container.querySelectorAll('.queue-item:not([style*="opacity"])')];
+    for (const item of items) {
+      const box = item.getBoundingClientRect();
+      if (y < box.top + box.height / 2) return item;
+    }
+    return null;
+  }
+})();
+</script>
 
 <%- include("../../partials/footer") %>

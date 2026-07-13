@@ -1,9 +1,17 @@
 import { supabase } from "../config/supabase";
+import {
+  type DailySlot,
+  decideSlotDelivery,
+  jstDateString,
+  jstEndOfDayIso,
+  queuePositions
+} from "../lib/dailyQueue";
 import { throwIfError } from "../repositories/baseRepository";
 import {
   dailySurveyRepository,
   type DailySurvey,
   type DailySurveyQuestion,
+  type DailySurveyWithQuestionCount,
   type DailySurveyWithStats
 } from "../repositories/dailySurveyRepository";
 import { notificationTemplateRepository } from "../repositories/notificationTemplateRepository";
@@ -19,6 +27,14 @@ interface DeliveryResult {
   sent: number;
   failed: number;
   skipped: number;
+}
+
+export interface SlotRunResult extends DeliveryResult {
+  slot: DailySlot;
+  survey_id: string | null;
+  survey_title: string | null;
+  source: "scheduled" | "queue" | null;
+  reason: string;
 }
 
 export const dailySurveyService = {
@@ -41,6 +57,7 @@ export const dailySurveyService = {
     scheduled_at?: string | null;
     expires_at?: string | null;
     notification_template_id?: string | null;
+    answer_ui_preset?: DailySurvey["answer_ui_preset"];
   }): Promise<DailySurvey> {
     return dailySurveyRepository.create({
       ...input,
@@ -56,8 +73,13 @@ export const dailySurveyService = {
     return dailySurveyRepository.delete(id);
   },
 
+  /**
+   * 手動で「配信開始」にする。日付と回答期限を必ず埋める（期限が無いと active が居座り、
+   * 完了に落ちないまま残ってしまう）。
+   */
   async activate(id: string): Promise<void> {
-    return dailySurveyRepository.updateStatus(id, "active");
+    const survey = await dailySurveyRepository.getById(id);
+    await this.activateForToday(survey);
   },
 
   async pause(id: string): Promise<void> {
@@ -111,9 +133,16 @@ export const dailySurveyService = {
     const survey = await dailySurveyRepository.getById(surveyId);
 
     let lineUserIds: string[] = options.targetLineUserIds ?? [];
+    let skipped = 0;
 
     if (lineUserIds.length === 0) {
-      lineUserIds = await this.resolveTargetUsers(survey);
+      // 宛先を明示していない一斉配信では、すでに delivery レコードを持つユーザー
+      // （＝送信済み or 回答済み）を必ず除外する。cron のキャッチアップ再実行や
+      // 手動の再配信で同じ人に何度も push しないための最後の砦。
+      const all = await this.resolveTargetUsers(survey);
+      const alreadyDelivered = await dailySurveyRepository.listDeliveredUserIds(surveyId);
+      lineUserIds = all.filter((id) => !alreadyDelivered.has(id));
+      skipped = all.length - lineUserIds.length;
     }
 
     const template = survey.notification_template_id
@@ -124,7 +153,7 @@ export const dailySurveyService = {
       throw new Error("通知テンプレートが見つかりません");
     }
 
-    const result: DeliveryResult = { total: lineUserIds.length, sent: 0, failed: 0, skipped: 0 };
+    const result: DeliveryResult = { total: lineUserIds.length, sent: 0, failed: 0, skipped };
     const liffUrl = options.liffBaseUrl
       ? `${options.liffBaseUrl}?survey_id=${surveyId}`
       : `https://liff.line.me/${process.env.LINE_LIFF_ID_SURVEY ?? ""}?survey_id=${surveyId}`;
@@ -218,11 +247,120 @@ export const dailySurveyService = {
       }
     }
 
-    if (!options.testMode && survey.status === "draft") {
-      await dailySurveyRepository.updateStatus(surveyId, "active");
+    // 宛先を明示した送信（管理画面のテスト送信）では状態を動かさない。
+    // ここで active にすると、キュー待ちのアンケートがテスト送信だけでキューから抜けてしまう。
+    const isTargetedSend = (options.targetLineUserIds?.length ?? 0) > 0;
+    if (!options.testMode && !isTargetedSend && survey.status !== "active") {
+      await this.activateForToday(survey);
     }
 
     return result;
+  },
+
+  // ── キュー / スロット配信（migration 079・docs/plan-daily-survey-queue.md）──
+
+  /**
+   * 配信中にする。日付が未設定なら「今日」を、回答期限が未設定なら「その日の終わり（JST）」を入れる。
+   * 期限を入れておかないと active が居座り、翌日以降も配信対象として残ってしまう。
+   */
+  async activateForToday(survey: DailySurvey): Promise<void> {
+    const today = survey.scheduled_date ?? jstDateString();
+    const expiresAt = survey.expires_at ?? jstEndOfDayIso(today);
+    await dailySurveyRepository.update(survey.id, {
+      status: "active",
+      scheduled_date: today,
+      expires_at: expiresAt,
+      queue_position: null
+    });
+  },
+
+  /**
+   * その枠（朝/夜）で配信すべき 1 件を決めて配信する。cron から呼ばれる。
+   *
+   * 日付固定 > キュー先頭 の順で選び、どちらも無ければ何もしない。
+   * 夜枠はスケジューラ設定の evening_autofill_enabled が true のときだけキューから補充する。
+   */
+  async runSlot(
+    slot: DailySlot,
+    options: { eveningAutofillEnabled: boolean; liffBaseUrl?: string }
+  ): Promise<SlotRunResult> {
+    const today = jstDateString();
+    const base: SlotRunResult = {
+      slot,
+      survey_id: null,
+      survey_title: null,
+      source: null,
+      reason: "",
+      total: 0,
+      sent: 0,
+      failed: 0,
+      skipped: 0
+    };
+
+    // 期限切れの active を落としてから判定する（居座った active の再配信を止める）。
+    const swept = await dailySurveyRepository.completeExpired(new Date().toISOString());
+    if (swept > 0) logger.info(`daily survey: completed ${swept} expired survey(s)`);
+
+    const occupant = await dailySurveyRepository.getByDateSlot(today, slot);
+    const queue = occupant ? [] : await dailySurveyRepository.listQueued();
+
+    const decision = decideSlotDelivery({
+      slot,
+      occupant: occupant ? { id: occupant.id, status: occupant.status } : null,
+      queueHeadId: queue[0]?.id ?? null,
+      eveningAutofillEnabled: options.eveningAutofillEnabled
+    });
+
+    if (decision.action === "noop") {
+      return { ...base, reason: decision.reason };
+    }
+
+    const survey = occupant ?? (queue[0] as DailySurvey);
+    const expiresAt = survey.expires_at ?? jstEndOfDayIso(today);
+    await dailySurveyRepository.markActive(survey.id, today, slot, expiresAt);
+
+    const delivery = await this.deliver(survey.id, { liffBaseUrl: options.liffBaseUrl });
+
+    return {
+      ...base,
+      survey_id: survey.id,
+      survey_title: survey.title,
+      source: decision.source,
+      reason: "delivered",
+      ...delivery
+    };
+  },
+
+  /** キューの末尾に積む。 */
+  async enqueue(id: string): Promise<void> {
+    const position = await dailySurveyRepository.nextQueuePosition();
+    await dailySurveyRepository.enqueue(id, position);
+  },
+
+  /** キューの並びを保存する。 */
+  async reorderQueue(orderedIds: string[]): Promise<void> {
+    await dailySurveyRepository.saveQueueOrder(queuePositions(orderedIds));
+  },
+
+  /** 日付×枠に固定する。回答期限が未設定ならその日の終わりを入れる。 */
+  async assignToSlot(id: string, date: string, slot: DailySlot): Promise<void> {
+    const survey = await dailySurveyRepository.getById(id);
+    const expiresAt = survey.expires_at ?? jstEndOfDayIso(date);
+    await dailySurveyRepository.assignToSlot(id, date, slot, expiresAt);
+  },
+
+  /** カレンダー表示に必要な一式を返す。 */
+  async getPlanningData(fromDate: string, toDate: string): Promise<{
+    queued: DailySurveyWithQuestionCount[];
+    scheduled: DailySurveyWithQuestionCount[];
+    unplanned: DailySurveyWithQuestionCount[];
+  }> {
+    const [queued, scheduled, unplanned] = await Promise.all([
+      dailySurveyRepository.listQueued(),
+      dailySurveyRepository.listScheduledBetween(fromDate, toDate),
+      dailySurveyRepository.listUnplanned()
+    ]);
+    return { queued, scheduled, unplanned };
   },
 
   async recordAnswer(input: {

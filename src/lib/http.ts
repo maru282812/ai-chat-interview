@@ -36,6 +36,13 @@ export function errorHandler(
     res.status(statusCode).json({ error: error.message });
     return;
   }
+  // 管理画面から fetch で呼ぶエンドポイント（キューの並べ替え・日付固定など）は
+  // Accept: application/json を送る。HTML のエラーページを返すとクライアントが
+  // メッセージを読めないので JSON で返す。
+  if (req.path.startsWith("/admin") && (req.headers.accept ?? "").includes("application/json")) {
+    res.status(statusCode).json({ error: error.message });
+    return;
+  }
   if (req.path.startsWith("/admin")) {
     res.status(statusCode).render("error", {
       title: "Error",

@@ -4,6 +4,7 @@ import { deriveCodebook } from "../lib/codebook";
 import type { ExportAnswerGroup, ExportRespondent } from "../lib/statExport";
 import {
   type RawdataRespondent,
+  ageBand,
   assignQNumbers,
   buildRawdataColumnIndex,
   buildRawdataLayoutRows,
@@ -192,15 +193,42 @@ test("rawdata: 回答値（ラベル）出力", () => {
   assert.equal(row.q5s2, "不満");
 });
 
-test("rawdata: ステータスフィルタ（既定=完了のみ・指定で途中離脱も含む）", () => {
+test("rawdata: ステータスフィルタ（既定で未完了も含む・指定で完了のみに絞れる）", () => {
   const partial = makeRespondent({ respondent_key: "r-P", response_status: "partial", completed_at: null, total_duration_sec: null });
   const defaultRows = buildRawdataRows(ASSIGNMENTS, [makeRespondent(), partial]);
-  assert.equal(defaultRows.length, 1, "既定は completed のみ");
+  assert.equal(defaultRows.length, 2, "既定は completed/partial/abandoned（裁定は集計アプリ側）");
+  assert.equal(defaultRows[1]!.STA, "PARTIAL");
+  assert.equal(defaultRows[1]!.TIME, "", "既存 TIME は完了者のみ");
 
-  const withPartial = buildRawdataRows(ASSIGNMENTS, [makeRespondent(), partial], { statuses: ["completed", "partial"] });
-  assert.equal(withPartial.length, 2);
-  assert.equal(withPartial[1]!.STA, "PARTIAL");
-  assert.equal(withPartial[1]!.TIME, "");
+  const completedOnly = buildRawdataRows(ASSIGNMENTS, [makeRespondent(), partial], { statuses: ["completed"] });
+  assert.equal(completedOnly.length, 1);
+});
+
+test("rawdata: TIME_SEC（完了=開始→完了・未完了=開始→最終回答時刻・回答ゼロは空欄）", () => {
+  const completed = buildRawdataRows(ASSIGNMENTS, [makeRespondent()])[0]!;
+  assert.equal(completed.TIME_SEC, 330);
+
+  // 未完了: 最終回答は Q1 の 00:01:10（既定の groups で最も遅い created_at）
+  const partial = makeRespondent({
+    respondent_key: "r-P",
+    response_status: "partial",
+    completed_at: null,
+    total_duration_sec: null,
+    groups: groupsFor({
+      [Q_SINGLE.id]: { primary: makeAnswer({ question_id: Q_SINGLE.id, answer_text: "コーヒー", created_at: "2026-07-12T00:02:00.000Z" }) }
+    })
+  });
+  const partialRow = buildRawdataRows(ASSIGNMENTS, [partial], { statuses: ["partial"] })[0]!;
+  assert.equal(partialRow.TIME_SEC, 120);
+
+  const noAnswer = makeRespondent({ respondent_key: "r-Z", response_status: "partial", completed_at: null, total_duration_sec: null, groups: groupsFor({}) });
+  assert.equal(buildRawdataRows(ASSIGNMENTS, [noAnswer], { statuses: ["partial"] })[0]!.TIME_SEC, "");
+});
+
+test("rawdata: SURVEY_VERSION（回答した調査票の版数・未確定は空欄）", () => {
+  const versioned = buildRawdataRows(ASSIGNMENTS, [makeRespondent({ snapshot_version: 3 })])[0]!;
+  assert.equal(versioned.SURVEY_VERSION, 3);
+  assert.equal(buildRawdataRows(ASSIGNMENTS, [makeRespondent()])[0]!.SURVEY_VERSION, "");
 });
 
 test("rawdata: テスト回答は既定除外・excludeTest:false で含む", () => {
@@ -234,42 +262,70 @@ test("rawdata: 属性列のコード化（code/label両モード）", () => {
     gender: "female",
     birth_date: "1990-06-15",
     prefecture: "東京都",
-    occupation: "会社員",
-    industry: "小売",
+    occupation: "会社員（正社員）",
+    industry: "小売・流通",
     marital_status: "married",
     has_children: true,
     household_income: "200_400"
   };
-  const codeRow = buildRawdataRows(ASSIGNMENTS, [makeRespondent({ profile })])[0]!;
+  const codeRow = buildRawdataRows(ASSIGNMENTS, [makeRespondent({ profile, rank_code: "silver", rank_name: "シルバー" })])[0]!;
   assert.equal(codeRow.SEX, 2);
   assert.equal(codeRow.AGE, 36); // 2026-07-12 時点・1990-06-15生 → 36歳
+  assert.equal(codeRow.AGE_BAND, 30);
   assert.equal(codeRow.PRE, 13);
-  assert.equal(codeRow.JOB, "会社員");
+  assert.equal(codeRow.REGION, "関東");
+  assert.equal(codeRow.JOB, 1);
+  assert.equal(codeRow.BUS, 6);
   assert.equal(codeRow.MAR, 2);
   assert.equal(codeRow.INC, 2);
   assert.equal(codeRow.CHI, 1);
+  assert.equal(codeRow.RANK, "silver");
 
-  const labelRow = buildRawdataRows(ASSIGNMENTS, [makeRespondent({ profile })], { mode: "label" })[0]!;
+  const labelRow = buildRawdataRows(ASSIGNMENTS, [makeRespondent({ profile, rank_code: "silver", rank_name: "シルバー" })], { mode: "label" })[0]!;
   assert.equal(labelRow.SEX, "女性");
   assert.equal(labelRow.PRE, "東京都");
+  assert.equal(labelRow.REGION, "関東");
+  assert.equal(labelRow.JOB, "会社員（正社員）");
+  assert.equal(labelRow.BUS, "小売・流通");
   assert.equal(labelRow.MAR, "既婚");
   assert.equal(labelRow.INC, "200〜400万円未満");
   assert.equal(labelRow.CHI, "あり");
+  assert.equal(labelRow.RANK, "シルバー");
+
+  // コード表に無いラベル（旧データ・表記ゆれ）は 99
+  const legacy = buildRawdataRows(ASSIGNMENTS, [makeRespondent({ profile: { ...profile, occupation: "会社員", industry: "小売" } })])[0]!;
+  assert.equal(legacy.JOB, 99);
+  assert.equal(legacy.BUS, 99);
 
   // プロフィール未登録は空欄
   const noProfile = buildRawdataRows(ASSIGNMENTS, [makeRespondent()])[0]!;
   assert.equal(noProfile.SEX, "");
   assert.equal(noProfile.AGE, "");
+  assert.equal(noProfile.AGE_BAND, "");
+  assert.equal(noProfile.REGION, "");
   assert.equal(noProfile.INC, "");
+  assert.equal(noProfile.RANK, "");
 });
 
-test("rawdata: 回答環境列（UserAgent/IPAddress・未収集は空欄）", () => {
-  const withEnv = makeRespondent({ user_agent: "Mozilla/5.0 (iPhone)", ip_address: "203.0.113.1" });
-  const row = buildRawdataRows(ASSIGNMENTS, [withEnv])[0]!;
-  assert.equal(row.UserAgent, "Mozilla/5.0 (iPhone)");
-  assert.equal(row.IPAddress, "203.0.113.1");
+test("ageBand: 10刻み（18〜19歳は10・上限90）", () => {
+  assert.equal(ageBand(18), 10);
+  assert.equal(ageBand(35), 30);
+  assert.equal(ageBand(99), 90);
+  assert.equal(ageBand(null), null);
+});
 
-  const withoutEnv = buildRawdataRows(ASSIGNMENTS, [makeRespondent()])[0]!;
+test("rawdata: UserAgent/IPAddress は既定で出力しない（includePii でのみ出る）", () => {
+  const withEnv = makeRespondent({ user_agent: "Mozilla/5.0 (iPhone)", ip_address: "203.0.113.1" });
+
+  const defaultRow = buildRawdataRows(ASSIGNMENTS, [withEnv])[0]!;
+  assert.ok(!("UserAgent" in defaultRow), "既定では個人情報列を出さない");
+  assert.ok(!("IPAddress" in defaultRow));
+
+  const piiRow = buildRawdataRows(ASSIGNMENTS, [withEnv], { includePii: true })[0]!;
+  assert.equal(piiRow.UserAgent, "Mozilla/5.0 (iPhone)");
+  assert.equal(piiRow.IPAddress, "203.0.113.1");
+
+  const withoutEnv = buildRawdataRows(ASSIGNMENTS, [makeRespondent()], { includePii: true })[0]!;
   assert.equal(withoutEnv.UserAgent, "");
   assert.equal(withoutEnv.IPAddress, "");
 });
@@ -304,14 +360,48 @@ test("layout: 全列の意味・コード表が引ける", () => {
   assert.equal(q5s1.length, 3);
   assert.ok(String(q5s1[0]!.column_role).includes("味"));
 
-  // メタ・属性・回答環境
+  // メタ・属性
   assert.ok(byColumn.has("MID"));
   assert.equal(byColumn.get("STA")!.length, 4);
   assert.equal(byColumn.get("SEX")!.length, 4);
   assert.ok(byColumn.has("PRE"));
   assert.equal(byColumn.get("INC")!.length, 10);
-  assert.ok(byColumn.has("UserAgent"));
-  assert.ok(byColumn.has("IPAddress"));
+  assert.ok(byColumn.has("TIME_SEC"));
+  assert.ok(byColumn.has("SURVEY_VERSION"));
+  assert.ok(byColumn.has("AGE_BAND"));
+  assert.equal(byColumn.get("REGION")!.length, 8, "8地方区分");
+  assert.equal(byColumn.get("JOB")!.length, 9, "職業コード表");
+  assert.equal(byColumn.get("BUS")!.length, 11, "業種コード表");
+  assert.ok(byColumn.has("RANK"));
+
+  // 個人情報列は既定で定義行も出さない（rawdata.csv 側と揃える）
+  assert.ok(!byColumn.has("UserAgent"));
+  assert.ok(!byColumn.has("IPAddress"));
+  const withPii = buildRawdataLayoutRows(ASSIGNMENTS, { includePii: true });
+  assert.ok(withPii.some((row) => row.column_name === "UserAgent"));
+});
+
+test("layout: ハブ突合キー（question_id / question_version / trait_key）が設問列に付く", () => {
+  const rows = buildRawdataLayoutRows(ASSIGNMENTS, {
+    questionVersion: 2,
+    ranks: [{ rank_code: "bronze", rank_name: "ブロンズ" }]
+  });
+
+  const q1 = rows.find((row) => row.column_name === "q1")!;
+  assert.equal(q1.question_id, Q_SINGLE.id);
+  assert.equal(q1.question_version, 2);
+  assert.equal(q1.trait_key, "", "metric_code 未設定は空欄（ハブ辞書に未登録）");
+
+  // メタ・属性列には突合キーが付かない
+  const sta = rows.find((row) => row.column_name === "STA")!;
+  assert.equal(sta.question_id, "");
+  assert.equal(sta.question_version, "");
+
+  // ランクはコード表が引ける
+  const rank = rows.find((row) => row.column_name === "RANK")!;
+  assert.equal(rank.code, "bronze");
+  assert.equal(rank.label, "ブロンズ");
+  assert.ok(String(rank.note).includes("出力時点"));
 });
 
 test("columnIndex: 設問→ロウデータ列の対応（圧縮表記・列対応）", () => {

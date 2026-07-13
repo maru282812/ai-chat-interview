@@ -7,6 +7,60 @@
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
     <link rel="stylesheet" href="/public/hibi.css" />
+    <style>
+      /* 今日の1問（案件一覧の最上部・その場で回答して完結する。ページ遷移させない） */
+      .hb-daily {
+        background: linear-gradient(135deg, #2ca87a, #1f8f66);
+        color: #fff; border-radius: 16px;
+        padding: 14px 16px; margin: 10px 12px 4px;
+        box-shadow: 0 4px 14px rgba(44,168,122,.28);
+      }
+      .hb-daily .head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+      .hb-daily .lbl { font-size: 12px; font-weight: 800; letter-spacing: .04em; opacity: .95; }
+      .hb-daily .pt {
+        background: rgba(255,255,255,.22); border-radius: 20px;
+        padding: 3px 10px; font-size: 12px; font-weight: 800;
+      }
+      .hb-daily .q { font-size: 16px; font-weight: 800; line-height: 1.5; margin-bottom: 10px; }
+      .hb-daily .opts { display: flex; flex-wrap: wrap; gap: 8px; }
+      .hb-daily .opt {
+        flex: 1 1 calc(50% - 8px); min-width: 0;
+        background: rgba(255,255,255,.96); color: #14493a;
+        border: none; border-radius: 12px;
+        padding: 13px 10px; font-size: 15px; font-weight: 700;
+        cursor: pointer; transition: transform .1s, background .15s;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .hb-daily .opt:active { transform: scale(.96); }
+      .hb-daily .opt.on { background: #14493a; color: #fff; box-shadow: inset 0 0 0 2px #fff; }
+      /* スケールは横一列に詰める */
+      .hb-daily .opts.scale .opt { flex: 1 1 0; padding: 13px 4px; font-size: 16px; }
+      .hb-daily textarea {
+        width: 100%; border: none; border-radius: 12px;
+        padding: 11px 12px; font-size: 15px; color: #14493a;
+        min-height: 74px; resize: vertical; font-family: inherit;
+      }
+      .hb-daily .send {
+        width: 100%; margin-top: 8px;
+        background: #14493a; color: #fff; border: none; border-radius: 12px;
+        padding: 13px; font-size: 15px; font-weight: 800; cursor: pointer;
+      }
+      .hb-daily .send:disabled { opacity: .5; }
+      .hb-daily .step { font-size: 11px; opacity: .8; margin-top: 8px; text-align: right; }
+      .hb-daily .msg { font-size: 12px; margin-top: 8px; min-height: 15px; }
+
+      /* 回答後（消さずに実績として見せる） */
+      .hb-daily.done {
+        background: #eef7f3; color: #14493a;
+        box-shadow: none; border: 1px solid #cfe6dc;
+        display: flex; align-items: center; gap: 10px;
+      }
+      .hb-daily.done .icon { font-size: 22px; }
+      .hb-daily.done .t { font-size: 14px; font-weight: 800; }
+      .hb-daily.done .s { font-size: 12px; color: #4d7a6b; margin-top: 2px; }
+      .hb-daily.done .rewards { margin-left: auto; text-align: right; }
+      .hb-daily.done .rewards b { font-size: 17px; font-weight: 900; color: #1f8f66; }
+    </style>
   </head>
   <body class="hibi">
     <div class="hb-shell">
@@ -27,6 +81,7 @@
         <div class="bar"><i id="monthly-bar" style="width:0%"></i></div>
       </section>
 
+      <div id="daily-area"></div>
       <div id="pick-area"></div>
       <div class="hb-h" id="list-head" style="display:none">🆕 新着の案件</div>
 
@@ -103,6 +158,153 @@
               <span class="go">見る ›</span>
             </div>
           </a>`;
+      }
+
+      // ─────────────────────────────────────────────────────────────
+      // 今日の1問（その場で回答して完結する。案件詳細へは遷移させない）
+      // ─────────────────────────────────────────────────────────────
+      const dailyArea = document.getElementById('daily-area');
+
+      function rewardLabel(s) {
+        return s.reward_type === 'fixed'
+          ? `+${s.reward_points}pt`
+          : `+${s.reward_min_points}〜${s.reward_max_points}pt`;
+      }
+
+      /** 1件ぶんのカード。設問を1問ずつ進め、最後の回答で送信する。 */
+      function mountDailyCard(item, slotEl) {
+        const { survey, questions, delivery, answerUrl } = item;
+        const answers = {};
+        let idx = 0;
+
+        function done(result) {
+          const r = result || {};
+          const bonus = r.streakBonusAwarded ? ` (+${r.streakBonusAwarded}pt ボーナス)` : '';
+          slotEl.className = 'hb-daily done';
+          slotEl.innerHTML = `
+            <div class="icon">✅</div>
+            <div>
+              <div class="t">今日の1問に回答しました</div>
+              <div class="s">${r.currentStreak ? esc(String(r.currentStreak)) + '日連続' : 'また明日'}${esc(bonus)}</div>
+            </div>
+            <div class="rewards"><b>+${esc(String(r.pointsAwarded ?? 0))}</b><small>pt</small></div>`;
+        }
+
+        async function submit() {
+          const msg = slotEl.querySelector('.msg');
+          if (msg) msg.textContent = '送信中…';
+          try {
+            const res = await fetch(answerUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+              body: JSON.stringify({
+                deliveryId: delivery.id,
+                answers: Object.entries(answers).map(([questionId, answerValue]) => ({ questionId, answerValue }))
+              })
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              throw new Error(err.error || '送信に失敗しました');
+            }
+            done(await res.json());
+          } catch (err) {
+            if (msg) msg.textContent = err.message || '送信に失敗しました';
+          }
+        }
+
+        /** 1問ぶんの回答が確定したら次へ。最後なら送信。 */
+        function commit(value) {
+          answers[questions[idx].id] = value;
+          if (idx < questions.length - 1) { idx++; render(); }
+          else submit();
+        }
+
+        function render() {
+          const q = questions[idx];
+          const opts = (q.answer_options || []).length
+            ? q.answer_options
+            : (q.question_type === 'scale' ? [1,2,3,4,5].map(n => ({ label: String(n), value: String(n) })) : []);
+          const step = questions.length > 1 ? `<div class="step">${idx + 1} / ${questions.length}</div>` : '';
+
+          let body = '';
+          if (q.question_type === 'text') {
+            body = `<textarea class="txt" placeholder="ひとことどうぞ"></textarea>
+                    <button class="send">送信する</button>`;
+          } else if (q.question_type === 'multiple_choice') {
+            body = `<div class="opts">${opts.map(o =>
+                      `<button class="opt" data-val="${esc(o.value)}">${esc(o.label)}</button>`).join('')}</div>
+                    <button class="send" disabled>選んで送信</button>`;
+          } else {
+            // single_choice / scale はタップした瞬間に確定する（確定ボタンを挟まない）
+            const scaleClass = q.question_type === 'scale' ? ' scale' : '';
+            body = `<div class="opts${scaleClass}">${opts.map(o =>
+                      `<button class="opt" data-val="${esc(o.value)}">${esc(o.label)}</button>`).join('')}</div>`;
+          }
+
+          slotEl.className = 'hb-daily';
+          slotEl.innerHTML = `
+            <div class="head">
+              <span class="lbl">☀️ 今日の1問</span>
+              <span class="pt">${esc(rewardLabel(survey))}</span>
+            </div>
+            <p class="q">${esc(q.question_text)}</p>
+            ${body}
+            ${step}
+            <p class="msg"></p>`;
+
+          wire(q);
+        }
+
+        function wire(q) {
+          const optEls = [...slotEl.querySelectorAll('.opt')];
+          const sendEl = slotEl.querySelector('.send');
+          const txtEl = slotEl.querySelector('.txt');
+
+          if (q.question_type === 'multiple_choice') {
+            const picked = new Set();
+            optEls.forEach(el => el.addEventListener('click', () => {
+              const v = el.dataset.val;
+              if (picked.has(v)) { picked.delete(v); el.classList.remove('on'); }
+              else { picked.add(v); el.classList.add('on'); }
+              sendEl.disabled = picked.size === 0;
+              sendEl.textContent = picked.size ? `${picked.size}件で送信` : '選んで送信';
+            }));
+            sendEl.addEventListener('click', () => {
+              if (picked.size === 0) return;
+              sendEl.disabled = true;
+              commit([...picked]);
+            });
+            return;
+          }
+
+          if (q.question_type === 'text') {
+            sendEl.addEventListener('click', () => {
+              const v = (txtEl.value || '').trim();
+              if (!v) { slotEl.querySelector('.msg').textContent = '入力してください'; return; }
+              sendEl.disabled = true;
+              commit(v);
+            });
+            return;
+          }
+
+          // single_choice / scale
+          optEls.forEach(el => el.addEventListener('click', () => {
+            optEls.forEach(o => { o.disabled = true; });
+            el.classList.add('on');
+            commit(el.dataset.val);
+          }));
+        }
+
+        render();
+      }
+
+      function renderDaily(items) {
+        dailyArea.innerHTML = '';
+        for (const item of items) {
+          const slot = document.createElement('section');
+          dailyArea.appendChild(slot);
+          mountDailyCard(item, slot);
+        }
       }
 
       function renderProjects(list) {
@@ -193,6 +395,14 @@
           const token = await LiffAuth.initLiffOrWebAuth(liffId);
           if (!token) return;
           idToken = token;
+
+          // 今日の1問は案件一覧の表示をブロックしない（失敗してもカードを出さないだけ）。
+          if (d.dailyTodayUrl) {
+            void fetch(d.dailyTodayUrl, { headers: { Authorization: `Bearer ${idToken}` } })
+              .then(r => (r.ok ? r.json() : null))
+              .then(json => { if (json?.items?.length) renderDaily(json.items); })
+              .catch(err => console.error('daily load failed', err));
+          }
 
           const _fetchStart = performance.now();
           const res = await fetch(projectsDataUrl, { headers: { Authorization: `Bearer ${idToken}` } });

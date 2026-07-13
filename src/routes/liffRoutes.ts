@@ -119,6 +119,8 @@ liffRoutes.post("/contact", asyncHandler(liffController.submitContact));
 // デイリーアンケート
 liffRoutes.get("/daily-survey", asyncHandler(liffController.dailySurveyPage));
 liffRoutes.get("/daily-survey-data", asyncHandler(liffController.getDailySurveyData));
+// 案件一覧の最上部に出す「今日の1問」。どれを出すかはサーバーが決める。
+liffRoutes.get("/daily-surveys-today", asyncHandler(liffController.getTodayDailySurveys));
 liffRoutes.post("/daily-survey/:surveyId/answer", asyncHandler(liffController.submitDailySurveyAnswer));
 
 // 店舗専用アンケート流入（専用URL / QR）

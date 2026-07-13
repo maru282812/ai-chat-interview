@@ -13,16 +13,38 @@
 
 <% if (jobResult) { %>
   <div class="alert <%= jobResult.failed > 0 ? 'alert-warning' : 'alert-success' %>" style="margin-bottom:1rem">
-    手動実行完了（<%= jobResult.job %>）: 送信 <strong><%= jobResult.sent %></strong> / <strong><%= jobResult.total %></strong>件
-    <% if (jobResult.failed > 0) { %> 失敗 <strong><%= jobResult.failed %></strong>件<% } %>
+    <% if (jobResult.survey) { %>
+      手動実行完了（<%= jobResult.job %>）: <strong><%= jobResult.survey %></strong> を
+      送信 <strong><%= jobResult.sent %></strong> / <strong><%= jobResult.total %></strong>件
+      <% if (jobResult.failed > 0) { %> 失敗 <strong><%= jobResult.failed %></strong>件<% } %>
+    <% } else if (jobResult.reason === 'queue-empty') { %>
+      手動実行完了（<%= jobResult.job %>）: <strong>キューが空</strong>のため何も配信しませんでした。
+      <a href="/admin/daily-surveys">キューにアンケートを積む</a>
+    <% } else if (jobResult.reason === 'autofill-disabled') { %>
+      手動実行完了（<%= jobResult.job %>）: 夜枠の<strong>自動補充が無効</strong>で、日付固定もないため何も配信しませんでした。
+    <% } else if (jobResult.reason === 'already-completed' || jobResult.reason === 'paused') { %>
+      手動実行完了（<%= jobResult.job %>）: この枠のアンケートは<strong><%= jobResult.reason === 'paused' ? '停止中' : '完了済み' %></strong>のため配信しませんでした。
+    <% } else { %>
+      手動実行完了（<%= jobResult.job %>）: 送信 <strong><%= jobResult.sent %></strong> / <strong><%= jobResult.total %></strong>件
+      <% if (jobResult.failed > 0) { %> 失敗 <strong><%= jobResult.failed %></strong>件<% } %>
+    <% } %>
   </div>
 <% } %>
+
+<div class="card" style="margin-bottom:1.5rem;background:#f7fbf9;border-left:4px solid #2ca87a">
+  <p style="font-size:13px;line-height:1.7;margin:0">
+    デイリーアンケートは<strong>枠ごとに 1 件だけ</strong>配信されます。
+    その枠に<a href="/admin/daily-surveys">カレンダー</a>で日付固定されたものがあればそれを、
+    無ければ<strong>キューの先頭</strong>を配信します。どちらも無ければ何も送りません。
+  </p>
+</div>
 
 <form method="POST" action="/admin/scheduler-settings">
   <div class="card" style="margin-bottom:1.5rem">
     <h3 style="margin-bottom:1rem">朝の配信</h3>
     <p class="muted" style="margin-bottom:1rem">
-      active 状態のデイリーアンケートを全対象ユーザーに一斉配信します。
+      キューの先頭から <strong>1 件</strong>を配信します（日付固定があればそちらが優先）。
+      すでに配信済み・回答済みのユーザーには再送しません。
     </p>
     <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
       <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer">
@@ -41,9 +63,10 @@
   <div class="card" style="margin-bottom:1.5rem">
     <h3 style="margin-bottom:1rem">夜の配信</h3>
     <p class="muted" style="margin-bottom:1rem">
-      朝と同様に active なアンケートを夜にも配信します。
+      夜の枠は既定では<strong>日付固定した分だけ</strong>配信します。
+      「キューから自動補充する」を有効にすると、朝に続いて<strong>もう 1 件</strong>がキューから配信されます（＝1 日 2 件）。
     </p>
-    <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:.75rem">
       <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer">
         <input type="checkbox" name="evening_enabled" value="1"
           <%= settings.evening_enabled ? 'checked' : '' %>>
@@ -55,6 +78,11 @@
           style="padding:.3rem .5rem;border:1px solid #ccc;border-radius:4px">
       </label>
     </div>
+    <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer">
+      <input type="checkbox" name="evening_autofill_enabled" value="1"
+        <%= settings.evening_autofill_enabled ? 'checked' : '' %>>
+      <span>キューから自動補充する<span class="muted">（1 日 2 件配信になります）</span></span>
+    </label>
   </div>
 
   <div class="card" style="margin-bottom:1.5rem">
@@ -104,6 +132,7 @@
   <ul class="muted" style="padding-left:1.2rem;line-height:1.8">
     <li>設定を保存するとサーバー内の cron ジョブが即時再登録されます。</li>
     <li>時刻はすべて JST（Asia/Tokyo）で入力してください。</li>
+    <li>配信する順番の管理は<a href="/admin/daily-surveys">デイリーアンケートのカレンダー／キュー</a>で行います。</li>
     <li>リマインダーには <a href="/admin/notification-templates?category=unanswered_reminder">unanswered_reminder カテゴリ</a>のデフォルトテンプレートが使用されます。</li>
     <li>サーバー再起動時はスケジューラが自動で起動します。</li>
   </ul>

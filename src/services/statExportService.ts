@@ -3,6 +3,8 @@ import { answerRepository } from "../repositories/answerRepository";
 import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { questionRepository } from "../repositories/questionRepository";
+import { questionnaireSnapshotRepository } from "../repositories/questionnaireSnapshotRepository";
+import { rankRepository } from "../repositories/rankRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
 import { userConsentRecordRepository } from "../repositories/userConsentRecordRepository";
@@ -28,9 +30,10 @@ import {
   buildRawdataRows,
   buildStatusCounts
 } from "../lib/rawdataExport";
+import { createZip } from "../lib/zip";
 import { snapshotService } from "./snapshotService";
 import type { VariableDefinition } from "../lib/codebook";
-import type { Answer, AnswerExtraction, Question, Session } from "../types/domain";
+import type { Answer, AnswerExtraction, Question, Rank, Session } from "../types/domain";
 
 /**
  * statExportService
@@ -105,16 +108,18 @@ export interface ExportOptions {
   consentedOnly?: boolean;
   /** 同意フィルタ対象の書類タイプ（未指定なら任意の有効同意で可） */
   consentDocType?: string;
-  /** ロウデータ出力用: user_profiles の属性を respondent に付与する */
-  withProfiles?: boolean;
+  /** ロウデータ出力用: 属性・ランク・回答した調査票の版数を respondent に付与する */
+  forRawdata?: boolean;
 }
 
 /** ロウデータ（Freeasy水準）出力のオプション。docs/plan-rawdata-export.md 参照。 */
 export interface RawdataExportOptions extends ExportOptions {
   mode?: RawdataMode;
-  /** 含める response_status（既定 completed のみ・画面の件数パネルで手動選択） */
+  /** 含める response_status（既定 completed/partial/abandoned・画面の件数パネルで手動選択） */
   statuses?: string[];
   includeProbe?: boolean;
+  /** UserAgent / IPAddress を含める（不正検出用・既定 false） */
+  includePii?: boolean;
 }
 
 async function loadExportData(
@@ -181,12 +186,18 @@ async function loadExportData(
     answersBySession.set(answer.session_id, list);
   }
 
-  // ロウデータ出力用の属性（withProfiles 時のみ・凍結ファイル(wide/long/codebook)は profile を読まない）
+  // ロウデータ出力用の付加情報（forRawdata 時のみ・凍結ファイル(wide/long/codebook)はこれらを読まない）
   const profileByLineUser = new Map<string, RawdataRespondent["profile"]>();
-  if (options.withProfiles) {
-    const profiles = await userProfileRepository.listByLineUserIds(
-      respondents.map((respondent) => respondent.line_user_id)
-    );
+  const rankByLineUser = new Map<string, Rank>();
+  const versionBySnapshotId = new Map<string, number>();
+  if (options.forRawdata) {
+    const lineUserIds = respondents.map((respondent) => respondent.line_user_id);
+    const [profiles, ranks, snapshots] = await Promise.all([
+      userProfileRepository.listByLineUserIds(lineUserIds),
+      // RANK は user_ranks（正準）の現在ランク。回答完了時点の復元はしない（docs/実装計画_rawdata拡張_2026-07-13.md）
+      rankRepository.listUserRanksByLineUserIds(lineUserIds),
+      questionnaireSnapshotRepository.listByProject(projectId)
+    ]);
     for (const profile of profiles) {
       profileByLineUser.set(profile.line_user_id, {
         gender: profile.gender,
@@ -199,10 +210,27 @@ async function loadExportData(
         household_income: profile.household_income ?? null
       });
     }
+    for (const [lineUserId, rank] of ranks) {
+      rankByLineUser.set(lineUserId, rank);
+    }
+    for (const snapshot of snapshots) {
+      versionBySnapshotId.set(snapshot.id, snapshot.version);
+    }
   }
 
   const exportRespondents: RawdataRespondent[] = selected.map(({ respondent, session }) => ({
-    profile: options.withProfiles ? profileByLineUser.get(respondent.line_user_id) ?? null : undefined,
+    profile: options.forRawdata ? profileByLineUser.get(respondent.line_user_id) ?? null : undefined,
+    // 会員ランク: user_ranks が正準。未同期なら案件スコープの current_rank にフォールバック。
+    rank_code: options.forRawdata
+      ? (rankByLineUser.get(respondent.line_user_id)?.rank_code ?? respondent.current_rank?.rank_code ?? null)
+      : undefined,
+    rank_name: options.forRawdata
+      ? (rankByLineUser.get(respondent.line_user_id)?.rank_name ?? respondent.current_rank?.rank_name ?? null)
+      : undefined,
+    // 回答した調査票の版数（§1/§14・sessions.snapshot_id）。未確定セッションは null。
+    snapshot_version: options.forRawdata
+      ? (session.snapshot_id ? versionBySnapshotId.get(session.snapshot_id) ?? null : null)
+      : undefined,
     // 回答環境（migration 078・LIFF セッションのみ記録・未適用DBでは undefined → null）
     user_agent: session.user_agent ?? null,
     ip_address: session.ip_address ?? null,
@@ -284,29 +312,57 @@ export const statExportService = {
     return toCsvRfc4180(buildRandomizationLogRows(variables, respondents));
   },
 
+  /**
+   * 集計アプリ（ai-report）の入力契約である3点セット（wide/long/codebook）を zip 1本にまとめる。
+   * 契約凍結ファイルをそのまま同梱するだけで、中身は個別DLと同一。
+   * 3ファイルとも同じ回答スナップショットから作る必要があるため loadExportData は1回だけ呼ぶ。
+   */
+  async analysisBundleZip(projectId: string, options: ExportOptions = {}): Promise<Buffer> {
+    const { respondents, variables } = await loadExportData(projectId, options);
+    return createZip([
+      {
+        name: "respondents_wide.csv",
+        data: toCsvRfc4180(buildWideRows(variables, respondents, { excludeTest: options.excludeTest }))
+      },
+      { name: "answers_long.csv", data: toCsvRfc4180(buildLongRows(variables, respondents)) },
+      { name: "codebook.csv", data: toCsvRfc4180(buildCodebookRows(variables)) }
+    ]);
+  },
+
   // ------------------------------------------------------------------
   // ロウデータ（Freeasy水準）出力。docs/plan-rawdata-export.md。
   // 既存3ファイル（wide/long/codebook）は凍結契約のため触らず新ファイルで提供。
   // ------------------------------------------------------------------
 
   async rawdataCsv(projectId: string, options: RawdataExportOptions = {}): Promise<string> {
-    const { respondents, variables, questions } = await loadExportData(projectId, { ...options, withProfiles: true });
+    const { respondents, variables, questions } = await loadExportData(projectId, { ...options, forRawdata: true });
     const assignments = assignQNumbers(variables, questions, { includeProbe: options.includeProbe });
     return toCsvRfc4180(
       buildRawdataRows(assignments, respondents, {
         mode: options.mode,
         statuses: options.statuses,
         includeProbe: options.includeProbe,
-        excludeTest: options.excludeTest
+        excludeTest: options.excludeTest,
+        includePii: options.includePii
       })
     );
   },
 
   async rawdataLayoutCsv(projectId: string, options: RawdataExportOptions = {}): Promise<string> {
     const questions = await questionRepository.listByProject(projectId);
-    const variables = await snapshotService.resolveCodebook(projectId, questions);
+    const [variables, active, ranks] = await Promise.all([
+      snapshotService.resolveCodebook(projectId, questions),
+      snapshotService.getActive(projectId),
+      rankRepository.list()
+    ]);
     const assignments = assignQNumbers(variables, questions, { includeProbe: options.includeProbe });
-    return toCsvRfc4180(buildRawdataLayoutRows(assignments));
+    return toCsvRfc4180(
+      buildRawdataLayoutRows(assignments, {
+        includePii: options.includePii,
+        questionVersion: active?.version ?? null,
+        ranks: ranks.map((rank) => ({ rank_code: rank.rank_code, rank_name: rank.rank_name }))
+      })
+    );
   },
 
   /** 出力画面の件数パネル用。フィルタ前（全ステータス・テスト別掲）の件数を返す。 */

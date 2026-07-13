@@ -72,6 +72,11 @@ adminRoutes.get(
   "/projects/:projectId/exports/stat/randomization-log.csv",
   asyncHandler(adminController.exportStatRandomizationLog)
 );
+// 集計アプリ（ai-report）向け3点セット一括DL
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/bundle.zip",
+  asyncHandler(adminController.exportStatBundleZip)
+);
 // ロウデータ（Freeasy水準）出力（docs/plan-rawdata-export.md）
 adminRoutes.get(
   "/projects/:projectId/exports/stat/rawdata.csv",
@@ -255,6 +260,10 @@ adminRoutes.post("/daily-question-priorities/:id/toggle", asyncHandler(adminCont
 adminRoutes.get("/daily-surveys", asyncHandler(adminController.dailySurveys));
 adminRoutes.get("/daily-surveys/new", asyncHandler(adminController.newDailySurvey));
 adminRoutes.post("/daily-surveys", asyncHandler(adminController.createDailySurvey));
+// 配信キュー / 日付スロット（migration 079）。:surveyId ルートより先に置く。
+adminRoutes.post("/daily-surveys/queue/reorder", asyncHandler(adminController.reorderDailySurveyQueue));
+adminRoutes.post("/daily-surveys/:surveyId/schedule", asyncHandler(adminController.scheduleDailySurvey));
+adminRoutes.post("/daily-surveys/:surveyId/enqueue", asyncHandler(adminController.enqueueDailySurvey));
 adminRoutes.get("/daily-surveys/:surveyId", asyncHandler(adminController.showDailySurvey));
 adminRoutes.get("/daily-surveys/:surveyId/analytics", asyncHandler(adminController.dailySurveyAnalytics));
 adminRoutes.get("/daily-surveys/:surveyId/edit", asyncHandler(adminController.editDailySurvey));

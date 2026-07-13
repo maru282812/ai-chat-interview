@@ -1,5 +1,6 @@
 import cron, { type ScheduledTask } from "node-cron";
 import { supabase } from "../config/supabase";
+import type { DailySlot } from "../lib/dailyQueue";
 import { dailySurveyService } from "./dailySurveyService";
 import { lineMessagingService } from "./lineMessagingService";
 import { notificationTemplateRepository } from "../repositories/notificationTemplateRepository";
@@ -15,6 +16,8 @@ export interface SchedulerSettings {
   morning_time: string;
   evening_enabled: boolean;
   evening_time: string;
+  /** 夜枠をキューから自動補充するか。false（既定）なら夜は日付固定分だけ＝1日1件。 */
+  evening_autofill_enabled: boolean;
   reminder_enabled: boolean;
   reminder_time: string;
   updated_at: string;
@@ -28,6 +31,10 @@ export interface SchedulerRunResult {
   failed: number;
   skipped: number;
   ran_at: string;
+  /** 配信したアンケート名（何も配信しなかったときは null）。 */
+  survey_title?: string | null;
+  /** 配信しなかった理由（queue-empty / autofill-disabled / already-completed / paused）。 */
+  reason?: string;
 }
 
 function timeToUtcCronExpr(hhmm: string): string {
@@ -67,54 +74,61 @@ class NotificationSchedulerService {
   }
 
   async runDailyMorning(): Promise<SchedulerRunResult> {
-    return this._runDeliveryJobs("morning");
+    return this._runSlot("morning");
   }
 
   async runDailyEvening(): Promise<SchedulerRunResult> {
-    return this._runDeliveryJobs("evening");
+    return this._runSlot("evening");
   }
 
-  private async _runDeliveryJobs(jobName: string): Promise<SchedulerRunResult> {
+  /**
+   * その枠で配信すべき「1 件」を配信する（migration 079）。
+   *
+   * 以前は status='active' のアンケートを全部・全ユーザーに毎回 push していたため、
+   * active が残っている限り毎朝毎晩・回答済みの人にも送り続けていた。
+   * 現在は「日付固定 > キュー先頭」で 1 件だけ選び、どちらも無ければ何も送らない。
+   */
+  private async _runSlot(slot: DailySlot): Promise<SchedulerRunResult> {
     const result: SchedulerRunResult = {
-      job: jobName,
+      job: slot,
       surveys_processed: 0,
       total: 0,
       sent: 0,
       failed: 0,
       skipped: 0,
-      ran_at: new Date().toISOString()
+      ran_at: new Date().toISOString(),
+      survey_title: null,
+      reason: ""
     };
 
-    const { data: surveys, error } = await supabase
-      .from("daily_surveys")
-      .select("id")
-      .eq("status", "active");
-
-    if (error) {
-      logger.error(`Scheduler ${jobName}: failed to fetch surveys`, { error });
-      return result;
+    let eveningAutofillEnabled = false;
+    try {
+      eveningAutofillEnabled = (await this.getSettings()).evening_autofill_enabled;
+    } catch (e) {
+      logger.warn(`Scheduler ${slot}: settings unavailable, evening autofill treated as off`, {
+        error: String(e)
+      });
     }
 
-    for (const survey of surveys ?? []) {
-      try {
-        const deliveryResult = await dailySurveyService.deliver(survey.id, {
-          liffBaseUrl: env.APP_BASE_URL
-        });
-        result.surveys_processed++;
-        result.total += deliveryResult.total;
-        result.sent += deliveryResult.sent;
-        result.failed += deliveryResult.failed;
-        result.skipped += deliveryResult.skipped;
-      } catch (e) {
-        logger.error(`Scheduler ${jobName}: deliver failed`, {
-          surveyId: survey.id,
-          error: String(e)
-        });
-        result.failed++;
-      }
+    try {
+      const run = await dailySurveyService.runSlot(slot, {
+        eveningAutofillEnabled,
+        liffBaseUrl: env.APP_BASE_URL
+      });
+      result.surveys_processed = run.survey_id ? 1 : 0;
+      result.total = run.total;
+      result.sent = run.sent;
+      result.failed = run.failed;
+      result.skipped = run.skipped;
+      result.survey_title = run.survey_title;
+      result.reason = run.reason;
+    } catch (e) {
+      logger.error(`Scheduler ${slot}: slot run failed`, { error: String(e) });
+      result.failed++;
+      result.reason = "error";
     }
 
-    logger.info(`Scheduler ${jobName}: done`, result);
+    logger.info(`Scheduler ${slot}: done`, result);
     return result;
   }
 
