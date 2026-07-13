@@ -125,7 +125,7 @@ function matchOptionCode(allowed: CodebookOption[], token: string): string | nul
 }
 
 /** 回答から選択コード群と未マッチ（その他自由記述）を取り出す。 */
-function getSelected(
+export function getSelected(
   answer: Answer,
   variable: VariableDefinition
 ): { codes: string[]; otherText: string | null } {
@@ -162,7 +162,7 @@ function getSelected(
   };
 }
 
-function getNumericValue(answer: Answer): number | null {
+export function getNumericValue(answer: Answer): number | null {
   const normalized = asRecord(answer.normalized_answer);
   if (typeof normalized.value === "number" && Number.isFinite(normalized.value)) {
     return normalized.value;
@@ -172,7 +172,7 @@ function getNumericValue(answer: Answer): number | null {
 }
 
 /** §7: 回答状態の判定（answered or 欠損区分）。 */
-function determineResponseState(
+export function determineResponseState(
   group: ExportAnswerGroup,
   respondent: ExportRespondent
 ): ResponseState {
@@ -187,7 +187,7 @@ function determineResponseState(
   return respondent.response_status === "completed" ? "no_answer" : "not_reached";
 }
 
-function missingSentinel(state: ResponseState, variable: VariableDefinition): CellValue {
+export function missingSentinel(state: ResponseState, variable: VariableDefinition): CellValue {
   if (state === "answered") {
     return null;
   }
@@ -196,13 +196,13 @@ function missingSentinel(state: ResponseState, variable: VariableDefinition): Ce
   return variable.data_type === "text" ? "" : code.code;
 }
 
-function probeQuestionText(probe: Answer): string {
+export function probeQuestionText(probe: Answer): string {
   const normalized = asRecord(probe.normalized_answer);
   const candidate = normalized.probe_question ?? normalized.question_text ?? normalized.prompt;
   return typeof candidate === "string" ? candidate : "";
 }
 
-function probeReason(group: ExportAnswerGroup): string {
+export function probeReason(group: ExportAnswerGroup): string {
   for (const source of [group.primaryAnswer, ...group.probeAnswers]) {
     const reason = asRecord(source?.normalized_answer).probe_reason;
     if (typeof reason === "string" && reason.trim()) {
@@ -212,7 +212,7 @@ function probeReason(group: ExportAnswerGroup): string {
   return "";
 }
 
-function finalAnswerText(group: ExportAnswerGroup): string {
+export function finalAnswerText(group: ExportAnswerGroup): string {
   const parts: string[] = [];
   if (group.primaryAnswer?.answer_text.trim()) {
     parts.push(group.primaryAnswer.answer_text.trim());

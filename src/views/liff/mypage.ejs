@@ -303,6 +303,20 @@
       function chk(v, t) { return v === t ? "checked" : ""; }
       function inArr(arr, v) { return (arr||[]).includes(v) ? "checked" : ""; }
 
+      // 世帯年収の選択肢（値はサーバー側 parseIncome / lib/rawdataExport.ts INCOME_CODES と対応）
+      const incomeOptions = [
+        ["under_200", "200万円未満"],
+        ["200_400", "200〜400万円未満"],
+        ["400_600", "400〜600万円未満"],
+        ["600_800", "600〜800万円未満"],
+        ["800_1000", "800〜1,000万円未満"],
+        ["1000_1500", "1,000〜1,500万円未満"],
+        ["1500_2000", "1,500〜2,000万円未満"],
+        ["over_2000", "2,000万円以上"],
+        ["unknown", "わからない"],
+        ["no_answer", "答えたくない"]
+      ];
+
       function show(html) {
         loadingView.style.display = "none";
         appView.style.display = "";
@@ -514,7 +528,11 @@
 
               <div class="card" style="background:#f8faf9;border-radius:12px;padding:14px;margin-top:4px">
                 <div class="section-title" style="margin-bottom:8px">推奨項目（任意）</div>
-                <p style="font-size:12px;color:#60726f;margin-bottom:12px">入力するとあなたに合ったアンケートが届きやすくなります。</p>
+                <p style="font-size:12px;color:#60726f;margin-bottom:12px;line-height:1.6">
+                  アンケートには「お子さまがいる方」「特定のご職業の方」など、プロフィールが条件になっているものがあります。
+                  任意項目も埋めておくほど<strong style="color:#2e7d5b">答えられるアンケートが増え、ポイントを貯めるチャンスが広がります</strong>。
+                  未入力の項目が条件のアンケートは届かないことがあります。
+                </p>
                 <div class="form-stack">
                   <div class="form-group">
                     <label>婚姻状況</label>
@@ -530,6 +548,13 @@
                       <label><input type="radio" name="has_children" value="true"  ${p.has_children === true  ? "checked" : ""} />いる</label>
                       <label><input type="radio" name="has_children" value="false" ${p.has_children === false ? "checked" : ""} />いない</label>
                     </div>
+                  </div>
+                  <div class="form-group">
+                    <label>世帯年収</label>
+                    <select class="form-control" name="household_income">
+                      <option value="">選択してください</option>
+                      ${incomeOptions.map(([v,l]) => `<option value="${v}" ${sel(p.household_income, v)}>${l}</option>`).join("")}
+                    </select>
                   </div>
                 </div>
               </div>
@@ -568,6 +593,7 @@
             industry:       fd.get("industry") || null,
             marital_status: fd.get("marital_status") || null,
             has_children:   fd.get("has_children") === "true" ? true : fd.get("has_children") === "false" ? false : null,
+            household_income: fd.get("household_income") || null,
           };
 
           try {
@@ -1040,6 +1066,10 @@
             <span style="font-weight:600;font-size:16px;">プロフィール編集</span>
           </div>
           <div class="card">
+            <div style="background:#f0f7f4;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:#4a5f5b;line-height:1.6;">
+              💡 プロフィールを埋めるほど、条件に合う<strong style="color:#2e7d5b">答えられるアンケートが増えます</strong>。
+              未入力の項目が条件になっているアンケートは届かないことがあるため、任意項目もぜひご登録ください。
+            </div>
             <form id="edit-form" class="form-stack">
               <div class="form-group">
                 <label>呼び名</label>
@@ -1107,6 +1137,13 @@
                   ).join("")}
                 </div>
               </div>
+              <div class="form-group">
+                <label>世帯年収</label>
+                <select class="form-control" name="household_income">
+                  <option value="">選択してください</option>
+                  ${incomeOptions.map(([v,l]) => `<option value="${v}" ${sel(p.household_income, v)}>${l}</option>`).join("")}
+                </select>
+              </div>
               <p id="edit-status" class="status-msg"></p>
               <button type="submit" class="btn btn-primary">保存する</button>
             </form>
@@ -1146,6 +1183,7 @@
             has_children:         fd.get("has_children") === "true" ? true : fd.get("has_children") === "false" ? false : null,
             children_ages:        childAges,
             household_composition: fd.getAll("household_composition").map(String).filter(Boolean),
+            household_income:     fd.get("household_income") || null,
           };
 
           try {

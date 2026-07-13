@@ -45,12 +45,16 @@ export function errorHandler(
   }
 
   if (req.path.startsWith("/liff")) {
+    // 401 は「LINEから開き直す」導線が最適なので専用文言。それ以外の 4xx（400/403/404/409 等）は
+    // HttpError の message が利用者向けに意図された説明（例: 「このお店のアンケートが見つかりませんでした。」）
+    // なのでそのまま返す。5xx は DB 内部メッセージ等が混入し得るため文脈非依存の定型文に丸める
+    // （旧実装は 4xx も一律「投稿の保存に失敗しました」に潰れ、回答/完了/流入で文脈がずれていた）。
     const friendlyMessage =
       statusCode === 401
         ? "認証に失敗しました。LINEからもう一度開き直してください。"
-        : statusCode === 400
+        : statusCode < 500
           ? error.message
-          : "投稿の保存に失敗しました。時間を置いて再度お試しください。";
+          : "処理に失敗しました。時間を置いて再度お試しください。";
 
     const body: { error: string; detail?: string; fallback: string } = {
       error: friendlyMessage,

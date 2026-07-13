@@ -72,6 +72,23 @@ adminRoutes.get(
   "/projects/:projectId/exports/stat/randomization-log.csv",
   asyncHandler(adminController.exportStatRandomizationLog)
 );
+// ロウデータ（Freeasy水準）出力（docs/plan-rawdata-export.md）
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/rawdata.csv",
+  asyncHandler(adminController.exportRawdata)
+);
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/rawdata-layout.csv",
+  asyncHandler(adminController.exportRawdataLayout)
+);
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/status-counts",
+  asyncHandler(adminController.statExportStatusCounts)
+);
+adminRoutes.get(
+  "/projects/:projectId/exports/stat/history",
+  asyncHandler(adminController.statExportHistory)
+);
 // 送付前バリデーション (§4/§5/§6)
 adminRoutes.get(
   "/projects/:projectId/validate",
