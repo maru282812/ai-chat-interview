@@ -6,6 +6,7 @@
     <title><%= title %></title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
+    <%- include('../partials/daily-today-card') %>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body {
@@ -78,6 +79,8 @@
     <div class="page-header">
       <h1>保存した案件</h1>
     </div>
+
+    <div id="daily-area"></div>
 
     <div id="loading-overlay"><div class="spinner"></div></div>
     <div class="project-list" id="project-list" style="display:none"></div>
@@ -159,6 +162,9 @@
           const token = await LiffAuth.initLiffOrWebAuth(liffId);
           if (!token) return;
           idToken = token;
+
+          // 今日の1問はこの画面の表示をブロックしない（失敗してもカードを出さないだけ）。
+          DailyToday.mount({ idToken });
 
           const res = await fetch(savedDataUrl, { headers: { Authorization: `Bearer ${idToken}` } });
           const data = await res.json();

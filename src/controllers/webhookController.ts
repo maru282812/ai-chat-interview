@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { verifyLineSignature } from "../lib/line";
 import { logger } from "../lib/logger";
 import { conversationOrchestratorService } from "../services/conversationOrchestratorService";
+import { dailySurveyChatService } from "../services/dailySurveyChatService";
 import type { LineWebhookEvent } from "../types/domain";
 
 export const webhookController = {
@@ -32,6 +33,21 @@ export const webhookController = {
 
           if (event.type === "unfollow") {
             await conversationOrchestratorService.handleUnfollowEvent(event.source.userId);
+            continue;
+          }
+
+          // デイリーの「今日の1問」をトーク内のボタンで回答したとき（LIFF を開かない導線）。
+          if (event.type === "postback" && event.replyToken && event.postback?.data) {
+            const handled = await dailySurveyChatService.handlePostback({
+              lineUserId: event.source.userId,
+              replyToken: event.replyToken,
+              data: event.postback.data
+            });
+            if (handled) continue;
+            logger.warn("webhook.postback.unhandled", {
+              userId: event.source.userId,
+              data: event.postback.data.slice(0, 120)
+            });
             continue;
           }
 

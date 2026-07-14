@@ -7,6 +7,7 @@
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
     <link rel="stylesheet" href="/public/hibi.css" />
+    <%- include('../partials/daily-today-card') %>
     <style>
       .hb-tabs { display: flex; background: #FFFDF6; border-bottom: 2px solid var(--hb-line); position: sticky; top: 49px; z-index: 19; }
       .hb-tab { flex: 1; text-align: center; padding: 12px 4px; font-size: 13px; font-weight: 700; color: var(--hb-sub); border-bottom: 3px solid transparent; margin-bottom: -2px; cursor: pointer; white-space: nowrap; }
@@ -28,6 +29,8 @@
         <span class="hb-title">やりとり</span>
         <span style="width:24px"></span>
       </header>
+
+      <div id="daily-area"></div>
 
       <nav class="hb-tabs" id="tab-bar">
         <div class="hb-tab on" data-tab="applications">応募中<span class="cnt" id="cnt-applications"></span></div>
@@ -174,6 +177,10 @@
           const token = await LiffAuth.initLiffOrWebAuth(liffId);
           if (!token) return;
           idToken = token;
+
+          // 今日の1問はこの画面の表示をブロックしない（失敗してもカードを出さないだけ）。
+          DailyToday.mount({ idToken });
+
           const res = await fetch(interactionsDataUrl, { headers: { Authorization: `Bearer ${idToken}` } });
           const data = await res.json();
           renderAll(data);

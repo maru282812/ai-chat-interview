@@ -1241,6 +1241,10 @@ export interface LineWebhookEvent {
     text?: string;
     [key: string]: unknown;
   };
+  postback?: {
+    data: string;
+    params?: Record<string, unknown>;
+  };
 }
 
 // ── user_points / user_ranks / badges / streaks ────────────────────

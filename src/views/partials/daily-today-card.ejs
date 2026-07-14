@@ -1,0 +1,222 @@
+<%#
+  今日の1問カード（共通パーシャル）
+
+  「ユーザーに選ばせにいかない。開いた画面の先頭に、もう表示されている」ための部品。
+  探す・保存・やりとり・マイページのどこから入ってきても同じカードが出る。
+
+  使い方: <div id="daily-area"></div> を置いて、認証後に DailyToday.mount({ idToken }) を呼ぶ。
+  回答済み・今日の配信なしのときは何も描かない（サーバーが空配列を返す）。
+
+  選択肢の描画は partials/answer-ui.ejs（案件アンケートと共通レンダラ）。
+  このパーシャルが answer-ui を内包するので、ホスト側で二重 include しないこと。
+%>
+<%- include('./answer-ui') %>
+<style>
+  /* 今日の1問（画面最上部・その場で回答して完結する。ページ遷移させない） */
+  .hb-daily {
+    background: linear-gradient(135deg, #2ca87a, #1f8f66);
+    color: #fff; border-radius: 16px;
+    padding: 14px 16px; margin: 10px 12px 4px;
+    box-shadow: 0 4px 14px rgba(44,168,122,.28);
+  }
+  .hb-daily .head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .hb-daily .lbl { font-size: 12px; font-weight: 800; letter-spacing: .04em; opacity: .95; }
+  .hb-daily .pt {
+    background: rgba(255,255,255,.22); border-radius: 20px;
+    padding: 3px 10px; font-size: 12px; font-weight: 800;
+  }
+  .hb-daily .q { font-size: 16px; font-weight: 800; line-height: 1.5; margin-bottom: 10px; }
+  /* 選択肢の描画は partials/answer-ui.ejs（案件アンケートと共通レンダラ）。
+     緑カードの上に載せるので .answer-ui-compact でサイズと文字色を寄せている。 */
+  .hb-daily textarea {
+    width: 100%; border: none; border-radius: 12px;
+    padding: 11px 12px; font-size: 15px; color: #14493a;
+    min-height: 74px; resize: vertical; font-family: inherit;
+  }
+  .hb-daily .send {
+    width: 100%; margin-top: 8px;
+    background: #14493a; color: #fff; border: none; border-radius: 12px;
+    padding: 13px; font-size: 15px; font-weight: 800; cursor: pointer;
+  }
+  .hb-daily .send:disabled { opacity: .5; }
+  .hb-daily .step { font-size: 11px; opacity: .8; margin-top: 8px; text-align: right; }
+  .hb-daily .msg { font-size: 12px; margin-top: 8px; min-height: 15px; }
+
+  /* 回答後（消さずに実績として見せる） */
+  .hb-daily.done {
+    background: #eef7f3; color: #14493a;
+    box-shadow: none; border: 1px solid #cfe6dc;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .hb-daily.done .icon { font-size: 22px; }
+  .hb-daily.done .t { font-size: 14px; font-weight: 800; }
+  .hb-daily.done .s { font-size: 12px; color: #4d7a6b; margin-top: 2px; }
+  .hb-daily.done .rewards { margin-left: auto; text-align: right; }
+  .hb-daily.done .rewards b { font-size: 17px; font-weight: 900; color: #1f8f66; }
+</style>
+<script>
+  (() => {
+    'use strict';
+
+    const TODAY_URL = '/liff/daily-surveys-today';
+
+    function esc(v) {
+      return String(v ?? '').replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      ));
+    }
+
+    function rewardLabel(s) {
+      return s.reward_type === 'fixed'
+        ? `+${s.reward_points}pt`
+        : `+${s.reward_min_points}〜${s.reward_max_points}pt`;
+    }
+
+    /** 1件ぶんのカード。設問を1問ずつ進め、最後の回答で送信する。 */
+    function mountCard(item, slotEl, idToken) {
+      const { survey, questions, delivery, answerUrl } = item;
+      const answers = {};
+      let idx = 0;
+
+      function done(result) {
+        const r = result || {};
+        const bonus = r.streakBonusAwarded ? ` (+${r.streakBonusAwarded}pt ボーナス)` : '';
+        slotEl.className = 'hb-daily done';
+        slotEl.innerHTML = `
+          <div class="icon">✅</div>
+          <div>
+            <div class="t">今日の1問に回答しました</div>
+            <div class="s">${r.currentStreak ? esc(String(r.currentStreak)) + '日連続' : 'また明日'}${esc(bonus)}</div>
+          </div>
+          <div class="rewards"><b>+${esc(String(r.pointsAwarded ?? 0))}</b><small>pt</small></div>`;
+      }
+
+      async function submit() {
+        const msg = slotEl.querySelector('.msg');
+        if (msg) msg.textContent = '送信中…';
+        try {
+          const res = await fetch(answerUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+            body: JSON.stringify({
+              deliveryId: delivery.id,
+              answers: Object.entries(answers).map(([questionId, answerValue]) => ({ questionId, answerValue }))
+            })
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || '送信に失敗しました');
+          }
+          done(await res.json());
+        } catch (err) {
+          if (msg) msg.textContent = err.message || '送信に失敗しました';
+        }
+      }
+
+      /** 1問ぶんの回答が確定したら次へ。最後なら送信。 */
+      function commit(value) {
+        answers[questions[idx].id] = value;
+        if (idx < questions.length - 1) { idx++; render(); }
+        else submit();
+      }
+
+      function render() {
+        const q = questions[idx];
+        const step = questions.length > 1 ? `<div class="step">${idx + 1} / ${questions.length}</div>` : '';
+
+        // 表示パターンはサーバー権威（q.presentation.pattern）。案件アンケートと同じ共通レンダラで描く。
+        // 対象外（テキスト等）だけカード内の従来入力欄にフォールバックする。
+        const pattern = q.presentation && q.presentation.pattern;
+        const rendered = AnswerUI.build({ question_code: q.id }, q.choices || [], pattern);
+        const needsSend = !AnswerUI.isAutoCommit(pattern);
+
+        const body = rendered
+          ? rendered + (needsSend ? `<button class="send" disabled>選んで送信</button>` : '')
+          : `<textarea class="txt" placeholder="ひとことどうぞ"></textarea>
+             <button class="send">送信する</button>`;
+
+        slotEl.className = 'hb-daily answer-ui-compact';
+        slotEl.innerHTML = `
+          <div class="head">
+            <span class="lbl">☀️ 今日の1問</span>
+            <span class="pt">${esc(rewardLabel(survey))}</span>
+          </div>
+          <p class="q">${esc(q.question_text)}</p>
+          ${body}
+          ${step}
+          <p class="msg"></p>`;
+
+        wire(q, !!rendered);
+      }
+
+      function wire(q, rendered) {
+        const sendEl = slotEl.querySelector('.send');
+
+        if (!rendered) {
+          // 共通レンダラの対象外（テキスト）
+          const txtEl = slotEl.querySelector('.txt');
+          sendEl.addEventListener('click', () => {
+            const v = (txtEl.value || '').trim();
+            if (!v) { slotEl.querySelector('.msg').textContent = '入力してください'; return; }
+            sendEl.disabled = true;
+            commit(v);
+          });
+          return;
+        }
+
+        let pending = null;
+        AnswerUI.wire(
+          slotEl,
+          { code: q.id, multi: q.question_type === 'multiple_choice' },
+          {
+            onChange: (value) => {
+              pending = value;
+              if (!sendEl) return;
+              const n = Array.isArray(value) ? value.length : (value ? 1 : 0);
+              sendEl.disabled = n === 0;
+              sendEl.textContent = n ? `${n}件で送信` : '選んで送信';
+            },
+            // スワイプ・タップ・振り分け完了はその操作自体が確定（送信ボタンを挟まない）
+            onCommit: (value) => { commit(value); },
+          },
+        );
+
+        if (sendEl) {
+          sendEl.addEventListener('click', () => {
+            const n = Array.isArray(pending) ? pending.length : (pending ? 1 : 0);
+            if (n === 0) return;
+            sendEl.disabled = true;
+            commit(pending);
+          });
+        }
+      }
+
+      render();
+    }
+
+    window.DailyToday = {
+      /**
+       * 今日の1問を #daily-area（既定）に描く。
+       * ホスト画面の表示はブロックしない（失敗してもカードを出さないだけ）。
+       */
+      mount(options) {
+        const opts = options || {};
+        const area = opts.container || document.getElementById('daily-area');
+        if (!area || !opts.idToken) return;
+
+        void fetch(opts.url || TODAY_URL, { headers: { Authorization: `Bearer ${opts.idToken}` } })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((json) => {
+            if (!json || !json.items || json.items.length === 0) return;
+            area.innerHTML = '';
+            for (const item of json.items) {
+              const slot = document.createElement('section');
+              area.appendChild(slot);
+              mountCard(item, slot, opts.idToken);
+            }
+          })
+          .catch((err) => console.error('daily load failed', err));
+      }
+    };
+  })();
+</script>
