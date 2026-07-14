@@ -1,7 +1,7 @@
 # 仕様整理: デイリーアンケート（配信キュー＋カレンダー＋1問完結UI）
 
 作成: 2026-07-13 / 更新: 2026-07-14
-状態: **Phase 0・1・2 実装済み（migration 079 本番適用済み・未コミット）／Phase 3 未着手**
+状態: **Phase 0・1・2・3 実装済み（migration 079 本番適用済み・未コミット）／Phase 4 未着手**
 
 ## 目的
 
@@ -155,7 +155,7 @@ runSlot(slot):                              # slot = morning | evening
 | ~~**0**~~ ✅ | 再配信バグ止め: `active` の毎日再送を停止・delivery 既存者をスキップ・`expires_at` 超過を `completed` に落とす | 本番でデイリーを `active` にしても二重配信されない（キュー導入の前提） |
 | ~~**1**~~ ✅ | キュー＋スロット＋カレンダー（migration / cron 書き換え / 管理2ペインUI / 作成画面の2択化） | 運営が「1問作ってキューに積む」だけで、上から順に1日1つ自動配信される。ドラッグで日付固定・夜枠 ON で1日2件 |
 | ~~**2**~~ ✅ | サイト面: `GET /liff/daily-surveys-today` ＋ 案件一覧最上部のカード（その場回答・タップ確定のUI） | サイトを開いた人が案件を見る前に今日の1問に出会い、遷移せず回答できる |
-| **3** | 回答UI共通化: `survey.ejs` の casual レンダラ（swipe_card / carousel / face_scale / chip_select / big_split）を共通パーシャルに切り出し、デイリーからも使う | デイリーがスワイプ・スタンプで回答できる。UI 改善が案件アンケートと同時に効く |
+| ~~**3**~~ ✅ | 回答UI共通化: `survey.ejs` の casual レンダラ（swipe_card / carousel / face_scale / chip_select / big_split / sort_swipe / big_slider）を共通パーシャルに切り出し、デイリーからも使う | デイリーがスワイプ・スタンプで回答できる。UI 改善が案件アンケートと同時に効く |
 | **4**（将来） | 1日N枠・任意時刻／セグメント配信の実装／AI で1問を自動生成してキューに積む／デイリーの回答UI A/B（[[project_answer_ui_experimentation]]） | – |
 
 Phase 2 と 3 の順序は入れ替え可能。3 を先にすると差し替え作業が減るが、`survey.ejs`（稼働中）の
@@ -235,6 +235,46 @@ daily card 件数: 1
 JS エラー: なし
 ```
 API 単体でも確認済み: 他人の deliveryId → **403** ／ 本人 → 200・8pt 付与・streak 1 ／ 回答後は `items: []`。
+
+## Phase 3 の実装記録（2026-07-14）
+
+| ファイル | 内容 |
+|---|---|
+| `src/views/partials/answer-ui.ejs`（新規） | 回答UI共通パーシャル。**CSS ＋ `window.AnswerUI`**（7パターンのレンダラ・スワイプ検出・配線）。案件アンケートとデイリーで同一コードを使う |
+| `src/lib/dailyAnswerUi.ts`（新規） | デイリー設問モデル → レンダラ入力のアダプタ（純関数）。`scale`→`single_choice`+`presentation.scale` ／ `multiple_choice`→`multi_choice` ／ `text`→`free_text_short` ／ `answer_options`→`choices`。`resolveAnswerPresentation` をそのまま再利用 |
+| `src/tests/dailyAnswerUi.test.ts`（新規） | 20件。全397件 pass |
+| `src/controllers/liffController.ts` | `getDailySurveyData` / `getTodayDailySurveys` が **表示パターンをサーバー権威で解決**して返す（`presentation` ＋ 正規化済み `choices`）。クライアントは pattern を見て描くだけ |
+| `src/views/liff/survey.ejs` | 移設したぶんを削除し共通パーシャルを include。呼び出し名は薄い別名で維持し、配線は `AnswerUI.wire` に委譲（matrix_rows は survey 固有なので残置） |
+| `src/views/liff/daily-survey.ejs` | 独自のラジオ/チェック/5段階ボタンを廃止し共通レンダラへ。確定操作を持つパターンでは「次へ」を出さない |
+| `src/views/liff/projects.ejs` | 今日の1問カードも共通レンダラへ（緑カード用に `.answer-ui-compact` でサイズ・文字色を調整） |
+
+**ホスト非依存の配線 API**（これが共通化の要）:
+
+```
+AnswerUI.build(q, choices, pattern) → HTML（対象外パターンは null＝ホストの従来描画へ）
+AnswerUI.wire(root, { code, multi }, { onChange, onCommit })
+   onChange(value) … 値の更新（未確定）
+   onCommit(value) … 確定操作（タップ/スワイプ/カルーセルCTA/振り分け完了）
+```
+
+「確定で何が起きるか」はホストが決める。**survey＝「次へ」の自動発火**（`btnNext.click()` 経由なので検証・保存・probe・分岐は既存経路のまま）、**デイリー＝次の設問 or 即送信**。
+保存形式（single=スカラー / multi=配列）は UI を変えても不変。
+
+**実機での確認（Playwright・モバイル 390×844）**:
+```
+[案件一覧の今日の1問]  multiple_choice → sort_swipe（3枚を◯で振り分け）→ 送信 → ✅ +8pt / 1日連続
+[デイリー単独ページ]   single_choice 3択 → carousel（CTA「「よく使う」にする」→ 隣へスクロールで文言追従）
+                       → 確定で即送信 → 完了演出 +5pt。「次へ」ボタンは出ない
+[survey.ejs]           ページ読込でスクリプトエラーなし・AnswerUI 生存
+[レンダラ7種の総当たり] tap_cards/big_split/face_scale/swipe_card/carousel → スカラー確定
+                       chip_select → 配列トグル（再タップで解除＝二重トグル相殺なし）
+                       sort_swipe → []→該当のみ配列で完了時確定
+                       その他=自由記述 → 入力値で上書き・確定は保留
+```
+
+**未確認**: survey.ejs の「実際の案件アンケートを最後まで通す」回帰は未実施（本番 Supabase へ assignment を作る必要があるため見送り）。
+共通レンダラ側はブラウザ実測で全パターン緑、survey 固有の残りは `onCommit` → `btnNext.click()` の数行のみ。
+**次に survey を触るときは、casual プリセットの案件を1本通しで確認すること。**
 
 ## 運用上の注意
 

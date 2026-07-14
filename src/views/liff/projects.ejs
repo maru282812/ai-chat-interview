@@ -7,6 +7,8 @@
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
     <link rel="stylesheet" href="/public/hibi.css" />
+    <%# 今日の1問の回答UI（案件アンケートと共通レンダラ・Phase 3） %>
+    <%- include('../partials/answer-ui') %>
     <style>
       /* 今日の1問（案件一覧の最上部・その場で回答して完結する。ページ遷移させない） */
       .hb-daily {
@@ -22,19 +24,8 @@
         padding: 3px 10px; font-size: 12px; font-weight: 800;
       }
       .hb-daily .q { font-size: 16px; font-weight: 800; line-height: 1.5; margin-bottom: 10px; }
-      .hb-daily .opts { display: flex; flex-wrap: wrap; gap: 8px; }
-      .hb-daily .opt {
-        flex: 1 1 calc(50% - 8px); min-width: 0;
-        background: rgba(255,255,255,.96); color: #14493a;
-        border: none; border-radius: 12px;
-        padding: 13px 10px; font-size: 15px; font-weight: 700;
-        cursor: pointer; transition: transform .1s, background .15s;
-        -webkit-tap-highlight-color: transparent;
-      }
-      .hb-daily .opt:active { transform: scale(.96); }
-      .hb-daily .opt.on { background: #14493a; color: #fff; box-shadow: inset 0 0 0 2px #fff; }
-      /* スケールは横一列に詰める */
-      .hb-daily .opts.scale .opt { flex: 1 1 0; padding: 13px 4px; font-size: 16px; }
+      /* 選択肢の描画は partials/answer-ui.ejs（案件アンケートと共通レンダラ）。
+         緑カードの上に載せるので .answer-ui-compact でサイズと文字色を寄せている。 */
       .hb-daily textarea {
         width: 100%; border: none; border-radius: 12px;
         padding: 11px 12px; font-size: 15px; color: #14493a;
@@ -221,27 +212,20 @@
 
         function render() {
           const q = questions[idx];
-          const opts = (q.answer_options || []).length
-            ? q.answer_options
-            : (q.question_type === 'scale' ? [1,2,3,4,5].map(n => ({ label: String(n), value: String(n) })) : []);
           const step = questions.length > 1 ? `<div class="step">${idx + 1} / ${questions.length}</div>` : '';
 
-          let body = '';
-          if (q.question_type === 'text') {
-            body = `<textarea class="txt" placeholder="ひとことどうぞ"></textarea>
-                    <button class="send">送信する</button>`;
-          } else if (q.question_type === 'multiple_choice') {
-            body = `<div class="opts">${opts.map(o =>
-                      `<button class="opt" data-val="${esc(o.value)}">${esc(o.label)}</button>`).join('')}</div>
-                    <button class="send" disabled>選んで送信</button>`;
-          } else {
-            // single_choice / scale はタップした瞬間に確定する（確定ボタンを挟まない）
-            const scaleClass = q.question_type === 'scale' ? ' scale' : '';
-            body = `<div class="opts${scaleClass}">${opts.map(o =>
-                      `<button class="opt" data-val="${esc(o.value)}">${esc(o.label)}</button>`).join('')}</div>`;
-          }
+          // 表示パターンはサーバー権威（q.presentation.pattern）。案件アンケートと同じ共通レンダラで描く。
+          // 対象外（テキスト等）だけカード内の従来入力欄にフォールバックする。
+          const pattern = q.presentation && q.presentation.pattern;
+          const rendered = AnswerUI.build({ question_code: q.id }, q.choices || [], pattern);
+          const needsSend = !AnswerUI.isAutoCommit(pattern);
 
-          slotEl.className = 'hb-daily';
+          const body = rendered
+            ? rendered + (needsSend ? `<button class="send" disabled>選んで送信</button>` : '')
+            : `<textarea class="txt" placeholder="ひとことどうぞ"></textarea>
+               <button class="send">送信する</button>`;
+
+          slotEl.className = 'hb-daily answer-ui-compact';
           slotEl.innerHTML = `
             <div class="head">
               <span class="lbl">☀️ 今日の1問</span>
@@ -252,32 +236,15 @@
             ${step}
             <p class="msg"></p>`;
 
-          wire(q);
+          wire(q, !!rendered);
         }
 
-        function wire(q) {
-          const optEls = [...slotEl.querySelectorAll('.opt')];
+        function wire(q, rendered) {
           const sendEl = slotEl.querySelector('.send');
-          const txtEl = slotEl.querySelector('.txt');
 
-          if (q.question_type === 'multiple_choice') {
-            const picked = new Set();
-            optEls.forEach(el => el.addEventListener('click', () => {
-              const v = el.dataset.val;
-              if (picked.has(v)) { picked.delete(v); el.classList.remove('on'); }
-              else { picked.add(v); el.classList.add('on'); }
-              sendEl.disabled = picked.size === 0;
-              sendEl.textContent = picked.size ? `${picked.size}件で送信` : '選んで送信';
-            }));
-            sendEl.addEventListener('click', () => {
-              if (picked.size === 0) return;
-              sendEl.disabled = true;
-              commit([...picked]);
-            });
-            return;
-          }
-
-          if (q.question_type === 'text') {
+          if (!rendered) {
+            // 共通レンダラの対象外（テキスト）
+            const txtEl = slotEl.querySelector('.txt');
             sendEl.addEventListener('click', () => {
               const v = (txtEl.value || '').trim();
               if (!v) { slotEl.querySelector('.msg').textContent = '入力してください'; return; }
@@ -287,12 +254,31 @@
             return;
           }
 
-          // single_choice / scale
-          optEls.forEach(el => el.addEventListener('click', () => {
-            optEls.forEach(o => { o.disabled = true; });
-            el.classList.add('on');
-            commit(el.dataset.val);
-          }));
+          let pending = null;
+          AnswerUI.wire(
+            slotEl,
+            { code: q.id, multi: q.question_type === 'multiple_choice' },
+            {
+              onChange: (value) => {
+                pending = value;
+                if (!sendEl) return;
+                const n = Array.isArray(value) ? value.length : (value ? 1 : 0);
+                sendEl.disabled = n === 0;
+                sendEl.textContent = n ? `${n}件で送信` : '選んで送信';
+              },
+              // スワイプ・タップ・振り分け完了はその操作自体が確定（送信ボタンを挟まない）
+              onCommit: (value) => { commit(value); },
+            },
+          );
+
+          if (sendEl) {
+            sendEl.addEventListener('click', () => {
+              const n = Array.isArray(pending) ? pending.length : (pending ? 1 : 0);
+              if (n === 0) return;
+              sendEl.disabled = true;
+              commit(pending);
+            });
+          }
         }
 
         render();

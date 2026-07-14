@@ -1,0 +1,740 @@
+<%#
+  回答UI共通パーシャル（docs/plan-daily-survey-queue.md Phase 3）
+
+  案件アンケート（survey.ejs）とデイリーアンケート（daily-survey.ejs / projects.ejs の今日の1問）で
+  同じレンダラを使うための共通化。表示パターン（pattern）はサーバー権威で解決済みの値を渡す前提
+  （src/lib/answerPresentation.ts / src/lib/dailyAnswerUi.ts）。
+
+  提供するもの:
+    - 各パターンの CSS
+    - window.AnswerUI.build(q, choices, pattern)  … HTML 生成（対象外パターンは null）
+    - window.AnswerUI.wire(root, ctx, handlers)   … 配線（onChange / onCommit の2コールバック）
+
+  ホストが決めること:
+    - onChange(value) … 値が更新された（未確定）。survey は answerCtx へ格納、デイリーは送信ボタン活性化。
+    - onCommit(value) … 確定操作（タップ/スワイプ/CTA/振り分け完了）。survey は「次へ」自動遷移、
+                        デイリーは次の設問へ or 即送信。
+    - 保存形式は UI に依存させない（single=スカラー / multi=配列）。これは Phase 3 でも不変。
+
+  実装上の罠（project_answer_ui_renderer_gotchas・触るときは必読）:
+    1. label + hidden checkbox はネイティブのラベル→checkbox トグルと共通クリック配線が
+       二重発火して相殺される → チップ等の複数選択は div で描く。
+    2. data-code 付きの input は汎用 text 配線に el.value を上書きされる → 独自 value 配線は付けない。
+%>
+<style>
+  /* ---- 選択肢カードの基底（tap/face/chip/カードグリッドが共有） ---- */
+  .card-item {
+    border: 2px solid #d8e3e0; border-radius: 12px; padding: 10px;
+    cursor: pointer; transition: all 0.15s; background: #fff;
+    display: flex; flex-direction: column; gap: 6px; align-items: center;
+  }
+  .card-item.selected { border-color: #2ca87a; background: #e8f7f0; }
+  .card-item input { accent-color: #2ca87a; }
+  .card-item-title { font-size: 13px; font-weight: 600; text-align: center; line-height: 1.3; }
+  .card-item-desc { font-size: 11px; color: #60726f; text-align: center; line-height: 1.3; }
+
+  /* ---- 回答UIプリセット: タップ確定系（tap_cards / big_split・migration 075） ---- */
+  .answer-tap { display: flex; flex-direction: column; gap: 12px; }
+  .answer-tap .tap-item {
+    padding: 18px 16px; border: 2px solid #d8e3e0; border-radius: 14px;
+    background: #fff; cursor: pointer; transition: all 0.12s; align-items: center;
+    gap: 6px; -webkit-tap-highlight-color: transparent;
+  }
+  .answer-tap .tap-item:active { transform: scale(0.98); }
+  .answer-tap .tap-item.selected { border-color: #2ca87a; background: #e8f7f0; box-shadow: 0 0 0 3px rgba(44,168,122,0.15); }
+  .answer-tap .tap-item .card-item-title { font-size: 16px; }
+  /* big_split: 残り画面を大きく使う2分割の巨大タップ */
+  .answer-split .tap-item { min-height: 96px; justify-content: center; font-size: 17px; }
+  .answer-split .tap-item .card-item-title { font-size: 18px; }
+
+  /* face_scale: 横並び絵文字フェイス */
+  .answer-facescale { display: flex; gap: 8px; justify-content: space-between; }
+  .answer-facescale .face-item {
+    flex: 1; padding: 12px 4px; border: 2px solid #d8e3e0; border-radius: 12px;
+    background: #fff; cursor: pointer; transition: all 0.12s; align-items: center; gap: 4px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .answer-facescale .face-item.selected { border-color: #2ca87a; background: #e8f7f0; }
+  .answer-facescale .face-emoji { font-size: 26px; line-height: 1; }
+  .answer-facescale .card-item-title { font-size: 11px; }
+
+  /* chip_select: ピル型チップ */
+  .answer-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .answer-chips .chip-item {
+    padding: 9px 16px; border: 2px solid #d8e3e0; border-radius: 999px;
+    background: #fff; cursor: pointer; transition: all 0.12s; flex-direction: row;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .answer-chips .chip-item.selected { border-color: #2ca87a; background: #e8f7f0; }
+  .answer-chips .chip-item .card-item-title { font-size: 14px; }
+
+  /* big_slider */
+  .answer-bigslider { padding: 8px 4px; }
+  .bigslider-value { text-align: center; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+  .bigslider-label { font-size: 18px; font-weight: 700; color: #2ca87a; }
+  .bigslider-range { width: 100%; margin: 14px 0 6px; accent-color: #2ca87a; height: 28px; }
+  .bigslider-ends { display: flex; justify-content: space-between; font-size: 12px; color: #60726f; }
+
+  /* swipe_card / sort_swipe 共通のデッキ（フルハイト＝カードが画面の主役・確定はサムゾーンの丸ボタン） */
+  .answer-swipe, .answer-sortswipe { display: flex; flex-direction: column; align-items: stretch; }
+  .swipe-deck, .sort-deck { position: relative; height: clamp(240px, 44vh, 430px); margin: 4px 0 16px; }
+  .swipe-card, .sort-card {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px; text-align: center;
+    border: 1.5px solid #dfe9e6; border-radius: 20px; background: #fff; padding: 20px;
+    box-shadow: 0 10px 26px rgba(28,43,39,0.10); cursor: grab; user-select: none; -webkit-user-select: none; touch-action: pan-y; overflow: hidden;
+  }
+  .swipe-back { position: absolute; inset: 0; border: 1.5px solid #e4ecea; border-radius: 20px; background: #fff; }
+  .swipe-back1 { transform: translateY(10px) scale(0.965); }
+  .swipe-back2 { transform: translateY(20px) scale(0.93); }
+  .swipe-card-hint { font-size: 12px; color: #90a29e; }
+  .swipe-opts { display: flex; flex-direction: column; gap: 8px; }
+  .swipe-opt { font-size: 18px; font-weight: 700; color: #1a2f2a; }
+  /* ドラッグ量に応じて浮かぶ選択肢スタンプ（Tinder の LIKE/NOPE 方式） */
+  .swipe-stamp {
+    position: absolute; top: 20px; padding: 5px 12px; border-radius: 10px;
+    font-size: 16px; font-weight: 900; letter-spacing: 0.04em; opacity: 0;
+    border: 3px solid; background: rgba(255,255,255,0.88); pointer-events: none;
+    max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .swipe-stamp.stamp-l { left: 14px; transform: rotate(-12deg); color: #2ca87a; border-color: #2ca87a; }
+  .swipe-stamp.stamp-r { right: 14px; transform: rotate(12deg); color: #4a90d9; border-color: #4a90d9; }
+  .answer-sortswipe .swipe-stamp.stamp-l { color: #c55; border-color: #c55; }
+  .answer-sortswipe .swipe-stamp.stamp-r { color: #2ca87a; border-color: #2ca87a; }
+  .sort-title { font-size: 20px; font-weight: 800; color: #1a2f2a; }
+  .sort-desc, .carousel-desc { font-size: 12px; color: #60726f; }
+  .sort-done { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #2ca87a; }
+  /* サムゾーンの丸型確定ボタン */
+  .swipe-round-btns { display: flex; justify-content: center; gap: 40px; }
+  .round-btn {
+    background: none; border: none; padding: 0; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    font-family: inherit; -webkit-tap-highlight-color: transparent;
+  }
+  .round-btn:active .rb-circle { transform: scale(0.92); }
+  .rb-circle {
+    width: 66px; height: 66px; border-radius: 50%; background: #fff;
+    box-shadow: 0 6px 16px rgba(28,43,39,0.16); display: flex; align-items: center; justify-content: center;
+    font-size: 24px; font-weight: 800; transition: transform 0.1s;
+  }
+  .rb-label { font-size: 11px; font-weight: 700; max-width: 100px; line-height: 1.3; color: #4a6060; text-align: center; }
+  .round-btn.rb-l .rb-circle { color: #2ca87a; }
+  .round-btn.rb-r .rb-circle { color: #4a90d9; }
+  .answer-sortswipe .round-btn.rb-l .rb-circle { color: #c55; }
+  .answer-sortswipe .round-btn.rb-r .rb-circle { color: #2ca87a; }
+  .swipe-tip { font-size: 12px; color: #90a29e; text-align: center; margin: 10px 0 0; }
+  .sort-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .sort-chip { font-size: 11px; color: #60726f; padding: 3px 8px; border-radius: 999px; background: #eef4f2; }
+  .sort-chip.active { background: #2ca87a; color: #fff; }
+  .sort-chip.done { text-decoration: line-through; opacity: 0.6; }
+  .sort-chip.done.yes { text-decoration: none; opacity: 1; background: #d6efe4; color: #1f7a57; }
+
+  /* carousel（ピーク型 scroll-snap: 隣のカードの端を見せて「横に動く」ことを視覚で伝える） */
+  .answer-carousel { display: flex; flex-direction: column; }
+  .carousel-track {
+    display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory;
+    margin: 0 -20px; padding: 6px 34px 12px;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .carousel-track::-webkit-scrollbar { display: none; }
+  .carousel-card {
+    flex: 0 0 78%; scroll-snap-align: center; position: relative;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; text-align: center;
+    border: 2px solid #dfe9e6; border-radius: 18px; background: #fff; padding: 18px 14px;
+    min-height: clamp(160px, 28vh, 300px); user-select: none; -webkit-user-select: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .carousel-card.picked { border-color: #2ca87a; background: #f4fbf8; box-shadow: 0 0 0 3px rgba(44,168,122,0.15); }
+  .carousel-check {
+    position: absolute; top: 10px; right: 10px; width: 24px; height: 24px; border-radius: 50%;
+    background: #2ca87a; color: #fff; font-size: 13px; font-weight: 900;
+    display: none; align-items: center; justify-content: center;
+  }
+  .carousel-card.picked .carousel-check { display: flex; }
+  .carousel-img { max-width: 100%; height: 110px; object-fit: cover; border-radius: 10px; }
+  .carousel-title { font-size: 18px; font-weight: 800; color: #1a2f2a; }
+  .carousel-nav { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 2px; }
+  .carousel-arrow {
+    width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid #d8e3e0;
+    background: #fff; color: #60726f; font-size: 16px; cursor: pointer; line-height: 1;
+  }
+  .carousel-arrow:disabled { opacity: 0.35; }
+  .carousel-dots { display: flex; gap: 6px; }
+  .carousel-dot { width: 7px; height: 7px; border-radius: 50%; background: #d3dfdb; transition: all 0.2s; }
+  .carousel-dot.active { background: #2ca87a; width: 18px; border-radius: 4px; }
+  .carousel-counter { font-size: 11px; color: #90a29e; font-weight: 700; min-width: 34px; text-align: center; }
+  /* 値入りの全幅CTA（「この◯◯にする」） */
+  .carousel-pick {
+    margin-top: 12px; width: 100%; padding: 14px; border: none; border-radius: 14px;
+    background: #2ca87a; color: #fff; font-size: 15px; font-weight: 700; cursor: pointer;
+    box-shadow: 0 6px 14px rgba(44,168,122,0.28); font-family: inherit;
+  }
+  .carousel-pick:active { transform: scale(0.98); }
+  /* 初回だけの「横に動く」ナッジ（無言のチュートリアル） */
+  @keyframes carousel-nudge {
+    0%, 100% { transform: translateX(0); }
+    30% { transform: translateX(-20px); }
+    60% { transform: translateX(0); }
+    80% { transform: translateX(-7px); }
+  }
+  .carousel-nudge .carousel-card { animation: carousel-nudge 1.1s ease 0.6s 1; }
+  @media (prefers-reduced-motion: reduce) { .carousel-nudge .carousel-card { animation: none; } }
+
+  /* ---- コンパクト版（案件一覧に埋め込む「今日の1問」カードなど、画面の主役ではない場所） ---- */
+  .answer-ui-compact .swipe-deck,
+  .answer-ui-compact .sort-deck { height: clamp(170px, 26vh, 240px); margin: 2px 0 12px; }
+  .answer-ui-compact .rb-circle { width: 54px; height: 54px; font-size: 20px; }
+  .answer-ui-compact .swipe-round-btns { gap: 28px; }
+  .answer-ui-compact .rb-label { color: #eaf6f1; }
+  .answer-ui-compact .swipe-tip { color: rgba(255,255,255,0.82); }
+  .answer-ui-compact .carousel-track { margin: 0 -16px; padding: 4px 22px 10px; }
+  .answer-ui-compact .carousel-card { min-height: clamp(120px, 18vh, 170px); }
+  .answer-ui-compact .carousel-counter { color: rgba(255,255,255,0.85); }
+  .answer-ui-compact .carousel-dot { background: rgba(255,255,255,0.45); }
+  .answer-ui-compact .carousel-dot.active { background: #fff; }
+  .answer-ui-compact .carousel-pick { background: #14493a; box-shadow: none; }
+  .answer-ui-compact .sort-chip { background: rgba(255,255,255,0.22); color: #eaf6f1; }
+  .answer-ui-compact .sort-chip.active { background: #fff; color: #14493a; }
+  .answer-ui-compact .sort-done { color: #fff; }
+  .answer-ui-compact .bigslider-label { color: #fff; }
+  .answer-ui-compact .bigslider-ends { color: rgba(255,255,255,0.85); }
+</style>
+<script>
+  // ---- 回答UI共通レンダラ（詳細はこのファイル冒頭のコメント） ----
+  window.AnswerUI = (function () {
+    function esc(v) {
+      return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    /** 確定操作を自分で持つパターン（＝ホストの送信ボタンが要らない）。 */
+    var AUTO_COMMIT_PATTERNS = ['tap_cards', 'big_split', 'face_scale', 'swipe_card', 'carousel', 'sort_swipe'];
+    /** このレンダラが描けるパターン（対象外はホスト側の従来描画に任せる）。 */
+    var SUPPORTED_PATTERNS = AUTO_COMMIT_PATTERNS.concat(['chip_select', 'big_slider']);
+
+    /** multi_choice 排他制御用の data 属性（相手ラベルは `,` 連結）。 */
+    function exclAttrs(c) {
+      var ew = (c.exclusive_with || []).join(',');
+      return 'data-exclusive="' + (c.exclusive ? '1' : '0') + '" data-exclusive-with="' + esc(ew) + '"';
+    }
+
+    function otherInput(q, c, extraClass, marginTop) {
+      if (!c.allow_free_text) return '';
+      return '<input type="text" class="other-text-input' + (extraClass ? ' ' + extraClass : '') + '"'
+        + ' data-code="' + esc(q.question_code) + '" data-val="' + esc(c.value) + '" placeholder="自由記述"'
+        + ' onclick="event.stopPropagation();" style="margin-top:' + marginTop + 'px;width:100%;box-sizing:border-box;" />';
+    }
+
+    // ---- タップ確定系（tap_cards / big_split・migration 075）----
+    // radio と同一の name/value を用いるため collectChoiceVal・保存形式（single のスカラー）が radio と完全一致。
+    function buildTapChoiceHtml(q, choices, pattern) {
+      var layoutClass = pattern === 'big_split' ? 'answer-split' : 'answer-tapcards';
+      var items = choices.map(function (c) {
+        return '<label class="card-item tap-item">'
+          + '<input type="radio" name="q_' + esc(q.question_code) + '" value="' + esc(c.value) + '" style="display:none" />'
+          + '<span class="card-item-title">' + esc(c.label) + '</span>'
+          + (c.description ? '<span class="card-item-desc">' + esc(c.description) + '</span>' : '')
+          + otherInput(q, c, '', 8)
+          + '</label>';
+      }).join('');
+      return '<div class="answer-tap ' + layoutClass + '" data-type="single" data-autoadvance="1">' + items + '</div>';
+    }
+
+    // ---- face_scale（絵文字フェイス・single_choice の順序尺度）----
+    function faceIconsFor(n) {
+      if (n === 2) return ['👎', '👍'];
+      if (n === 3) return ['😕', '😐', '🙂'];
+      if (n === 4) return ['😫', '😕', '🙂', '😍'];
+      if (n === 5) return ['😫', '😕', '😐', '🙂', '😍'];
+      var five = ['😫', '😕', '😐', '🙂', '😍'];
+      return Array.from({ length: n }, function (_x, i) { return five[n <= 1 ? 2 : Math.round(i / (n - 1) * 4)]; });
+    }
+    function buildFaceScaleHtml(q, choices) {
+      var cfg = q.question_config || {};
+      var custom = cfg.presentation && Array.isArray(cfg.presentation.icons) ? cfg.presentation.icons : null;
+      var defaults = faceIconsFor(choices.length);
+      var items = choices.map(function (c, i) {
+        var icon = (custom && custom[i]) || defaults[i] || '•';
+        return '<label class="card-item face-item">'
+          + '<input type="radio" name="q_' + esc(q.question_code) + '" value="' + esc(c.value) + '" style="display:none" />'
+          + '<span class="face-emoji">' + esc(icon) + '</span>'
+          + '<span class="card-item-title">' + esc(c.label) + '</span>'
+          + '</label>';
+      }).join('');
+      return '<div class="answer-facescale" data-type="single" data-autoadvance="1">' + items + '</div>';
+    }
+
+    // ---- chip_select（チップ選択・multi_choice）----
+    // 注意: チップは <label> ではなく <div>。<label> だとネイティブのラベル→checkbox トグルと
+    // 共通クリック配線の input.checked 反転が二重発火して相殺され、選択できなくなる。
+    function buildChipSelectHtml(q, choices) {
+      var items = choices.map(function (c) {
+        return '<div class="card-item chip-item">'
+          + '<input type="checkbox" name="q_' + esc(q.question_code) + '" value="' + esc(c.value) + '" ' + exclAttrs(c) + ' style="display:none" />'
+          + '<span class="card-item-title">' + esc(c.label) + '</span>'
+          + otherInput(q, c, '', 6)
+          + '</div>';
+      }).join('');
+      return '<div class="answer-chips" data-type="multi">' + items + '</div>';
+    }
+
+    // ---- big_slider（順序尺度を標準プリセットで）----
+    // 値の格納はレンジ操作時に onChange で行う（決定はホストの「次へ」/送信）。
+    function buildBigSliderHtml(q, choices) {
+      var n = choices.length;
+      var mid = Math.floor((n - 1) / 2);
+      var values = JSON.stringify(choices.map(function (c) { return c.value; }));
+      var labels = JSON.stringify(choices.map(function (c) { return c.label; }));
+      var first = choices[0] ? esc(choices[0].label) : '';
+      var last = choices[n - 1] ? esc(choices[n - 1].label) : '';
+      return '<div class="answer-bigslider" data-code="' + esc(q.question_code) + '">'
+        + '<div class="bigslider-value"><span class="bigslider-label">スライドして選択してください</span></div>'
+        + '<input type="range" class="bigslider-range" min="0" max="' + (n - 1) + '" step="1" value="' + mid + '"'
+        + " data-values='" + values + "' data-labels='" + labels + "' />"
+        + '<div class="bigslider-ends"><span>' + first + '</span><span>' + last + '</span></div>'
+        + '</div>';
+    }
+
+    // ---- swipe_card（2択スワイプ）----
+    // 左スワイプ=選択肢1 / 右スワイプ=選択肢2（options 並び順）。左右ボタンでも回答可。
+    function buildSwipeCardHtml(q, choices) {
+      if (choices.length < 2) return buildTapChoiceHtml(q, choices, 'tap_cards');
+      var c0 = choices[0], c1 = choices[1];
+      return '<div class="answer-swipe" data-code="' + esc(q.question_code) + '"'
+        + ' data-v0="' + esc(c0.value) + '" data-v1="' + esc(c1.value) + '">'
+        + '<div class="swipe-deck">'
+        + '<div class="swipe-back swipe-back2"></div>'
+        + '<div class="swipe-back swipe-back1"></div>'
+        + '<div class="swipe-card">'
+        + '<span class="swipe-stamp stamp-l">' + esc(c0.label) + '</span>'
+        + '<span class="swipe-stamp stamp-r">' + esc(c1.label) + '</span>'
+        + '<div class="swipe-opts">'
+        + '<span class="swipe-opt">◀ ' + esc(c0.label) + '</span>'
+        + '<span class="swipe-opt">' + esc(c1.label) + ' ▶</span>'
+        + '</div>'
+        + '<span class="swipe-card-hint">カードを左右にスワイプ</span>'
+        + '</div></div>'
+        + '<div class="swipe-round-btns">'
+        + '<button type="button" class="round-btn rb-l" data-dir="left"><span class="rb-circle">◀</span><span class="rb-label">' + esc(c0.label) + '</span></button>'
+        + '<button type="button" class="round-btn rb-r" data-dir="right"><span class="rb-circle">▶</span><span class="rb-label">' + esc(c1.label) + '</span></button>'
+        + '</div>'
+        + '<p class="swipe-tip">スワイプまたはボタンで回答（そのまま次へ進みます）</p>'
+        + '</div>';
+    }
+
+    // ---- carousel（ピーク型カード・single_choice 3件以上）----
+    function buildCarouselHtml(q, choices) {
+      var cards = choices.map(function (c, i) {
+        var img = c.imageUrl
+          ? '<img class="carousel-img" src="' + esc(c.imageUrl) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'" />'
+          : '';
+        return '<div class="carousel-card" data-i="' + i + '" data-val="' + esc(c.value) + '" data-label="' + esc(c.title || c.label) + '">'
+          + '<span class="carousel-check">✓</span>'
+          + img
+          + '<span class="carousel-title">' + esc(c.title || c.label) + '</span>'
+          + (c.description ? '<span class="carousel-desc">' + esc(c.description) + '</span>' : '')
+          + otherInput(q, c, 'carousel-other', 8)
+          + '</div>';
+      }).join('');
+      var dots = choices.map(function (_c, i) {
+        return '<span class="carousel-dot' + (i === 0 ? ' active' : '') + '" data-i="' + i + '"></span>';
+      }).join('');
+      return '<div class="answer-carousel" data-code="' + esc(q.question_code) + '">'
+        + '<div class="carousel-track carousel-nudge">' + cards + '</div>'
+        + '<div class="carousel-nav">'
+        + '<button type="button" class="carousel-arrow" data-nav="prev" aria-label="前へ">‹</button>'
+        + '<div class="carousel-dots">' + dots + '</div>'
+        + '<span class="carousel-counter">1 / ' + choices.length + '</span>'
+        + '<button type="button" class="carousel-arrow" data-nav="next" aria-label="次へ">›</button>'
+        + '</div>'
+        + '<button type="button" class="carousel-pick">「' + esc(choices[0].title || choices[0].label) + '」にする</button>'
+        + '</div>';
+    }
+
+    // ---- sort_swipe（スワイプ振り分け・multi_choice）----
+    // 1選択肢=1カードに分解し、右=該当 / 左=非該当で全件判定。保存形式は該当のみの配列で一致。
+    // 排他選択肢（「特になし」等）はデッキから除外（全カード左＝空配列＝非該当全選択と等価）。
+    function buildSortSwipeHtml(q, choices) {
+      var deck = choices.filter(function (c) { return !c.exclusive; });
+      var strip = deck.map(function (c, i) {
+        return '<span class="sort-chip" data-i="' + i + '">' + esc(c.label) + '</span>';
+      }).join('');
+      var cards = deck.map(function (c, i) {
+        return '<div class="sort-card" data-i="' + i + '" data-val="' + esc(c.value) + '" style="' + (i === 0 ? '' : 'display:none;') + '">'
+          + '<span class="swipe-stamp stamp-l">✕ あてはまらない</span>'
+          + '<span class="swipe-stamp stamp-r">◯ あてはまる</span>'
+          + '<span class="sort-title">' + esc(c.label) + '</span>'
+          + (c.description ? '<span class="sort-desc">' + esc(c.description) + '</span>' : '')
+          + '<span class="swipe-card-hint">右=あてはまる / 左=あてはまらない</span>'
+          + '</div>';
+      }).join('');
+      return '<div class="answer-sortswipe" data-code="' + esc(q.question_code) + '" data-total="' + deck.length + '">'
+        + '<div class="sort-strip">' + strip + '</div>'
+        + '<div class="sort-deck">' + cards
+        + '<div class="sort-done" style="display:none;">振り分け完了</div>'
+        + '</div>'
+        + '<div class="swipe-round-btns">'
+        + '<button type="button" class="round-btn rb-l" data-dir="left"><span class="rb-circle">✕</span><span class="rb-label">あてはまらない</span></button>'
+        + '<button type="button" class="round-btn rb-r" data-dir="right"><span class="rb-circle">◯</span><span class="rb-label">あてはまる</span></button>'
+        + '</div>'
+        + '<p class="swipe-tip">スワイプまたはボタンで振り分け</p>'
+        + '</div>';
+    }
+
+    /**
+     * パターン別の HTML を返す。共通レンダラの対象外（textarea / legacy / matrix 等）は null。
+     * q は { question_code, question_config? } を持てばよい（デイリーは question_code に設問 id を渡す）。
+     */
+    function build(q, choices, pattern) {
+      if (!pattern || !choices || choices.length === 0) return null;
+      switch (pattern) {
+        case 'tap_cards':
+        case 'big_split':
+          return buildTapChoiceHtml(q, choices, pattern);
+        case 'face_scale':
+          return buildFaceScaleHtml(q, choices);
+        case 'chip_select':
+          return buildChipSelectHtml(q, choices);
+        case 'big_slider':
+          return buildBigSliderHtml(q, choices);
+        case 'swipe_card':
+          return buildSwipeCardHtml(q, choices);
+        case 'carousel':
+          return buildCarouselHtml(q, choices);
+        case 'sort_swipe':
+          return buildSortSwipeHtml(q, choices);
+        default:
+          return null;
+      }
+    }
+
+    // ---- 水平ドラッグ（スワイプ）検出。touch/mouse 両対応・60px でコミット ----
+    // onDrag(dx) は任意: ドラッグ量に応じたスタンプ表示などの追従演出用（0 でリセット）。
+    function attachHorizontalDrag(el, onCommit, onDrag) {
+      var startX = null, dx = 0, dragging = false;
+      var THRESHOLD = 60;
+      function down(x) { startX = x; dx = 0; dragging = true; el.style.transition = 'none'; }
+      function move(x) {
+        if (!dragging || startX === null) return;
+        dx = x - startX;
+        el.style.transform = 'translateX(' + dx + 'px) rotate(' + (dx / 22) + 'deg)';
+        el.style.opacity = String(Math.max(0.5, 1 - Math.abs(dx) / 400));
+        if (onDrag) onDrag(dx);
+      }
+      function up() {
+        if (!dragging) return;
+        dragging = false;
+        el.style.transition = 'transform .2s ease, opacity .2s ease';
+        if (Math.abs(dx) >= THRESHOLD) {
+          var dir = dx < 0 ? 'left' : 'right';
+          el.style.transform = 'translateX(' + (dx < 0 ? -700 : 700) + 'px) rotate(' + (dx / 10) + 'deg)';
+          el.style.opacity = '0';
+          onCommit(dir);
+        } else {
+          el.style.transform = '';
+          el.style.opacity = '';
+          if (onDrag) onDrag(0);
+        }
+        startX = null; dx = 0;
+      }
+      el.addEventListener('touchstart', function (e) { down(e.touches[0].clientX); }, { passive: true });
+      el.addEventListener('touchmove', function (e) { move(e.touches[0].clientX); }, { passive: true });
+      el.addEventListener('touchend', up);
+      el.addEventListener('mousedown', function (e) {
+        down(e.clientX);
+        var mm = function (ev) { move(ev.clientX); };
+        var mu = function () { up(); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); };
+        document.addEventListener('mousemove', mm);
+        document.addEventListener('mouseup', mu);
+      });
+    }
+
+    /** 選択肢の回答値を収集（その他=自由記述を考慮）。list/card・single/multi 共通。 */
+    function collectChoiceVal(root, code, multi) {
+      var checked = [].slice.call(root.querySelectorAll('input[name="q_' + code + '"]:checked'));
+      var valueOf = function (el) {
+        var wrap = el.closest('.choice-item') || el.closest('.card-item');
+        var other = wrap && wrap.querySelector('.other-text-input');
+        return (other && other.value.trim()) ? other.value.trim() : el.value;
+      };
+      if (multi) return checked.map(valueOf);
+      return checked.length ? valueOf(checked[0]) : '';
+    }
+
+    /** multi_choice 排他制御: 今 ON にした選択肢と衝突する既存の ON を自動 OFF にする（無向評価）。 */
+    function applyExclusion(root, changedEl, code) {
+      if (!changedEl || !changedEl.checked) return;
+      var boxes = [].slice.call(root.querySelectorAll('input[name="q_' + code + '"]'));
+      var parseWith = function (el) {
+        return (el.getAttribute('data-exclusive-with') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+      };
+      var isEx = function (el) { return el.getAttribute('data-exclusive') === '1'; };
+      var conflicts = function (a, b) {
+        if (a === b) return false;
+        if (isEx(a) || isEx(b)) return true;
+        if (parseWith(a).indexOf(b.value) >= 0) return true;
+        if (parseWith(b).indexOf(a.value) >= 0) return true;
+        return false;
+      };
+      boxes.forEach(function (other) {
+        if (other === changedEl) return;
+        if (other.checked && conflicts(changedEl, other)) {
+          other.checked = false;
+          var w = other.closest('.choice-item') || other.closest('.card-item');
+          if (w) w.classList.remove('selected');
+        }
+      });
+    }
+
+    /**
+     * .card-item（tap / big_split / face_scale / chip_select・画像カードグリッド）の配線。
+     * radio は排他選択、checkbox はトグル＋排他解除。「その他」自由記述も拾う。
+     * data-autoadvance="1" の中の radio（自由記述なし）だけ onCommit も呼ぶ。
+     */
+    function wireChoiceItems(root, ctx, handlers) {
+      var code = ctx.code;
+      var multi = !!ctx.multi;
+      var onChange = handlers.onChange || function () {};
+      var onCommit = handlers.onCommit || function () {};
+
+      [].slice.call(root.querySelectorAll('.card-item')).forEach(function (card) {
+        card.addEventListener('click', function (e) {
+          if (e.target.tagName === 'INPUT') return;
+          var input = card.querySelector('input');
+          if (!input) return;
+          if (input.type === 'radio') {
+            [].slice.call(root.querySelectorAll('.card-item')).forEach(function (c) { c.classList.remove('selected'); });
+            input.checked = true;
+            card.classList.add('selected');
+          } else {
+            input.checked = !input.checked;
+            card.classList.toggle('selected', input.checked);
+            applyExclusion(root, input, code); // 排他相手を自動解除
+          }
+          var val = collectChoiceVal(root, code, multi);
+          onChange(val);
+          // タップで確定できるのは「その他」記述を持たない radio のみ（記述は入力待ちのため）。
+          if (input.type === 'radio' && card.closest('[data-autoadvance="1"]') && !card.querySelector('.other-text-input')) {
+            onCommit(val);
+          }
+        });
+      });
+
+      // その他=自由記述: 入力したら該当選択肢を選択状態にして収集する。
+      [].slice.call(root.querySelectorAll('.other-text-input')).forEach(function (inp) {
+        inp.addEventListener('input', function () {
+          var wrap = inp.closest('.choice-item') || inp.closest('.card-item');
+          var box = wrap && wrap.querySelector('input[name="q_' + code + '"]');
+          if (box && !box.checked) {
+            if (box.type === 'radio') {
+              [].slice.call(root.querySelectorAll('input[name="q_' + code + '"]')).forEach(function (b) { b.checked = false; });
+            }
+            box.checked = true;
+            [].slice.call(root.querySelectorAll('.choice-item, .card-item')).forEach(function (l) {
+              var b = l.querySelector('input');
+              if (b) l.classList.toggle('selected', b.checked);
+            });
+          }
+          onChange(collectChoiceVal(root, code, multi));
+        });
+      });
+    }
+
+    /**
+     * インタラクティブ系（big_slider / swipe_card / carousel / sort_swipe）の配線。
+     * 値は input 要素を持たないので、onChange / onCommit でホストへ渡す。
+     */
+    function wirePatterns(root, ctx, handlers) {
+      var code = ctx.code;
+      var onChange = handlers.onChange || function () {};
+      var onCommit = handlers.onCommit || function () {};
+
+      // big_slider: レンジ操作で選択肢 value を確定（決定はホスト側）
+      var slider = root.querySelector('.answer-bigslider[data-code="' + code + '"]');
+      if (slider) {
+        var range = slider.querySelector('.bigslider-range');
+        var labelEl = slider.querySelector('.bigslider-label');
+        var values = [], labels = [];
+        try { values = JSON.parse(range.getAttribute('data-values') || '[]'); } catch (_e) {}
+        try { labels = JSON.parse(range.getAttribute('data-labels') || '[]'); } catch (_e) {}
+        range.addEventListener('input', function () {
+          var i = parseInt(range.value, 10) || 0;
+          if (labelEl) labelEl.textContent = labels[i] || '';
+          onChange(values[i]);
+        });
+      }
+
+      // swipe_card: 左=選択肢1 / 右=選択肢2（ドラッグ・丸ボタン両対応・スタンプ追従）
+      var swipe = root.querySelector('.answer-swipe[data-code="' + code + '"]');
+      if (swipe) {
+        var v0 = swipe.getAttribute('data-v0');
+        var v1 = swipe.getAttribute('data-v1');
+        var card = swipe.querySelector('.swipe-card');
+        var stampL = card ? card.querySelector('.stamp-l') : null;
+        var stampR = card ? card.querySelector('.stamp-r') : null;
+        var showStamp = function (dx) {
+          var k = Math.min(Math.abs(dx) / 60, 1);
+          if (stampL) stampL.style.opacity = dx < 0 ? String(k) : '0';
+          if (stampR) stampR.style.opacity = dx > 0 ? String(k) : '0';
+        };
+        var commitDir = function (dir) {
+          var val = dir === 'left' ? v0 : v1;
+          onChange(val);
+          onCommit(val);
+        };
+        if (card) attachHorizontalDrag(card, commitDir, showStamp);
+        [].slice.call(swipe.querySelectorAll('.round-btn')).forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var dir = btn.getAttribute('data-dir');
+            if (card) {
+              showStamp(dir === 'left' ? -60 : 60);
+              card.style.transition = 'transform .25s ease, opacity .25s ease';
+              card.style.transform = 'translateX(' + (dir === 'left' ? -700 : 700) + 'px) rotate(' + (dir === 'left' ? -18 : 18) + 'deg)';
+              card.style.opacity = '0';
+            }
+            commitDir(dir);
+          });
+        });
+      }
+
+      // carousel: ピーク型 scroll-snap（ネイティブ横スクロール）・値入り全幅CTAで確定
+      var carousel = root.querySelector('.answer-carousel[data-code="' + code + '"]');
+      if (carousel) {
+        var track = carousel.querySelector('.carousel-track');
+        var cards = [].slice.call(carousel.querySelectorAll('.carousel-card'));
+        var dots = [].slice.call(carousel.querySelectorAll('.carousel-dot'));
+        var prevBtn = carousel.querySelector('.carousel-arrow[data-nav="prev"]');
+        var nextBtn = carousel.querySelector('.carousel-arrow[data-nav="next"]');
+        var counter = carousel.querySelector('.carousel-counter');
+        var pickBtn = carousel.querySelector('.carousel-pick');
+        var idx = 0, pickedIdx = -1;
+        var currentIndex = function () {
+          var mid = track.scrollLeft + track.clientWidth / 2;
+          var best = 0, bestDist = Infinity;
+          cards.forEach(function (c, i) {
+            var center = c.offsetLeft + c.offsetWidth / 2;
+            var dist = Math.abs(center - mid);
+            if (dist < bestDist) { bestDist = dist; best = i; }
+          });
+          return best;
+        };
+        var sync = function () {
+          idx = currentIndex();
+          dots.forEach(function (d, k) { d.classList.toggle('active', k === idx); });
+          if (counter) counter.textContent = (idx + 1) + ' / ' + cards.length;
+          if (prevBtn) prevBtn.disabled = idx === 0;
+          if (nextBtn) nextBtn.disabled = idx === cards.length - 1;
+          if (pickBtn) {
+            var label = cards[idx] ? (cards[idx].getAttribute('data-label') || '') : '';
+            pickBtn.textContent = pickedIdx === idx ? '✓ 「' + label + '」を選択中' : '「' + label + '」にする';
+          }
+        };
+        var goTo = function (i) {
+          i = Math.max(0, Math.min(cards.length - 1, i));
+          var c = cards[i];
+          if (!c) return;
+          track.scrollTo({ left: c.offsetLeft - (track.clientWidth - c.offsetWidth) / 2, behavior: 'smooth' });
+        };
+        var scrollTimer;
+        track.addEventListener('scroll', function () {
+          clearTimeout(scrollTimer);
+          scrollTimer = setTimeout(sync, 60);
+        }, { passive: true });
+        if (prevBtn) prevBtn.addEventListener('click', function () { goTo(idx - 1); });
+        if (nextBtn) nextBtn.addEventListener('click', function () { goTo(idx + 1); });
+        cards.forEach(function (cardEl, i) {
+          cardEl.addEventListener('click', function () { if (i !== idx) goTo(i); });
+        });
+        if (pickBtn) pickBtn.addEventListener('click', function () {
+          var cardEl = cards[idx];
+          if (!cardEl) return;
+          var val = cardEl.getAttribute('data-val');
+          var other = cardEl.querySelector('.carousel-other');
+          if (other && other.value.trim()) val = other.value.trim();
+          pickedIdx = idx;
+          cards.forEach(function (c, k) { c.classList.toggle('picked', k === pickedIdx); });
+          sync();
+          onChange(val);
+          onCommit(val);
+        });
+        // 初回ナッジは操作が始まったら止める（2.6秒後にも保険で解除）
+        var stopNudge = function () { track.classList.remove('carousel-nudge'); };
+        track.addEventListener('pointerdown', stopNudge, { once: true });
+        setTimeout(stopNudge, 2600);
+        sync();
+      }
+
+      // sort_swipe: 各カードを右=該当/左=非該当で振り分け、全件後に確定
+      var sort = root.querySelector('.answer-sortswipe[data-code="' + code + '"]');
+      if (sort) {
+        var sortCards = [].slice.call(sort.querySelectorAll('.sort-card'));
+        var chips = [].slice.call(sort.querySelectorAll('.sort-chip'));
+        var doneEl = sort.querySelector('.sort-done');
+        var selected = [];
+        var si = 0;
+        // multi は「1件も該当なし」も有効回答になり得るため、開始時に空配列を渡す
+        onChange([]);
+        var show = function (i) {
+          si = i;
+          sortCards.forEach(function (c, k) {
+            c.style.display = k === si ? '' : 'none';
+            c.style.transform = '';
+            c.style.opacity = '';
+          });
+          chips.forEach(function (ch, k) { ch.classList.toggle('active', k === si); });
+        };
+        var decide = function (dir) {
+          var card = sortCards[si];
+          if (!card) return;
+          if (dir === 'right') selected.push(card.getAttribute('data-val'));
+          var chip = chips[si];
+          if (chip) { chip.classList.add('done'); if (dir === 'right') chip.classList.add('yes'); }
+          onChange(selected.slice());
+          if (si + 1 < sortCards.length) {
+            show(si + 1);
+          } else {
+            sortCards.forEach(function (c) { c.style.display = 'none'; });
+            if (doneEl) doneEl.style.display = '';
+            onCommit(selected.slice());
+          }
+        };
+        sortCards.forEach(function (cardEl) {
+          var sl = cardEl.querySelector('.stamp-l');
+          var sr = cardEl.querySelector('.stamp-r');
+          attachHorizontalDrag(cardEl, decide, function (dx) {
+            var k = Math.min(Math.abs(dx) / 60, 1);
+            if (sl) sl.style.opacity = dx < 0 ? String(k) : '0';
+            if (sr) sr.style.opacity = dx > 0 ? String(k) : '0';
+          });
+        });
+        [].slice.call(sort.querySelectorAll('.round-btn')).forEach(function (btn) {
+          btn.addEventListener('click', function () { decide(btn.getAttribute('data-dir')); });
+        });
+      }
+    }
+
+    /** .card-item 系とインタラクティブ系をまとめて配線する。 */
+    function wire(root, ctx, handlers) {
+      wireChoiceItems(root, ctx, handlers);
+      wirePatterns(root, ctx, handlers);
+    }
+
+    return {
+      esc: esc,
+      build: build,
+      wire: wire,
+      wireChoiceItems: wireChoiceItems,
+      wirePatterns: wirePatterns,
+      attachHorizontalDrag: attachHorizontalDrag,
+      collectChoiceVal: collectChoiceVal,
+      applyExclusion: applyExclusion,
+      faceIconsFor: faceIconsFor,
+      AUTO_COMMIT_PATTERNS: AUTO_COMMIT_PATTERNS,
+      /** そのパターンが自前で確定操作を持つか（ホストの送信ボタンが不要か）。 */
+      isAutoCommit: function (pattern) { return AUTO_COMMIT_PATTERNS.indexOf(pattern) >= 0; },
+      /** 共通レンダラが描けるパターンか（false ならホスト側の従来描画にフォールバックする）。 */
+      isSupported: function (pattern) { return SUPPORTED_PATTERNS.indexOf(pattern) >= 0; },
+    };
+  })();
+</script>
