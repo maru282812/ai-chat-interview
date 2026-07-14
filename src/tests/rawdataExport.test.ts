@@ -273,7 +273,7 @@ test("rawdata: 属性列のコード化（code/label両モード）", () => {
   assert.equal(codeRow.AGE, 36); // 2026-07-12 時点・1990-06-15生 → 36歳
   assert.equal(codeRow.AGE_BAND, 30);
   assert.equal(codeRow.PRE, 13);
-  assert.equal(codeRow.REGION, "関東");
+  assert.equal(codeRow.REGION, "関東地方");
   assert.equal(codeRow.JOB, 1);
   assert.equal(codeRow.BUS, 6);
   assert.equal(codeRow.MAR, 2);
@@ -284,7 +284,7 @@ test("rawdata: 属性列のコード化（code/label両モード）", () => {
   const labelRow = buildRawdataRows(ASSIGNMENTS, [makeRespondent({ profile, rank_code: "silver", rank_name: "シルバー" })], { mode: "label" })[0]!;
   assert.equal(labelRow.SEX, "女性");
   assert.equal(labelRow.PRE, "東京都");
-  assert.equal(labelRow.REGION, "関東");
+  assert.equal(labelRow.REGION, "関東地方");
   assert.equal(labelRow.JOB, "会社員（正社員）");
   assert.equal(labelRow.BUS, "小売・流通");
   assert.equal(labelRow.MAR, "既婚");
