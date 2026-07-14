@@ -53,6 +53,9 @@ import { dailySurveyRepository } from "../repositories/dailySurveyRepository";
 import { userStreakService } from "../services/userStreakService";
 import { userBadgeService } from "../services/userBadgeService";
 import { userPointService } from "../services/userPointService";
+import { pointStatusService } from "../services/pointStatusService";
+import { buildDailyAnswerNoticeMessages } from "../lib/dailyAnswerNotice";
+import { lineMessagingService } from "../services/lineMessagingService";
 import { pointExchangeRepository } from "../repositories/pointExchangeRepository";
 import { pointExchangeService, ExchangeError, EXCHANGE_UNIT_POINTS } from "../services/pointExchangeService";
 
@@ -2214,12 +2217,40 @@ export const liffController = {
       answers,
     });
 
-    const streakRow = await userStreakService.getStreak(verifiedUser.userId);
+    const [streakRow, pointStatus] = await Promise.all([
+      userStreakService.getStreak(verifiedUser.userId),
+      pointStatusService.getStatus(verifiedUser.userId),
+    ]);
+
+    // LINE 側にも「ポイントが付いた」を残す。LIFF で回答するとトークに何も出ないため、
+    // 付与されたのかユーザーから見えない状態だった。
+    // 通知が失敗しても回答とポイントは確定済みなので、回答自体は成功として返す。
+    const notice = buildDailyAnswerNoticeMessages({
+      pointsAwarded: result.pointsAwarded,
+      streakBonusAwarded: result.streakBonusAwarded,
+      currentStreak: streakRow.current_streak,
+      rankChanged: result.rankChanged,
+      newRankName: result.newRankName,
+      availablePoints: pointStatus.available_points,
+      nextRankName: pointStatus.next_rank_name,
+      pointsToNext: pointStatus.points_to_next,
+    });
+    try {
+      await lineMessagingService.push(verifiedUser.userId, notice);
+    } catch (err) {
+      logger.warn("daily.answer.notice_push_failed", {
+        surveyId,
+        deliveryId,
+        lineUserId: verifiedUser.userId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     res.json({
       ok: true,
       ...result,
       currentStreak: streakRow.current_streak,
+      pointStatus,
     });
   },
 
@@ -2403,11 +2434,16 @@ export const liffController = {
     const lineUserId = verifiedUser.userId;
     const category = stringValue(req.query.category).trim() || null;
 
-    const [projects, favoritedIds, appliedMap, monthly] = await Promise.all([
+    // ポイント/ランクは一覧の表示をブロックしない（取れなければカードを出さないだけ）。
+    const [projects, favoritedIds, appliedMap, monthly, pointStatus] = await Promise.all([
       projectRepository.listDiscoverable(),
       projectFavoriteRepository.getFavoritedProjectIds(lineUserId),
       projectApplicationRepository.getAppliedProjectIds(lineUserId),
       applicationService.getMonthlySummary(lineUserId),
+      pointStatusService.getStatus(lineUserId).catch((err) => {
+        logger.warn("projects.point_status.failed", { lineUserId, error: String(err) });
+        return null;
+      }),
     ]);
 
     const filtered = category ? projects.filter(p => (p as unknown as Record<string, unknown>).category === category) : projects;
@@ -2429,7 +2465,7 @@ export const liffController = {
       application_status: appliedMap.get(p.id) ?? null,
     }));
 
-    res.json({ ok: true, projects: items, monthly_applications: monthly });
+    res.json({ ok: true, projects: items, monthly_applications: monthly, point_status: pointStatus });
   },
 
   async getProjectDetailData(req: Request, res: Response): Promise<void> {

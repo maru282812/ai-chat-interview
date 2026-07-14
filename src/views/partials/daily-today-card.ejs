@@ -73,13 +73,17 @@
     }
 
     /** 1件ぶんのカード。設問を1問ずつ進め、最後の回答で送信する。 */
-    function mountCard(item, slotEl, idToken) {
+    function mountCard(item, slotEl, idToken, onAnswered) {
       const { survey, questions, delivery, answerUrl } = item;
       const answers = {};
       let idx = 0;
 
       function done(result) {
         const r = result || {};
+        // ポイント残高やランクを出しているホスト画面に、付与後の値を渡す（案件一覧の pt カード等）。
+        if (typeof onAnswered === 'function') {
+          try { onAnswered(r); } catch (e) { console.error('onAnswered failed', e); }
+        }
         const bonus = r.streakBonusAwarded ? ` (+${r.streakBonusAwarded}pt ボーナス)` : '';
         slotEl.className = 'hb-daily done';
         slotEl.innerHTML = `
@@ -198,6 +202,9 @@
       /**
        * 今日の1問を #daily-area（既定）に描く。
        * ホスト画面の表示はブロックしない（失敗してもカードを出さないだけ）。
+       *
+       * options.onAnswered(result) … 回答確定時に呼ぶ。result には付与ポイントと
+       * 付与後の pointStatus（残高・ランク・次ランクまで）が入る。
        */
       mount(options) {
         const opts = options || {};
@@ -212,7 +219,7 @@
             for (const item of json.items) {
               const slot = document.createElement('section');
               area.appendChild(slot);
-              mountCard(item, slot, opts.idToken);
+              mountCard(item, slot, opts.idToken, opts.onAnswered);
             }
           })
           .catch((err) => console.error('daily load failed', err));

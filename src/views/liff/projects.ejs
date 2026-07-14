@@ -9,6 +9,50 @@
     <link rel="stylesheet" href="/public/hibi.css" />
     <%# 今日の1問（共通パーシャル。answer-ui もこの中で読み込まれる） %>
     <%- include('../partials/daily-today-card') %>
+    <style>
+      /* 現在のポイントと次ランクまでの距離。回答するとその場で数字が動くのが見えるように、
+         今日の1問カードのすぐ上に置く（回答 → 加算 → 次ランクが近づく、を1画面で見せる）。 */
+      .hb-pt {
+        display: block; margin: 10px 12px 6px; padding: 14px 16px;
+        background: #fff; border: 1px solid #e2ece8; border-radius: 16px;
+        box-shadow: 0 2px 8px rgba(20,73,58,.06);
+        text-decoration: none; color: inherit;
+      }
+      .hb-pt .top { display: flex; align-items: baseline; gap: 8px; }
+      .hb-pt .cap { font-size: 12px; font-weight: 700; color: #6b8c81; }
+      .hb-pt .val { font-size: 28px; font-weight: 900; color: #14493a; line-height: 1.1; }
+      .hb-pt .unit { font-size: 13px; font-weight: 800; color: #14493a; margin-left: -3px; }
+      .hb-pt .badge {
+        margin-left: auto; align-self: center;
+        padding: 4px 11px; border-radius: 20px;
+        font-size: 12px; font-weight: 800;
+        background: #eef7f3; color: #1f8f66; border: 1px solid #cfe6dc;
+      }
+      .hb-pt .badge.silver   { background: #f0f0f5; color: #556080; border-color: #dcdce6; }
+      .hb-pt .badge.gold     { background: #fdf5e0; color: #9a6800; border-color: #f0e2bd; }
+      .hb-pt .badge.platinum { background: #f0eef8; color: #5a3a9a; border-color: #ddd6f0; }
+      .hb-pt .bar {
+        height: 8px; border-radius: 20px; background: #edf3f1;
+        overflow: hidden; margin: 10px 0 6px;
+      }
+      .hb-pt .bar i {
+        display: block; height: 100%; border-radius: 20px;
+        background: linear-gradient(90deg, #2ca87a, #1f8f66);
+        transition: width .45s ease;
+      }
+      .hb-pt .next { display: flex; justify-content: space-between; font-size: 12px; color: #4d7a6b; }
+      .hb-pt .next b { color: #1f8f66; font-weight: 800; }
+      .hb-pt .gain {
+        display: inline-block; margin-left: 6px; font-size: 12px; font-weight: 800;
+        color: #1f8f66; animation: hb-pt-pop 1.6s ease;
+      }
+      @keyframes hb-pt-pop {
+        0% { opacity: 0; transform: translateY(6px); }
+        20% { opacity: 1; transform: translateY(0); }
+        80% { opacity: 1; }
+        100% { opacity: 0; }
+      }
+    </style>
   </head>
   <body class="hibi">
     <div class="hb-shell">
@@ -16,6 +60,8 @@
         <span class="hb-logo">Hibi</span>
         <input class="hb-search" id="search-input" placeholder="キーワードで探す" />
       </header>
+
+      <a class="hb-pt" id="point-card" href="#" style="display:none"></a>
 
       <nav class="hb-chips" id="chip-bar">
         <button class="hb-chip on" data-filter="all">すべて</button>
@@ -191,6 +237,35 @@
         renderProjects(list.slice(1));
       }
 
+      /**
+       * 現在のポイントと次ランクまでの進捗。
+       * gained を渡すと「+15pt」を一瞬出す（デイリー回答直後の加算を見せるため）。
+       */
+      function renderPointCard(status, gained) {
+        const el = document.getElementById('point-card');
+        if (!el || !status) return;
+
+        const rankLabel = status.badge_label || status.rank_name || 'ランクなし';
+        const rankCls = String(status.rank_code || '').toLowerCase();
+        const pct = Math.max(0, Math.min(100, Number(status.progress_pct) || 0));
+        const gainTag = gained > 0 ? `<span class="gain">+${esc(String(gained))}pt</span>` : '';
+
+        const next = status.next_rank_name && status.points_to_next !== null
+          ? `<span>次のランク <b>${esc(status.next_rank_name)}</b> まで</span><span>あと <b>${esc(String(status.points_to_next))}pt</b></span>`
+          : `<span>最上位ランクに到達しています</span><span>🏆</span>`;
+
+        el.href = d.mypageUrl || '#';
+        el.style.display = '';
+        el.innerHTML = `
+          <div class="top">
+            <span class="cap">現在のポイント</span>
+            <span class="val">${esc(String(status.available_points ?? 0))}</span><span class="unit">pt</span>${gainTag}
+            <span class="badge ${esc(rankCls)}">${esc(rankLabel)}</span>
+          </div>
+          <div class="bar"><i style="width:${pct}%"></i></div>
+          <div class="next">${next}</div>`;
+      }
+
       async function load() {
         try {
           const token = await LiffAuth.initLiffOrWebAuth(liffId);
@@ -198,13 +273,22 @@
           idToken = token;
 
           // 今日の1問は案件一覧の表示をブロックしない（失敗してもカードを出さないだけ）。
-          DailyToday.mount({ idToken, url: d.dailyTodayUrl });
+          // 回答が確定したら、上のポイントカードを付与後の値に差し替える。
+          DailyToday.mount({
+            idToken,
+            url: d.dailyTodayUrl,
+            onAnswered: (result) => {
+              const gained = (result.pointsAwarded ?? 0) + (result.streakBonusAwarded ?? 0);
+              renderPointCard(result.pointStatus, gained);
+            },
+          });
 
           const _fetchStart = performance.now();
           const res = await fetch(projectsDataUrl, { headers: { Authorization: `Bearer ${idToken}` } });
           const data = await res.json();
           const _dataMs = performance.now() - _fetchStart;
           allProjects = data.projects || [];
+          renderPointCard(data.point_status, 0);
 
           const monthly = data.monthly_applications;
           if (monthly) {

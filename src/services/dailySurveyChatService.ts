@@ -10,11 +10,13 @@
  */
 
 import { supabase } from "../config/supabase";
+import { buildDailyAnswerNoticeMessages } from "../lib/dailyAnswerNotice";
 import { parseDailyPostbackData } from "../lib/dailyChatAnswer";
 import { logger } from "../lib/logger";
 import { dailySurveyRepository } from "../repositories/dailySurveyRepository";
 import { dailySurveyService } from "./dailySurveyService";
 import { lineMessagingService } from "./lineMessagingService";
+import { pointStatusService } from "./pointStatusService";
 import { userStreakService } from "./userStreakService";
 import type { LineMessage } from "../types/domain";
 
@@ -105,23 +107,22 @@ export const dailySurveyChatService = {
         answers: [{ questionId: question.id, answerValue: option.value }]
       });
 
-      const streak = await userStreakService.getStreak(input.lineUserId);
+      const [streak, pointStatus] = await Promise.all([
+        userStreakService.getStreak(input.lineUserId),
+        pointStatusService.getStatus(input.lineUserId)
+      ]);
 
-      const lines = [
-        "回答ありがとうございます。",
-        `獲得ポイント: +${result.pointsAwarded}pt`
-      ];
-      if (result.streakBonusAwarded > 0) {
-        lines.push(`連続回答ボーナス: +${result.streakBonusAwarded}pt`);
-      }
-      if (streak.current_streak > 1) {
-        lines.push(`${streak.current_streak}日連続で回答中です。`);
-      }
-      if (result.rankChanged && result.newRankName) {
-        lines.push(`ランクが ${result.newRankName} になりました。`);
-      }
-
-      return [{ type: "text", text: lines.join("\n") }];
+      // 文面は LIFF 回答時の push と共通（経路によって見え方が変わらないようにする）。
+      return buildDailyAnswerNoticeMessages({
+        pointsAwarded: result.pointsAwarded,
+        streakBonusAwarded: result.streakBonusAwarded,
+        currentStreak: streak.current_streak,
+        rankChanged: result.rankChanged,
+        newRankName: result.newRankName,
+        availablePoints: pointStatus.available_points,
+        nextRankName: pointStatus.next_rank_name,
+        pointsToNext: pointStatus.points_to_next
+      });
     } catch (error) {
       // ここまで来ると配信は answered に倒れている。ポイントが付いていない可能性があるので
       // 握りつぶさずログに残す（運用で手動付与できるように survey / user を必ず出す）。
