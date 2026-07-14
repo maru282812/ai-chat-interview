@@ -17,6 +17,7 @@ import {
 } from "../services/surveyFlowService";
 import { resolveAnswerPresentation } from "../lib/answerPresentation";
 import { jstDateString } from "../lib/dailyQueue";
+import { resolveDailyQuestionViews } from "../lib/dailyAnswerUi";
 import { generatePairwisePairs, isNewAnswerType, validateNewTypeAnswer } from "../lib/answerTypes";
 import { userProfileRepository, type UserProfileUpsertInput } from "../repositories/userProfileRepository";
 import { projectRepository } from "../repositories/projectRepository";
@@ -2086,11 +2087,13 @@ export const liffController = {
       await dailySurveyRepository.markDeliveryStatus(finalDelivery.id, "opened");
     }
 
+    // 表示パターンはサーバー権威で解決する（案件アンケートと同じ原則・Phase 3）。
+    // クライアントは presentation.pattern を見て共通レンダラで描くだけ。
     res.json({
       ok: true,
       alreadyAnswered: false,
       survey,
-      questions,
+      questions: resolveDailyQuestionViews(questions, survey.answer_ui_preset),
       delivery: finalDelivery,
     });
   },
@@ -2165,7 +2168,8 @@ export const liffController = {
           reward_max_points: survey.reward_max_points,
           answer_ui_preset: survey.answer_ui_preset,
         },
-        questions,
+        // 表示パターンはサーバー権威で解決して返す（Phase 3）。
+        questions: resolveDailyQuestionViews(questions, survey.answer_ui_preset),
         delivery: { id: finalDelivery.id },
         answerUrl: `/liff/daily-survey/${survey.id}/answer`,
       });

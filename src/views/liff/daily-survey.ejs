@@ -6,6 +6,8 @@
     <title><%= title %></title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
+    <%# 回答UI（スワイプ・カルーセル・絵文字フェイス…）は案件アンケートと共通・Phase 3 %>
+    <%- include('../partials/answer-ui') %>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body {
@@ -48,37 +50,7 @@
         line-height: 1.6; margin-bottom: 14px;
       }
 
-      /* ---- 選択肢 ---- */
-      .options-list { display: flex; flex-direction: column; gap: 8px; }
-      .option-label {
-        display: flex; align-items: center; gap: 10px;
-        padding: 11px 14px;
-        border: 1.5px solid #d8e3e0; border-radius: 10px;
-        font-size: 14px; color: #333;
-        cursor: pointer;
-        transition: border-color 0.15s, background 0.15s;
-      }
-      .option-label:has(input:checked) {
-        border-color: #2ca87a; background: #e8f5ef;
-      }
-      .option-label input { accent-color: #2ca87a; flex-shrink: 0; }
-
-      /* スケール */
-      .scale-row {
-        display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;
-        margin-top: 4px;
-      }
-      .scale-btn {
-        width: 44px; height: 44px;
-        border: 1.5px solid #d8e3e0; border-radius: 10px;
-        background: #fff; font-size: 15px; font-weight: 600; color: #333;
-        cursor: pointer; transition: border-color 0.15s, background 0.15s;
-      }
-      .scale-btn.selected { border-color: #2ca87a; background: #e8f5ef; color: #1a7a5a; }
-      .scale-labels {
-        display: flex; justify-content: space-between;
-        font-size: 11px; color: #999; margin-top: 6px; padding: 0 4px;
-      }
+      /* 選択肢・スケールの描画は partials/answer-ui.ejs（案件アンケートと共通）に寄せた。 */
 
       /* 自由記述 */
       .text-input {
@@ -178,7 +150,10 @@
       let idToken = null;
       let surveyData = null;   // { survey, questions, delivery }
       let currentQ = 0;
-      const answers = {};      // questionId → value
+      const answers = {};      // questionId → value（保存形式は UI に依存しない）
+      // 現在の設問が「確定操作」を終えたか（スワイプ・タップ・振り分け完了）。
+      // 共通レンダラのパターンは自前で確定を持つので、次へボタンではなくこれで進む。
+      let committed = false;
 
       function esc(v) {
         return String(v ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
@@ -209,41 +184,15 @@
           ? `${survey.reward_points}pt`
           : `${survey.reward_min_points}〜${survey.reward_max_points}pt`;
 
-        let inputHtml = "";
-        if (q.question_type === "single_choice") {
-          inputHtml = `<div class="options-list">` +
-            (q.answer_options || []).map(opt => `
-              <label class="option-label">
-                <input type="radio" name="q_${esc(q.id)}" value="${esc(opt.value)}"
-                  ${answers[q.id] === opt.value ? "checked" : ""} />
-                ${esc(opt.label)}
-              </label>`).join("") +
-            `</div>`;
-        } else if (q.question_type === "multiple_choice") {
-          const sel = Array.isArray(answers[q.id]) ? answers[q.id] : [];
-          inputHtml = `<div class="options-list">` +
-            (q.answer_options || []).map(opt => `
-              <label class="option-label">
-                <input type="checkbox" name="q_${esc(q.id)}" value="${esc(opt.value)}"
-                  ${sel.includes(opt.value) ? "checked" : ""} />
-                ${esc(opt.label)}
-              </label>`).join("") +
-            `</div>`;
-        } else if (q.question_type === "scale") {
-          const opts = q.answer_options?.length ? q.answer_options
-            : [1,2,3,4,5].map(n => ({ label: String(n), value: String(n) }));
-          inputHtml = `
-            <div class="scale-row">
-              ${opts.map(opt => `
-                <button type="button" class="scale-btn${answers[q.id] === opt.value ? " selected" : ""}"
-                  data-val="${esc(opt.value)}" onclick="selectScale('${esc(q.id)}', '${esc(opt.value)}', this)">
-                  ${esc(opt.label)}
-                </button>`).join("")}
-            </div>
-            ${opts.length >= 2 ? `<div class="scale-labels"><span>${esc(opts[0].label)}</span><span>${esc(opts[opts.length-1].label)}</span></div>` : ""}`;
-        } else {
-          inputHtml = `<textarea class="text-input" id="text-answer" placeholder="ここに入力してください">${esc(answers[q.id] ?? "")}</textarea>`;
-        }
+        // 表示パターンはサーバー権威（q.presentation.pattern）。共通レンダラが描けるものは
+        // それに任せ、対象外（テキスト等）だけ従来の入力欄で描く。
+        const pattern = q.presentation && q.presentation.pattern;
+        const autoCommit = AnswerUI.isAutoCommit(pattern);
+        committed = false;
+
+        const inputHtml =
+          AnswerUI.build({ question_code: q.id }, q.choices || [], pattern)
+          || `<textarea class="text-input" id="text-answer" placeholder="ここに入力してください">${esc(answers[q.id] ?? "")}</textarea>`;
 
         show(`
           <div class="card">
@@ -276,18 +225,28 @@
             ${index > 0
               ? `<button class="btn btn-secondary" style="flex:1" onclick="goBack()">← 戻る</button>`
               : ""}
-            <button class="btn btn-primary" style="flex:2" id="btn-next" onclick="goNext()">
-              ${index < questions.length - 1 ? "次へ →" : "回答を送信する"}
-            </button>
+            ${autoCommit
+              ? "" // スワイプ・タップ確定系は操作そのものが確定なので「次へ」を出さない
+              : `<button class="btn btn-primary" style="flex:2" id="btn-next" onclick="goNext()">
+                   ${index < questions.length - 1 ? "次へ →" : "回答を送信する"}
+                 </button>`}
           </div>
         `);
-      }
 
-      window.selectScale = function(questionId, value, btn) {
-        answers[questionId] = value;
-        document.querySelectorAll(".scale-btn").forEach(b => b.classList.remove("selected"));
-        btn.classList.add("selected");
-      };
+        // 共通レンダラの配線。onChange=値の更新 / onCommit=確定操作（そのまま次の設問 or 送信）。
+        AnswerUI.wire(
+          appView,
+          { code: q.id, multi: q.question_type === "multiple_choice" },
+          {
+            onChange: (value) => { answers[q.id] = value; },
+            onCommit: (value) => {
+              answers[q.id] = value;
+              committed = true;
+              setTimeout(goNext, 220);
+            },
+          },
+        );
+      }
 
       window.goBack = function() {
         saveCurrentAnswer();
@@ -319,22 +278,24 @@
         const q = surveyData.questions[currentQ];
         if (!q) return true;
 
-        if (q.question_type === "single_choice") {
-          const checked = document.querySelector(`input[name="q_${q.id}"]:checked`);
-          if (!checked) return false;
-          answers[q.id] = checked.value;
-        } else if (q.question_type === "multiple_choice") {
-          const checked = [...document.querySelectorAll(`input[name="q_${q.id}"]:checked`)].map(i => i.value);
-          if (checked.length === 0) return false;
-          answers[q.id] = checked;
-        } else if (q.question_type === "scale") {
-          if (!answers[q.id]) return false;
-        } else {
-          const ta = document.getElementById("text-answer");
-          const val = ta ? ta.value.trim() : "";
-          if (!val) return false;
-          answers[q.id] = val;
+        const pattern = q.presentation && q.presentation.pattern;
+
+        // 確定操作を自分で持つパターン（スワイプ・タップ・振り分け）は、その操作が終わるまで進めない。
+        // 振り分けは「1件も該当なし」も有効回答なので、値の中身ではなく確定済みかどうかで判定する。
+        if (AnswerUI.isAutoCommit(pattern)) return committed;
+
+        // チップ選択・スライダーは共通レンダラが answers に値を入れている（「次へ」で確定）。
+        if (AnswerUI.isSupported(pattern)) {
+          const val = answers[q.id];
+          if (Array.isArray(val)) return val.length > 0;
+          return val !== undefined && val !== null && val !== "";
         }
+
+        // 共通レンダラの対象外（テキスト等）は従来どおり入力欄から読む。
+        const ta = document.getElementById("text-answer");
+        const val = ta ? ta.value.trim() : "";
+        if (!val) return false;
+        answers[q.id] = val;
         return true;
       }
 
