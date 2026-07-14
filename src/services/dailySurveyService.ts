@@ -1,11 +1,17 @@
 import { supabase } from "../config/supabase";
 import {
+  buildDailyPostbackData,
+  resolveChatAnswerable,
+  truncateButtonLabel
+} from "../lib/dailyChatAnswer";
+import {
   type DailySlot,
   decideSlotDelivery,
   jstDateString,
   jstEndOfDayIso,
   queuePositions
 } from "../lib/dailyQueue";
+import { buildDailyQuestionFlex } from "../templates/flex";
 import { throwIfError } from "../repositories/baseRepository";
 import {
   dailySurveyRepository,
@@ -163,6 +169,25 @@ export const dailySurveyService = {
         ? String(survey.reward_points)
         : `${survey.reward_min_points}〜${survey.reward_max_points}`;
 
+    // 選択肢1問だけの設問は、トークを開いた瞬間に選んで終われるよう Flex のボタンで送る。
+    // 対象外（自由記述・複数設問など）は従来どおりテキスト＋LIFFリンクにフォールバックする。
+    const questions = await dailySurveyRepository.listQuestions(surveyId);
+    const chatAnswerable = resolveChatAnswerable(questions);
+    const chatMessage = chatAnswerable
+      ? buildDailyQuestionFlex({
+          questionText: chatAnswerable.question.question_text,
+          rewardLabel: `+${pointLabel}pt`,
+          options: chatAnswerable.options.map((option, index) => ({
+            label: truncateButtonLabel(option.label),
+            data: buildDailyPostbackData({
+              surveyId,
+              questionId: chatAnswerable.question.id,
+              optionIndex: index
+            })
+          }))
+        })
+      : null;
+
     for (const lineUserId of lineUserIds) {
       const sentAt = new Date().toISOString();
       const renderedBody = notificationTemplateRepository.renderBody(template, {
@@ -186,7 +211,9 @@ export const dailySurveyService = {
           });
         }
 
-        await lineMessagingService.push(lineUserId, [{ type: "text", text: renderedBody }]);
+        await lineMessagingService.push(lineUserId, [
+          chatMessage ?? { type: "text", text: renderedBody }
+        ]);
 
         if (!options.testMode) {
           const { data } = await supabase

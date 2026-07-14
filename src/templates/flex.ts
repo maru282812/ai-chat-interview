@@ -252,6 +252,66 @@ export function buildProjectStartFlex(input: {
   };
 }
 
+/**
+ * デイリーの「今日の1問」をトーク内でそのまま選ばせるバブル。
+ * ボタンは postback アクション（LIFF を開かせない）。displayText を付けて、
+ * 押した選択肢が自分の発言としてトークに残るようにする。
+ */
+export function buildDailyQuestionFlex(input: {
+  questionText: string;
+  rewardLabel: string;
+  options: Array<{ label: string; data: string }>;
+}): LineFlexMessage {
+  return {
+    type: "flex",
+    altText: input.questionText,
+    contents: bubble([
+      {
+        type: "box",
+        layout: "horizontal",
+        contents: [
+          {
+            type: "text",
+            text: "☀️ 今日の1問",
+            size: "sm",
+            weight: "bold",
+            color: "#0B7A75"
+          },
+          {
+            type: "text",
+            text: input.rewardLabel,
+            size: "sm",
+            weight: "bold",
+            color: "#C26D00",
+            align: "end"
+          }
+        ]
+      },
+      {
+        type: "text",
+        text: input.questionText,
+        size: "lg",
+        weight: "bold",
+        wrap: true
+      },
+      {
+        type: "separator"
+      },
+      ...input.options.map((option) => ({
+        type: "button",
+        action: {
+          type: "postback",
+          label: option.label,
+          data: option.data,
+          displayText: option.label
+        },
+        style: "secondary",
+        height: "sm"
+      }))
+    ])
+  };
+}
+
 export function buildRankUpMessages(newRankName: string): LineMessage[] {
   return [
     {
