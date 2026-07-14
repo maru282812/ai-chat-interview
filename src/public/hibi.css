@@ -49,7 +49,10 @@ button { font-family: inherit; cursor: pointer; }
 /* ---- チップ絞り込み ---- */
 .hb-chips { display: flex; gap: 8px; overflow-x: auto; padding: 10px 16px; background: #FFFDF6; border-bottom: 1px solid var(--hb-paper); scrollbar-width: none; position: sticky; top: 49px; z-index: 19; }
 .hb-chips::-webkit-scrollbar { display: none; }
-.hb-chip { flex-shrink: 0; border: 1px solid #ddd; border-radius: 16px; padding: 6px 13px; font-size: 12px; color: #555; background: #fff; }
+.hb-chip { flex-shrink: 0; border: none; border-radius: 6px; padding: 6px 12px; font-size: 12px; font-weight: 500; background: #f0f0f0; color: #666; transition: all 0.2s; }
+.hb-chip[data-category="life"] { background: #e3f2fd; color: #1E7BA0; }
+.hb-chip[data-category="work"] { background: #f5f0e8; color: #8B6F47; }
+.hb-chip[data-category="urgent"] { background: #ffebee; color: #d32f2f; }
 .hb-chip.on { background: var(--hb-brand-strong); border-color: var(--hb-brand-strong); color: #fff; font-weight: 700; }
 
 /* ---- 応募数プログレス ---- */
