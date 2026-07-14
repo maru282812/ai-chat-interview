@@ -42,22 +42,32 @@ const failedCount    = qp.get('failed');
       <tr>
         <td class="muted">配信予定</td>
         <td>
-          <%= survey.scheduled_at
-            ? new Date(survey.scheduled_at).toLocaleString('ja-JP')
-            : '<span class="muted">未設定</span>' %>
+          <% if (survey.scheduled_at) { %>
+            <%= new Date(survey.scheduled_at).toLocaleString('ja-JP') %>
+          <% } else { %>
+            <span class="muted">未設定</span>
+          <% } %>
         </td>
       </tr>
       <tr>
         <td class="muted">回答期限</td>
         <td>
-          <%= survey.expires_at
-            ? new Date(survey.expires_at).toLocaleString('ja-JP')
-            : '<span class="muted">未設定</span>' %>
+          <% if (survey.expires_at) { %>
+            <%= new Date(survey.expires_at).toLocaleString('ja-JP') %>
+          <% } else { %>
+            <span class="muted">未設定</span>
+          <% } %>
         </td>
       </tr>
       <tr>
         <td class="muted">説明</td>
-        <td><%= survey.description || '<span class="muted">-</span>' %></td>
+        <td>
+          <% if (survey.description) { %>
+            <%= survey.description %>
+          <% } else { %>
+            <span class="muted">-</span>
+          <% } %>
+        </td>
       </tr>
       <tr>
         <td class="muted">作成日</td>
@@ -177,11 +187,13 @@ const failedCount    = qp.get('failed');
     </div>
 
     <button type="submit" class="btn"
-      <% if (survey.status === 'completed') { %>disabled<% } %>>
+      <% if (survey.status === 'completed' || questions.length === 0) { %>disabled<% } %>>
       📤 配信実行
     </button>
     <% if (survey.status === 'completed') { %>
       <span class="muted" style="margin-left:8px">（完了済みのため配信不可）</span>
+    <% } else if (questions.length === 0) { %>
+      <span class="muted" style="margin-left:8px">（設問が1問もないため配信不可。先に設問を追加してください）</span>
     <% } %>
   </form>
 </div>
