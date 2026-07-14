@@ -11,6 +11,7 @@ import {
   jstEndOfDayIso,
   queuePositions
 } from "../lib/dailyQueue";
+import { HttpError } from "../lib/http";
 import { buildDailyQuestionFlex } from "../templates/flex";
 import { throwIfError } from "../repositories/baseRepository";
 import {
@@ -138,6 +139,16 @@ export const dailySurveyService = {
   ): Promise<DeliveryResult> {
     const survey = await dailySurveyRepository.getById(surveyId);
 
+    // 設問が無いアンケートを配信しても、回答者側は何も表示できない
+    // （サイトの「今日の1問」も設問0件はスキップする）。押す前に止める。
+    const questions = await dailySurveyRepository.listQuestions(surveyId);
+    if (questions.length === 0) {
+      throw new HttpError(
+        400,
+        "設問が1問もありません。設問を追加してから配信してください。"
+      );
+    }
+
     let lineUserIds: string[] = options.targetLineUserIds ?? [];
     let skipped = 0;
 
@@ -151,13 +162,11 @@ export const dailySurveyService = {
       skipped = all.length - lineUserIds.length;
     }
 
+    // 通知テンプレートは「リンク通知にフォールバックするとき」の本文にしか使わない。
+    // 未登録でも配信を止めない（既定テンプレートが無い環境で配信できなくなるため）。
     const template = survey.notification_template_id
       ? await notificationTemplateRepository.getById(survey.notification_template_id)
       : await notificationTemplateRepository.getDefault("daily_survey");
-
-    if (!template) {
-      throw new Error("通知テンプレートが見つかりません");
-    }
 
     const result: DeliveryResult = { total: lineUserIds.length, sent: 0, failed: 0, skipped };
     const liffUrl = options.liffBaseUrl
@@ -171,7 +180,6 @@ export const dailySurveyService = {
 
     // 選択肢1問だけの設問は、トークを開いた瞬間に選んで終われるよう Flex のボタンで送る。
     // 対象外（自由記述・複数設問など）は従来どおりテキスト＋LIFFリンクにフォールバックする。
-    const questions = await dailySurveyRepository.listQuestions(surveyId);
     const chatAnswerable = resolveChatAnswerable(questions);
     const chatMessage = chatAnswerable
       ? buildDailyQuestionFlex({
@@ -188,19 +196,28 @@ export const dailySurveyService = {
         })
       : null;
 
+    // フォールバック本文。テンプレート未登録でも配信できるようにしておく。
+    const fallbackBody = [
+      `【今日のアンケート】${survey.title}`,
+      `回答すると ${pointLabel}pt もらえます。`,
+      liffUrl
+    ].join("\n");
+
     for (const lineUserId of lineUserIds) {
       const sentAt = new Date().toISOString();
-      const renderedBody = notificationTemplateRepository.renderBody(template, {
-        point: pointLabel,
-        surveyUrl: liffUrl,
-        surveyTitle: survey.title,
-        streakDays: "",
-        daysToBonus: "",
-        bonusPoint: "",
-        expireDate: survey.expires_at
-          ? new Date(survey.expires_at).toLocaleDateString("ja-JP")
-          : ""
-      });
+      const renderedBody = template
+        ? notificationTemplateRepository.renderBody(template, {
+            point: pointLabel,
+            surveyUrl: liffUrl,
+            surveyTitle: survey.title,
+            streakDays: "",
+            daysToBonus: "",
+            bonusPoint: "",
+            expireDate: survey.expires_at
+              ? new Date(survey.expires_at).toLocaleDateString("ja-JP")
+              : ""
+          })
+        : fallbackBody;
 
       try {
         if (!options.testMode) {
@@ -232,9 +249,9 @@ export const dailySurveyService = {
 
           await supabase.from("notification_logs").insert({
             line_user_id: lineUserId,
-            template_id: template.id,
+            template_id: template?.id ?? null,
             category: "daily_survey",
-            rendered_title: template.title_text ?? null,
+            rendered_title: template?.title_text ?? null,
             rendered_body: renderedBody,
             variables_used: {
               survey_id: surveyId,
@@ -254,9 +271,9 @@ export const dailySurveyService = {
           try {
             await supabase.from("notification_logs").insert({
               line_user_id: lineUserId,
-              template_id: template.id,
+              template_id: template?.id ?? null,
               category: "daily_survey",
-              rendered_title: template.title_text ?? null,
+              rendered_title: template?.title_text ?? null,
               rendered_body: renderedBody,
               variables_used: {
                 survey_id: surveyId,
@@ -343,6 +360,19 @@ export const dailySurveyService = {
     }
 
     const survey = occupant ?? (queue[0] as DailySurvey);
+
+    // 設問0件のものを配信すると回答者側に何も出せない。active にも倒さず、その枠は見送る
+    // （ここで throw すると枠ごと cron が落ちる。キューの先頭を直せば翌枠から流れる）。
+    const questions = await dailySurveyRepository.listQuestions(survey.id);
+    if (questions.length === 0) {
+      logger.warn("daily survey: skipped slot (survey has no questions)", {
+        slot,
+        surveyId: survey.id,
+        surveyTitle: survey.title
+      });
+      return { ...base, survey_id: survey.id, survey_title: survey.title, reason: "no_questions" };
+    }
+
     const expiresAt = survey.expires_at ?? jstEndOfDayIso(today);
     await dailySurveyRepository.markActive(survey.id, today, slot, expiresAt);
 

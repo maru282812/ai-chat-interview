@@ -1,4 +1,5 @@
 import { supabase } from "../config/supabase";
+import { logger } from "../lib/logger";
 import { requireData, throwIfError } from "./baseRepository";
 
 export type NotificationCategory =
@@ -67,6 +68,15 @@ export const notificationTemplateRepository = {
     return requireData(data as NotificationTemplate | null, `NotificationTemplate not found: ${id}`);
   },
 
+  /**
+   * カテゴリの既定テンプレートを返す。
+   *
+   * 既定が複数ある状態でも必ず1件に決める（最終更新が新しいものを採る）。
+   * 以前は .single() で引いていたため、既定が2件あると PGRST116 になり、
+   * それを「該当なし」と解釈して null を返していた＝テンプレートが存在するのに
+   * 「見つかりません」で配信が落ち、リマインド通知は黙って送られていなかった。
+   * データは migration 080 で正したが、再発しても止まらないようにここでも吸収する。
+   */
   async getDefault(category: NotificationCategory): Promise<NotificationTemplate | null> {
     const { data, error } = await supabase
       .from("notification_templates")
@@ -74,10 +84,19 @@ export const notificationTemplateRepository = {
       .eq("category", category)
       .eq("is_default", true)
       .eq("is_active", true)
-      .single();
-    if (error?.code === "PGRST116") return null;
+      .order("updated_at", { ascending: false })
+      .order("id", { ascending: true });
     throwIfError(error);
-    return data as NotificationTemplate | null;
+
+    const rows = (data ?? []) as NotificationTemplate[];
+    if (rows.length > 1) {
+      logger.warn("notification_template.default.duplicated", {
+        category,
+        count: rows.length,
+        usedId: rows[0]?.id ?? null
+      });
+    }
+    return rows[0] ?? null;
   },
 
   async create(input: Omit<NotificationTemplate, "id" | "created_at" | "updated_at">): Promise<NotificationTemplate> {
