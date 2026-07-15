@@ -7,6 +7,7 @@
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
     <link rel="stylesheet" href="/public/hibi.css" />
+    <script src="/public/rank-icons.js"></script>
     <%# 今日の1問（共通パーシャル。answer-ui もこの中で読み込まれる） %>
     <%- include('../partials/daily-today-card') %>
     <style>
@@ -18,31 +19,32 @@
         box-shadow: 0 2px 8px rgba(20,73,58,.06);
         text-decoration: none; color: inherit;
       }
-      .hb-pt .top { display: flex; align-items: baseline; gap: 8px; }
+      .hb-pt .caprow { display: flex; align-items: baseline; gap: 6px; }
       .hb-pt .cap { font-size: 12px; font-weight: 700; color: #6b8c81; }
-      .hb-pt .val { font-size: 28px; font-weight: 900; color: #14493a; line-height: 1.1; }
-      .hb-pt .unit { font-size: 13px; font-weight: 800; color: #14493a; margin-left: -3px; }
-      .hb-pt .badge {
-        margin-left: auto; align-self: center;
-        padding: 4px 11px; border-radius: 20px;
-        font-size: 12px; font-weight: 800;
-        background: #eef7f3; color: #1f8f66; border: 1px solid #cfe6dc;
-      }
-      .hb-pt .badge.bronze   { background: #f6e9dd; color: #8a5424; border-color: #e2c3a4; }
-      .hb-pt .badge.silver   { background: #f0f0f5; color: #556080; border-color: #dcdce6; }
-      .hb-pt .badge.gold     { background: #fdf5e0; color: #9a6800; border-color: #f0e2bd; }
-      .hb-pt .badge.platinum { background: #f0eef8; color: #5a3a9a; border-color: #ddd6f0; }
+      .hb-pt .val { font-size: 26px; font-weight: 900; color: #14493a; line-height: 1.1; }
+      .hb-pt .unit { font-size: 13px; font-weight: 800; color: #14493a; margin-left: -2px; }
+
+      /* 現在ランク → 次ランク の「旅路」。バー両端のメダルが現在地／目的地を表すので、
+         メダル単体でも「今どこにいて次はどこか」が説明なしで伝わる。 */
+      .hb-pt .journey { display: flex; align-items: flex-start; gap: 9px; margin: 12px 0 6px; }
+      .hb-pt .stop { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 66px; }
+      .hb-pt .stop .m { font-size: 22px; line-height: 0; }
+      .hb-pt .stop .n { margin-top: 3px; font-size: 9.5px; font-weight: 800; white-space: nowrap; }
+      .hb-pt .stop.cur .n { color: #14493a; }
+      .hb-pt .stop.nxt { opacity: .9; }
+      .hb-pt .stop.nxt .m { filter: grayscale(.25); }
+      .hb-pt .stop.nxt .n { color: #6b8c81; }
       .hb-pt .bar {
-        height: 8px; border-radius: 20px; background: #edf3f1;
-        overflow: hidden; margin: 10px 0 6px;
+        flex: 1; margin-top: 17px; height: 8px; border-radius: 20px;
+        background: #edf3f1; overflow: hidden;
       }
       .hb-pt .bar i {
         display: block; height: 100%; border-radius: 20px;
         background: linear-gradient(90deg, #2ca87a, #1f8f66);
         transition: width .45s ease;
       }
-      .hb-pt .next { display: flex; justify-content: space-between; font-size: 12px; color: #4d7a6b; }
-      .hb-pt .next b { color: #1f8f66; font-weight: 800; }
+      .hb-pt .togo { text-align: right; font-size: 12px; color: #4d7a6b; }
+      .hb-pt .togo b { color: #1f8f66; font-weight: 800; }
       .hb-pt .gain {
         display: inline-block; margin-left: 6px; font-size: 12px; font-weight: 800;
         color: #1f8f66; animation: hb-pt-pop 1.6s ease;
@@ -234,33 +236,82 @@
         renderProjects(list.slice(1));
       }
 
+      // ランクを表すメダル。ranks.badge_label は環境で絵文字/英字と不一致なので、
+      // 表示用メダルは rank_code / rank_name から決め打ちする（データに依存させない）。
+      // 順序: … → プラチナ → エメラルド → ダイヤモンド → マスター（migration 081）
+      const RANK_MEDAL = { bronze: '🥉', silver: '🥈', gold: '🥇', platinum: '💠', emerald: '💚', diamond: '💎', master: '👑' };
+      const RANK_MEDAL_JP = { 'ブロンズ': '🥉', 'シルバー': '🥈', 'ゴールド': '🥇', 'プラチナ': '💠', 'エメラルド': '💚', 'ダイヤモンド': '💎', 'マスター': '👑' };
+      function rankMedal(name, code) {
+        return RANK_MEDAL_JP[name] || RANK_MEDAL[String(code || '').toLowerCase()] || '🏅';
+      }
+
+      const TIER_ROMAN = { 1: 'I', 2: 'II', 3: 'III' };
+
       /**
-       * 現在のポイントと次ランクまでの進捗。
+       * 現在の段位 → 次の段位 の「旅路」バー。
+       * 左端メダル＝今のランク／右端メダル＝次の目標（同ランク次段位 or 昇格先ランク）。
+       * 段位フィールド（Phase 2）が来ていればそれを、無ければ旧ランクベースにフォールバックする。
        * gained を渡すと「+15pt」を一瞬出す（デイリー回答直後の加算を見せるため）。
        */
       function renderPointCard(status, gained) {
         const el = document.getElementById('point-card');
         if (!el || !status) return;
 
-        const rankLabel = status.badge_label || status.rank_name || 'ランクなし';
-        const rankCls = String(status.rank_code || '').toLowerCase();
-        const pct = Math.max(0, Math.min(100, Number(status.progress_pct) || 0));
+        const rankName = status.rank_name || 'ブロンズ';
+        const tier = status.tier || null;
+        // SVG アイコン（rank-icons.js）。読み込み前や rank_code 不明時は絵文字にフォールバック。
+        const ICON_SIZE = 42;
+        const medalOf = (code, name, t) =>
+          (window.RankIcons && code) ? RankIcons.badge(code, t || 1, ICON_SIZE) : rankMedal(name, code);
+        const curMedal = medalOf(status.rank_code, rankName, tier || 1);
+        const curLabel = tier ? `${esc(rankName)} ${TIER_ROMAN[tier]}` : esc(rankName);
         const gainTag = gained > 0 ? `<span class="gain">+${esc(String(gained))}pt</span>` : '';
 
-        const next = status.next_rank_name && status.points_to_next !== null
-          ? `<span>次のランク <b>${esc(status.next_rank_name)}</b> まで</span><span>あと <b>${esc(String(status.points_to_next))}pt</b></span>`
-          : `<span>最上位ランクに到達しています</span><span>🏆</span>`;
+        let fill, nextMedal, nextName, togo;
+        const hasTier = tier != null && status.tier_progress_pct != null;
+        if (hasTier) {
+          // ── 段位ベース（Phase 2）──
+          if (status.points_to_next_tier == null) {
+            // 最上位ランクの最上位段位（上限なし）
+            fill = 100; nextMedal = '🏆'; nextName = '最上位';
+            togo = `<b>最上位に到達しています 🎉</b>`;
+          } else {
+            const tpct = Math.max(0, Math.min(100, Number(status.tier_progress_pct) || 0));
+            fill = tpct > 0 ? Math.max(tpct, 4) : 0;
+            if (status.next_tier_promotes && status.next_rank_code) {
+              nextMedal = medalOf(status.next_rank_code, status.next_rank_name, 1);
+              nextName = `${esc(status.next_rank_name)} I`;
+            } else {
+              nextMedal = medalOf(status.rank_code, rankName, tier + 1);
+              nextName = `${esc(rankName)} ${TIER_ROMAN[tier + 1] || ''}`;
+            }
+            togo = `次の段位まで <b>あと ${esc(String(status.points_to_next_tier))}pt</b>`;
+          }
+        } else {
+          // ── フォールバック（旧・ランクベース）──
+          const pct = Math.max(0, Math.min(100, Number(status.progress_pct) || 0));
+          fill = pct > 0 ? Math.max(pct, 4) : 0;
+          const hasNext = status.next_rank_name && status.points_to_next != null;
+          nextMedal = hasNext ? medalOf(status.next_rank_code, status.next_rank_name, 1) : '🏆';
+          nextName = hasNext ? esc(status.next_rank_name) : '最上位';
+          togo = hasNext
+            ? `次のランクまで <b>あと ${esc(String(status.points_to_next))}pt</b>`
+            : `<b>最上位ランクに到達しています 🎉</b>`;
+        }
 
         el.href = d.mypageUrl || '#';
         el.style.display = '';
         el.innerHTML = `
-          <div class="top">
+          <div class="caprow">
             <span class="cap">現在のポイント</span>
             <span class="val">${esc(String(status.available_points ?? 0))}</span><span class="unit">pt</span>${gainTag}
-            <span class="badge ${esc(rankCls)}">${esc(rankLabel)}</span>
           </div>
-          <div class="bar"><i style="width:${pct}%"></i></div>
-          <div class="next">${next}</div>`;
+          <div class="journey">
+            <span class="stop cur"><span class="m">${curMedal}</span><span class="n">${curLabel}</span></span>
+            <div class="bar"><i style="width:${fill}%"></i></div>
+            <span class="stop nxt"><span class="m">${nextMedal}</span><span class="n">${nextName}</span></span>
+          </div>
+          <div class="togo">${togo}</div>`;
       }
 
       async function load() {

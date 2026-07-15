@@ -12,6 +12,7 @@ import {
   queuePositions
 } from "../lib/dailyQueue";
 import { HttpError } from "../lib/http";
+import { qualityWeightedPoints } from "../lib/qualityScore";
 import { buildDailyQuestionFlex } from "../templates/flex";
 import { throwIfError } from "../repositories/baseRepository";
 import {
@@ -456,11 +457,14 @@ export const dailySurveyService = {
       .eq("id", input.deliveryId);
 
     // 3. 通常ポイント付与（ランダムの場合は範囲内でランダム）
-    const pointsAwarded =
+    const basePoints =
       survey.reward_type === "random"
         ? Math.floor(Math.random() * (survey.reward_max_points - survey.reward_min_points + 1)) +
           survey.reward_min_points
         : survey.reward_points;
+    // 「有効回答 × 品質」の受け皿を必ず通す。品質判定の本設計はここ（qualityScore.ts）に入れる。
+    // 現状は係数 1.0（仮）＝ basePoints と一致するので挙動は変わらない。
+    const pointsAwarded = qualityWeightedPoints(basePoints, { answers: input.answers });
 
     await userPointService.ensureRow(input.lineUserId);
     await userPointService.awardPoints({

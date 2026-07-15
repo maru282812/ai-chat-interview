@@ -68,6 +68,48 @@ test("ranks の並びが min_points 昇順でなくても正しく判定する",
   assert.equal(p.nextRank?.rank_code, "gold");
 });
 
+// ── 段位 I〜III（Phase 2）──
+// Silver 帯 = 100〜500（幅400）。区切り 30%/65% → I:100-220 / II:220-360 / III:360-500。
+test("段位: 帯の前半は I、次段まで／段位内到達率が出る", () => {
+  const p = computeRankProgress(100, RANKS); // Silver に入った直後
+  assert.equal(p.tier, 1);
+  assert.equal(p.pointsToNextTier, 120); // 220 まで
+  assert.equal(p.tierProgressPct, 0);
+  assert.equal(p.nextTierPromotes, false);
+});
+
+test("段位: 帯の中盤は II", () => {
+  const p = computeRankProgress(250, RANKS);
+  assert.equal(p.tier, 2);
+  assert.equal(p.pointsToNextTier, 110); // 360 まで
+  assert.equal(p.tierProgressPct, 21); // (250-220)/140
+  assert.equal(p.nextTierPromotes, false);
+});
+
+test("段位: 帯の後半 III の次は次ランクへ昇格する", () => {
+  const p = computeRankProgress(400, RANKS);
+  assert.equal(p.tier, 3);
+  assert.equal(p.pointsToNextTier, 100); // Gold(500) まで
+  assert.equal(p.nextTierPromotes, true);
+});
+
+test("段位: 前半ほど小刻み（I の帯幅 < II の帯幅）", () => {
+  const tierI = computeRankProgress(100, RANKS).pointsToNextTier; // 120
+  const tierII = computeRankProgress(220, RANKS).pointsToNextTier; // 140
+  assert.ok((tierI ?? 0) < (tierII ?? 0));
+});
+
+test("段位: 最上位ランクは絶対ステップで区切られ、段位IIIは上限なし", () => {
+  const t1 = computeRankProgress(900, RANKS); // Gold 500〜: I(500-1500)
+  assert.equal(t1.tier, 1);
+  assert.equal(t1.pointsToNextTier, 600); // 1500 まで
+  const t3 = computeRankProgress(4000, RANKS); // Gold 3000〜: III 青天井
+  assert.equal(t3.tier, 3);
+  assert.equal(t3.pointsToNextTier, null);
+  assert.equal(t3.tierProgressPct, 100);
+  assert.equal(t3.nextTierPromotes, false);
+});
+
 test("通知文: 付与ポイントと残高と次ランクまでの距離が必ず入る", () => {
   const lines = buildDailyAnswerNoticeLines({
     pointsAwarded: 15,

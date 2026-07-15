@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title><%= title %></title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script src="/public/rank-icons.js"></script>
     <%- include('../partials/liff-auth') %>
     <%- include('../partials/daily-today-card') %>
     <style>
@@ -52,6 +53,9 @@
       .rank-badge.silver { background: #f0f0f5; color: #556080; }
       .rank-badge.gold   { background: #fdf5e0; color: #9a6800; }
       .rank-badge.platinum { background: #f0eef8; color: #5a3a9a; }
+      /* SVG ランクアイコン＋段位ラベル（rank-icons.js） */
+      .rank-line { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+      .rank-line .rank-name { font-size: 13px; font-weight: 800; color: #14493a; }
 
       .stats-row {
         display: grid;
@@ -396,7 +400,10 @@
               <div class="avatar">${esc(initial)}</div>
               <div>
                 <div class="profile-name">${esc(name)}</div>
-                <div class="rank-badge ${rankClass(s.rank_code)}">${esc(s.badge_label || s.rank_name || "Bronze")}</div>
+                <div class="rank-line">
+                  ${(window.RankIcons && s.rank_code) ? RankIcons.badge(s.rank_code, s.tier || 1, 46) : ""}
+                  <span class="rank-name">${esc(s.rank_name || "ブロンズ")}${s.tier ? " " + ["I", "II", "III"][s.tier - 1] : ""}</span>
+                </div>
               </div>
             </div>
           </div>

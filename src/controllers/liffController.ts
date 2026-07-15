@@ -54,6 +54,7 @@ import { userStreakService } from "../services/userStreakService";
 import { userBadgeService } from "../services/userBadgeService";
 import { userPointService } from "../services/userPointService";
 import { pointStatusService } from "../services/pointStatusService";
+import { computeRankProgress } from "../lib/pointStatus";
 import { buildDailyAnswerNoticeMessages } from "../lib/dailyAnswerNotice";
 import { lineMessagingService } from "../services/lineMessagingService";
 import { pointExchangeRepository } from "../repositories/pointExchangeRepository";
@@ -665,8 +666,12 @@ export const liffController = {
     const respondentPoints = primaryRespondent?.total_points ?? 0;
     const totalPoints = (pointBalance?.available_points ?? 0) || respondentPoints;
     const rankPoints = (pointBalance?.lifetime_points ?? 0) || respondentPoints;
-    const currentRank = primaryRespondent?.current_rank ?? null;
-    const nextRank = ranks.find(r => r.min_points > rankPoints && r.min_points > (currentRank?.min_points ?? -1)) ?? null;
+    // ランク表示は正準（累計ポイント × ranks しきい値）に統一する。
+    // 以前は respondents.current_rank（レガシー集計）で、旅路バー（pointStatusService）と
+    // ズレる余地があった。段位（tier）もここで導出して整合させる。
+    const rankProgress = computeRankProgress(rankPoints, ranks);
+    const currentRank = rankProgress.currentRank;
+    const nextRank = rankProgress.nextRank;
 
     const recentTransactions = primaryRespondent
       ? (await pointTransactionRepository.listByRespondent(primaryRespondent.id)).slice(0, 5)
@@ -681,12 +686,14 @@ export const liffController = {
       profile: profile ?? null,
       stats: {
         total_points: totalPoints,
-        rank_name: currentRank?.rank_name ?? "Bronze",
+        rank_name: currentRank?.rank_name ?? "ブロンズ",
         rank_code: currentRank?.rank_code ?? "bronze",
         badge_label: currentRank?.badge_label ?? null,
+        tier: rankProgress.tier,
         completed_count: completedCount,
         next_rank_min_points: nextRank?.min_points ?? null,
         next_rank_name: nextRank?.rank_name ?? null,
+        next_rank_code: nextRank?.rank_code ?? null,
         current_streak: streakRow?.current_streak ?? 0,
         longest_streak: streakRow?.longest_streak ?? 0,
       },
