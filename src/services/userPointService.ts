@@ -12,7 +12,7 @@ export interface AwardPointsInput {
   transactionType: UserPointTransactionType;
   points: number;
   reason: string;
-  referenceType?: "daily_survey_answer" | "project_assignment" | "campaign" | "session" | "manual" | "exchange_request";
+  referenceType?: "daily_survey_answer" | "project_assignment" | "campaign" | "session" | "manual" | "exchange_request" | "pool_question_answer";
   referenceId?: string;
   idempotencyKey?: string;
 }

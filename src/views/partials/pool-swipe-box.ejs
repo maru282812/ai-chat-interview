@@ -1,0 +1,214 @@
+<%#
+  ついでスワイプ（設問プール）カード（共通パーシャル）
+  docs/spec-pool-swipe-questions.md
+
+  案件一覧を開いた「ついで」に、報酬期待の低い簡単な2択へスワイプ回答してもらう。
+  今日の1問（緑ヒーロー）が主役、こちらは脇役（白ベースの控えめなカード）。
+
+  使い方: <div id="pool-swipe-area"></div> を置いて、認証後に
+          PoolSwipe.mount({ idToken, onAnswered }) を呼ぶ。出題なしなら何も描かない。
+
+  ⚠ window.AnswerUI 必須。このパーシャルは answer-ui.ejs を include しない。
+     ホストが daily-today-card.ejs（内部で answer-ui を include 済み）か
+     answer-ui.ejs を先に include していること。
+%>
+<style>
+  /* ついでスワイプ（脇役・白ベースの控えめカード） */
+  .hb-pool {
+    background: #fff; border: 1px solid #e3ece9; border-radius: 16px;
+    padding: 12px 14px; margin: 4px 12px 6px;
+    box-shadow: 0 2px 8px rgba(28,43,39,.06);
+  }
+  .hb-pool .head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .hb-pool .lbl { font-size: 12px; font-weight: 800; letter-spacing: .03em; color: #6b7d78; }
+  .hb-pool .pt {
+    background: #eef7f3; color: #1f8f66; border-radius: 20px;
+    padding: 3px 10px; font-size: 12px; font-weight: 800;
+  }
+  .hb-pool .q { font-size: 15px; font-weight: 800; line-height: 1.5; color: #1a2f2a; margin: 2px 0 8px; }
+  .hb-pool .send {
+    width: 100%; margin-top: 8px;
+    background: #14493a; color: #fff; border: none; border-radius: 12px;
+    padding: 12px; font-size: 15px; font-weight: 800; cursor: pointer;
+  }
+  .hb-pool .send:disabled { opacity: .5; }
+  .hb-pool .foot { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+  .hb-pool .dots { display: flex; gap: 5px; }
+  .hb-pool .dot { width: 6px; height: 6px; border-radius: 50%; background: #d3dfdb; }
+  .hb-pool .dot.on { background: #2ca87a; }
+  .hb-pool .skip {
+    background: none; border: none; color: #90a29e; font-size: 12px;
+    text-decoration: underline; cursor: pointer; font-family: inherit; padding: 2px 4px;
+  }
+  .hb-pool .msg { font-size: 12px; margin-top: 6px; min-height: 15px; color: #c0392b; }
+  .hb-pool.done { display: flex; align-items: center; gap: 8px; color: #4d7a6b; }
+  .hb-pool.done .icon { font-size: 18px; }
+  .hb-pool.done .t { font-size: 13px; font-weight: 700; }
+</style>
+<script>
+  (() => {
+    'use strict';
+
+    const TODAY_URL = '/liff/pool-questions-today';
+
+    function esc(v) {
+      return String(v ?? '').replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      ));
+    }
+
+    /** items（今日ぶんの設問リスト）を1問ずつ進める。 */
+    function mountList(items, area, idToken, onAnswered) {
+      let idx = 0;
+
+      function dots() {
+        return '<span class="dots">' + items.map((_x, i) =>
+          '<span class="dot' + (i <= idx ? ' on' : '') + '"></span>').join('') + '</span>';
+      }
+
+      function done() {
+        area.innerHTML =
+          '<section class="hb-pool done">' +
+          '<span class="icon">🎴</span>' +
+          '<span class="t">今日のぶんは終わり。また明日</span>' +
+          '</section>';
+      }
+
+      function next() {
+        if (idx < items.length - 1) { idx++; render(); }
+        else done();
+      }
+
+      /** 回答 or スキップの POST。url は設問ごとに変わる。 */
+      async function post(url, payload, onFail) {
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || '送信に失敗しました');
+          }
+          return await res.json();
+        } catch (err) {
+          onFail(err.message || '送信に失敗しました');
+          return null;
+        }
+      }
+
+      function render() {
+        const item = items[idx];
+        const q = item.question;
+        const pattern = q.presentation && q.presentation.pattern;
+        const rendered = AnswerUI.build({ question_code: q.id }, q.choices || [], pattern);
+        const needsSend = rendered && !AnswerUI.isAutoCommit(pattern);
+        const ptChip = q.reward_points > 0
+          ? `<span class="pt">+${esc(String(q.reward_points))}pt</span>` : '';
+
+        // 共通レンダラが描けないパターンは、そもそもプールでは出ない想定。保険で畳む。
+        if (!rendered) { next(); return; }
+
+        const slot = document.createElement('section');
+        slot.className = 'hb-pool answer-ui-compact';
+        slot.innerHTML =
+          '<div class="head"><span class="lbl">🎴 ついでスワイプ</span>' + ptChip + '</div>' +
+          '<p class="q">' + esc(q.question_text) + '</p>' +
+          rendered +
+          (needsSend ? '<button class="send" disabled>選んで送信</button>' : '') +
+          '<div class="foot">' + dots() +
+            '<button type="button" class="skip">スキップ</button></div>' +
+          '<p class="msg"></p>';
+        area.innerHTML = '';
+        area.appendChild(slot);
+
+        wire(slot, item, needsSend);
+      }
+
+      function wire(slot, item, needsSend) {
+        const q = item.question;
+        const msg = slot.querySelector('.msg');
+        const shownAt = Date.now();
+        let committing = false;
+
+        async function answer(value) {
+          if (committing) return;
+          committing = true;
+          const result = await post(
+            '/liff/pool-questions/' + q.id + '/answer',
+            { exposureId: item.exposureId, answerValue: value, answerMs: Date.now() - shownAt },
+            (m) => { msg.textContent = m; committing = false; }
+          );
+          if (!result) return;
+          if (typeof onAnswered === 'function') {
+            try { onAnswered(result); } catch (e) { console.error('onAnswered failed', e); }
+          }
+          next();
+        }
+
+        const sendEl = slot.querySelector('.send');
+        let pending = null;
+        AnswerUI.wire(
+          slot,
+          { code: q.id, multi: false },
+          {
+            onChange: (value) => {
+              pending = value;
+              if (!sendEl) return;
+              const n = Array.isArray(value) ? value.length : (value ? 1 : 0);
+              sendEl.disabled = n === 0;
+            },
+            // スワイプ・タップ・フェイスはその操作が確定（送信ボタンを挟まない）
+            onCommit: (value) => { answer(value); },
+          },
+        );
+        if (needsSend && sendEl) {
+          sendEl.addEventListener('click', () => {
+            const n = Array.isArray(pending) ? pending.length : (pending ? 1 : 0);
+            if (n === 0) return;
+            sendEl.disabled = true;
+            answer(pending);
+          });
+        }
+
+        const skipEl = slot.querySelector('.skip');
+        skipEl.addEventListener('click', async () => {
+          if (committing) return;
+          committing = true;
+          skipEl.disabled = true;
+          const result = await post(
+            '/liff/pool-questions/' + q.id + '/skip',
+            { exposureId: item.exposureId },
+            (m) => { msg.textContent = m; committing = false; skipEl.disabled = false; }
+          );
+          if (!result) return;
+          next();
+        });
+      }
+
+      render();
+    }
+
+    window.PoolSwipe = {
+      /**
+       * ついでスワイプを #pool-swipe-area（既定）に描く。案件一覧の表示はブロックしない
+       * （fetch 失敗・出題なしはカードを出さないだけ）。
+       * options.onAnswered(result) … 回答確定時に呼ぶ。result.pointStatus を含む。
+       */
+      mount(options) {
+        const opts = options || {};
+        const area = opts.container || document.getElementById('pool-swipe-area');
+        if (!area || !opts.idToken || !window.AnswerUI) return;
+
+        void fetch(opts.url || TODAY_URL, { headers: { Authorization: `Bearer ${opts.idToken}` } })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((json) => {
+            if (!json || !json.items || json.items.length === 0) return;
+            mountList(json.items, area, opts.idToken, opts.onAnswered);
+          })
+          .catch((err) => console.error('pool swipe load failed', err));
+      }
+    };
+  })();
+</script>

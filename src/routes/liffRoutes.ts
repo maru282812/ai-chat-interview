@@ -123,6 +123,11 @@ liffRoutes.get("/daily-survey-data", asyncHandler(liffController.getDailySurveyD
 liffRoutes.get("/daily-surveys-today", asyncHandler(liffController.getTodayDailySurveys));
 liffRoutes.post("/daily-survey/:surveyId/answer", asyncHandler(liffController.submitDailySurveyAnswer));
 
+// ついでスワイプ（設問プール）。案件一覧に埋め込む低ステークス2択。
+liffRoutes.get("/pool-questions-today", asyncHandler(liffController.getTodayPoolQuestions));
+liffRoutes.post("/pool-questions/:questionId/answer", asyncHandler(liffController.submitPoolQuestionAnswer));
+liffRoutes.post("/pool-questions/:questionId/skip", asyncHandler(liffController.skipPoolQuestion));
+
 // 店舗専用アンケート流入（専用URL / QR）
 liffRoutes.get("/store", asyncHandler(liffController.storeEntryPage));
 liffRoutes.post("/store/resolve", asyncHandler(liffController.resolveStoreEntry));

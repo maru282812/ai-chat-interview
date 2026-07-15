@@ -43,6 +43,13 @@ import { pointService } from "../services/pointService";
 import { assignmentService, type AssignmentRuleFilter } from "../services/assignmentService";
 import { projectRepository } from "../repositories/projectRepository";
 import { clientRepository } from "../repositories/clientRepository";
+import {
+  poolQuestionRepository,
+  type PoolChoice,
+  type PoolQuestionMutationInput,
+  type PoolQuestionStatus,
+  type PoolQuestionType,
+} from "../repositories/poolQuestionRepository";
 import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
 import { exportJobRepository } from "../repositories/exportJobRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
@@ -197,6 +204,89 @@ function bodyStringArray(value: unknown): string[] {
 
 function parseAnswerUiPreset(value: unknown): "casual" | "standard" | "formal" {
   return value === "standard" || value === "formal" ? value : "casual";
+}
+
+// ── ついでスワイプ（設問プール）フォーム解析 ──────────────────────
+const POOL_MAX_CHOICES = 4;
+
+/** options[]（配列）または option_1..option_4 から選択肢ラベルを集める。 */
+function parsePoolChoiceLabels(body: Record<string, unknown>): string[] {
+  const arr = bodyStringArray(body.options);
+  if (arr.length > 0) return arr.map((s) => s.trim());
+  const collected: string[] = [];
+  for (let i = 1; i <= POOL_MAX_CHOICES; i++) {
+    collected.push(bodyString(body[`option_${i}`]).trim());
+  }
+  return collected;
+}
+
+/** ラベル配列を {value,label} 形へ。value はラベルから自動採番（JSON を書かせない）。 */
+function buildPoolChoices(labels: string[]): PoolChoice[] {
+  const out: PoolChoice[] = [];
+  for (const label of labels) {
+    const l = label.trim();
+    if (!l) continue;
+    out.push({ value: `opt_${out.length + 1}`, label: l });
+  }
+  return out;
+}
+
+/**
+ * 単発フォームの入力を PoolQuestionMutationInput へ。
+ * parseContent=false のときは設問文・タイプ・選択肢を検証しない（回答付き設問の編集ロック用。
+ * 呼び出し側で既存値へ差し替える）。
+ */
+function parsePoolQuestionInput(
+  body: Record<string, unknown>,
+  opts: { defaultStatus: PoolQuestionStatus; parseContent: boolean },
+): PoolQuestionMutationInput {
+  let questionText = "";
+  let questionType: PoolQuestionType = "single_choice";
+  let answerOptions: PoolChoice[] = [];
+
+  if (opts.parseContent) {
+    questionText = bodyString(body.question_text).trim();
+    if (!questionText) throw new HttpError(400, "設問文は必須です。");
+    questionType = body.question_type === "scale" ? "scale" : "single_choice";
+    if (questionType === "single_choice") {
+      answerOptions = buildPoolChoices(parsePoolChoiceLabels(body));
+      if (answerOptions.length < 2) throw new HttpError(400, "選択肢は2つ以上必要です。");
+      if (answerOptions.length > POOL_MAX_CHOICES) {
+        throw new HttpError(400, `選択肢は最大${POOL_MAX_CHOICES}つまでです。`);
+      }
+    }
+    // scale は選択肢を持たない（表示時に 1〜5 を補う）。
+  }
+
+  const rewardRaw = Math.floor(Number(bodyString(body.reward_points) || "1"));
+  const rewardPoints = Number.isFinite(rewardRaw) ? Math.min(3, Math.max(0, rewardRaw)) : 1;
+  const priorityRaw = Math.floor(Number(bodyString(body.priority) || "0"));
+  const priority = Number.isFinite(priorityRaw) ? priorityRaw : 0;
+  const reaskRaw = bodyString(body.reask_after_days).trim();
+  const reaskNum = reaskRaw ? Math.floor(Number(reaskRaw)) : Number.NaN;
+  const reaskAfterDays = Number.isFinite(reaskNum) && reaskNum >= 1 ? reaskNum : null;
+
+  const statusInput = bodyString(body.status).trim();
+  const status: PoolQuestionStatus = (["draft", "active", "paused", "archived"] as const).includes(
+    statusInput as PoolQuestionStatus,
+  )
+    ? (statusInput as PoolQuestionStatus)
+    : opts.defaultStatus;
+
+  return {
+    question_text: questionText,
+    question_type: questionType,
+    answer_options: answerOptions,
+    topic_tag: bodyString(body.topic_tag).trim() || null,
+    client_id: bodyString(body.client_id).trim() || null,
+    attribute_key: bodyString(body.attribute_key).trim() || null,
+    status,
+    priority,
+    reward_points: rewardPoints,
+    reask_after_days: reaskAfterDays,
+    starts_at: bodyString(body.starts_at).trim() || null,
+    ends_at: bodyString(body.ends_at).trim() || null,
+  };
 }
 
 /**
@@ -8174,6 +8264,266 @@ export const adminController = {
       }
     }
     res.redirect(`${back}msg=` + encodeURIComponent(`落選にしました${suffix}`));
+  },
+
+  // ── ついでスワイプ（設問プール）─────────────────────────────
+  // docs/spec-pool-swipe-questions.md。1設問=1枚の在庫。作成UXは「2択を量産」に最適化。
+
+  /** 在庫ボード（一覧）。active 在庫が細っていないかを見る場所。 */
+  async poolQuestions(req: Request, res: Response): Promise<void> {
+    const statusParam = queryString(req.query.status).trim();
+    let statuses: PoolQuestionStatus[] | undefined;
+    if (statusParam === "all") statuses = undefined;
+    else if ((["draft", "active", "paused", "archived"] as const).includes(statusParam as PoolQuestionStatus)) {
+      statuses = [statusParam as PoolQuestionStatus];
+    } else statuses = ["active", "draft"];
+
+    const topicTag = queryString(req.query.topic_tag).trim() || null;
+    const clientId = queryString(req.query.client_id).trim() || null;
+
+    const [questions, activeCount, clients, topicTags] = await Promise.all([
+      poolQuestionRepository.listWithStats({ statuses, topicTag, clientId }),
+      poolQuestionRepository.countActive(),
+      clientRepository.list().catch(() => [] as Awaited<ReturnType<typeof clientRepository.list>>),
+      poolQuestionRepository.listTopicTags(),
+    ]);
+
+    res.render("admin/pool-questions/index", {
+      title: "ついでスワイプ（設問プール）",
+      questions,
+      activeCount,
+      clients,
+      topicTags,
+      filter: { status: statusParam || "default", topicTag: topicTag ?? "", clientId: clientId ?? "" },
+      msg: queryString(req.query.msg) || null,
+      err: queryString(req.query.err) || null,
+    });
+  },
+
+  async newPoolQuestion(req: Request, res: Response): Promise<void> {
+    const [clients, attributeDefs, topicTags, activeCount] = await Promise.all([
+      clientRepository.list().catch(() => [] as Awaited<ReturnType<typeof clientRepository.list>>),
+      userAttributeRepository.listDefinitions().catch(() => []),
+      poolQuestionRepository.listTopicTags(),
+      poolQuestionRepository.countActive(),
+    ]);
+    res.render("admin/pool-questions/form", {
+      title: "ついでスワイプ 設問作成",
+      mode: "create",
+      question: null,
+      locked: false,
+      clients,
+      attributeDefs,
+      topicTags,
+      activeCount,
+      // 連続作成で維持する詳細設定（作成後に query で戻ってくる）
+      prefill: {
+        topic_tag: queryString(req.query.topic_tag),
+        client_id: queryString(req.query.client_id),
+        question_type: queryString(req.query.question_type) || "single_choice",
+        priority: queryString(req.query.priority) || "0",
+        reward_points: queryString(req.query.reward_points) || "1",
+        reask_after_days: queryString(req.query.reask_after_days),
+        starts_at: queryString(req.query.starts_at),
+        ends_at: queryString(req.query.ends_at),
+        attribute_key: queryString(req.query.attribute_key),
+        status: queryString(req.query.status) || "active",
+      },
+      created: queryString(req.query.created) === "1",
+      createdActiveCount: queryString(req.query.n) || null,
+      err: queryString(req.query.err) || null,
+    });
+  },
+
+  async createPoolQuestion(req: Request, res: Response): Promise<void> {
+    const b = req.body as Record<string, unknown>;
+    let input: PoolQuestionMutationInput;
+    try {
+      input = parsePoolQuestionInput(b, { defaultStatus: "active", parseContent: true });
+    } catch (error) {
+      // 同フォームに留まる方針に合わせ、エラーも new フォームへ戻す（詳細設定は維持）。
+      const p = new URLSearchParams();
+      p.set("err", error instanceof HttpError ? error.message : "作成に失敗しました。");
+      for (const k of ["topic_tag", "client_id", "question_type", "priority", "reward_points", "reask_after_days", "starts_at", "ends_at", "attribute_key", "status"]) {
+        const v = bodyString(b[k]).trim();
+        if (v) p.set(k, v);
+      }
+      res.redirect("/admin/pool-questions/new?" + p.toString());
+      return;
+    }
+
+    await poolQuestionRepository.create(input);
+    const activeCount = await poolQuestionRepository.countActive();
+
+    // 302 で一覧に戻さず同フォームへ。設問文/選択肢だけクリア、詳細設定は query で維持。
+    const p = new URLSearchParams();
+    p.set("created", "1");
+    p.set("n", String(activeCount));
+    if (input.topic_tag) p.set("topic_tag", input.topic_tag);
+    if (input.client_id) p.set("client_id", input.client_id);
+    p.set("question_type", input.question_type);
+    p.set("priority", String(input.priority));
+    p.set("reward_points", String(input.reward_points));
+    if (input.reask_after_days != null) p.set("reask_after_days", String(input.reask_after_days));
+    if (input.starts_at) p.set("starts_at", input.starts_at);
+    if (input.ends_at) p.set("ends_at", input.ends_at);
+    if (input.attribute_key) p.set("attribute_key", input.attribute_key);
+    p.set("status", input.status === "draft" ? "draft" : "active");
+    res.redirect("/admin/pool-questions/new?" + p.toString());
+  },
+
+  async editPoolQuestion(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    const [question, locked, clients, attributeDefs, topicTags] = await Promise.all([
+      poolQuestionRepository.getById(id),
+      poolQuestionRepository.hasAnswers(id),
+      clientRepository.list().catch(() => [] as Awaited<ReturnType<typeof clientRepository.list>>),
+      userAttributeRepository.listDefinitions().catch(() => []),
+      poolQuestionRepository.listTopicTags(),
+    ]);
+    res.render("admin/pool-questions/form", {
+      title: "ついでスワイプ 設問編集",
+      mode: "edit",
+      question,
+      locked,
+      clients,
+      attributeDefs,
+      topicTags,
+      activeCount: null,
+      prefill: null,
+      created: false,
+      createdActiveCount: null,
+      err: null,
+    });
+  },
+
+  async updatePoolQuestion(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    const b = req.body as Record<string, unknown>;
+    const [existing, locked] = await Promise.all([
+      poolQuestionRepository.getById(id),
+      poolQuestionRepository.hasAnswers(id),
+    ]);
+
+    let input: PoolQuestionMutationInput;
+    try {
+      input = parsePoolQuestionInput(b, { defaultStatus: existing.status, parseContent: !locked });
+    } catch (error) {
+      res.redirect(
+        `/admin/pool-questions/${id}/edit?err=` +
+          encodeURIComponent(error instanceof HttpError ? error.message : "更新に失敗しました。"),
+      );
+      return;
+    }
+
+    // 回答が付いた設問は設問文・選択肢・タイプを編集不可（回答の意味が変わるため）。
+    if (locked) {
+      input = {
+        ...input,
+        question_text: existing.question_text,
+        question_type: existing.question_type,
+        answer_options: existing.answer_options,
+      };
+    }
+    // status は編集フォームでは触らず、status ボタンで管理する（既存値を維持）。
+    input = { ...input, status: existing.status };
+
+    await poolQuestionRepository.update(id, input);
+    res.redirect("/admin/pool-questions?msg=" + encodeURIComponent("更新しました"));
+  },
+
+  async updatePoolQuestionStatus(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    const action = routeParam(req, "action");
+    const map: Record<string, PoolQuestionStatus> = {
+      activate: "active",
+      pause: "paused",
+      archive: "archived",
+    };
+    const status = map[action];
+    if (!status) throw new HttpError(400, "不正な操作です。");
+    await poolQuestionRepository.updateStatus(id, status);
+    res.redirect("/admin/pool-questions?msg=" + encodeURIComponent("ステータスを変更しました"));
+  },
+
+  async deletePoolQuestion(req: Request, res: Response): Promise<void> {
+    const id = routeParam(req, "id");
+    if (await poolQuestionRepository.hasAnswers(id)) {
+      res.redirect(
+        "/admin/pool-questions?err=" +
+          encodeURIComponent("回答が付いた設問は削除できません。archive（アーカイブ）してください。"),
+      );
+      return;
+    }
+    await poolQuestionRepository.delete(id);
+    res.redirect("/admin/pool-questions?msg=" + encodeURIComponent("削除しました"));
+  },
+
+  async newPoolQuestionsBulk(req: Request, res: Response): Promise<void> {
+    const [clients, topicTags] = await Promise.all([
+      clientRepository.list().catch(() => [] as Awaited<ReturnType<typeof clientRepository.list>>),
+      poolQuestionRepository.listTopicTags(),
+    ]);
+    res.render("admin/pool-questions/bulk", {
+      title: "ついでスワイプ まとめて追加",
+      clients,
+      topicTags,
+      err: queryString(req.query.err) || null,
+    });
+  },
+
+  async createPoolQuestionsBulk(req: Request, res: Response): Promise<void> {
+    const b = req.body as Record<string, unknown>;
+    const commonTopic = bodyString(b.topic_tag).trim() || null;
+    const commonClient = bodyString(b.client_id).trim() || null;
+    const status: PoolQuestionStatus = bodyString(b.status).trim() === "draft" ? "draft" : "active";
+
+    let rows: Array<{ question_text?: unknown; left?: unknown; right?: unknown }>;
+    try {
+      rows = JSON.parse(bodyString(b.questions_json) || "[]");
+    } catch {
+      res.redirect("/admin/pool-questions/bulk?err=" + encodeURIComponent("データ形式が不正です。"));
+      return;
+    }
+    if (!Array.isArray(rows) || rows.length === 0) {
+      res.redirect("/admin/pool-questions/bulk?err=" + encodeURIComponent("取り込む設問がありません。"));
+      return;
+    }
+
+    // 行ごとに検証し、1行でも不正なら1件も作成しない（部分作成しない）。
+    const inputs: PoolQuestionMutationInput[] = [];
+    for (const [i, r] of rows.entries()) {
+      const text = String(r.question_text ?? "").trim();
+      const left = String(r.left ?? "").trim();
+      const right = String(r.right ?? "").trim();
+      if (!text || !left || !right) {
+        res.redirect(
+          "/admin/pool-questions/bulk?err=" +
+            encodeURIComponent(`${i + 1}行目が不正です（設問文・左・右すべて必要）。`),
+        );
+        return;
+      }
+      inputs.push({
+        question_text: text,
+        question_type: "single_choice",
+        answer_options: [
+          { value: "opt_1", label: left },
+          { value: "opt_2", label: right },
+        ],
+        topic_tag: commonTopic,
+        client_id: commonClient,
+        attribute_key: null,
+        status,
+        priority: 0,
+        reward_points: 1,
+        reask_after_days: null,
+        starts_at: null,
+        ends_at: null,
+      });
+    }
+
+    await poolQuestionRepository.createMany(inputs);
+    res.redirect("/admin/pool-questions?msg=" + encodeURIComponent(`${inputs.length}件を追加しました`));
   }
 };
 

@@ -1,0 +1,239 @@
+<%- include("../../partials/header", { title }) %>
+<%# 回答者に見えるパターンを実レンダラで描くためのライブプレビュー用（自己完結IIFE）。 %>
+<%- include("../../partials/answer-ui") %>
+
+<%
+  const isEdit = mode === 'edit';
+  // 初期値: 編集は question から、作成は prefill（連続作成で維持される詳細設定）から。
+  const v = {
+    question_text: isEdit ? (question.question_text || '') : '',
+    question_type: isEdit ? question.question_type : (prefill.question_type || 'single_choice'),
+    topic_tag: isEdit ? (question.topic_tag || '') : (prefill.topic_tag || ''),
+    client_id: isEdit ? (question.client_id || '') : (prefill.client_id || ''),
+    priority: isEdit ? question.priority : (prefill.priority || '0'),
+    reward_points: isEdit ? question.reward_points : (prefill.reward_points || '1'),
+    reask_after_days: isEdit ? (question.reask_after_days ?? '') : (prefill.reask_after_days || ''),
+    starts_at: isEdit ? (question.starts_at ? String(question.starts_at).slice(0,16) : '') : (prefill.starts_at || ''),
+    ends_at: isEdit ? (question.ends_at ? String(question.ends_at).slice(0,16) : '') : (prefill.ends_at || ''),
+    attribute_key: isEdit ? (question.attribute_key || '') : (prefill.attribute_key || ''),
+    status: isEdit ? question.status : (prefill.status || 'active'),
+  };
+  const existingOptions = isEdit && Array.isArray(question.answer_options) ? question.answer_options : [];
+%>
+
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:1rem">
+  <a href="/admin/pool-questions" class="btn-secondary">← 一覧に戻る</a>
+  <h2><%= isEdit ? '設問を編集' : '設問を作成' %></h2>
+</div>
+
+<% if (err) { %><div class="card" style="background:#fdecea;border-left:4px solid #c0392b;margin-bottom:1rem"><p style="margin:0;color:#c0392b"><%= err %></p></div><% } %>
+<% if (created) { %><div class="card" style="background:#eef7f3;border-left:4px solid #2ca87a;margin-bottom:1rem"><p style="margin:0">追加しました<% if (createdActiveCount) { %>（公開中 在庫 <%= createdActiveCount %> 件）<% } %>。続けて同じテーマの設問を入れられます。</p></div><% } %>
+
+<% if (isEdit && locked) { %>
+<div class="card" style="background:#fdf3e7;border-left:4px solid #e67e22;margin-bottom:1rem">
+  <p style="margin:0;font-size:13px">この設問には既に回答が付いています。<strong>設問文・選択肢・タイプは編集できません</strong>（回答の意味が変わり集計を読み違えるため）。文面を変えたい場合は<strong>アーカイブ→新規作成</strong>してください。</p>
+</div>
+<% } %>
+
+<form method="post" action="<%= isEdit ? '/admin/pool-questions/' + question.id : '/admin/pool-questions' %>">
+<div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+
+  <!-- メイン -->
+  <div style="flex:1 1 420px;min-width:320px">
+    <div class="card" style="margin-bottom:1rem">
+      <h3>設問</h3>
+
+      <div class="form-group">
+        <label>設問文 <span style="color:red">*</span></label>
+        <input type="text" id="f_text" name="question_text" value="<%= v.question_text %>"
+               placeholder="朝はパン派？ごはん派？" <%= locked ? 'disabled' : 'required' %>>
+      </div>
+
+      <div id="choicesBlock">
+        <label>選択肢（2択）<span style="color:red">*</span></label>
+        <p class="muted" style="font-size:12px;margin:2px 0 8px">左＝スワイプ左 / 右＝スワイプ右。value は自動採番されます。</p>
+        <% for (let i = 1; i <= 4; i++) {
+             const opt = existingOptions[i-1];
+             const show = i <= 2 || (opt && opt.label);
+        %>
+          <div class="opt-row" data-i="<%= i %>" style="margin-bottom:6px;<%= show ? '' : 'display:none' %>">
+            <input type="text" class="opt-input" name="option_<%= i %>"
+                   value="<%= opt ? opt.label : '' %>"
+                   placeholder="<%= i === 1 ? '左の選択肢（例: パン）' : i === 2 ? '右の選択肢（例: ごはん）' : ('選択肢' + i) %>"
+                   <%= locked ? 'disabled' : '' %>>
+          </div>
+        <% } %>
+        <button type="button" id="addChoiceBtn" class="btn-secondary" style="padding:4px 12px;font-size:12px;<%= locked ? 'display:none' : '' %>">＋ 選択肢を追加（最大4）</button>
+        <p class="muted" style="font-size:11px;margin-top:6px">3〜4択にすると横スクロールのカード（carousel）表示になります（プレビュー参照）。</p>
+      </div>
+
+      <div class="form-group" style="margin-top:1rem">
+        <label>トピックタグ</label>
+        <input type="text" id="f_topic" name="topic_tag" list="topicTags" value="<%= v.topic_tag %>" placeholder="例: food_pref">
+        <datalist id="topicTags"><% for (const t of topicTags) { %><option value="<%= t %>"></option><% } %></datalist>
+        <p class="muted" style="font-size:11px;margin-top:2px">整合性判定・志向集計のキーになります（実質推奨）。</p>
+      </div>
+
+      <div class="form-group">
+        <label>企業</label>
+        <select name="client_id">
+          <option value="">運営設問</option>
+          <% for (const c of clients) { %>
+            <option value="<%= c.id %>" <%= v.client_id === c.id ? 'selected' : '' %>><%= c.name %></option>
+          <% } %>
+        </select>
+      </div>
+    </div>
+
+    <!-- 詳細設定（アコーディオン） -->
+    <details class="card" style="margin-bottom:1rem" <%= isEdit ? 'open' : '' %>>
+      <summary style="cursor:pointer;font-weight:700">詳細設定</summary>
+      <div style="margin-top:12px">
+        <div class="form-group">
+          <label>設問タイプ</label>
+          <select id="f_type" name="question_type" <%= locked ? 'disabled' : '' %>>
+            <option value="single_choice" <%= v.question_type === 'single_choice' ? 'selected' : '' %>>選択肢</option>
+            <option value="scale" <%= v.question_type === 'scale' ? 'selected' : '' %>>尺度（1〜5）</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <div class="form-group" style="flex:1 1 120px">
+            <label>優先度（priority）</label>
+            <input type="number" name="priority" value="<%= v.priority %>" step="1">
+          </div>
+          <div class="form-group" style="flex:1 1 120px">
+            <label>報酬（0〜3pt）</label>
+            <input type="number" id="f_reward" name="reward_points" value="<%= v.reward_points %>" min="0" max="3" step="1">
+          </div>
+          <div class="form-group" style="flex:1 1 140px">
+            <label>再出題間隔（日）</label>
+            <input type="number" name="reask_after_days" value="<%= v.reask_after_days %>" min="1" step="1" placeholder="空=再出題しない">
+          </div>
+        </div>
+        <p class="muted" style="font-size:11px;margin:0 0 10px">再出題間隔: N日後に同じ質問を再度出し、回答の一致を品質判定の素材にします。</p>
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <div class="form-group" style="flex:1 1 180px">
+            <label>掲載開始</label>
+            <input type="datetime-local" name="starts_at" value="<%= v.starts_at %>">
+          </div>
+          <div class="form-group" style="flex:1 1 180px">
+            <label>掲載終了</label>
+            <input type="datetime-local" name="ends_at" value="<%= v.ends_at %>">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>attribute_key（将来用）</label>
+          <select name="attribute_key">
+            <option value="">なし</option>
+            <% for (const d of attributeDefs) { %>
+              <option value="<%= d.attr_key %>" <%= v.attribute_key === d.attr_key ? 'selected' : '' %>><%= d.label %>（<%= d.attr_key %>）</option>
+            <% } %>
+          </select>
+        </div>
+        <% if (!isEdit) { %>
+          <div class="form-group">
+            <label>作成時ステータス</label>
+            <label style="font-weight:400;margin-right:16px"><input type="radio" name="status" value="active" <%= v.status !== 'draft' ? 'checked' : '' %>> すぐ公開（active）</label>
+            <label style="font-weight:400"><input type="radio" name="status" value="draft" <%= v.status === 'draft' ? 'checked' : '' %>> 下書き</label>
+          </div>
+        <% } %>
+      </div>
+    </details>
+
+    <div style="display:flex;gap:8px">
+      <button type="submit" class="btn"><%= isEdit ? '更新する' : '追加する（続けて入力できます）' %></button>
+      <a href="/admin/pool-questions" class="btn-secondary">一覧へ戻る</a>
+    </div>
+  </div>
+
+  <!-- プレビュー（スマホ幅・実レンダラ） -->
+  <div style="flex:0 0 300px;min-width:280px">
+    <div class="card" style="position:sticky;top:12px">
+      <h3 style="margin-top:0">プレビュー</h3>
+      <p class="muted" style="font-size:11px">回答者に見える表示（サーバー権威と同じレンダラ）。本番の最終解決はサーバー側で行います。</p>
+      <div style="max-width:320px;margin:0 auto;background:#f4f7f6;border-radius:14px;padding:14px">
+        <p id="pv_text" style="font-size:15px;font-weight:800;line-height:1.5;color:#1a2f2a;margin:0 0 10px">設問文を入力してください</p>
+        <div id="pv_render"></div>
+        <p id="pv_pattern" class="muted" style="font-size:11px;text-align:right;margin-top:6px"></p>
+      </div>
+    </div>
+  </div>
+
+</div>
+</form>
+
+<script>
+(() => {
+  'use strict';
+  const textEl = document.getElementById('f_text');
+  const typeEl = document.getElementById('f_type');
+  const choicesBlock = document.getElementById('choicesBlock');
+  const addBtn = document.getElementById('addChoiceBtn');
+  const pvText = document.getElementById('pv_text');
+  const pvRender = document.getElementById('pv_render');
+  const pvPattern = document.getElementById('pv_pattern');
+  const patternLabel = { swipe_card:'スワイプ2択', carousel:'カルーセル', face_scale:'フェイス尺度', tap_cards:'タップ選択' };
+
+  function optRows() { return [].slice.call(choicesBlock.querySelectorAll('.opt-row')); }
+
+  function currentChoices() {
+    const labels = optRows()
+      .filter((r) => r.style.display !== 'none')
+      .map((r) => r.querySelector('.opt-input').value.trim())
+      .filter(Boolean);
+    return labels.map((label, i) => ({ value: 'opt_' + (i + 1), label }));
+  }
+
+  // casual プリセットのサーバー解決を JS で再現（src/lib/answerPresentation.ts）:
+  //   scale→face_scale / 選択肢<=2→swipe_card / >2→carousel。
+  function resolvePattern(type, n) {
+    if (type === 'scale') return 'face_scale';
+    if (n <= 2) return 'swipe_card';
+    return 'carousel';
+  }
+
+  function scaleChoices() {
+    return [1,2,3,4,5].map((x) => ({ value: String(x), label: String(x) }));
+  }
+
+  function renderPreview() {
+    const type = typeEl ? typeEl.value : 'single_choice';
+    const isScale = type === 'scale';
+    // scale のときは選択肢入力を隠す
+    if (choicesBlock) {
+      const inputsWrap = choicesBlock.querySelectorAll('.opt-row, #addChoiceBtn');
+      choicesBlock.style.opacity = isScale ? '0.4' : '1';
+    }
+    pvText.textContent = (textEl && textEl.value.trim()) || '設問文を入力してください';
+
+    const choices = isScale ? scaleChoices() : currentChoices();
+    if (!isScale && choices.length < 2) {
+      pvRender.innerHTML = '<p class="muted" style="font-size:12px">選択肢を2つ以上入力するとプレビューが出ます。</p>';
+      pvPattern.textContent = '';
+      return;
+    }
+    const pattern = resolvePattern(type, choices.length);
+    const html = AnswerUI.build({ question_code: 'preview' }, choices, pattern);
+    pvRender.innerHTML = html || '<p class="muted" style="font-size:12px">このパターンはプレビュー対象外です。</p>';
+    pvPattern.textContent = patternLabel[pattern] ? '表示: ' + patternLabel[pattern] : '';
+  }
+
+  // 「選択肢を追加」で次の非表示 opt-row を出す（最大4）。
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      const hidden = optRows().find((r) => r.style.display === 'none');
+      if (hidden) hidden.style.display = '';
+      if (!optRows().some((r) => r.style.display === 'none')) addBtn.style.display = 'none';
+      renderPreview();
+    });
+  }
+
+  // 入力のたびにプレビュー更新
+  const wrap = document.querySelector('form');
+  if (wrap) wrap.addEventListener('input', renderPreview);
+  if (typeEl) typeEl.addEventListener('change', renderPreview);
+  renderPreview();
+})();
+</script>
+
+<%- include("../../partials/footer") %>

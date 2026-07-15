@@ -275,6 +275,17 @@ adminRoutes.post("/daily-surveys/:surveyId/questions", asyncHandler(adminControl
 adminRoutes.post("/daily-surveys/:surveyId/questions/:questionId", asyncHandler(adminController.updateDailySurveyQuestion));
 adminRoutes.post("/daily-surveys/:surveyId/questions/:questionId/delete", asyncHandler(adminController.deleteDailySurveyQuestion));
 
+// ついでスワイプ（設問プール）管理。静的セグメント（new / bulk）を :id より先に置く。
+adminRoutes.get("/pool-questions", asyncHandler(adminController.poolQuestions));
+adminRoutes.get("/pool-questions/new", asyncHandler(adminController.newPoolQuestion));
+adminRoutes.get("/pool-questions/bulk", asyncHandler(adminController.newPoolQuestionsBulk));
+adminRoutes.post("/pool-questions/bulk", asyncHandler(adminController.createPoolQuestionsBulk));
+adminRoutes.post("/pool-questions", asyncHandler(adminController.createPoolQuestion));
+adminRoutes.get("/pool-questions/:id/edit", asyncHandler(adminController.editPoolQuestion));
+adminRoutes.post("/pool-questions/:id/status/:action", asyncHandler(adminController.updatePoolQuestionStatus));
+adminRoutes.post("/pool-questions/:id/delete", asyncHandler(adminController.deletePoolQuestion));
+adminRoutes.post("/pool-questions/:id", asyncHandler(adminController.updatePoolQuestion));
+
 // AI 不足属性自動判定 API
 adminRoutes.get("/api/missing-attributes/coverage", asyncHandler(adminController.apiMissingAttributeCoverage));
 adminRoutes.get("/api/missing-attributes/suggest", asyncHandler(adminController.apiMissingAttributeSuggest));

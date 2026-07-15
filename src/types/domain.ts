@@ -1264,7 +1264,8 @@ export type UserPointTransactionType =
   | "redemption"
   | "exchange_request"
   | "exchange_cancel"
-  | "exchange_refund";
+  | "exchange_refund"
+  | "pool_question";
 
 export interface UserPoints {
   line_user_id: string;

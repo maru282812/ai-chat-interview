@@ -1,0 +1,128 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+  const statusLabel = { draft:'下書き', active:'公開中', paused:'停止中', archived:'アーカイブ' };
+  const statusClass = { draft:'', active:'badge-green', paused:'badge-yellow', archived:'badge-gray' };
+  function fmtDate(v) { return v ? new Date(v).toLocaleDateString('ja-JP') : ''; }
+%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>ついでスワイプ（設問プール）</h2>
+  <div style="display:flex;gap:8px;align-items:center">
+    <a href="/admin/pool-questions/bulk" class="btn-secondary">まとめて追加</a>
+    <a href="/admin/pool-questions/new" class="btn">＋ 新規作成</a>
+  </div>
+</div>
+
+<% if (msg) { %><div class="card" style="background:#eef7f3;border-left:4px solid #2ca87a;margin-bottom:1rem"><p style="margin:0"><%= msg %></p></div><% } %>
+<% if (err) { %><div class="card" style="background:#fdecea;border-left:4px solid #c0392b;margin-bottom:1rem"><p style="margin:0;color:#c0392b"><%= err %></p></div><% } %>
+
+<!-- 在庫サマリ: CAP 3問/日 × アクティブユーザーに対し在庫が細っていないか。 -->
+<div class="card" style="margin-bottom:1rem;<%= activeCount < 10 ? 'background:#fdf3e7;border-left:4px solid #e67e22' : 'background:#f7fbf9;border-left:4px solid #2ca87a' %>">
+  <p style="margin:0;font-size:14px">
+    公開中（active）の設問 <strong style="font-size:18px"><%= activeCount %></strong> 件
+    <% if (activeCount < 10) { %>
+      <span style="color:#c0392b;font-weight:700;margin-left:8px">⚠ 在庫が少なくなっています（毎日最大3問消費。10件を切ると出題が枯れやすい）</span>
+    <% } %>
+  </p>
+</div>
+
+<!-- フィルタ -->
+<form method="get" action="/admin/pool-questions" class="card" style="margin-bottom:1rem;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+  <div class="form-group" style="margin:0">
+    <label>ステータス</label>
+    <select name="status">
+      <option value="default" <%= filter.status === 'default' ? 'selected' : '' %>>公開中＋下書き（既定）</option>
+      <option value="all" <%= filter.status === 'all' ? 'selected' : '' %>>すべて</option>
+      <% for (const s of ['active','draft','paused','archived']) { %>
+        <option value="<%= s %>" <%= filter.status === s ? 'selected' : '' %>><%= statusLabel[s] %></option>
+      <% } %>
+    </select>
+  </div>
+  <div class="form-group" style="margin:0">
+    <label>トピックタグ</label>
+    <input type="text" name="topic_tag" list="topicTags" value="<%= filter.topicTag %>" placeholder="すべて">
+    <datalist id="topicTags"><% for (const t of topicTags) { %><option value="<%= t %>"></option><% } %></datalist>
+  </div>
+  <div class="form-group" style="margin:0">
+    <label>企業</label>
+    <select name="client_id">
+      <option value="">すべて</option>
+      <% for (const c of clients) { %>
+        <option value="<%= c.id %>" <%= filter.clientId === c.id ? 'selected' : '' %>><%= c.name %></option>
+      <% } %>
+    </select>
+  </div>
+  <button type="submit" class="btn-secondary">絞り込む</button>
+  <a href="/admin/pool-questions" class="btn-secondary" style="background:#eee">クリア</a>
+</form>
+
+<% if (questions.length === 0) { %>
+  <div class="card" style="text-align:center;padding:1.5rem"><p class="muted" style="margin:0">設問がありません</p></div>
+<% } else { %>
+<table>
+  <thead>
+    <tr>
+      <th>設問文</th>
+      <th>トピック</th>
+      <th>企業</th>
+      <th>状態</th>
+      <th style="text-align:center">優先</th>
+      <th style="text-align:center">報酬</th>
+      <th style="text-align:center">出題 / 回答 / スキップ</th>
+      <th>期間</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const q of questions) { %>
+      <%
+        const opts = Array.isArray(q.answer_options) ? q.answer_options : [];
+        const labelPair = opts.map(o => o.label).join(' / ');
+        const skipRate = q.served_count > 0 ? Math.round((q.skipped_count / q.served_count) * 100) : 0;
+      %>
+      <tr>
+        <td>
+          <a href="/admin/pool-questions/<%= q.id %>/edit"><strong><%= q.question_text %></strong></a>
+          <% if (labelPair) { %><br><span class="muted" style="font-size:12px"><%= labelPair %></span><% } %>
+          <% if (q.question_type === 'scale') { %><br><span class="muted" style="font-size:12px">尺度 1〜5</span><% } %>
+        </td>
+        <td><%= q.topic_tag || '—' %></td>
+        <td><%= q.client_name || '運営' %></td>
+        <td><span class="badge <%= statusClass[q.status] || '' %>"><%= statusLabel[q.status] || q.status %></span></td>
+        <td style="text-align:center"><%= q.priority %></td>
+        <td style="text-align:center"><%= q.reward_points %>pt</td>
+        <td style="text-align:center">
+          <%= q.served_count %> / <%= q.answered_count %> / <%= q.skipped_count %>
+          <% if (q.served_count > 0) { %><br><span class="muted" style="font-size:11px">スキップ率 <%= skipRate %>%</span><% } %>
+        </td>
+        <td style="font-size:12px" class="muted">
+          <%= q.starts_at || q.ends_at ? (fmtDate(q.starts_at) || '〜') + ' 〜 ' + (fmtDate(q.ends_at) || '') : '無期限' %>
+        </td>
+        <td style="white-space:nowrap">
+          <% if (q.status !== 'active') { %>
+            <form method="post" action="/admin/pool-questions/<%= q.id %>/status/activate" style="display:inline">
+              <button type="submit" class="btn" style="padding:2px 8px;font-size:12px">公開</button>
+            </form>
+          <% } else { %>
+            <form method="post" action="/admin/pool-questions/<%= q.id %>/status/pause" style="display:inline">
+              <button type="submit" class="btn-secondary" style="padding:2px 8px;font-size:12px">停止</button>
+            </form>
+          <% } %>
+          <a href="/admin/pool-questions/<%= q.id %>/edit" style="margin-left:6px">編集</a>
+          <form method="post" action="/admin/pool-questions/<%= q.id %>/status/archive" style="display:inline;margin-left:6px"
+                onsubmit="return confirm('この設問をアーカイブしますか？')">
+            <button type="submit" class="btn-secondary" style="padding:2px 8px;font-size:12px">アーカイブ</button>
+          </form>
+          <form method="post" action="/admin/pool-questions/<%= q.id %>/delete" style="display:inline;margin-left:6px"
+                onsubmit="return confirm('「<%= q.question_text %>」を削除しますか？（回答が付いていると削除できません）')">
+            <button type="submit" class="btn-danger" style="padding:2px 8px;font-size:12px">削除</button>
+          </form>
+        </td>
+      </tr>
+    <% } %>
+  </tbody>
+</table>
+<% } %>
+
+<%- include("../../partials/footer") %>

@@ -50,6 +50,8 @@ import { storeEntryService } from "../services/storeEntryService";
 import { applicationService, isRecruitClosed } from "../services/applicationService";
 import { projectApplicationRepository } from "../repositories/projectApplicationRepository";
 import { dailySurveyRepository } from "../repositories/dailySurveyRepository";
+import { poolQuestionRepository } from "../repositories/poolQuestionRepository";
+import { poolQuestionService } from "../services/poolQuestionService";
 import { userStreakService } from "../services/userStreakService";
 import { userBadgeService } from "../services/userBadgeService";
 import { userPointService } from "../services/userPointService";
@@ -2261,6 +2263,81 @@ export const liffController = {
     });
   },
 
+  // ── ついでスワイプ（設問プール）────────────────────────────────
+  // 案件一覧に埋め込む低ステークス2択。信頼スコア（整合性判定）の素材集め。
+  // docs/spec-pool-swipe-questions.md。認証・日付・ポイントの流儀はデイリーと同じ。
+
+  /**
+   * 今この人に出すプール設問（最大 POOL_DAILY_CAP 件）。サーバーが選定する。
+   * topic_tag / client_id は返さない（回答者に判定利用・出所を悟らせない）。
+   */
+  async getTodayPoolQuestions(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const items = await poolQuestionService.getTodayForUser(verifiedUser.userId);
+    res.json({ ok: true, items });
+  },
+
+  async submitPoolQuestionAnswer(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const questionId = stringValue(req.params.questionId).trim();
+    const body = req.body as Record<string, unknown>;
+
+    if (!questionId || !isUuid(questionId)) throw new HttpError(404, "設問が見つかりません。");
+
+    const exposureId = stringValue(body.exposureId).trim();
+    if (!exposureId || !isUuid(exposureId)) throw new HttpError(400, "exposureId が不正です。");
+    if (body.answerValue === undefined || body.answerValue === null) {
+      throw new HttpError(400, "回答が含まれていません。");
+    }
+    const answerMs =
+      typeof body.answerMs === "number" && Number.isFinite(body.answerMs)
+        ? Math.min(600000, Math.max(0, Math.round(body.answerMs)))
+        : null;
+
+    // 所有者検証（400/403/409 の順で厳格に）。他人の exposureId で
+    // ポイント参照先をすり替える攻撃を遮断する（deliveryId 検証の前例踏襲）。
+    const exposure = await poolQuestionRepository.getExposureById(exposureId);
+    if (!exposure || exposure.question_id !== questionId || exposure.line_user_id !== verifiedUser.userId) {
+      throw new HttpError(403, "この回答を受け付けられません。");
+    }
+    if (exposure.status !== "served") {
+      throw new HttpError(409, "この設問はすでに回答またはスキップ済みです。");
+    }
+
+    const question = await poolQuestionRepository.getById(questionId);
+    const { pointsAwarded } = await poolQuestionService.recordAnswer({
+      lineUserId: verifiedUser.userId,
+      question,
+      exposureId,
+      answerValue: body.answerValue,
+      answerMs,
+    });
+
+    const pointStatus = await pointStatusService.getStatus(verifiedUser.userId);
+    res.json({ ok: true, pointsAwarded, pointStatus });
+  },
+
+  async skipPoolQuestion(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const questionId = stringValue(req.params.questionId).trim();
+    const body = req.body as Record<string, unknown>;
+
+    if (!questionId || !isUuid(questionId)) throw new HttpError(404, "設問が見つかりません。");
+    const exposureId = stringValue(body.exposureId).trim();
+    if (!exposureId || !isUuid(exposureId)) throw new HttpError(400, "exposureId が不正です。");
+
+    const exposure = await poolQuestionRepository.getExposureById(exposureId);
+    if (!exposure || exposure.question_id !== questionId || exposure.line_user_id !== verifiedUser.userId) {
+      throw new HttpError(403, "この操作を受け付けられません。");
+    }
+    if (exposure.status !== "served") {
+      throw new HttpError(409, "この設問はすでに回答またはスキップ済みです。");
+    }
+
+    await poolQuestionService.skip(exposureId);
+    res.json({ ok: true });
+  },
+
   async submitContact(req: Request, res: Response): Promise<void> {
     const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
     const body = req.body as Record<string, unknown>;
@@ -2429,6 +2506,7 @@ export const liffController = {
         projectsDataUrl: "/liff/projects-data",
         projectDetailBaseUrl: "/liff/projects",
         dailyTodayUrl: "/liff/daily-surveys-today",
+        poolQuestionsTodayUrl: "/liff/pool-questions-today",
         savedProjectsUrl: "/liff/saved-projects",
         interactionsUrl: "/liff/interactions",
         mypageUrl: "/liff/mypage",

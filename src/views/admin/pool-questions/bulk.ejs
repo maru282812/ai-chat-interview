@@ -1,0 +1,129 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:1rem">
+  <a href="/admin/pool-questions" class="btn-secondary">← 一覧に戻る</a>
+  <h2>まとめて追加</h2>
+</div>
+
+<% if (err) { %><div class="card" style="background:#fdecea;border-left:4px solid #c0392b;margin-bottom:1rem"><p style="margin:0;color:#c0392b"><%= err %></p></div><% } %>
+
+<div class="card" style="margin-bottom:1rem">
+  <h3>共通設定（全行に適用）</h3>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+    <div class="form-group" style="margin:0">
+      <label>トピックタグ</label>
+      <input type="text" id="c_topic" list="topicTags" placeholder="例: food_pref">
+      <datalist id="topicTags"><% for (const t of topicTags) { %><option value="<%= t %>"></option><% } %></datalist>
+    </div>
+    <div class="form-group" style="margin:0">
+      <label>企業</label>
+      <select id="c_client">
+        <option value="">運営設問</option>
+        <% for (const c of clients) { %><option value="<%= c.id %>"><%= c.name %></option><% } %>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0">
+      <label>作成時ステータス</label>
+      <select id="c_status">
+        <option value="active">すぐ公開（active）</option>
+        <option value="draft">下書き</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
+  <h3>設問を貼り付け</h3>
+  <p class="muted" style="font-size:12px;margin-bottom:8px">1行1問。<code>設問文 | 左選択肢 | 右選択肢</code> の形式（区切りは半角/全角の縦棒どちらでも可）。</p>
+  <textarea id="pasteArea" rows="8" style="width:100%;font-family:monospace;font-size:13px"
+            placeholder="朝はパン派？ごはん派？ | パン | ごはん
+犬派？猫派？ | 犬 | 猫"></textarea>
+  <div style="margin-top:8px">
+    <button type="button" id="importBtn" class="btn-secondary">取り込む</button>
+  </div>
+</div>
+
+<div class="card" id="previewCard" style="margin-bottom:1rem;display:none">
+  <h3>取り込み内容（<span id="okCount">0</span>件）</h3>
+  <table>
+    <thead><tr><th>#</th><th>設問文</th><th>左</th><th>右</th><th></th></tr></thead>
+    <tbody id="rowsBody"></tbody>
+  </table>
+
+  <form method="post" action="/admin/pool-questions/bulk" id="bulkForm" style="margin-top:12px" onsubmit="return beforeBulkSubmit()">
+    <input type="hidden" name="topic_tag" id="h_topic">
+    <input type="hidden" name="client_id" id="h_client">
+    <input type="hidden" name="status" id="h_status">
+    <input type="hidden" name="questions_json" id="h_json">
+    <button type="submit" class="btn" id="submitBtn">まとめて作成</button>
+    <span class="muted" id="submitNote" style="font-size:12px;margin-left:8px"></span>
+  </form>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  let rows = []; // { question_text, left, right, error }
+
+  function esc(v) {
+    return String(v ?? '').replace(/[&<>"']/g, (c) => (
+      { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  function parseLines(text) {
+    return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const parts = line.split(/[|｜]/).map((s) => s.trim());
+      const [question_text, left, right] = [parts[0] || '', parts[1] || '', parts[2] || ''];
+      let error = '';
+      if (!question_text || !left || !right) error = '設問文・左・右すべて必要です';
+      else if (parts.length > 3) error = '区切りが多すぎます（縦棒は2つまで）';
+      return { question_text, left, right, error };
+    });
+  }
+
+  function render() {
+    const body = document.getElementById('rowsBody');
+    const okCount = rows.filter((r) => !r.error).length;
+    document.getElementById('okCount').textContent = String(okCount);
+    body.innerHTML = rows.map((r, i) => (
+      '<tr style="' + (r.error ? 'background:#fdecea' : '') + '">' +
+      '<td>' + (i + 1) + '</td>' +
+      '<td>' + esc(r.question_text) + (r.error ? '<br><span style="color:#c0392b;font-size:11px">' + esc(r.error) + '</span>' : '') + '</td>' +
+      '<td>' + esc(r.left) + '</td>' +
+      '<td>' + esc(r.right) + '</td>' +
+      '<td><button type="button" class="btn-danger" style="padding:2px 8px;font-size:12px" data-del="' + i + '">削除</button></td>' +
+      '</tr>'
+    )).join('');
+    document.getElementById('previewCard').style.display = rows.length ? '' : 'none';
+
+    const hasError = rows.some((r) => r.error);
+    const submitBtn = document.getElementById('submitBtn');
+    submitBtn.disabled = hasError || okCount === 0;
+    document.getElementById('submitNote').textContent =
+      hasError ? '赤い行を直すか削除してください（1行でも不正だと作成できません）。' : '';
+  }
+
+  document.getElementById('importBtn').addEventListener('click', () => {
+    rows = parseLines(document.getElementById('pasteArea').value);
+    render();
+  });
+
+  document.getElementById('rowsBody').addEventListener('click', (e) => {
+    const del = e.target.getAttribute && e.target.getAttribute('data-del');
+    if (del != null) { rows.splice(Number(del), 1); render(); }
+  });
+
+  window.beforeBulkSubmit = function () {
+    if (rows.some((r) => r.error) || rows.length === 0) return false;
+    document.getElementById('h_topic').value = document.getElementById('c_topic').value;
+    document.getElementById('h_client').value = document.getElementById('c_client').value;
+    document.getElementById('h_status').value = document.getElementById('c_status').value;
+    document.getElementById('h_json').value = JSON.stringify(
+      rows.map((r) => ({ question_text: r.question_text, left: r.left, right: r.right }))
+    );
+    return true;
+  };
+})();
+</script>
+
+<%- include("../../partials/footer") %>
