@@ -8,6 +8,8 @@
     <%- include('../partials/liff-auth') %>
     <link rel="stylesheet" href="/public/hibi.css" />
     <script src="/public/rank-icons.js"></script>
+    <%# 昇格演出（共通パーシャル。rank-icons.js の後に読み込む） %>
+    <%- include('../partials/rank-celebration') %>
     <%# 今日の1問（共通パーシャル。answer-ui もこの中で読み込まれる） %>
     <%- include('../partials/daily-today-card') %>
     <style>
@@ -106,6 +108,8 @@
       let allProjects = [];
       let filter = 'all';
       let searchText = '';
+      // 直近描画したランク状態。回答確定後に旧→新を比べて昇格演出を出すために保持する。
+      let lastPointStatus = null;
       const SORTS = [
         { key: 'new',      label: '⇅ 新着順' },
         { key: 'reward',   label: '⇅ 報酬が高い順' },
@@ -256,6 +260,7 @@
       function renderPointCard(status, gained) {
         const el = document.getElementById('point-card');
         if (!el || !status) return;
+        lastPointStatus = status;
 
         const rankName = status.rank_name || 'ブロンズ';
         const tier = status.tier || null;
@@ -327,7 +332,13 @@
             url: d.dailyTodayUrl,
             onAnswered: (result) => {
               const gained = (result.pointsAwarded ?? 0) + (result.streakBonusAwarded ?? 0);
+              // 昇格判定は「回答前の状態(prev)」と「付与後の状態(result.pointStatus)」で行う。
+              // renderPointCard が lastPointStatus を上書きするので、その前に prev を退避する。
+              const prev = lastPointStatus;
               renderPointCard(result.pointStatus, gained);
+              try {
+                if (window.RankCelebration) RankCelebration.maybePlay(prev, result.pointStatus);
+              } catch (e) { console.error('rank celebration failed', e); }
             },
           });
 

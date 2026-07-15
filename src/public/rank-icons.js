@@ -20,6 +20,15 @@
     master:   { base: "#9A63E6", light: "#D3B6F7", dark: "#5C3390" }
   };
   var GOLD = { base: "#F5C64C", light: "#FDE9A6", dark: "#A9760F" };
+  // 七宝（エナメル）の地色。金属リムを明るく、地を深くして紋章（金属色）を象嵌のように浮かせる。
+  var ENAMEL = {
+    bronze:   { mid: "#6A3D18", deep: "#331D0B" },
+    silver:   { mid: "#3B4556", deep: "#212836" },
+    gold:     { mid: "#5A4008", deep: "#2C1E03" },
+    platinum: { mid: "#0F544C", deep: "#062E29" },
+    emerald:  { mid: "#0F5533", deep: "#052E1B" },
+    diamond:  { mid: "#1C477F", deep: "#0B2450" }
+  };
   var LEAF = "M0 0 C 3.4 -2.4, 3.4 -8, 0 -11 C -3.4 -8, -3.4 -2.4, 0 0 Z";
 
   var _seq = 0;
@@ -85,6 +94,42 @@
       '<radialGradient id="' + gid + '" cx="36%" cy="30%" r="72%"><stop offset="0" stop-color="' + r.light + '"/><stop offset="1" stop-color="' + r.base + '"/></radialGradient>' +
       '<linearGradient id="' + rid + '" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="' + r.base + '"/><stop offset="1" stop-color="' + r.light + '"/></linearGradient>' +
       '</defs>' + wreathMarkup(r, SPEC.n, SPEC.a0, SPEC.a1, rid) + centerEmblem(r, tier, gid) + "</svg></span>";
+  }
+
+  // ── メダリオン（ブロンズ〜ダイヤ）──
+  // 現行の月桂冠紋章（wreathMarkup + centerEmblem）はそのまま流用し、その周りに
+  // 「鋳造された一枚」の器を与える：金属リム＋ミリング＋七宝地の窪み＋浮き彫りの陰影＋磨かれた光沢。
+  // 小サイズ（<48px）ではミリング等の微細ディテールを省いて視認性を優先する。
+  function badgeCoin(rankCode, tier, size) {
+    var r = RANK_COLORS[rankCode] || RANK_COLORS.bronze;
+    var en = ENAMEL[rankCode] || ENAMEL.bronze;
+    var small = size < 48;
+    var rimG = uid(), fldG = uid(), bevG = uid(), specG = uid(), gid = uid(), rid = uid();
+    var SPEC = { 1: { n: 5, a0: 130, a1: 228 }, 2: { n: 7, a0: 120, a1: 240 }, 3: { n: 9, a0: 110, a1: 250 } }[tier];
+    var wreathScale = small ? 0.9 : 0.82;
+    var inner = '<g transform="translate(32 32) scale(' + wreathScale + ') translate(-32 -34)">' +
+      wreathMarkup(r, SPEC.n, SPEC.a0, SPEC.a1, rid) + centerEmblem(r, tier, gid) + '</g>';
+    var rim = '<circle cx="32" cy="32" r="30" fill="url(#' + rimG + ')" stroke="' + r.dark + '" stroke-width="' + (small ? 1.4 : 1.1) + '"/>';
+    var reed = small ? '' :
+      '<circle cx="32" cy="32" r="28.4" fill="none" stroke="' + r.dark + '" stroke-width="3.2" stroke-dasharray="1.1 3.05" opacity=".5"/>' +
+      '<circle cx="32" cy="32" r="28.4" fill="none" stroke="' + r.light + '" stroke-width="1.5" stroke-dasharray="1.1 3.05" stroke-dashoffset="1.1" opacity=".55"/>';
+    var bevel = '<circle cx="32" cy="32" r="' + (small ? 25.6 : 26.2) + '" fill="none" stroke="url(#' + bevG + ')" stroke-width="' + (small ? 2 : 2.4) + '"/>';
+    var field = '<circle cx="32" cy="32" r="' + (small ? 24.2 : 24.6) + '" fill="url(#' + fldG + ')"/>';
+    var vign = '<circle cx="32" cy="32" r="' + (small ? 24.2 : 24.6) + '" fill="none" stroke="#000" stroke-width="2.6" opacity=".18"/>';
+    var spec = '<ellipse cx="32" cy="' + (small ? 22 : 21) + '" rx="' + (small ? 15 : 16) + '" ry="' + (small ? 7 : 8.5) + '" fill="url(#' + specG + ')"/>';
+    var glow = (tier >= 3 && !small) ? '<circle cx="32" cy="32" r="31.4" fill="none" stroke="' + r.light + '" stroke-width="1" opacity=".55" stroke-dasharray="1 4"/>' : '';
+    var defs = '<defs>' +
+      '<linearGradient id="' + rimG + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="' + r.light + '"/><stop offset=".5" stop-color="' + r.base + '"/><stop offset="1" stop-color="' + r.dark + '"/></linearGradient>' +
+      '<linearGradient id="' + bevG + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".85"/><stop offset=".5" stop-color="' + r.base + '" stop-opacity=".2"/><stop offset="1" stop-color="' + r.dark + '" stop-opacity=".9"/></linearGradient>' +
+      '<radialGradient id="' + fldG + '" cx="46%" cy="34%" r="72%"><stop offset="0" stop-color="' + en.mid + '"/><stop offset="1" stop-color="' + en.deep + '"/></radialGradient>' +
+      '<radialGradient id="' + specG + '" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#fff" stop-opacity="' + (small ? .55 : .6) + '"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>' +
+      '<radialGradient id="' + gid + '" cx="36%" cy="30%" r="72%"><stop offset="0" stop-color="' + r.light + '"/><stop offset="1" stop-color="' + r.base + '"/></radialGradient>' +
+      '<linearGradient id="' + rid + '" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="' + r.base + '"/><stop offset="1" stop-color="' + r.light + '"/></linearGradient>' +
+      '</defs>';
+    var glowFilter = 'drop-shadow(0 2px 3px rgba(0,0,0,.5))' +
+      (tier >= 2 ? ' drop-shadow(0 0 ' + (tier * 2.2) + 'px ' + r.base + (tier >= 3 ? '88' : '55') + ')' : ' drop-shadow(0 0 2px ' + r.base + '40)');
+    return '<span class="rk-badge" style="line-height:0;display:inline-block;filter:' + glowFilter + '">' +
+      '<svg viewBox="0 0 64 64" width="' + size + '" height="' + size + '">' + defs + rim + reed + bevel + field + vign + spec + inner + glow + "</svg></span>";
   }
 
   // ── 翼（マスター／GM 共通）──
@@ -185,7 +230,14 @@
       var r = RANK_COLORS[rankCode] || RANK_COLORS.bronze;
       tier = (tier === 1 || tier === 2 || tier === 3) ? tier : 1;
       size = size || 64;
-      return rankCode === "master" ? badgeMaster(r, tier, size) : badgeWreath(r, tier, size);
+      // ブロンズ〜ダイヤはメダリオン（badgeCoin）、マスターは金翼水晶。
+      return rankCode === "master" ? badgeMaster(r, tier, size) : badgeCoin(rankCode, tier, size);
+    },
+    // 旧・月桂冠（枠なし）も明示的に呼びたい場合のために残す。
+    wreath: function (rankCode, tier, size) {
+      var r = RANK_COLORS[rankCode] || RANK_COLORS.bronze;
+      tier = (tier === 1 || tier === 2 || tier === 3) ? tier : 1;
+      return badgeWreath(r, tier, size || 64);
     },
     grandmaster: function (pos, size) { return badgeGrandmaster(pos, size || 64); }
   };
