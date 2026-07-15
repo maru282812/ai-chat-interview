@@ -110,11 +110,7 @@ button { font-family: inherit; cursor: pointer; }
 .hb-btn.ghost { border: 1.5px solid var(--hb-teal); color: var(--hb-teal); background: #fff; }
 .hb-btn.sub { background: #F1F2F4; color: #555; }
 
-/* ---- 下部ナビ ---- */
-.hb-bottomnav { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 640px; display: flex; background: #FFFDF6; border-top: 1px solid var(--hb-line); z-index: 30; }
-.hb-bottomnav a { flex: 1; text-align: center; padding: 8px 0 10px; font-size: 10.5px; color: #999; }
-.hb-bottomnav a .i { display: block; font-size: 21px; margin-bottom: 2px; }
-.hb-bottomnav a.on { color: var(--hb-brand-text); font-weight: 700; }
+/* ---- 下部ナビは partials/liff-bottom-nav.ejs（SVGアイコン版）に一本化 ---- */
 
 /* ---- 並び替えFAB ---- */
 .hb-fab { position: fixed; bottom: 86px; right: max(16px, calc(50% - 320px + 16px)); background: var(--hb-teal); color: #fff; border-radius: 24px; padding: 12px 18px; font-size: 14px; font-weight: 800; box-shadow: 0 4px 12px rgba(0,0,0,.25); z-index: 31; border: none; }

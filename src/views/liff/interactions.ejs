@@ -46,12 +46,7 @@
       <div id="tab-completed"    class="tab-content" style="display:none"></div>
       <div style="height:16px"></div>
 
-      <nav class="hb-bottomnav">
-        <a id="nav-projects" href="#"><span class="i">🔍</span>探す</a>
-        <a id="nav-saved" href="#"><span class="i">☆</span>保存</a>
-        <a class="on" href="#"><span class="i">📋</span>やりとり</a>
-        <a id="nav-mypage" href="#"><span class="i">👤</span>マイページ</a>
-      </nav>
+      <%- include('../partials/liff-bottom-nav', { active: 'interactions' }) %>
     </div>
 
     <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
@@ -61,9 +56,6 @@
       'use strict';
       const d = JSON.parse(document.getElementById('initial-data').dataset.json || '{}');
       const { liffId, interactionsDataUrl, surveyBaseUrl, projectsUrl } = d;
-      document.getElementById('nav-projects').href = projectsUrl || '/liff/projects';
-      document.getElementById('nav-saved').href = d.savedProjectsUrl || '/liff/saved-projects';
-      document.getElementById('nav-mypage').href = d.mypageUrl || '/liff/mypage';
 
       let idToken = null;
       let currentTab = 'applications';
