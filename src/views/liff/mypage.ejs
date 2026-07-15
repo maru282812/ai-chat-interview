@@ -6,6 +6,8 @@
     <title><%= title %></title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <script src="/public/rank-icons.js"></script>
+    <%# 昇格演出（rank-icons.js の後に読み込む） %>
+    <%- include('../partials/rank-celebration') %>
     <%- include('../partials/liff-auth') %>
     <%- include('../partials/daily-today-card') %>
     <style>
@@ -300,6 +302,8 @@
       const appView   = document.getElementById("app-view");
       const loadingView = document.getElementById("loading-view");
       let idToken = null;
+      // 直近のランク状態（デイリー回答での昇格演出用）。ダッシュボード描画時に更新する。
+      let lastPointStatus = null;
 
       // ---- ユーティリティ ----
       function esc(v) {
@@ -372,6 +376,8 @@
         const initial = name.charAt(0).toUpperCase();
         const pct    = progressWidth(s.total_points, s.next_rank_min_points);
         const streak = s.current_streak ?? 0;
+        // 昇格判定の基準（回答前ランク）。デイリー回答の onAnswered で next と比較する。
+        lastPointStatus = { rank_code: s.rank_code, rank_name: s.rank_name || "ブロンズ", tier: s.tier };
 
         const txHtml = txs.length === 0
           ? `<li class="tx-item"><span class="tx-reason" style="color:#999">まだ履歴がありません</span></li>`
@@ -1279,7 +1285,19 @@
           if (await ensureGlobalConsent()) return;
 
           // 今日の1問は同意を通った後にだけ出す（マイページの表示はブロックしない）。
-          DailyToday.mount({ idToken });
+          // 回答でランク/段位が上がったら昇格演出を出す（回答前ランク prev と付与後 next を比較）。
+          DailyToday.mount({
+            idToken,
+            onAnswered: (result) => {
+              try {
+                if (window.RankCelebration && result.pointStatus) {
+                  const prev = lastPointStatus;
+                  RankCelebration.maybePlay(prev, result.pointStatus);
+                  lastPointStatus = result.pointStatus;
+                }
+              } catch (e) { console.error("rank celebration failed", e); }
+            },
+          });
 
           const res = await fetch(profileUrl, { headers: { Authorization: `Bearer ${idToken}` } });
           if (!res.ok) {
