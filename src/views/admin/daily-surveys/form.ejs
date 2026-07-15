@@ -5,7 +5,7 @@
   <h2><%= mode === 'create' ? 'デイリーアンケート作成' : 'デイリーアンケート編集' %></h2>
 </div>
 
-<form method="post" action="<%= mode === 'create' ? '/admin/daily-surveys' : '/admin/daily-surveys/' + survey.id %>">
+<form method="post" action="<%= mode === 'create' ? '/admin/daily-surveys' : '/admin/daily-surveys/' + survey.id %>" id="mainForm" onsubmit="beforeFormSubmit(event)">
 
   <div class="card" style="margin-bottom:1rem">
     <h3>基本設定</h3>
@@ -149,8 +149,62 @@
   </div>
 </form>
 
-<% if (mode === 'edit' && survey) { %>
 <!-- ─────────────────────────────────────────── 設問管理 ── -->
+<% if (!survey || mode === 'create') { %>
+<!-- 新規作成時：クライアント側で設問を一時管理 -->
+<hr style="margin:2rem 0">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h3>設問一覧 (<span id="question_count">0</span> 件)</h3>
+</div>
+
+<div id="temp_questions_table_wrapper">
+  <p class="muted" style="margin-bottom:1rem">設問がありません。下のフォームから追加してください。</p>
+</div>
+
+<!-- 設問追加フォーム -->
+<div class="card" style="margin-bottom:1rem">
+  <h4>設問を追加</h4>
+  <div id="addQuestionForm">
+    <div class="form-group">
+      <label>設問文 <span style="color:red">*</span></label>
+      <input type="text" id="form_question_text" placeholder="例：朝食は何を食べますか？" style="width:100%">
+    </div>
+    <div class="form-group" style="display:flex;gap:16px;flex-wrap:wrap">
+      <div>
+        <label>種別</label>
+        <select id="form_question_type" onchange="toggleOptionsField(this.value)">
+          <option value="single_choice">単一選択</option>
+          <option value="multiple_choice">複数選択</option>
+          <option value="text">自由記述</option>
+          <option value="scale">スケール</option>
+        </select>
+      </div>
+      <div>
+        <label>表示順序</label>
+        <input type="number" id="form_sort_order" value="10" min="0" style="width:80px">
+      </div>
+      <div>
+        <label>属性キー（任意）</label>
+        <input type="text" id="form_attribute_key" placeholder="例：housing_type" style="width:160px">
+      </div>
+    </div>
+    <div id="options_field" class="form-group">
+      <label>選択肢（1行に1つ、または JSON配列）</label>
+      <textarea id="form_answer_options" rows="4" style="width:100%"
+                placeholder='["はい", "いいえ"]&#10;または&#10;はい&#10;いいえ'></textarea>
+      <p class="muted" style="font-size:12px">
+        JSON例: [{"label":"はい","value":"yes"},{"label":"いいえ","value":"no"}]<br>
+        テキスト1行入力の場合は自動で value=opt_1, opt_2... が付与されます
+      </p>
+    </div>
+    <button type="button" class="btn" onclick="addTempQuestion()">設問を追加</button>
+  </div>
+</div>
+
+<input type="hidden" name="temp_questions_json" id="temp_questions_json">
+
+<% } else if (mode === 'edit' && survey) { %>
+<!-- 編集時：サーバー側で設問を管理 -->
 <hr style="margin:2rem 0">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
   <h3>設問一覧 (<%= questions.length %> 件)</h3>
@@ -290,26 +344,187 @@
 <% } %>
 
 <script>
+// ──────────────────────────────────────────────────────────────
+// 新規作成時：クライアント側の設問一時管理
+// ──────────────────────────────────────────────────────────────
+
+window.tempQuestions = [];
+
+function parseAnswerOptions(raw) {
+  if (!raw || !raw.trim()) return [];
+  const trimmed = raw.trim();
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) {
+      return parsed.map(opt => {
+        if (typeof opt === 'string') {
+          return { label: opt, value: opt };
+        }
+        return opt;
+      });
+    }
+    return [];
+  } catch {
+    // 改行区切りテキストとして解析
+    return trimmed.split('\n')
+      .map((line, i) => {
+        const label = line.trim();
+        if (!label) return null;
+        return { label, value: `opt_${i + 1}` };
+      })
+      .filter(x => x !== null);
+  }
+}
+
+function addTempQuestion() {
+  const questionText = document.getElementById('form_question_text').value.trim();
+  const questionType = document.getElementById('form_question_type').value;
+  const attributeKey = document.getElementById('form_attribute_key').value.trim() || null;
+  const sortOrder = parseInt(document.getElementById('form_sort_order').value, 10) || 0;
+  const answerOptionsRaw = document.getElementById('form_answer_options').value;
+
+  // バリデーション
+  if (!questionText) {
+    alert('設問文は必須です。');
+    return;
+  }
+
+  let answerOptions = [];
+  if (['single_choice', 'multiple_choice'].includes(questionType)) {
+    answerOptions = parseAnswerOptions(answerOptionsRaw);
+    if (answerOptions.length === 0) {
+      alert('選択肢は最低1つ必要です。');
+      return;
+    }
+  }
+
+  // 一時配列に追加
+  window.tempQuestions.push({
+    question_text: questionText,
+    question_type: questionType,
+    answer_options: answerOptions,
+    attribute_key: attributeKey,
+    sort_order: sortOrder
+  });
+
+  // テーブル再描画
+  renderTempQuestionTable();
+
+  // フォームをリセット
+  document.getElementById('form_question_text').value = '';
+  document.getElementById('form_question_type').value = 'single_choice';
+  document.getElementById('form_attribute_key').value = '';
+  document.getElementById('form_sort_order').value = (window.tempQuestions.length * 10);
+  document.getElementById('form_answer_options').value = '';
+  toggleOptionsField('single_choice');
+}
+
+function deleteTempQuestion(index) {
+  if (confirm('この設問を削除しますか？')) {
+    window.tempQuestions.splice(index, 1);
+    renderTempQuestionTable();
+    // sort_order の次の値を計算
+    document.getElementById('form_sort_order').value = (window.tempQuestions.length * 10);
+  }
+}
+
+function renderTempQuestionTable() {
+  const wrapper = document.getElementById('temp_questions_table_wrapper');
+  const countSpan = document.getElementById('question_count');
+  countSpan.textContent = window.tempQuestions.length;
+
+  if (window.tempQuestions.length === 0) {
+    wrapper.innerHTML = '<p class="muted" style="margin-bottom:1rem">設問がありません。下のフォームから追加してください。</p>';
+    return;
+  }
+
+  const qtLabel = { single_choice: '単一選択', multiple_choice: '複数選択', text: '自由記述', scale: 'スケール' };
+  let html = '<table style="margin-bottom:1.5rem"><thead><tr>';
+  html += '<th style="width:40px">順序</th>';
+  html += '<th>設問文</th>';
+  html += '<th>種別</th>';
+  html += '<th>選択肢数</th>';
+  html += '<th>属性キー</th>';
+  html += '<th>操作</th>';
+  html += '</tr></thead><tbody>';
+
+  window.tempQuestions.forEach((q, i) => {
+    html += '<tr>';
+    html += `<td style="text-align:center">${q.sort_order}</td>`;
+    html += `<td>${escapeHtml(q.question_text)}</td>`;
+    html += `<td><span class="muted">${qtLabel[q.question_type] || q.question_type}</span></td>`;
+    if (['single_choice', 'multiple_choice'].includes(q.question_type)) {
+      html += `<td style="text-align:center">${q.answer_options.length}</td>`;
+    } else {
+      html += '<td style="text-align:center"><span class="muted">-</span></td>';
+    }
+    html += `<td><span class="muted">${q.attribute_key || '-'}</span></td>`;
+    html += '<td style="white-space:nowrap">';
+    html += `<button type="button" class="btn-danger" style="padding:2px 8px;font-size:12px" onclick="deleteTempQuestion(${i})">削除</button>`;
+    html += '</td>';
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  wrapper.innerHTML = html;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function toggleOptionsField(val) {
+  const optionsField = document.getElementById('form_question_type')
+    ? document.getElementById('options_field')
+    : document.getElementById('options_field');
+
+  if (optionsField) {
+    optionsField.style.display = ['single_choice', 'multiple_choice'].includes(val) ? '' : 'none';
+  }
+}
+
+function beforeFormSubmit(e) {
+  // 新規作成時のみ、temp_questions_json をセット
+  const modeCreate = <%= mode === 'create' ? 'true' : 'false' %>;
+  if (modeCreate && window.tempQuestions && window.tempQuestions.length > 0) {
+    document.getElementById('temp_questions_json').value = JSON.stringify(window.tempQuestions);
+  } else if (modeCreate) {
+    document.getElementById('temp_questions_json').value = '[]';
+  }
+  // フォーム送信を続行
+}
+
+// ──────────────────────────────────────────────────────────────
+// 既存スクリプト
+// ──────────────────────────────────────────────────────────────
+
 function toggleRewardFields(val) {
   document.getElementById('reward_fixed').style.display  = val === 'fixed'  ? '' : 'none';
   document.getElementById('reward_random').style.display = val === 'random' ? '' : 'none';
 }
 toggleRewardFields(document.getElementById('reward_type_select').value);
 
-function toggleOptionsField(val) {
-  document.getElementById('options_field').style.display =
-    ['single_choice','multiple_choice'].includes(val) ? '' : 'none';
-}
-toggleOptionsField(document.getElementById('qtype_select')?.value ?? 'single_choice');
-
 function togglePlacement(val) {
   document.getElementById('placement_date').style.display = val === 'date' ? '' : 'none';
 }
 togglePlacement(document.querySelector('input[name="placement"]:checked')?.value ?? 'queue');
 
+</script>
+
+<% if (mode === 'edit' && survey) { %>
+<script>
+// 編集時のみのスクリプト
+function toggleOptionsField_edit(val) {
+  document.getElementById('options_field').style.display =
+    ['single_choice','multiple_choice'].includes(val) ? '' : 'none';
+}
+toggleOptionsField_edit(document.getElementById('qtype_select')?.value ?? 'single_choice');
+
 function openEditQuestion(id, text, type, attrKey, sortOrder, optionsJson) {
   document.getElementById('editQuestionForm').action =
-    '/admin/daily-surveys/<%= survey?.id %>/questions/' + id;
+    '/admin/daily-surveys/<%= survey.id %>/questions/' + id;
   document.getElementById('edit_question_text').value = text;
   document.getElementById('edit_qtype').value = type;
   document.getElementById('edit_attribute_key').value = attrKey;
@@ -326,5 +541,6 @@ function closeEditQuestion() {
   document.getElementById('editQuestionModal').style.display = 'none';
 }
 </script>
+<% } %>
 
 <%- include("../../partials/footer") %>

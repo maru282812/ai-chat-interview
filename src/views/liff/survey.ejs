@@ -450,6 +450,8 @@
       <p class="complete-title">回答が完了しました</p>
       <p class="complete-sub">ご協力ありがとうございます。</p>
       <div id="completeActions" style="margin-top:20px;display:none">
+        <!-- 通常アンケートは完了後に案件一覧へ戻れるようにする（店舗専用は非会員のため出さない） -->
+        <button id="btnBackToProjects" class="btn-next" style="min-width:160px;display:none;">案件一覧に戻る</button>
         <button id="btnCloseLiff" class="btn-next" style="min-width:160px;">LINEに戻る</button>
         <p id="completeCloseTip" style="display:none;font-size:13px;color:#60726f;margin-top:8px;">アンケートは完了しました。この画面を閉じてください。</p>
       </div>
@@ -1961,6 +1963,7 @@
       const completeActions = document.getElementById('completeActions');
       const completeError = document.getElementById('completeError');
       const btnCloseLiff = document.getElementById('btnCloseLiff');
+      const btnBackToProjects = document.getElementById('btnBackToProjects');
       const completeCloseTip = document.getElementById('completeCloseTip');
 
       try {
@@ -1985,12 +1988,26 @@
 
         completeActions.style.display = 'block';
         const inLiff = window.liff && typeof liff.isInClient === 'function' && liff.isInClient();
+
+        // 通常アンケートは完了後の主導線を「案件一覧に戻る」にし、続けて他案件に回答できるようにする。
+        // 店舗専用アンケートは非会員向け（Hibi参加CTAが主役）なので案件一覧へは誘導しない。
+        if (!IS_STORE_SURVEY) {
+          btnBackToProjects.style.display = '';
+          btnBackToProjects.addEventListener('click', () => { location.href = PROJECTS_URL; });
+        }
+
         if (inLiff) {
           btnCloseLiff.style.display = '';
+          // 案件一覧が主役のときは「LINEに戻る」を控えめリンクへ降格する。
+          if (!IS_STORE_SURVEY) {
+            btnCloseLiff.className = 'complete-return-link';
+            btnCloseLiff.style.minWidth = '';
+          }
           btnCloseLiff.addEventListener('click', () => { liff.closeWindow(); });
         } else {
           btnCloseLiff.style.display = 'none';
-          completeCloseTip.style.display = '';
+          // ブラウザ表示（非LIFF）では案件一覧ボタンが遷移導線になるため、閉じる案内は店舗専用のときだけ出す。
+          if (IS_STORE_SURVEY) completeCloseTip.style.display = '';
         }
 
         // 店舗専用アンケートのときだけ「Hibiに参加する」CTA を表示（希望者のみ）。
@@ -2512,15 +2529,28 @@
 
         const closeBtnWrap = document.createElement('div');
         closeBtnWrap.style.cssText = 'text-align:center;margin-top:' + (IS_STORE_SURVEY ? '8px' : '16px') + ';';
+
+        // 通常アンケートは完了後の主導線を「案件一覧に戻る」にする（店舗専用は非会員向けのため出さない）。
+        if (!IS_STORE_SURVEY) {
+          const backBtn = document.createElement('button');
+          backBtn.className = 'btn-next';
+          backBtn.style.minWidth = '160px';
+          backBtn.textContent = '案件一覧に戻る';
+          backBtn.addEventListener('click', () => { location.href = PROJECTS_URL; });
+          closeBtnWrap.appendChild(backBtn);
+        }
+
         if (inLiff) {
           const closeBtn = document.createElement('button');
-          // 店舗アンケートでは主役をCTAに譲るため控えめなリンク、それ以外は従来の主ボタン。
-          closeBtn.className = IS_STORE_SURVEY ? 'complete-return-link' : 'btn-next';
-          if (!IS_STORE_SURVEY) closeBtn.style.minWidth = '160px';
+          // 店舗（Hibi参加CTA）でも通常（案件一覧に戻る）でも主導線は上にあるため、
+          // 「LINEに戻る」は常に控えめリンクへ降格する。
+          closeBtn.className = 'complete-return-link';
+          closeBtn.style.display = 'block';
+          closeBtn.style.margin = '4px auto 0';
           closeBtn.textContent = 'LINEに戻る';
           closeBtn.addEventListener('click', () => { liff.closeWindow(); });
           closeBtnWrap.appendChild(closeBtn);
-        } else {
+        } else if (IS_STORE_SURVEY) {
           const tip = document.createElement('p');
           tip.style.cssText = 'font-size:13px;color:#60726f;';
           tip.textContent = 'アンケートは完了しました。この画面を閉じてください。';

@@ -5629,20 +5629,75 @@ export const adminController = {
 
   async createDailySurvey(req: Request, res: Response): Promise<void> {
     const b = req.body as Record<string, string>;
-    const survey = await dailySurveyService.create({
-      title: bodyString(b.title),
-      description: b.description || null,
-      reward_type: (b.reward_type as "fixed" | "random") || "fixed",
-      reward_points: Number(b.reward_points ?? 5),
-      reward_min_points: Number(b.reward_min_points ?? 3),
-      reward_max_points: Number(b.reward_max_points ?? 20),
-      target_segment_id: b.target_segment_id || null,
-      expires_at: b.expires_at || null,
-      notification_template_id: b.notification_template_id || null,
-      answer_ui_preset: parseAnswerUiPreset(b.answer_ui_preset)
-    });
-    await applyDailySurveyPlacement(survey.id, b);
-    res.redirect(`/admin/daily-surveys/${survey.id}`);
+    try {
+      const survey = await dailySurveyService.create({
+        title: bodyString(b.title),
+        description: b.description || null,
+        reward_type: (b.reward_type as "fixed" | "random") || "fixed",
+        reward_points: Number(b.reward_points ?? 5),
+        reward_min_points: Number(b.reward_min_points ?? 3),
+        reward_max_points: Number(b.reward_max_points ?? 20),
+        target_segment_id: b.target_segment_id || null,
+        expires_at: b.expires_at || null,
+        notification_template_id: b.notification_template_id || null,
+        answer_ui_preset: parseAnswerUiPreset(b.answer_ui_preset)
+      });
+      await applyDailySurveyPlacement(survey.id, b);
+
+      // クライアント側で一時保管された設問を処理
+      const tempQuestionsJson = bodyString(b.temp_questions_json).trim();
+      if (tempQuestionsJson && tempQuestionsJson !== '[]') {
+        let tempQuestions: Array<{
+          question_text: string;
+          question_type: "single_choice" | "multiple_choice" | "text" | "scale";
+          answer_options?: Array<{ label: string; value: string }>;
+          attribute_key?: string | null;
+          sort_order?: number;
+        }>;
+        try {
+          tempQuestions = JSON.parse(tempQuestionsJson);
+        } catch (parseError) {
+          throw new HttpError(400, "設問の形式が不正です。");
+        }
+
+        if (Array.isArray(tempQuestions) && tempQuestions.length > 0) {
+          for (const tq of tempQuestions) {
+            const questionText = bodyString(tq.question_text || "").trim();
+            if (!questionText) {
+              throw new HttpError(400, "設問文は必須です。");
+            }
+
+            const questionType = tq.question_type || "single_choice";
+            let answerOptions: Array<{ label: string; value: string }> = [];
+
+            if (["single_choice", "multiple_choice"].includes(questionType)) {
+              if (!Array.isArray(tq.answer_options) || tq.answer_options.length === 0) {
+                throw new HttpError(400, `設問「${questionText}」の選択肢が不正です。`);
+              }
+              answerOptions = tq.answer_options;
+            }
+
+            await dailySurveyService.createQuestion({
+              survey_id: survey.id,
+              question_text: questionText,
+              question_type: questionType as "single_choice" | "multiple_choice" | "text" | "scale",
+              answer_options: answerOptions,
+              attribute_key: tq.attribute_key || null,
+              sort_order: Number(tq.sort_order ?? 0)
+            });
+          }
+        }
+      }
+
+      res.redirect(`/admin/daily-surveys/${survey.id}/edit`);
+    } catch (error) {
+      if (error instanceof HttpError) {
+        res.status(error.statusCode).json({ error: error.message });
+      } else {
+        logger.error("createDailySurvey error", { error: error instanceof Error ? error.message : String(error) });
+        res.status(500).json({ error: "デイリーアンケートの作成に失敗しました。" });
+      }
+    }
   },
 
   async editDailySurvey(req: Request, res: Response): Promise<void> {
