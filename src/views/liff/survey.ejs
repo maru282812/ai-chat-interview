@@ -914,6 +914,7 @@
   const buildChipSelectHtml = (q, choices) => AnswerUI.build(q, choices, 'chip_select');
   const buildBigSliderHtml  = (q, choices) => AnswerUI.build(q, choices, 'big_slider');
   const buildSwipeCardHtml  = (q, choices) => AnswerUI.build(q, choices, 'swipe_card');
+  const buildSplitSwipeHtml = (q, choices) => AnswerUI.build(q, choices, 'split_swipe');
   const buildCarouselHtml   = (q, choices) => AnswerUI.build(q, choices, 'carousel');
   const buildSortSwipeHtml  = (q, choices) => AnswerUI.build(q, choices, 'sort_swipe');
   const attachHorizontalDrag = (el, onCommit, onDrag) => AnswerUI.attachHorizontalDrag(el, onCommit, onDrag);
@@ -1033,6 +1034,8 @@
           inputHtml = buildBigSliderHtml(q, choices);
         } else if (pattern === 'swipe_card') {
           inputHtml = buildSwipeCardHtml(q, choices);
+        } else if (pattern === 'split_swipe') {
+          inputHtml = buildSplitSwipeHtml(q, choices);
         } else if (pattern === 'carousel') {
           inputHtml = buildCarouselHtml(q, choices);
         } else {
@@ -1576,7 +1579,7 @@
       })();
 
       // ---- 回答UIプリセットのうち matrix_rows（survey 固有）だけをここで配線する ----
-      // big_slider / swipe_card / carousel / sort_swipe は共通パーシャル側（AnswerUI.wire）で配線済み。
+      // big_slider / swipe_card / split_swipe / carousel / sort_swipe は共通パーシャル側（AnswerUI.wire）で配線済み。
       (function wireMatrixRows() {
         const pattern = q.presentation && q.presentation.pattern;
         if (!pattern) return;

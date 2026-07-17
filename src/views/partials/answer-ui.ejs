@@ -129,6 +129,31 @@
   .sort-chip.done { text-decoration: line-through; opacity: 0.6; }
   .sort-chip.done.yes { text-decoration: none; opacity: 1; background: #d6efe4; color: #1f7a57; }
 
+  /* split_swipe（2択スワイプの別型: 設問は上の吹き出し／カードを仕切りで2分割した巨大タップ面。
+     現行 swipe_card の「中央に文字＋下の丸ボタン」を、カード全面を占める2つの選択面に置き換える） */
+  .answer-splitswipe { display: flex; flex-direction: column; align-items: stretch; }
+  .split-card {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    border: 1.5px solid #dfe9e6; border-radius: 20px; background: #fff;
+    box-shadow: 0 10px 26px rgba(28,43,39,0.10); cursor: grab; user-select: none;
+    -webkit-user-select: none; touch-action: pan-y; overflow: hidden;
+  }
+  .split-halves { flex: 1; display: grid; grid-template-columns: 1fr 1fr; }
+  .split-half {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; padding: 14px; text-align: center; cursor: pointer; transition: background 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .split-half + .split-half { border-left: 1px solid #dfe9e6; }
+  .split-arrow { font-size: 20px; font-weight: 900; opacity: 0.5; line-height: 1; }
+  .split-label { font-size: 19px; font-weight: 800; line-height: 1.3; color: #1a2f2a; }
+  .split-desc { font-size: 12px; color: #60726f; }
+  .split-half.sh-l .split-arrow { color: #2ca87a; }
+  .split-half.sh-r .split-arrow { color: #4a90d9; }
+  .split-half.sh-l.lit { background: #e8f7f0; }
+  .split-half.sh-r.lit { background: #eaf2fb; }
+  .split-half.lit .split-arrow { opacity: 1; }
+
   /* carousel（ピーク型 scroll-snap: 隣のカードの端を見せて「横に動く」ことを視覚で伝える） */
   .answer-carousel { display: flex; flex-direction: column; }
   .carousel-track {
@@ -199,6 +224,7 @@
   .answer-ui-compact .sort-done { color: #fff; }
   .answer-ui-compact .bigslider-label { color: #fff; }
   .answer-ui-compact .bigslider-ends { color: rgba(255,255,255,0.85); }
+  .answer-ui-compact .split-label { font-size: 17px; }
 </style>
 <script>
   // ---- 回答UI共通レンダラ（詳細はこのファイル冒頭のコメント） ----
@@ -209,7 +235,7 @@
     }
 
     /** 確定操作を自分で持つパターン（＝ホストの送信ボタンが要らない）。 */
-    var AUTO_COMMIT_PATTERNS = ['tap_cards', 'big_split', 'face_scale', 'swipe_card', 'carousel', 'sort_swipe'];
+    var AUTO_COMMIT_PATTERNS = ['tap_cards', 'big_split', 'face_scale', 'swipe_card', 'split_swipe', 'carousel', 'sort_swipe'];
     /** このレンダラが描けるパターン（対象外はホスト側の従来描画に任せる）。 */
     var SUPPORTED_PATTERNS = AUTO_COMMIT_PATTERNS.concat(['chip_select', 'big_slider']);
 
@@ -323,6 +349,36 @@
         + '</div>';
     }
 
+    // ---- split_swipe（2択スワイプの別型: カードを仕切りで2分割した巨大タップ面）----
+    // 左半分=選択肢1 / 右半分=選択肢2（options 並び順）。半分タップ・スワイプ・どちらでも確定。
+    // 設問文はホスト側（チャット吹き出し等）が上に表示する前提でカード内には持たない。
+    // 保存形式は swipe_card と同じく single のスカラー（onChange / onCommit で value を返す）。
+    function buildSplitSwipeHtml(q, choices) {
+      if (choices.length < 2) return buildTapChoiceHtml(q, choices, 'tap_cards');
+      var c0 = choices[0], c1 = choices[1];
+      return '<div class="answer-splitswipe" data-code="' + esc(q.question_code) + '"'
+        + ' data-v0="' + esc(c0.value) + '" data-v1="' + esc(c1.value) + '">'
+        + '<div class="swipe-deck">'
+        + '<div class="swipe-back swipe-back2"></div>'
+        + '<div class="swipe-back swipe-back1"></div>'
+        + '<div class="split-card">'
+        + '<span class="swipe-stamp stamp-l">' + esc(c0.label) + '</span>'
+        + '<span class="swipe-stamp stamp-r">' + esc(c1.label) + '</span>'
+        + '<div class="split-halves">'
+        + '<div class="split-half sh-l" data-dir="left">'
+        + '<span class="split-arrow">◀</span><span class="split-label">' + esc(c0.label) + '</span>'
+        + (c0.description ? '<span class="split-desc">' + esc(c0.description) + '</span>' : '')
+        + '</div>'
+        + '<div class="split-half sh-r" data-dir="right">'
+        + '<span class="split-arrow">▶</span><span class="split-label">' + esc(c1.label) + '</span>'
+        + (c1.description ? '<span class="split-desc">' + esc(c1.description) + '</span>' : '')
+        + '</div>'
+        + '</div>'
+        + '</div></div>'
+        + '<p class="swipe-tip">選択肢をタップ、またはカードを左右にスワイプ</p>'
+        + '</div>';
+    }
+
     // ---- carousel（ピーク型カード・single_choice 3件以上）----
     function buildCarouselHtml(q, choices) {
       var cards = choices.map(function (c, i) {
@@ -400,6 +456,8 @@
           return buildBigSliderHtml(q, choices);
         case 'swipe_card':
           return buildSwipeCardHtml(q, choices);
+        case 'split_swipe':
+          return buildSplitSwipeHtml(q, choices);
         case 'carousel':
           return buildCarouselHtml(q, choices);
         case 'sort_swipe':
@@ -594,6 +652,43 @@
               card.style.opacity = '0';
             }
             commitDir(dir);
+          });
+        });
+      }
+
+      // split_swipe: 左半分=選択肢1 / 右半分=選択肢2（半分タップ・ドラッグ両対応・倒す先の半分が点灯）
+      var split = root.querySelector('.answer-splitswipe[data-code="' + code + '"]');
+      if (split) {
+        var sv0 = split.getAttribute('data-v0');
+        var sv1 = split.getAttribute('data-v1');
+        var scard = split.querySelector('.split-card');
+        var sStampL = scard ? scard.querySelector('.stamp-l') : null;
+        var sStampR = scard ? scard.querySelector('.stamp-r') : null;
+        var sHalfL = split.querySelector('.split-half.sh-l');
+        var sHalfR = split.querySelector('.split-half.sh-r');
+        var sPaint = function (dx) {
+          var k = Math.min(Math.abs(dx) / 60, 1);
+          if (sStampL) sStampL.style.opacity = dx < 0 ? String(k) : '0';
+          if (sStampR) sStampR.style.opacity = dx > 0 ? String(k) : '0';
+          if (sHalfL) sHalfL.classList.toggle('lit', dx < -8);
+          if (sHalfR) sHalfR.classList.toggle('lit', dx > 8);
+        };
+        var sCommit = function (dir) {
+          var val = dir === 'left' ? sv0 : sv1;
+          onChange(val);
+          onCommit(val);
+        };
+        if (scard) attachHorizontalDrag(scard, sCommit, sPaint);
+        [].slice.call(split.querySelectorAll('.split-half')).forEach(function (half) {
+          half.addEventListener('click', function () {
+            var dir = half.getAttribute('data-dir');
+            if (scard) {
+              sPaint(dir === 'left' ? -60 : 60);
+              scard.style.transition = 'transform .25s ease, opacity .25s ease';
+              scard.style.transform = 'translateX(' + (dir === 'left' ? -700 : 700) + 'px) rotate(' + (dir === 'left' ? -18 : 18) + 'deg)';
+              scard.style.opacity = '0';
+            }
+            sCommit(dir);
           });
         });
       }

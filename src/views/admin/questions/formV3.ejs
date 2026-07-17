@@ -540,6 +540,7 @@
             <select name="presentation_pattern" style="margin-top:4px;">
               <option value="" <%= !safeForm.presentation_pattern ? 'selected' : '' %>>プリセットに従う</option>
               <option value="swipe_card"  <%= safeForm.presentation_pattern === 'swipe_card'  ? 'selected' : '' %>>swipe_card（2択スワイプ）</option>
+              <option value="split_swipe" <%= safeForm.presentation_pattern === 'split_swipe' ? 'selected' : '' %>>split_swipe（2択スワイプ・仕切り2分割）</option>
               <option value="big_split"   <%= safeForm.presentation_pattern === 'big_split'   ? 'selected' : '' %>>big_split（2分割ビッグタップ）</option>
               <option value="carousel"    <%= safeForm.presentation_pattern === 'carousel'    ? 'selected' : '' %>>carousel（カードカルーセル）</option>
               <option value="tap_cards"   <%= safeForm.presentation_pattern === 'tap_cards'   ? 'selected' : '' %>>tap_cards（大型タップカード）</option>
