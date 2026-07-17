@@ -8,6 +8,7 @@ import { adminRoutes } from "./routes/adminRoutes";
 import { liffRoutes } from "./routes/liffRoutes";
 import { webhookRoutes } from "./routes/webhookRoutes";
 import { cronRoutes } from "./routes/cronRoutes";
+import { mentalProxyRoutes } from "./routes/mentalProxyRoutes";
 
 export function createApp() {
   const app = express();
@@ -38,6 +39,7 @@ export function createApp() {
 
   app.use("/webhooks", webhookRoutes);
   app.use("/api/cron", cronRoutes);
+  app.use("/api/mental", mentalProxyRoutes);
   app.use("/admin", adminAuthMiddleware, adminRoutes);
   app.use("/liff", perfTiming, liffRoutes);
 

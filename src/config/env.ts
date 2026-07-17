@@ -52,7 +52,11 @@ const envSchema = z.object({
   // Vercel Cron ディスパッチャ（/api/cron/dispatch）の認証用シークレット。
   // Vercel に CRON_SECRET を設定すると Vercel Cron が Authorization: Bearer <secret> を付与する。
   // 未設定の場合 /api/cron/dispatch は 503 を返し、定期配信は行われない。
-  CRON_SECRET: z.string().min(1).optional()
+  CRON_SECRET: z.string().min(1).optional(),
+  // staff-voice（企業メンタルチェック・別リポ/別DB）からの Push プロキシ（/api/mental/push）の
+  // 認証用シークレット。staff-voice 側の env と同じ値を設定する。
+  // 未設定の場合 /api/mental/push は 503 を返し、プロキシは無効。
+  MENTAL_PUSH_PROXY_SECRET: z.string().min(16).optional()
 });
 
 export const env = envSchema.parse(process.env);
