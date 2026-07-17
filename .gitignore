@@ -9,3 +9,6 @@ temp/
 # --- AI discovery skill chain (local copies from ai-development-skills; not committed) ---
 .agents/skills/
 .claude/skills/
+
+# 集計アプリ送付用の一時エクスポート
+exports/

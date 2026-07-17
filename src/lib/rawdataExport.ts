@@ -460,6 +460,19 @@ export const REGION_BY_PREFECTURE: Record<string, string> = {
   鹿児島県: "九州地方", 沖縄県: "九州地方"
 };
 
+/** 年代コード表（ageBand の値域・layout は1選択肢=1行で展開する＝集計アプリ規約 §2.3）。 */
+export const AGE_BAND_CODES: { code: number; label: string }[] = [
+  { code: 10, label: "10代（18〜19歳）" },
+  { code: 20, label: "20代" },
+  { code: 30, label: "30代" },
+  { code: 40, label: "40代" },
+  { code: 50, label: "50代" },
+  { code: 60, label: "60代" },
+  { code: 70, label: "70代" },
+  { code: 80, label: "80代" },
+  { code: 90, label: "90代以上" }
+];
+
 /** 年代（ハブ規約: floor(age/10)*10・18〜19歳は 10 が下限）。 */
 export function ageBand(age: number | null): number | null {
   if (age === null || age < 0) {
@@ -714,7 +727,8 @@ export function buildRawdataLayoutRows(assignments: QAssignment[], options: Rawd
   rows.push(
     layoutRow("SURVEY_VERSION", "", "", "", "回答した調査票スナップショットの版数", "", "", "questionnaire_snapshot.json と突合。未確定は空欄")
   );
-  rows.push(layoutRow("IS_TEST", "", "", "", "テスト回答フラグ", "1/0", "", ""));
+  rows.push(layoutRow("IS_TEST", "", "", "", "テスト回答フラグ", 1, "テスト回答", "既定出力ではテスト回答（1）の行を除外"));
+  rows.push(layoutRow("IS_TEST", "", "", "", "テスト回答フラグ", 0, "本番回答", ""));
   rows.push(layoutRow("CHANNEL", "", "", "", "流入経路", "", "", ""));
 
   // 設問列
@@ -786,8 +800,12 @@ export function buildRawdataLayoutRows(assignments: QAssignment[], options: Rawd
     rows.push(layoutRow("SEX", "", "", "", "性別（プロフィール）", entry.code, `${entry.label}（${key}）`, ""));
   }
   rows.push(layoutRow("AGE", "", "", "", "年齢（回答時点の満年齢）", "", "", "生年月日未登録は空欄"));
-  rows.push(layoutRow("AGE_BAND", "", "", "", "年代（floor(age/10)*10・上限90）", "10-90", "", "18〜19歳は10。生年月日未登録は空欄"));
-  rows.push(layoutRow("PRE", "", "", "", "都道府県（JIS X 0401 コード）", "1-47", "", "コード未定義の値は原文のまま出力"));
+  for (const band of AGE_BAND_CODES) {
+    rows.push(layoutRow("AGE_BAND", "", "", "", "年代（floor(age/10)*10・上限90）", band.code, band.label, "18〜19歳は10。生年月日未登録は空欄"));
+  }
+  for (const [prefecture, code] of Object.entries(PREFECTURE_CODES)) {
+    rows.push(layoutRow("PRE", "", "", "", "都道府県（JIS X 0401 コード）", code, prefecture, "コード未定義の値は原文のまま出力"));
+  }
   for (const region of [...new Set(Object.values(REGION_BY_PREFECTURE))]) {
     rows.push(layoutRow("REGION", "", "", "", "地方（8区分・都道府県から導出）", region, region, "沖縄県は九州に含む。都道府県未登録は空欄"));
   }
@@ -803,7 +821,8 @@ export function buildRawdataLayoutRows(assignments: QAssignment[], options: Rawd
   for (const [key, entry] of Object.entries(INCOME_CODES)) {
     rows.push(layoutRow("INC", "", "", "", "世帯年収（プロフィール）", entry.code, `${entry.label}（${key}）`, "未登録は空欄"));
   }
-  rows.push(layoutRow("CHI", "", "", "", "子供の有無（プロフィール）", "1=あり / 2=なし", "", "未登録は空欄"));
+  rows.push(layoutRow("CHI", "", "", "", "子供の有無（プロフィール）", 1, "あり", "未登録は空欄"));
+  rows.push(layoutRow("CHI", "", "", "", "子供の有無（プロフィール）", 2, "なし", "未登録は空欄"));
 
   const rankNote = "出力時点の現在ランク（回答完了時点ではない）。再出力で値が変わりうる";
   if (options.ranks && options.ranks.length > 0) {

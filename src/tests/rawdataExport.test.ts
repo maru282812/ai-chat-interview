@@ -364,11 +364,32 @@ test("layout: 全列の意味・コード表が引ける", () => {
   assert.ok(byColumn.has("MID"));
   assert.equal(byColumn.get("STA")!.length, 4);
   assert.equal(byColumn.get("SEX")!.length, 4);
-  assert.ok(byColumn.has("PRE"));
   assert.equal(byColumn.get("INC")!.length, 10);
   assert.ok(byColumn.has("TIME_SEC"));
   assert.ok(byColumn.has("SURVEY_VERSION"));
-  assert.ok(byColumn.has("AGE_BAND"));
+
+  // 集計アプリ規約 §2.3: 選択肢は「1選択肢=1行・code+label 非空」で展開する
+  const pre = byColumn.get("PRE")!;
+  assert.equal(pre.length, 47, "都道府県コード表は47行");
+  assert.equal(pre[0]!.code, 1);
+  assert.equal(pre[0]!.label, "北海道");
+  assert.equal(pre[46]!.code, 47);
+  assert.equal(pre[46]!.label, "沖縄県");
+
+  const ageBandRows = byColumn.get("AGE_BAND")!;
+  assert.equal(ageBandRows.length, 9, "年代コード表は10〜90の9行");
+  assert.equal(ageBandRows[0]!.code, 10);
+  assert.ok(String(ageBandRows[0]!.label).includes("10代"));
+  assert.equal(ageBandRows[8]!.code, 90);
+
+  const chi = byColumn.get("CHI")!;
+  assert.equal(chi.length, 2);
+  assert.deepEqual(chi.map((row) => [row.code, row.label]), [[1, "あり"], [2, "なし"]]);
+
+  const isTest = byColumn.get("IS_TEST")!;
+  assert.equal(isTest.length, 2);
+  assert.deepEqual(isTest.map((row) => row.code), [1, 0]);
+  assert.ok(isTest.every((row) => String(row.label).length > 0));
   assert.equal(byColumn.get("REGION")!.length, 8, "8地方区分");
   assert.equal(byColumn.get("JOB")!.length, 9, "職業コード表");
   assert.equal(byColumn.get("BUS")!.length, 11, "業種コード表");
