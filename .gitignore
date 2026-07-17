@@ -12,3 +12,5 @@ temp/
 
 # 集計アプリ送付用の一時エクスポート
 exports/
+.vercel
+.env*
