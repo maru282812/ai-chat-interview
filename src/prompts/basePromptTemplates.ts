@@ -1089,7 +1089,9 @@ export type PromptPresetKey =
   | "business"
   | "website_hunter"
   | "interview"
-  | "animal_hospital";
+  | "animal_hospital"
+  | "non_leading"
+  | "young_casual";
 
 export interface PromptPreset {
   label: string;
@@ -1102,6 +1104,154 @@ export interface PromptPreset {
    */
   templateOverrides?: Partial<Record<BasePromptKey, string>>;
 }
+
+// ============================================================
+// 非誘導プリセット（例示の排除）
+//
+// 標準（BASE本文）を原則としつつ、回答者に見える文面を作るキーにだけ
+// 「回答例を出さない」ルールを追記する。標準との差分は例示の排除のみで、
+// 深掘りの積極性・辞退回答の再確認・トーンは標準のまま（挙動保存）。
+//
+// 例: 「あなたの興味あることを答えてください（金利、株、FX）」
+//   → 「あなたの興味あることを答えてください」
+// ============================================================
+
+/** 回答者向け文面を出す英語テンプレートへの追記ルール（共通） */
+const NON_LEADING_RULE_EN = `
+Non-leading rule (no examples):
+- Never put example answers in user-facing text. The Japanese forms "（例: 〇〇）", "（〇〇、〇〇）", "たとえば〇〇など", "〇〇や〇〇といった" are forbidden.
+- Never list candidate answers, category names, product names, or numeric ranges as hints.
+- Ask in an open form so the respondent answers in their own words.`;
+
+/**
+ * 深掘り文だけに足す（既出の語しか使わない）。
+ * 設問レンダリング側に足すと元の設問文が再現できなくなるため対象外にする。
+ */
+const NON_LEADING_PROBE_EN = `
+- Build the follow-up only from words the respondent has already used. Do not introduce new concrete nouns on your side.`;
+
+/** 元の設問文をレンダリングするキーにだけ足す（元設問側の例示を落とす） */
+const NON_LEADING_STRIP_EN = `
+- If the source question text contains example answers (typically in parentheses), drop that example part when presenting it. Keep the rest of the question's meaning and scope unchanged.`;
+
+/** 深掘りガイダンス（日本語断片）への追記ルール */
+const NON_LEADING_RULE_JA = `
+【非誘導ルール（例示の排除）】
+- 深掘り質問に回答例・候補語を含めない。「（例: 〇〇）」「たとえば〇〇など」「〇〇や〇〇といった」の形は禁止。
+- 回答者がまだ口にしていない具体名・カテゴリ名・数値レンジを、こちらから提示しない。
+- 引用してよいのは回答者が実際に述べた語のみ。別の語に言い換えたり補ったりしない。
+- 問いは開かれた形にし、答えの方向を限定しない。`;
+
+/** 追記対象キー: 深掘り文のみを生成する英語テンプレート */
+const NON_LEADING_EN_KEYS: BasePromptKey[] = [
+  "buildAnalyzeAnswerPrompt",
+  "buildProbeGenerationPrompt",
+  "buildProbePrompt",
+];
+
+/** 追記対象キー: 元の設問文をレンダリングする＝「元設問の例示を落とす」指示が要るもの */
+const NON_LEADING_EN_STRIP_KEYS: BasePromptKey[] = [
+  "buildQuestionRenderingPrompt",
+  "buildInterviewTurnPrompt",
+];
+
+/** 追記対象キー: 型別深掘りガイダンス（日本語断片） */
+const NON_LEADING_JA_KEYS: BasePromptKey[] = [
+  "probeGuidanceCommon",
+  "probeGuidanceText",
+  "probeGuidanceChoiceSingle",
+  "probeGuidanceChoiceMulti",
+  "probeGuidanceNumeric",
+];
+
+/**
+ * 非誘導プリセットの本文上書きを BASE から生成する（追記方式）。
+ * BASE 本文を書き換えず末尾に足すだけなので、BASE 側の改訂は自動で引き継がれる。
+ * 対象外キー（スロット抽出・完了チェック・要約・分析・投稿系・管理ツール系）は
+ * 回答者に文面が出ないため BASE のまま＝標準と同一。
+ */
+export function buildNonLeadingTemplateOverrides(): Partial<Record<BasePromptKey, string>> {
+  const overrides: Partial<Record<BasePromptKey, string>> = {};
+  for (const key of NON_LEADING_EN_KEYS) {
+    overrides[key] = `${BASE_PROMPT_TEMPLATES[key].template}\n${NON_LEADING_RULE_EN}${NON_LEADING_PROBE_EN}`;
+  }
+  for (const key of NON_LEADING_EN_STRIP_KEYS) {
+    overrides[key] = `${BASE_PROMPT_TEMPLATES[key].template}\n${NON_LEADING_RULE_EN}${NON_LEADING_STRIP_EN}`;
+  }
+  for (const key of NON_LEADING_JA_KEYS) {
+    overrides[key] = `${BASE_PROMPT_TEMPLATES[key].template}\n${NON_LEADING_RULE_JA}`;
+  }
+  return overrides;
+}
+
+/** 非誘導プリセットで本文を上書きするキー（10件・テスト／管理画面の可視化用） */
+export const NON_LEADING_OVERRIDE_KEYS: BasePromptKey[] = [
+  ...NON_LEADING_EN_KEYS,
+  ...NON_LEADING_EN_STRIP_KEYS,
+  ...NON_LEADING_JA_KEYS,
+];
+
+// ============================================================
+// 若年層プリセット（カジュアル・非誘導）
+//
+// 非誘導（例示の排除）を土台に、若年層モニター特有の離脱要因へ対処する
+// トーン規定を重ねる。対象キー・追記方式は非誘導と完全に同一
+// （BASE 本文＋非誘導ルール＋トーンルール の順に追記）。
+//
+// 若年層は提示された語にそのまま乗りやすい＝例示の害が最も大きい層のため、
+// 非誘導を外した「カジュアルのみ」の版は用意しない。
+//
+// 確定事項:
+// - 絵文字は完全禁止（AI側の文面）
+// - です・ます調は維持する（AIが崩すと滑るリスクが硬さのデメリットを上回る）
+// ============================================================
+
+/** 回答者向け文面を出す英語テンプレートへの追記ルール（トーン・離脱対策） */
+const YOUNG_CASUAL_RULE_EN = `
+Tone rule (young respondents):
+- Write plain, everyday Japanese in polite form (です・ます). Keep it warm but never stiff.
+- Keep one message to a single question, roughly 60 Japanese characters or fewer.
+- Do not use emoji or decorative symbols at all.
+- Do not imitate youth slang, SNS wording, or trendy expressions. Neutral-but-warm reads as
+  sincere; a failed attempt to sound young reads as fake and increases drop-off.
+- Do not use stiff written-language connectives such as "〜における" or "〜に関して".
+
+Drop-off rule:
+- Treat the respondent's attention as the scarcest resource.
+- When the answer is already usable, prefer ask_next over probe.
+- Never probe the same point twice. A second refusal is a final answer.`;
+
+/** 深掘りガイダンス（日本語断片）への追記ルール（トーン・離脱対策） */
+const YOUNG_CASUAL_RULE_JA = `
+【若年層向けの深掘り】
+- 文体は「です・ます」を保つ。タメ口・若者言葉・SNS語・絵文字は使わない。
+- 1メッセージ1問。60文字程度までに収める。
+- 「別に」「普通」「特にない」等の辞退回答への再確認は1回まで。2回目は行わず次へ進む。
+- 抽象語（やばい・微妙・普通・エモい 等）は語義をこちらで決めつけない。
+  肯定/否定どちらの意味かという方向だけを1点確認する。
+- 「なぜ」「理由を教えてください」を単独で使わない。
+  そう感じた場面をたずねる形にして、答えやすさを優先する。
+- 回答が既に使える具体性を持つ場合は深掘りしない選択を優先する（離脱コストの方が大きい）。`;
+
+/**
+ * 若年層プリセットの本文上書きを生成する（非誘導への追記方式）。
+ * 非誘導と同じキー群に、非誘導ルールの後ろへトーンルールを足す。
+ * BASE 本文・非誘導ルールはそのまま保持されるので、双方の改訂を自動で引き継ぐ。
+ */
+export function buildYoungCasualTemplateOverrides(): Partial<Record<BasePromptKey, string>> {
+  const base = buildNonLeadingTemplateOverrides();
+  const overrides: Partial<Record<BasePromptKey, string>> = {};
+  for (const key of [...NON_LEADING_EN_KEYS, ...NON_LEADING_EN_STRIP_KEYS]) {
+    overrides[key] = `${base[key]}\n${YOUNG_CASUAL_RULE_EN}`;
+  }
+  for (const key of NON_LEADING_JA_KEYS) {
+    overrides[key] = `${base[key]}\n${YOUNG_CASUAL_RULE_JA}`;
+  }
+  return overrides;
+}
+
+/** 若年層プリセットで本文を上書きするキー（10件・非誘導と同一） */
+export const YOUNG_CASUAL_OVERRIDE_KEYS: BasePromptKey[] = [...NON_LEADING_OVERRIDE_KEYS];
 
 /**
  * 用途プリセット定義。category（分類タグ）とは別概念で、
@@ -1156,6 +1306,31 @@ export const PROMPT_PRESETS: Record<PromptPresetKey, PromptPreset> = {
       restrictions: ["no_medical_legal_financial_claim", "no_leading_question", "no_internal_codes"],
       priority: "respondent_comfort_first",
     },
+  },
+  non_leading: {
+    label: "非誘導（例示なし）",
+    description:
+      "標準セットが原則。回答者に見える設問文・深掘り文から回答例（「（金利、株、FX）」等）を排除し、回答者自身の言葉で答えてもらう。深掘りの強さ・トーンは標準と同じ。",
+    // policy は標準と同じ空のまま＝標準との差分は「例示の排除」だけに限定する。
+    policy: {},
+    templateOverrides: buildNonLeadingTemplateOverrides(),
+  },
+  young_casual: {
+    label: "若年層向け（カジュアル・非誘導）",
+    description:
+      "若年層モニター向け。です・ます調は保ったまま硬さを取り、1問を短く保つ。回答例は出さず（非誘導）、辞退回答の再確認は1回まで・同一論点の再深掘りはしないことで離脱を防ぐ。絵文字・若者言葉はAI側では使わない。",
+    policy: {
+      audience: "young_casual",
+      probeStyle: "emotion_and_context",
+      // ambiguousAnswerRule は既定のまま。抽象語（やばい・微妙）の扱いは
+      // templateOverrides 側で「方向だけ1点確認」と規定しており、
+      // concrete_example（「たとえばどんな状況でしたか」）と二重に当てると
+      // 非誘導ルールの「たとえば〜」禁止と字面が衝突するため。
+      noneAnswerPolicy: "ask_for_small_hint",
+      restrictions: ["no_leading_question", "one_question_only", "no_internal_codes"],
+      priority: "respondent_comfort_first",
+    },
+    templateOverrides: buildYoungCasualTemplateOverrides(),
   },
 };
 
