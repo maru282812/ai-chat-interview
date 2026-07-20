@@ -152,6 +152,10 @@ test("listDiscoverable は status=published かつ visibility_type=public で絞
     eqCalls.some((a) => a[0] === "visibility_type" && a[1] === "public"),
     "visibility_type=public 条件が必要（private_store 漏れ防止）"
   );
+  assert.ok(
+    eqCalls.some((a) => a[0] === "is_discoverable" && a[1] === true),
+    "is_discoverable=true 条件が必要（テスト・デモ案件の露出防止）"
+  );
 });
 
 test("getDiscoverableById は visibility_type=public で絞る（専用案件の直リンク露出防止）", async () => {
@@ -163,6 +167,10 @@ test("getDiscoverableById は visibility_type=public で絞る（専用案件の
 
   const eqCalls = calls.filter((c) => c.method === "eq").map((c) => c.args);
   assert.ok(eqCalls.some((a) => a[0] === "visibility_type" && a[1] === "public"));
+  assert.ok(
+    eqCalls.some((a) => a[0] === "is_discoverable" && a[1] === true),
+    "is_discoverable=true 条件が必要（一覧に出していない案件への直リンク・応募を塞ぐ）"
+  );
 });
 
 test("getStoreProjectByEntryCode は private_store かつ published で絞る", async () => {
