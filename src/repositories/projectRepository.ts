@@ -61,6 +61,8 @@ interface ProjectMutationInput {
   concept_rotation_mode?: 'off' | 'latin' | 'full';
   randomize_question_order?: boolean;
   answer_ui_preset?: import("../types/domain").AnswerUiPreset;
+  /** 若年層体験パックのプロジェクト上書き (Migration 083)。 */
+  experience_config?: Record<string, unknown>;
 }
 
 type ProjectUpdateInput = Partial<ProjectMutationInput>;
@@ -229,6 +231,9 @@ export const projectRepository = {
       .select("id, name, user_display_title, category, delivery_type, display_thumbnail_url, estimated_minutes, max_respondents, reward_points, status, created_at, tags, ng_conditions, recruit_deadline, apply_mode, interview_format")
       .eq("status", "published")
       .eq("visibility_type", "public")
+      // 管理画面の「一覧に出す」チェック（is_discoverable）を尊重する。
+      // これが無いと published × public というだけでテスト・デモ案件まで露出する。
+      .eq("is_discoverable", true)
       // 募集期限切れは一覧に出さない（recruit_deadline 未設定は常に表示）
       .or(`recruit_deadline.is.null,recruit_deadline.gte.${new Date().toISOString()}`)
       .order("created_at", { ascending: false });
@@ -243,6 +248,9 @@ export const projectRepository = {
       .eq("id", id)
       .eq("status", "published")
       .eq("visibility_type", "public")
+      // 一覧と同条件。一覧に出していない案件へ直リンク／応募で入れる穴を塞ぐ
+      // （応募検証 applicationService もこの関数を通る）。
+      .eq("is_discoverable", true)
       .maybeSingle();
     throwIfError(error);
     return data as Project | null;
