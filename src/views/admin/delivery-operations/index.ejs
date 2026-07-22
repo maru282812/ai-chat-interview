@@ -618,18 +618,31 @@
       <tbody>
         <tr><td>対象案件</td><td id="modal-project"></td></tr>
         <tr>
-          <td>推定対象人数</td>
+          <td>実際の対象人数</td>
           <td id="modal-count" style="font-size:18px;color:#117a37"></td>
         </tr>
         <tr><td>セグメント</td><td id="modal-segment"></td></tr>
-        <tr><td>テンプレート</td><td id="modal-template"></td></tr>
         <tr><td>キャンペーン</td><td id="modal-campaign"></td></tr>
         <tr><td>同意書類</td><td id="modal-documents"></td></tr>
       </tbody>
     </table>
+
+    <!-- セグメント未選択＝全会員配信。最も影響が大きいケースなので明示的な同意を要求する -->
+    <div id="modal-allmembers-warning" class="confirm-panel" style="display:none;margin-top:12px">
+      <div><strong>全会員への配信です。</strong></div>
+      <div class="muted" style="font-size:13px;margin-top:4px">
+        セグメントが選択されていないため、条件を満たす全ユーザーが対象になります。
+      </div>
+    </div>
+
+    <label class="confirm-ack">
+      <input type="checkbox" id="modal-ack" onchange="document.getElementById('modal-confirm-btn').disabled = !this.checked" />
+      <span id="modal-ack-text">上記の内容を確認しました</span>
+    </label>
+
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal()">キャンセル</button>
-      <button class="btn-execute" id="modal-confirm-btn" onclick="executeDelivery()">
+      <button class="btn-execute" id="modal-confirm-btn" onclick="executeDelivery()" disabled>
         配信を実行
       </button>
     </div>
@@ -1000,7 +1013,7 @@
   // ============================================================
   // 確認モーダル
   // ============================================================
-  function showConfirmModal() {
+  async function showConfirmModal() {
     if (!selectedProjectId || !selectedCampaignId) return;
 
     const project = PROJECTS_DATA.find(p => p.id === selectedProjectId);
@@ -1008,19 +1021,56 @@
     if (!project || !campaign) return;
 
     const seg = selectedSegmentId ? SEGMENTS_DATA.find(s => s.id === selectedSegmentId) : null;
-    const tmpl = selectedTemplateId ? NOTIFICATION_TEMPLATES_DATA.find(t => t.id === selectedTemplateId) : null;
-    const countText = seg && seg.estimated_count != null ? `${seg.estimated_count}名` : '全会員';
 
     document.getElementById('modal-project').textContent = project.name;
-    document.getElementById('modal-count').textContent = countText;
-    document.getElementById('modal-segment').textContent = seg ? seg.name : '全会員';
-    document.getElementById('modal-template').textContent = tmpl ? tmpl.name : '（プロジェクト標準）';
+    document.getElementById('modal-segment').textContent = seg ? seg.name : '全会員（セグメント未選択）';
     document.getElementById('modal-campaign').textContent = campaign.name;
     document.getElementById('modal-documents').textContent = formatConsentDocumentSummary(project);
-    document.getElementById('modal-confirm-btn').disabled = false;
-    document.getElementById('modal-confirm-btn').textContent = '配信を実行';
+    document.getElementById('modal-allmembers-warning').style.display = seg ? 'none' : '';
 
+    // 確認は「実行してよいと分かった状態」からしか押せないようにする
+    const ack = document.getElementById('modal-ack');
+    ack.checked = false;
+    const confirmBtn = document.getElementById('modal-confirm-btn');
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = '配信を実行';
+
+    // 件数はセグメントに保存された estimated_count（古い可能性がある）ではなく、
+    // 実配信と同じ経路のドライランで取り直す。
+    const countCell = document.getElementById('modal-count');
+    countCell.textContent = '対象を確認中...';
     document.getElementById('confirm-modal').classList.add('active');
+
+    try {
+      const res = await fetch(`/admin/api/campaigns/${selectedCampaignId}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          segment_id: selectedSegmentId || null,
+          project_id: selectedProjectId || null,
+          dry_run: '1',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        countCell.textContent = '取得できませんでした';
+        countCell.style.color = '#b42318';
+        document.getElementById('modal-ack-text').textContent =
+          '対象人数を確認できませんでした：' + (data.error || '不明なエラー');
+        return;
+      }
+      countCell.style.color = '#117a37';
+      countCell.textContent = `${(data.target_count || 0).toLocaleString('ja-JP')}名`;
+      document.getElementById('modal-ack-text').textContent =
+        `${(data.target_count || 0).toLocaleString('ja-JP')}名に配信することを確認しました`;
+      if (!data.target_count) {
+        document.getElementById('modal-ack-text').textContent =
+          '対象者が0名です。配信しても何も送信されません。';
+      }
+    } catch {
+      countCell.textContent = '取得できませんでした';
+      countCell.style.color = '#b42318';
+    }
   }
 
   function closeModal() {
@@ -1050,7 +1100,9 @@
       const data = await res.json();
       if (res.ok) {
         closeModal();
-        alert(`配信完了！\n送信数: ${data.sent_count || 0}件`);
+        // このエンドポイントが行うのは案件のアサインまで。LINE push は別経路なので、
+        // 「送信数」と呼ぶと実際に通知が飛んだと誤解される。
+        alert(`${data.sent_count || 0}名に案件をアサインしました。\n（LINE通知の送信は配信テンプレート／スケジューラ側で行われます）`);
         location.reload();
       } else {
         alert(`エラー: ${data.error || '配信に失敗しました'}`);

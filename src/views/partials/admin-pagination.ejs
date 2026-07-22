@@ -1,0 +1,48 @@
+<%
+  /**
+   * 管理画面の共通ページネーション。
+   * 呼び出し側は page / totalPages / total / basePath / query（現在の絞り込み条件）を渡す。
+   * 全ページ番号を無制限に列挙すると50ページで数字の壁になるため、前後2ページ分の窓にする。
+   */
+  const _page = Number(page) || 1;
+  const _totalPages = Math.max(1, Number(totalPages) || 1);
+  const _total = Number(total) || 0;
+  const _base = basePath;
+  const _query = typeof query === "object" && query ? query : {};
+  const buildUrl = (p) => {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(_query)) {
+      if (v !== undefined && v !== null && String(v) !== "") params.set(k, String(v));
+    }
+    params.set("page", String(p));
+    return _base + "?" + params.toString();
+  };
+  const windowStart = Math.max(1, _page - 2);
+  const windowEnd = Math.min(_totalPages, _page + 2);
+%>
+<div class="pagination">
+  <span class="muted pagination-summary">
+    全 <%= _total.toLocaleString("ja-JP") %> 件 / <%= _page %> ページ目（全 <%= _totalPages %> ページ）
+  </span>
+  <% if (_totalPages > 1) { %>
+    <span class="pagination-links">
+      <% if (_page > 1) { %>
+        <a href="<%= buildUrl(1) %>">« 最初</a>
+        <a href="<%= buildUrl(_page - 1) %>">‹ 前へ</a>
+      <% } %>
+      <% if (windowStart > 1) { %><span class="muted">…</span><% } %>
+      <% for (let p = windowStart; p <= windowEnd; p++) { %>
+        <% if (p === _page) { %>
+          <strong class="pagination-current"><%= p %></strong>
+        <% } else { %>
+          <a href="<%= buildUrl(p) %>"><%= p %></a>
+        <% } %>
+      <% } %>
+      <% if (windowEnd < _totalPages) { %><span class="muted">…</span><% } %>
+      <% if (_page < _totalPages) { %>
+        <a href="<%= buildUrl(_page + 1) %>">次へ ›</a>
+        <a href="<%= buildUrl(_totalPages) %>">最後 »</a>
+      <% } %>
+    </span>
+  <% } %>
+</div>

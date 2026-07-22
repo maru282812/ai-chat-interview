@@ -1,5 +1,7 @@
 ﻿import type { Request, Response } from "express";
 import { HttpError } from "../lib/http";
+import { redirectWithFlash, redirectWithError } from "../lib/adminFlash";
+import { fromDateTimeLocalJst } from "../lib/adminView";
 import { logger } from "../lib/logger";
 import { env as appEnv } from "../config/env";
 import { STORAGE_BUCKET } from "../config/storage";
@@ -61,6 +63,7 @@ import {
 import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
 import { exportJobRepository } from "../repositories/exportJobRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
+import { researchOpsService } from "../services/researchOpsService";
 import { questionRepository } from "../repositories/questionRepository";
 import { collectClientMetrics } from "../lib/aggregationScope";
 import { rankRepository } from "../repositories/rankRepository";
@@ -405,16 +408,26 @@ async function applyDailySurveyPlacement(
 }
 
 
+/**
+ * 管理画面の `datetime-local` / `date` 入力を UTC の ISO 文字列にする。
+ *
+ * 入力欄の値はタイムゾーンを持たない壁時計時刻（例 "2026-07-22T09:30"）で、
+ * これを `new Date()` に渡すとサーバーのローカルタイムゾーンで解釈される。
+ * 本番は Vercel（UTC）なので JST のつもりで入れた時刻が9時間ずれていた。
+ * 管理画面の入力は常に JST として扱う。
+ */
 function parseNullableDateTime(value: unknown): string | null {
   const text = bodyString(value).trim();
   if (!text) {
     return null;
   }
-  const date = new Date(text);
-  if (Number.isNaN(date.getTime())) {
+  // 日付のみ（"2026-07-22"）は JST の 00:00 とみなす
+  const withTime = /^\d{4}-\d{2}-\d{2}$/.test(text) ? `${text}T00:00` : text;
+  const jst = fromDateTimeLocalJst(withTime.slice(0, 16));
+  if (!jst) {
     throw new HttpError(400, "deadline is invalid");
   }
-  return date.toISOString();
+  return jst;
 }
 
 function parseOptionalNumber(value: unknown): number | null {
@@ -2594,6 +2607,48 @@ async function evalGroupIds(db: any, group: SegGroup): Promise<Set<string>> {
   return profIds;
 }
 
+/** この評価器が実際にDBクエリへ落とせるフィールド */
+const SUPPORTED_SEGMENT_FIELDS = new Set([...PROFILE_FIELDS, "total_points"]);
+
+/**
+ * 条件の中に評価器が解釈できないフィールドが混じっていないか検査する。
+ * 実配信の直前に呼び、1つでもあれば実行を中断する（黙って無視すると
+ * 「20代女性向け」のつもりが全会員配信になる）。
+ */
+function findUnsupportedSegmentFields(rawConditions: unknown): string[] {
+  const norm = normalizeSegConds(rawConditions);
+  const unsupported = new Set<string>();
+  for (const group of norm.groups) {
+    for (const cond of group.conditions ?? []) {
+      if (!SUPPORTED_SEGMENT_FIELDS.has(cond.field)) unsupported.add(cond.field);
+    }
+  }
+  return [...unsupported];
+}
+
+/**
+ * 条件に一致する line_user_id の集合を返す。
+ * プレビュー（件数）と実配信（対象者）が同じロジックを通るようにするための共通実装。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function evaluateConditionsIds(db: any, rawConditions: unknown): Promise<Set<string>> {
+  const norm = normalizeSegConds(rawConditions);
+  const sets = await Promise.all(norm.groups.map(g => evalGroupIds(db, g)));
+  if (sets.length === 0) return new Set();
+
+  if (norm.operator === "AND") {
+    let result: Set<string> = sets[0] ?? new Set();
+    for (let i = 1; i < sets.length; i++) {
+      const next = sets[i] ?? new Set<string>();
+      result = new Set([...result].filter(id => next.has(id)));
+    }
+    return result;
+  }
+  const result = new Set<string>();
+  for (const s of sets) if (s) for (const id of s) result.add(id);
+  return result;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function evaluateConditionsCount(db: any, rawConditions: unknown): Promise<number> {
   const norm = normalizeSegConds(rawConditions);
@@ -2614,21 +2669,7 @@ async function evaluateConditionsCount(db: any, rawConditions: unknown): Promise
     return count ?? 0;
   }
 
-  // 通常パス: グループごとに ID 集合を評価して結合
-  const sets = await Promise.all(norm.groups.map(g => evalGroupIds(db, g)));
-  if (sets.length === 0) return 0;
-
-  if (norm.operator === "AND") {
-    let result: Set<string> = sets[0] ?? new Set();
-    for (let i = 1; i < sets.length; i++) {
-      const next = sets[i] ?? new Set<string>();
-      result = new Set([...result].filter(id => next.has(id)));
-    }
-    return result.size;
-  }
-  const result = new Set<string>();
-  for (const s of sets) if (s) for (const id of s) result.add(id);
-  return result.size;
+  return (await evaluateConditionsIds(db, rawConditions)).size;
 }
 
 function buildScheduleConfig(
@@ -2656,8 +2697,31 @@ function buildScheduleConfig(
 
 export const adminController = {
   async dashboard(_req: Request, res: Response): Promise<void> {
-    const stats = await adminService.dashboard();
-    res.render("admin/dashboard", { title: "Dashboard", stats });
+    const { pointExchangeRepository } = await import("../repositories/pointExchangeRepository");
+
+    // 「今なにを処理すべきか」が分かるように、未処理の件数をまとめて出す。
+    // 個々の取得は補助表示なので、失敗しても画面全体は落とさない。
+    const safeCount = async (fetch: () => Promise<number>): Promise<number | null> => {
+      try {
+        return await fetch();
+      } catch (err) {
+        logger.error("Failed to fetch dashboard queue count", { error: String(err) });
+        return null;
+      }
+    };
+
+    const [stats, pendingExchanges, pendingApplications] = await Promise.all([
+      adminService.dashboard(),
+      safeCount(() => pointExchangeRepository.countPending()),
+      safeCount(() => projectApplicationRepository.countPending())
+    ]);
+
+    res.render("admin/dashboard", {
+      title: "ダッシュボード",
+      stats,
+      queue: { pendingExchanges, pendingApplications },
+      generatedAt: new Date().toISOString()
+    });
   },
 
   async projects(req: Request, res: Response): Promise<void> {
@@ -3211,9 +3275,35 @@ export const adminController = {
     }
   },
 
-  async respondents(_req: Request, res: Response): Promise<void> {
-    const respondents = await adminService.listRespondents();
-    res.render("admin/respondents/index", { title: "Respondents", respondents });
+  async respondents(req: Request, res: Response): Promise<void> {
+    const PER_PAGE = 50;
+    const page = Math.max(1, Number(queryString(req.query.page)) || 1);
+    const projectId = queryString(req.query.project_id);
+    const status = queryString(req.query.status);
+    const q = queryString(req.query.q);
+
+    const [result, projects] = await Promise.all([
+      researchOpsService.listRespondentOverviewsPaged({
+        projectId: projectId || undefined,
+        status: status || undefined,
+        q: q || undefined,
+        limit: PER_PAGE,
+        offset: (page - 1) * PER_PAGE
+      }),
+      projectRepository.list()
+    ]);
+
+    res.render("admin/respondents/index", {
+      title: "回答者",
+      respondents: result.items,
+      total: result.total,
+      // 範囲外のページを要求された場合はリポジトリ側で最終ページに丸められている
+      page: Math.floor(result.offset / PER_PAGE) + 1,
+      perPage: PER_PAGE,
+      totalPages: Math.max(1, Math.ceil(result.total / PER_PAGE)),
+      projects,
+      filters: { projectId, status, q }
+    });
   },
 
   async projectRespondents(req: Request, res: Response): Promise<void> {
@@ -3334,11 +3424,38 @@ export const adminController = {
     res.redirect(`/admin/projects/${projectId}/analysis`);
   },
 
-  async points(_req: Request, res: Response): Promise<void> {
+  async points(req: Request, res: Response): Promise<void> {
+    const PER_PAGE = 50;
+    const page = Math.max(1, Number(queryString(req.query.page)) || 1);
+    const q = queryString(req.query.q);
+    const sortParam = queryString(req.query.sort);
+    const sort = (
+      ["lifetime_points", "total_points", "current_streak", "last_answered_date"] as const
+    ).includes(sortParam as never)
+      ? (sortParam as "lifetime_points" | "total_points" | "current_streak" | "last_answered_date")
+      : "lifetime_points";
+    const dir = queryString(req.query.dir) === "asc" ? "asc" : "desc";
+
     let summaries: Awaited<ReturnType<typeof userPointService.listSummaries>> = [];
+    let stats: Awaited<ReturnType<typeof userPointService.aggregateSummaries>> | null = null;
+    let total = 0;
+    let resolvedOffset = (page - 1) * PER_PAGE;
     let fetchError: string | null = null;
     try {
-      summaries = await userPointService.listSummaries(500);
+      const [pageResult, aggregate] = await Promise.all([
+        userPointService.searchSummaries({
+          q: q || undefined,
+          sort,
+          dir,
+          limit: PER_PAGE,
+          offset: (page - 1) * PER_PAGE
+        }),
+        userPointService.aggregateSummaries()
+      ]);
+      summaries = pageResult.rows;
+      total = pageResult.total;
+      resolvedOffset = pageResult.offset;
+      stats = aggregate;
     } catch (err) {
       logger.error("Failed to fetch point summaries", {
         error: String(err),
@@ -3346,9 +3463,17 @@ export const adminController = {
       });
       fetchError = "ポイント情報の取得に失敗しました。管理者へお問い合わせください。";
     }
+
     res.render("admin/points/index", {
       title: "ポイント管理",
       summaries,
+      stats,
+      total,
+      // 範囲外のページはサービス側で最終ページに丸められている
+      page: Math.floor(resolvedOffset / PER_PAGE) + 1,
+      perPage: PER_PAGE,
+      totalPages: Math.max(1, Math.ceil(total / PER_PAGE)),
+      filters: { q, sort, dir },
       fetchError
     });
   },
@@ -3358,10 +3483,18 @@ export const adminController = {
     const b = req.body as Record<string, string>;
     const points = Number(b.points);
     const reason = bodyString(b.reason) || "管理者調整";
+
+    // 従来はここで黙って /admin/points へ戻していたため、実行できたのかどうかが
+    // 画面から一切分からなかった。
     if (isNaN(points) || points === 0) {
-      res.redirect("/admin/points");
+      redirectWithError(res, "/admin/points", "増減ポイントに 0 以外の数値を入力してください。");
       return;
     }
+    if (Math.abs(points) > 10000) {
+      redirectWithError(res, "/admin/points", "1回の調整は ±10,000pt までです。");
+      return;
+    }
+
     await userPointService.awardPoints({
       lineUserId,
       transactionType: "manual_adjustment",
@@ -3369,7 +3502,11 @@ export const adminController = {
       reason,
       referenceType: "manual"
     });
-    res.redirect("/admin/points");
+    redirectWithFlash(
+      res,
+      "/admin/points",
+      `${points > 0 ? "+" : ""}${points}pt を調整しました（理由: ${reason}）。`
+    );
   },
 
   async badgesPage(_req: Request, res: Response): Promise<void> {
@@ -3381,7 +3518,10 @@ export const adminController = {
     res.render("admin/badges/index", {
       title: "バッジ管理",
       badges,
+      // 従来は slice(0,50) で黙って打ち切っており、51人目以降を見る手段が無かった。
+      // 全件数を一緒に渡して「何名中の何名を表示しているか」を画面に出す。
       userSummaries: userSummaries.slice(0, 50),
+      userSummaryTotal: userSummaries.length,
       awardCounts
     });
   },
@@ -3408,25 +3548,76 @@ export const adminController = {
 
   async adjustPoints(req: Request, res: Response): Promise<void> {
     const respondentId = routeParam(req, "respondentId");
-    await pointService.manualAdjust({
-      respondentId,
-      points: numberField(req.body.points),
-      reason: bodyString(req.body.reason || "Manual adjustment")
-    });
-    res.redirect(`/admin/respondents/${respondentId}`);
+    const points = numberField(req.body.points);
+    const reason = bodyString(req.body.reason) || "管理者調整";
+    const target = `/admin/respondents/${respondentId}`;
+
+    if (!Number.isFinite(points) || points === 0) {
+      redirectWithError(res, target, "増減ポイントに 0 以外の数値を入力してください。");
+      return;
+    }
+    if (Math.abs(points) > 10000) {
+      redirectWithError(res, target, "1回の調整は ±10,000pt までです。");
+      return;
+    }
+
+    await pointService.manualAdjust({ respondentId, points, reason });
+    redirectWithFlash(
+      res,
+      target,
+      `${points > 0 ? "+" : ""}${points}pt を調整しました（理由: ${reason}）。`
+    );
   },
 
   async ranks(_req: Request, res: Response): Promise<void> {
     const ranks = await adminService.listRanks();
-    res.render("admin/ranks/index", { title: "Ranks", ranks });
+    res.render("admin/ranks/index", { title: "ランク設定", ranks });
   },
 
   async updateRank(req: Request, res: Response): Promise<void> {
-    await rankRepository.updateThreshold(routeParam(req, "rankId"), {
-      min_points: numberField(req.body.min_points),
+    const rankId = routeParam(req, "rankId");
+    const minPoints = numberField(req.body.min_points);
+
+    if (!Number.isFinite(minPoints) || minPoints < 0) {
+      redirectWithError(res, "/admin/ranks", "必要ポイントには0以上の数値を入力してください。");
+      return;
+    }
+
+    // 閾値の逆転（シルバー100 > ゴールド50）を保存できてしまっていたので、
+    // 他ランクとの整合をここで検証する。
+    const ranks = await adminService.listRanks();
+    const target = ranks.find((rank) => rank.id === rankId);
+    if (!target) {
+      redirectWithError(res, "/admin/ranks", "対象のランクが見つかりませんでした。");
+      return;
+    }
+
+    const ordered = [...ranks].sort((a, b) => a.min_points - b.min_points);
+    const targetIndex = ordered.findIndex((rank) => rank.id === rankId);
+    const lower = ordered[targetIndex - 1];
+    const upper = ordered[targetIndex + 1];
+    if (lower && minPoints <= lower.min_points) {
+      redirectWithError(
+        res,
+        "/admin/ranks",
+        `${target.rank_name} の必要ポイントは ${lower.rank_name}（${lower.min_points}pt）より大きくしてください。`
+      );
+      return;
+    }
+    if (upper && minPoints >= upper.min_points) {
+      redirectWithError(
+        res,
+        "/admin/ranks",
+        `${target.rank_name} の必要ポイントは ${upper.rank_name}（${upper.min_points}pt）より小さくしてください。`
+      );
+      return;
+    }
+
+    await rankRepository.updateThreshold(rankId, {
+      min_points: minPoints,
       badge_label: bodyString(req.body.badge_label) || null
     });
-    res.redirect("/admin/ranks");
+    redirectWithFlash(res, "/admin/ranks", `${target.rank_name} を更新しました（下限 ${minPoints}pt）。`);
   },
 
   async exportAnswers(_req: Request, res: Response): Promise<void> {
@@ -5308,26 +5499,27 @@ export const adminController = {
     }
 
     // セグメント条件からターゲットユーザーを取得（画面からのsegment_idがあれば優先）
+    //
+    // 以前はここだけ `segment.conditions.conditions` という旧フォーマットを直接読み、
+    // gender / prefecture / is_blocked の3フィールドしか解釈していなかった。現行の
+    // 保存フォーマットは {operator, groups[]} なので条件が丸ごと無視され、
+    // 画面が出す「推定対象人数」と実配信対象が食い違っていた。
+    // プレビューと同じ評価器（evaluateConditionsIds）に一本化する。
     const effectiveSegmentId = segmentIdOverride ?? campaign.segment_id;
     let targetLineUserIds: string[] = [];
 
     if (effectiveSegmentId) {
       const segment = await segmentRepository.getById(effectiveSegmentId);
-      const conds = segment.conditions.conditions as Array<{
-        field: string; op: string; value: unknown;
-      }>;
-
-      let q = db.from("user_profiles").select("line_user_id").eq("profile_completed", true);
-      for (const c of conds) {
-        if (c.field === "gender" && c.op === "in" && Array.isArray(c.value))
-          q = q.in("gender", c.value as string[]);
-        else if (c.field === "prefecture" && c.op === "in" && Array.isArray(c.value))
-          q = q.in("prefecture", c.value as string[]);
-        else if (c.field === "is_blocked")
-          q = q.eq("is_blocked", c.value as boolean);
+      const unsupported = findUnsupportedSegmentFields(segment.conditions);
+      if (unsupported.length > 0) {
+        // 解釈できない条件があるまま配信すると対象が広がる方向に外れるため中断する
+        res.status(400).json({
+          error: `セグメント条件に未対応の項目が含まれています（${unsupported.join(", ")}）。条件を修正するまで配信できません。`
+        });
+        return;
       }
-      const { data } = await q;
-      targetLineUserIds = (data ?? []).map((r: { line_user_id: string }) => r.line_user_id);
+      const ids = await evaluateConditionsIds(db, segment.conditions);
+      targetLineUserIds = [...ids];
     } else {
       // セグメント未指定 → profile_completed 全員
       const { data } = await db
@@ -5336,6 +5528,19 @@ export const adminController = {
         .eq("profile_completed", true)
         .eq("is_blocked", false);
       targetLineUserIds = (data ?? []).map((r: { line_user_id: string }) => r.line_user_id);
+    }
+
+    // ドライラン: 対象件数だけ返して実際のアサインは行わない。
+    // 確認モーダルが「これから何名に配信されるか」を実配信と同じ経路で取得するために使う。
+    if (bodyString(req.body.dry_run) === "1") {
+      res.json({
+        ok: true,
+        dry_run: true,
+        target_count: targetLineUserIds.length,
+        segment_id: effectiveSegmentId ?? null,
+        is_all_members: !effectiveSegmentId
+      });
+      return;
     }
 
     if (targetLineUserIds.length === 0) {
@@ -6088,7 +6293,6 @@ export const adminController = {
 
   async schedulerSettings(req: Request, res: Response): Promise<void> {
     const settings = await notificationSchedulerService.getSettings();
-    const flash = req.query.saved ? "設定を保存しました" : null;
     const jobResult = req.query.job
       ? {
           job: req.query.job as string,
@@ -6102,7 +6306,6 @@ export const adminController = {
     res.render("admin/scheduler-settings/index", {
       title: "通知スケジューラ設定",
       settings,
-      flash,
       jobResult,
       activeJobCount: notificationSchedulerService.activeJobCount
     });
@@ -6119,7 +6322,7 @@ export const adminController = {
       reminder_enabled: b.reminder_enabled === "1",
       reminder_time: b.reminder_time || "20:00"
     });
-    res.redirect("/admin/scheduler-settings?saved=1");
+    redirectWithFlash(res, "/admin/scheduler-settings", "設定を保存しました。");
   },
 
   async runSchedulerJob(req: Request, res: Response): Promise<void> {
@@ -6145,8 +6348,7 @@ export const adminController = {
 
   async rewardCampaigns(req: Request, res: Response): Promise<void> {
     const campaigns = await rewardCampaignService.list();
-    const flash = req.query.saved ? "保存しました" : null;
-    res.render("admin/reward-campaigns/index", { title: "報酬キャンペーン", campaigns, flash });
+    res.render("admin/reward-campaigns/index", { title: "報酬キャンペーン", campaigns });
   },
 
   async newRewardCampaign(req: Request, res: Response): Promise<void> {
@@ -6170,11 +6372,12 @@ export const adminController = {
       condition_type: b.condition_type as import("../repositories/rewardCampaignRepository").ConditionType,
       condition_value: conditionValue,
       target_segment_id: b.target_segment_id || null,
-      start_at: b.start_at || null,
-      end_at: b.end_at || null,
+      // datetime-local の値は JST の壁時計時刻。UTC として解釈すると9時間ずれる
+      start_at: parseNullableDateTime(b.start_at),
+      end_at: parseNullableDateTime(b.end_at),
       is_active: b.is_active === "1"
     });
-    res.redirect("/admin/reward-campaigns?saved=1");
+    redirectWithFlash(res, "/admin/reward-campaigns", "保存しました。");
   },
 
   async editRewardCampaign(req: Request, res: Response): Promise<void> {
@@ -6203,11 +6406,12 @@ export const adminController = {
       condition_type: b.condition_type as import("../repositories/rewardCampaignRepository").ConditionType,
       condition_value: conditionValue,
       target_segment_id: b.target_segment_id || null,
-      start_at: b.start_at || null,
-      end_at: b.end_at || null,
+      // datetime-local の値は JST の壁時計時刻。UTC として解釈すると9時間ずれる
+      start_at: parseNullableDateTime(b.start_at),
+      end_at: parseNullableDateTime(b.end_at),
       is_active: b.is_active === "1"
     });
-    res.redirect("/admin/reward-campaigns?saved=1");
+    redirectWithFlash(res, "/admin/reward-campaigns", "保存しました。");
   },
 
   async deleteRewardCampaign(req: Request, res: Response): Promise<void> {
@@ -6228,11 +6432,9 @@ export const adminController = {
 
   async dailyQuestionPriorities(req: Request, res: Response): Promise<void> {
     const questions = await dailyQuestionPriorityService.list();
-    const flash = req.query.saved ? "保存しました" : null;
     res.render("admin/daily-question-priorities/index", {
       title: "デイリー設問優先度",
-      questions,
-      flash
+      questions
     });
   },
 
@@ -6259,7 +6461,7 @@ export const adminController = {
       weight: Number(b.weight ?? 10),
       is_active: b.is_active === "1"
     });
-    res.redirect("/admin/daily-question-priorities?saved=1");
+    redirectWithFlash(res, "/admin/daily-question-priorities", "保存しました。");
   },
 
   async editDailyQuestionPriority(req: Request, res: Response): Promise<void> {
@@ -6290,7 +6492,7 @@ export const adminController = {
       weight: Number(b.weight ?? 10),
       is_active: b.is_active === "1"
     });
-    res.redirect("/admin/daily-question-priorities?saved=1");
+    redirectWithFlash(res, "/admin/daily-question-priorities", "保存しました。");
   },
 
   async deleteDailyQuestionPriority(req: Request, res: Response): Promise<void> {

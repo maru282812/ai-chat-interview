@@ -1,9 +1,47 @@
 <%- include("../partials/header", { title }) %>
+
+<%#
+  要対応キュー。従来のダッシュボードは数値カード4枚と開発者向けの内部文言だけで、
+  未処理の仕事へ辿る導線が1つも無かった。
+%>
+<h2 style="margin-bottom:12px">要対応</h2>
 <section class="grid">
-  <div class="card">
+  <a class="card queue-card" href="/admin/exchange-requests?status=pending">
+    <div class="muted">未処理の交換申請</div>
+    <h2>
+      <% if (queue.pendingExchanges === null) { %>
+        <span class="muted" style="font-size:16px">取得できませんでした</span>
+      <% } else { %>
+        <span class="<%= queue.pendingExchanges > 0 ? "danger-text" : "" %>"><%= queue.pendingExchanges.toLocaleString("ja-JP") %></span>
+      <% } %>
+    </h2>
+  </a>
+  <a class="card queue-card" href="/admin/applications?status=applied">
+    <div class="muted">選考待ちの応募</div>
+    <h2>
+      <% if (queue.pendingApplications === null) { %>
+        <span class="muted" style="font-size:16px">取得できませんでした</span>
+      <% } else { %>
+        <span class="<%= queue.pendingApplications > 0 ? "danger-text" : "" %>"><%= queue.pendingApplications.toLocaleString("ja-JP") %></span>
+      <% } %>
+    </h2>
+  </a>
+  <a class="card queue-card" href="/admin/daily-surveys">
+    <div class="muted">デイリー配信キュー</div>
+    <h2 style="font-size:18px">カレンダーを見る</h2>
+  </a>
+  <a class="card queue-card" href="/admin/delivery-operations">
+    <div class="muted">配信オペレーション</div>
+    <h2 style="font-size:18px">配信を実行する</h2>
+  </a>
+</section>
+
+<h2 style="margin:24px 0 12px">全体の状況</h2>
+<section class="grid">
+  <a class="card queue-card" href="/admin/projects">
     <div class="muted">稼働中プロジェクト</div>
     <h2><%= stats.activeProjects %></h2>
-  </div>
+  </a>
   <div class="card">
     <div class="muted">進行中セッション</div>
     <h2><%= stats.activeSessions %></h2>
@@ -12,14 +50,13 @@
     <div class="muted">完了セッション</div>
     <h2><%= stats.completedSessions %></h2>
   </div>
-  <div class="card">
+  <a class="card queue-card" href="/admin/respondents">
     <div class="muted">回答者数</div>
     <h2><%= stats.totalRespondents %></h2>
-  </div>
+  </a>
 </section>
 
-<section class="card" style="margin-top: 16px;">
-  <h2>MVP Scope</h2>
-  <p class="muted">Webhook、固定質問フロー、回答保存、管理画面、CSV、ポイント、ランク、AI深掘り/要約/分析の土台を同一アプリで運用します。</p>
-</section>
+<p class="muted" style="margin-top:16px;font-size:12px">
+  集計時点: <%= fmtDateTime(generatedAt) %>
+</p>
 <%- include("../partials/footer") %>

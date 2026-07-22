@@ -7,9 +7,6 @@
   </span>
 </div>
 
-<% if (flash) { %>
-  <div class="alert alert-success" style="margin-bottom:1rem"><%= flash %></div>
-<% } %>
 
 <% if (jobResult) { %>
   <div class="alert <%= jobResult.failed > 0 ? 'alert-warning' : 'alert-success' %>" style="margin-bottom:1rem">
@@ -113,19 +110,43 @@
 <hr style="margin:2rem 0">
 
 <h3 style="margin-bottom:1rem">手動実行</h3>
-<p class="muted" style="margin-bottom:1rem">スケジュール時刻に関係なく、今すぐジョブを実行します。</p>
+<div class="confirm-panel" style="margin-bottom:1rem">
+  <strong>本番のLINE配信が即座に飛びます。</strong>
+  <div class="muted" style="font-size:13px;margin-top:4px">
+    スケジュール時刻に関係なく、対象ユーザーへ実際にメッセージを送信します。
+    テスト目的では実行しないでください。
+  </div>
+</div>
 
 <div style="display:flex;gap:.75rem;flex-wrap:wrap">
-  <form method="POST" action="/admin/scheduler-settings/run/morning">
+  <form method="POST" action="/admin/scheduler-settings/run/morning" onsubmit="return confirmManualRun(this, '朝の配信')">
     <button type="submit" class="btn btn-secondary">▶ 朝の配信 を今すぐ実行</button>
   </form>
-  <form method="POST" action="/admin/scheduler-settings/run/evening">
+  <form method="POST" action="/admin/scheduler-settings/run/evening" onsubmit="return confirmManualRun(this, '夜の配信')">
     <button type="submit" class="btn btn-secondary">▶ 夜の配信 を今すぐ実行</button>
   </form>
-  <form method="POST" action="/admin/scheduler-settings/run/reminder">
+  <form method="POST" action="/admin/scheduler-settings/run/reminder" onsubmit="return confirmManualRun(this, '未回答リマインダー')">
     <button type="submit" class="btn btn-secondary">▶ 未回答リマインダー を今すぐ実行</button>
   </form>
 </div>
+
+<script>
+  // 誤クリック1回で全ユーザーへLINE配信が飛び、連打で多重送信もできる状態だった。
+  // 確認 + 送信中の二重送信防止を入れる。
+  function confirmManualRun(form, jobName) {
+    if (!confirm(
+      jobName + ' を今すぐ実行します。\n\n' +
+      '対象ユーザーへ本番のLINEメッセージが実際に送信されます。\n' +
+      'この操作は取り消せません。実行してよろしいですか？'
+    )) {
+      return false;
+    }
+    var button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    button.textContent = '実行中...';
+    return true;
+  }
+</script>
 
 <div class="card" style="margin-top:2rem;background:#f9f9f9">
   <h4 style="margin-bottom:.5rem">補足</h4>

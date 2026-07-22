@@ -48,19 +48,23 @@
           </td>
         </tr>
         <tr>
-          <th>配信予定日時</th>
+          <th>配信予定日時（JST）</th>
           <td>
             <input type="datetime-local" name="scheduled_at"
-              value="<%= campaign?.scheduled_at ? new Date(campaign.scheduled_at).toISOString().slice(0,16) : '' %>"
+              value="<%= dtLocal(campaign?.scheduled_at) %>"
               style="width:260px" />
-            <p class="muted" style="margin-top:4px;font-size:12px">空白の場合は下書き保存。設定時刻に自動実行されます。</p>
+            <p class="danger-text" style="margin-top:4px;font-size:12px">
+              ここに入れた時刻は<strong>予定のメモとして記録されるだけ</strong>で、自動実行はされません。
+              配信は<a href="/admin/delivery-operations">配信オペレーション</a>または一覧の「今すぐ実行」で手動で行ってください。
+            </p>
+            <p class="muted" style="margin-top:4px;font-size:12px">空白の場合は下書き保存になります。</p>
           </td>
         </tr>
         <tr>
           <th>回答期限</th>
           <td>
             <input type="datetime-local" name="deadline"
-              value="<%= campaign?.deadline ? new Date(campaign.deadline).toISOString().slice(0,16) : '' %>"
+              value="<%= dtLocal(campaign?.deadline) %>"
               style="width:260px" />
             <p class="muted" style="margin-top:4px;font-size:12px">アサインの期限（空白可）</p>
           </td>

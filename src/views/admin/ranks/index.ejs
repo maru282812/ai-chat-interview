@@ -1,18 +1,42 @@
 <%- include("../../partials/header", { title }) %>
+<p><a href="/admin/points">← ポイント管理に戻る</a></p>
+<h2>ランク設定</h2>
+<p class="muted">
+  必要ポイントを変更すると、以後の判定で全ユーザーのランクに波及します。
+  下限は上位ランクほど大きくなるように設定してください（逆転している場合は保存できません）。
+</p>
+
 <div class="stack">
   <% for (const rank of ranks) { %>
-    <form class="card" method="post" action="/admin/ranks/<%= rank.id %>">
+    <form
+      class="card"
+      method="post"
+      action="/admin/ranks/<%= rank.id %>"
+      onsubmit="return confirmRankUpdate(this, <%- JSON.stringify(rank.rank_name) %>)"
+    >
       <h2><%= rank.rank_name %></h2>
       <label>
-        min_points
-        <input type="number" name="min_points" value="<%= rank.min_points %>" />
+        必要ポイント（下限）
+        <input type="number" name="min_points" value="<%= rank.min_points %>" required />
       </label>
       <label>
-        badge_label
+        バッジ表示ラベル
         <input type="text" name="badge_label" value="<%= rank.badge_label || '' %>" />
       </label>
       <button type="submit">更新</button>
     </form>
   <% } %>
 </div>
+
+<script>
+  // 全ユーザーのランクに波及する破壊的操作なので、確認なしでは実行させない。
+  function confirmRankUpdate(form, rankName) {
+    var value = form.min_points.value;
+    if (!confirm(rankName + " の必要ポイントを " + value + "pt に変更します。\n以後の判定で全ユーザーのランクに影響します。\n\n実行してよろしいですか？")) {
+      return false;
+    }
+    form.querySelector('button[type="submit"]').disabled = true;
+    return true;
+  }
+</script>
 <%- include("../../partials/footer") %>

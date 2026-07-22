@@ -103,6 +103,16 @@ export const projectApplicationRepository = {
     return count ?? 0;
   },
 
+  /** 選考待ちの応募総数（ダッシュボードの要対応キュー用） */
+  async countPending(): Promise<number> {
+    const { count, error } = await supabase
+      .from("project_applications")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "applied");
+    throwIfError(error);
+    return count ?? 0;
+  },
+
   /** 案件の有効応募数（満枠判定用）。withdrawn/rejected/expired は数えない。 */
   async countActiveByProject(projectId: string): Promise<number> {
     const { count, error } = await supabase

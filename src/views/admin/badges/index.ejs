@@ -128,7 +128,17 @@ input:checked + .toggle-slider::before { transform:translateX(20px); }
 
 <!-- ユーザー別獲得状況 -->
 <section class="card">
-  <h3 style="margin-bottom:.75rem">ユーザー別獲得状況（上位50名）</h3>
+  <h3 style="margin-bottom:.75rem">
+    ユーザー別獲得状況
+    <span class="muted" style="font-size:13px">
+      （獲得者 <%= (typeof userSummaryTotal !== "undefined" ? userSummaryTotal : userSummaries.length).toLocaleString("ja-JP") %> 名のうち上位 <%= userSummaries.length %> 名を表示）
+    </span>
+  </h3>
+  <% if (typeof userSummaryTotal !== "undefined" && userSummaryTotal > userSummaries.length) { %>
+    <p class="muted" style="font-size:13px">
+      残り <%= (userSummaryTotal - userSummaries.length).toLocaleString("ja-JP") %> 名はこの画面には表示されません。
+    </p>
+  <% } %>
   <% if (userSummaries.length === 0) { %>
     <p class="muted">まだバッジ獲得者がいません</p>
   <% } else { %>
