@@ -1,7 +1,8 @@
 ﻿import type { Request, Response } from "express";
 import { HttpError } from "../lib/http";
 import { redirectWithFlash, redirectWithError } from "../lib/adminFlash";
-import { fromDateTimeLocalJst } from "../lib/adminView";
+import { formatDateTimeJst, fromDateTimeLocalJst, statusLabel } from "../lib/adminView";
+import { toCsvRfc4180 } from "../lib/statExport";
 import { logger } from "../lib/logger";
 import { env as appEnv } from "../config/env";
 import { STORAGE_BUCKET } from "../config/storage";
@@ -32,6 +33,13 @@ import {
 } from "../lib/metricCatalog";
 import { getProjectResearchSettings, parseLineSeparatedList } from "../lib/projectResearch";
 import { jstDateString, previewQueueAssignments, slotKey } from "../lib/dailyQueue";
+import {
+  isoToJstParts,
+  nextDailyRunJstFromTime,
+  nextRunJst,
+  scheduleLabel,
+  templateOccurrences
+} from "../lib/deliveryCalendar";
 import { DEFAULT_RAWDATA_STATUSES } from "../lib/rawdataExport";
 import { csvService } from "../services/csvService";
 import { statExportService } from "../services/statExportService";
@@ -61,6 +69,8 @@ import {
   type PoolQuestionType,
 } from "../repositories/poolQuestionRepository";
 import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
+import { answerRepository } from "../repositories/answerRepository";
+import QRCode from "qrcode";
 import { exportJobRepository } from "../repositories/exportJobRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
 import { researchOpsService } from "../services/researchOpsService";
@@ -121,6 +131,7 @@ import {
 } from "../prompts/adminPrompts";
 import { applicationService } from "../services/applicationService";
 import { projectApplicationRepository } from "../repositories/projectApplicationRepository";
+import { sessionRepository } from "../repositories/sessionRepository";
 import { lineMessagingService } from "../services/lineMessagingService";
 import { buildApplicationAcceptedFlex, buildApplicationRejectedFlex } from "../templates/flex";
 import { buildProjectStartUrl } from "../services/liffService";
@@ -1933,6 +1944,8 @@ function renderQuestionForm(
       columns: { name: string; label: string }[];
       snapshotConfirmed: boolean;
     } | null;
+    /** この設問に付いている回答件数（編集時のみ・取得失敗時は null） */
+    answeredCount?: number | null;
   }
 ): void {
   if (typeof input.statusCode === "number") {
@@ -1946,6 +1959,7 @@ function renderQuestionForm(
     action: input.action,
     form: input.formValues,
     rawdataInfo: input.rawdataInfo ?? null,
+    answeredCount: input.answeredCount ?? null,
     availableQuestions: input.availableQuestions.filter(
       (candidate) => !candidate.is_hidden || candidate.id === input.question?.id
     ),
@@ -2695,6 +2709,35 @@ function buildScheduleConfig(
   };
 }
 
+/**
+ * user_profiles の12条件フィルタを Supabase クエリへ適用する。
+ * 一覧（userProfilesAdmin）と CSV 出力で同じ絞り込みになるよう共通化。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyUserProfileFilters(query: any, q: Record<string, string>): any {
+  if (q.nickname) query = query.ilike("nickname", `%${q.nickname}%`);
+  if (q.gender) query = query.eq("gender", q.gender);
+  if (q.prefecture) query = query.eq("prefecture", q.prefecture);
+  if (q.occupation) query = query.ilike("occupation", `%${q.occupation}%`);
+  if (q.industry) query = query.ilike("industry", `%${q.industry}%`);
+  if (q.marital_status) query = query.eq("marital_status", q.marital_status);
+  if (q.has_children === "true") query = query.eq("has_children", true);
+  if (q.has_children === "false") query = query.eq("has_children", false);
+  if (q.profile_completed === "true") query = query.eq("profile_completed", true);
+  if (q.profile_completed === "false") query = query.eq("profile_completed", false);
+  if (q.age_from) {
+    const yearTo = new Date().getFullYear() - Number(q.age_from);
+    query = query.lte("birth_date", `${yearTo}-12-31`);
+  }
+  if (q.age_to) {
+    const yearFrom = new Date().getFullYear() - Number(q.age_to) - 1;
+    query = query.gte("birth_date", `${yearFrom + 1}-01-01`);
+  }
+  if (q.updated_from) query = query.gte("updated_at", q.updated_from);
+  if (q.updated_to) query = query.lte("updated_at", `${q.updated_to}T23:59:59Z`);
+  return query;
+}
+
 export const adminController = {
   async dashboard(_req: Request, res: Response): Promise<void> {
     const { pointExchangeRepository } = await import("../repositories/pointExchangeRepository");
@@ -2710,16 +2753,50 @@ export const adminController = {
       }
     };
 
-    const [stats, pendingExchanges, pendingApplications] = await Promise.all([
-      adminService.dashboard(),
-      safeCount(() => pointExchangeRepository.countPending()),
-      safeCount(() => projectApplicationRepository.countPending())
-    ]);
+    const { postRepository } = await import("../repositories/postRepository");
+
+    // 今日配信される（見込み含む）デイリーアンケートの枠数。
+    // 日付固定分＋キュー自動補充の見込みを dailySurveys カレンダーと同じロジックで数える。
+    const countTodayDailyDeliveries = async (): Promise<number> => {
+      const today = jstDateString();
+      let eveningAutofillEnabled = false;
+      try {
+        eveningAutofillEnabled = (await notificationSchedulerService.getSettings())
+          .evening_autofill_enabled;
+      } catch {
+        // 設定行が無い場合は「夜枠は補充しない」扱いで続行する
+      }
+      const planning = await dailySurveyService.getPlanningData(today, today);
+      const occupiedSlots = new Set<string>();
+      let deliverable = 0;
+      for (const s of planning.scheduled) {
+        if (!s.scheduled_date || !s.slot) continue;
+        occupiedSlots.add(slotKey(s.scheduled_date, s.slot));
+        if (s.status !== "completed" && s.status !== "paused") deliverable++;
+      }
+      const preview = previewQueueAssignments({
+        startDate: today,
+        days: 1,
+        queueIds: planning.queued.map((s) => s.id),
+        occupiedSlots,
+        eveningAutofillEnabled
+      });
+      return deliverable + preview.size;
+    };
+
+    const [stats, pendingExchanges, pendingApplications, todayDailyDeliveries, unanalyzedPosts] =
+      await Promise.all([
+        adminService.dashboard(),
+        safeCount(() => pointExchangeRepository.countPending()),
+        safeCount(() => projectApplicationRepository.countPending()),
+        safeCount(countTodayDailyDeliveries),
+        safeCount(() => postRepository.countUnanalyzed())
+      ]);
 
     res.render("admin/dashboard", {
       title: "ダッシュボード",
       stats,
-      queue: { pendingExchanges, pendingApplications },
+      queue: { pendingExchanges, pendingApplications, todayDailyDeliveries, unanalyzedPosts },
       generatedAt: new Date().toISOString()
     });
   },
@@ -3139,10 +3216,13 @@ export const adminController = {
     // ロウデータ列の対応（導出に失敗しても編集画面は落とさない）
     const rawdataIndex = await statExportService.rawdataColumnIndex(question.project_id).catch(() => null);
     const rawdataEntry = rawdataIndex?.byQuestionId[question.id];
+    // 公開後編集の警告バナー用。取得失敗でも編集画面は落とさない
+    const answeredCount = await answerRepository.countByQuestion(question.id).catch(() => null);
     renderQuestionForm(res, {
       title: "質問編集",
       project,
       question,
+      answeredCount,
       action: `/admin/questions/${question.id}`,
       formValues: buildQuestionFormValues(question),
       availableQuestions,
@@ -3399,6 +3479,38 @@ export const adminController = {
       tagSummary: adminService.summarizeTags(rows),
       projects,
       filters
+    });
+  },
+
+  async sessions(req: Request, res: Response): Promise<void> {
+    const PER_PAGE = 50;
+    const page = Math.max(1, Number(queryString(req.query.page)) || 1);
+    const projectId = queryString(req.query.project_id);
+    const statusRaw = queryString(req.query.status);
+    const status = (["pending", "active", "completed", "abandoned"] as const).find(
+      (s) => s === statusRaw
+    );
+
+    const [result, projects] = await Promise.all([
+      sessionRepository.listPaged({
+        projectId: projectId || undefined,
+        status,
+        limit: PER_PAGE,
+        offset: (page - 1) * PER_PAGE
+      }),
+      projectRepository.list()
+    ]);
+
+    res.render("admin/sessions/index", {
+      title: "セッション",
+      sessions: result.rows,
+      total: result.total,
+      // 範囲外のページを要求された場合はリポジトリ側で最終ページに丸められている
+      page: Math.floor(result.offset / PER_PAGE) + 1,
+      perPage: PER_PAGE,
+      totalPages: Math.max(1, Math.ceil(result.total / PER_PAGE)),
+      projects,
+      filters: { projectId, status: status ?? "" }
     });
   },
 
@@ -4473,6 +4585,20 @@ export const adminController = {
     const questionId = routeParam(req, "questionId");
     // Verify question exists (throws HttpError 404 if not)
     await questionRepository.getById(questionId);
+
+    // 回答が付いた設問の物理削除は、収集済み回答との整合とロウデータの列契約
+    // （wide/long/codebook は集計アプリ契約で凍結）を壊すため拒否する
+    const answeredCount = await answerRepository.countByQuestion(questionId).catch(() => null);
+    if (answeredCount === null) {
+      res.status(500).json({ error: "回答件数を確認できなかったため削除を中断しました。再試行してください。" });
+      return;
+    }
+    if (answeredCount > 0) {
+      res.status(409).json({
+        error: `この設問には回答が ${answeredCount} 件付いているため削除できません。設問を外したい場合は「非表示」を使ってください。`
+      });
+      return;
+    }
 
     const { supabase } = await import("../config/supabase");
     const { error } = await supabase
@@ -5611,6 +5737,41 @@ export const adminController = {
     res.redirect("/admin/data-management");
   },
 
+  /**
+   * NGワードの一括登録（改行区切りの貼り付け）。
+   * 空行・重複入力・既存登録済みは除外し、登録件数とスキップ件数をフラッシュで返す。
+   */
+  async bulkCreateNgWords(req: Request, res: Response): Promise<void> {
+    const raw = bodyString(req.body.words).trim();
+    const category = bodyString(req.body.category).trim() || "general";
+    const words = [...new Set(raw.split(/\r?\n/).map((w) => w.trim()).filter(Boolean))];
+    if (words.length === 0) {
+      redirectWithError(res, "/admin/data-management", "NGワードが入力されていません");
+      return;
+    }
+
+    const { supabase: db } = await import("../config/supabase");
+    const { data: existingRows, error: readError } = await db
+      .from("ng_words")
+      .select("word")
+      .in("word", words);
+    if (readError) throw new HttpError(500, readError.message);
+    const existing = new Set((existingRows ?? []).map((r) => String((r as { word: string }).word)));
+    const fresh = words.filter((w) => !existing.has(w));
+
+    if (fresh.length > 0) {
+      const { error } = await db.from("ng_words").insert(fresh.map((word) => ({ word, category })));
+      if (error) throw new HttpError(500, error.message);
+    }
+
+    const skipped = words.length - fresh.length;
+    redirectWithFlash(
+      res,
+      "/admin/data-management",
+      `NGワードを${fresh.length}件登録しました${skipped > 0 ? `（登録済み${skipped}件はスキップ）` : ""}`
+    );
+  },
+
   async toggleNgWord(req: Request, res: Response): Promise<void> {
     const id = routeParam(req, "id");
     const { supabase: db } = await import("../config/supabase");
@@ -5750,28 +5911,10 @@ export const adminController = {
     const { supabase: db } = await import("../config/supabase");
     const q = req.query as Record<string, string>;
 
-    let query = db.from("user_profiles").select("*", { count: "exact" });
-
-    if (q.nickname) query = query.ilike("nickname", `%${q.nickname}%`);
-    if (q.gender) query = query.eq("gender", q.gender);
-    if (q.prefecture) query = query.eq("prefecture", q.prefecture);
-    if (q.occupation) query = query.ilike("occupation", `%${q.occupation}%`);
-    if (q.industry) query = query.ilike("industry", `%${q.industry}%`);
-    if (q.marital_status) query = query.eq("marital_status", q.marital_status);
-    if (q.has_children === "true") query = query.eq("has_children", true);
-    if (q.has_children === "false") query = query.eq("has_children", false);
-    if (q.profile_completed === "true") query = query.eq("profile_completed", true);
-    if (q.profile_completed === "false") query = query.eq("profile_completed", false);
-    if (q.age_from) {
-      const yearTo = new Date().getFullYear() - Number(q.age_from);
-      query = query.lte("birth_date", `${yearTo}-12-31`);
-    }
-    if (q.age_to) {
-      const yearFrom = new Date().getFullYear() - Number(q.age_to) - 1;
-      query = query.gte("birth_date", `${yearFrom + 1}-01-01`);
-    }
-    if (q.updated_from) query = query.gte("updated_at", q.updated_from);
-    if (q.updated_to) query = query.lte("updated_at", `${q.updated_to}T23:59:59Z`);
+    const query = applyUserProfileFilters(
+      db.from("user_profiles").select("*", { count: "exact" }),
+      q
+    );
 
     const page = Math.max(1, Number(q.page ?? "1"));
     const perPage = 50;
@@ -5798,9 +5941,271 @@ export const adminController = {
     });
   },
 
+  /**
+   * プロフィール検索の絞り込み結果を CSV 出力する。
+   * 一覧と同じ12条件フィルタ（applyUserProfileFilters）を適用し、
+   * ページングせず全件を1000件ずつ取得して打ち切りを避ける。
+   */
+  async userProfilesExportCsv(req: Request, res: Response): Promise<void> {
+    if (!upAdminIsAuthenticated(req)) {
+      res.redirect("/admin/user-profiles/login");
+      return;
+    }
+
+    const { supabase: db } = await import("../config/supabase");
+    const q = req.query as Record<string, string>;
+
+    const PAGE = 1000;
+    const profiles: import("../types/domain").UserProfile[] = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const { data, error } = await applyUserProfileFilters(
+        db.from("user_profiles").select("*"),
+        q
+      )
+        .order("updated_at", { ascending: false })
+        .range(offset, offset + PAGE - 1);
+      if (error) throw new HttpError(500, error.message);
+      const rows = (data ?? []) as import("../types/domain").UserProfile[];
+      profiles.push(...rows);
+      if (rows.length < PAGE) break;
+    }
+
+    const body = toCsvRfc4180(
+      profiles.map((p) => ({
+        id: p.id,
+        line_user_id: p.line_user_id,
+        nickname: p.nickname ?? "",
+        gender: p.gender ?? "",
+        birth_date: p.birth_date ?? "",
+        prefecture: p.prefecture ?? "",
+        occupation: p.occupation ?? "",
+        industry: p.industry ?? "",
+        marital_status: p.marital_status ?? "",
+        has_children: p.has_children === null ? "" : p.has_children,
+        children_ages: (p.children_ages ?? []).join("|"),
+        household_income: p.household_income ?? "",
+        profile_completed: p.profile_completed,
+        notification_ok: p.notification_ok,
+        is_blocked: p.is_blocked,
+        fraud_flag: p.fraud_flag,
+        quality_score: p.quality_score ?? "",
+        last_login_at_jst: formatDateTimeJst(p.last_login_at, ""),
+        created_at_jst: formatDateTimeJst(p.created_at, ""),
+        updated_at_jst: formatDateTimeJst(p.updated_at, "")
+      }))
+    );
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=user-profiles-${jstDateString()}.csv`
+    );
+    res.send(body);
+  },
+
   // ============================================================
   // デイリーアンケート管理
   // ============================================================
+
+  /**
+   * 配信カレンダー。配信テンプレート・デイリーアンケート（確定＋キュー見込み）・
+   * キャンペーン予約の「次にいつ何が飛ぶか」を1画面へ集約する。
+   * ここに出るのは設定から計算した「予定」であり、実際に自動発火するかは
+   * スケジューラ / cron の構成に依存する（キャンペーン予約は自動実行が未実装）。
+   */
+  async deliveryCalendar(req: Request, res: Response): Promise<void> {
+    const today = jstDateString();
+    const month = queryString(req.query.month).trim() || today.slice(0, 7); // YYYY-MM
+    const [y, m] = month.split("-").map(Number);
+    const year = y ?? Number(today.slice(0, 4));
+    const monthIndex = (m ?? Number(today.slice(5, 7))) - 1;
+    const firstDate = new Date(Date.UTC(year, monthIndex, 1)).toISOString().slice(0, 10);
+    const lastDay = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+    const lastDate = new Date(Date.UTC(year, monthIndex, lastDay)).toISOString().slice(0, 10);
+
+    let settings: Awaited<ReturnType<typeof notificationSchedulerService.getSettings>> | null =
+      null;
+    try {
+      settings = await notificationSchedulerService.getSettings();
+    } catch {
+      // 設定行が無くてもカレンダー自体は出す
+    }
+
+    const [templates, campaigns, planning, logs] = await Promise.all([
+      deliveryTemplateRepository.list().catch(() => []),
+      deliveryCampaignRepository.list().catch(() => []),
+      dailySurveyService.getPlanningData(firstDate, lastDate),
+      deliveryTemplateRepository.listAllLogs(10).catch(() => [])
+    ]);
+
+    interface CalendarEvent {
+      time: string | null;
+      kind: "daily" | "daily_auto" | "template" | "campaign";
+      label: string;
+      href: string | null;
+    }
+    const events: Record<string, CalendarEvent[]> = {};
+    const pushEvent = (date: string, event: CalendarEvent): void => {
+      if (date < firstDate || date > lastDate) return;
+      (events[date] ??= []).push(event);
+    };
+    const slotTime = (slot: "morning" | "evening"): string | null =>
+      slot === "morning" ? settings?.morning_time ?? null : settings?.evening_time ?? null;
+    const slotJa = (slot: "morning" | "evening"): string => (slot === "morning" ? "朝" : "夜");
+
+    // デイリーアンケート: 日付固定分
+    const occupiedSlots = new Set<string>();
+    for (const s of planning.scheduled) {
+      if (!s.scheduled_date || !s.slot) continue;
+      occupiedSlots.add(slotKey(s.scheduled_date, s.slot));
+      pushEvent(s.scheduled_date, {
+        time: slotTime(s.slot),
+        kind: "daily",
+        label: `デイリー${slotJa(s.slot)}: ${s.title}`,
+        href: `/admin/daily-surveys/${s.id}`
+      });
+    }
+
+    // デイリーアンケート: キューから自動補充される見込み（表示専用・DB非保存）
+    const preview = previewQueueAssignments({
+      startDate: today,
+      days: 62,
+      queueIds: planning.queued.map((s) => s.id),
+      occupiedSlots,
+      eveningAutofillEnabled: settings?.evening_autofill_enabled ?? false
+    });
+    for (const [key, id] of preview) {
+      const date = key.slice(0, 10);
+      const slot = key.slice(11) as "morning" | "evening";
+      const s = planning.queued.find((q) => q.id === id);
+      if (!s) continue;
+      pushEvent(date, {
+        time: slotTime(slot),
+        kind: "daily_auto",
+        label: `デイリー${slotJa(slot)}(自動): ${s.title}`,
+        href: `/admin/daily-surveys/${s.id}`
+      });
+    }
+
+    // 配信テンプレート（有効なもののみカレンダーに置く）
+    for (const t of templates) {
+      if (!t.is_enabled) continue;
+      for (const occ of templateOccurrences(t, firstDate, lastDate)) {
+        pushEvent(occ.date, {
+          time: occ.time,
+          kind: "template",
+          label: t.name,
+          href: "/admin/delivery-templates"
+        });
+      }
+    }
+
+    // セグメントキャンペーンの予約（送信済みも当該日に実績として残す）
+    for (const c of campaigns) {
+      if (!c.scheduled_at || c.status === "cancelled") continue;
+      const parts = isoToJstParts(c.scheduled_at);
+      if (!parts) continue;
+      pushEvent(parts.date, {
+        time: parts.time,
+        kind: "campaign",
+        label: `${c.name}${c.status === "sent" ? "（送信済み）" : ""}`,
+        href: `/admin/segments/campaigns/${c.id}/edit`
+      });
+    }
+
+    for (const list of Object.values(events)) {
+      list.sort((a, b) => (a.time ?? "99:99").localeCompare(b.time ?? "99:99"));
+    }
+
+    // 次回実行予定の一覧（カレンダーに乗らない interval 型・無効なものもここで見える）
+    interface UpcomingRow {
+      category: string;
+      name: string;
+      schedule: string;
+      nextRun: string | null;
+      enabled: boolean;
+      warning: string | null;
+      href: string;
+    }
+    const upcoming: UpcomingRow[] = [];
+    if (settings) {
+      upcoming.push(
+        {
+          category: "デイリー配信",
+          name: "朝の配信",
+          schedule: `毎日 ${settings.morning_time}`,
+          nextRun: settings.morning_enabled ? nextDailyRunJstFromTime(settings.morning_time) : null,
+          enabled: settings.morning_enabled,
+          warning: null,
+          href: "/admin/scheduler-settings"
+        },
+        {
+          category: "デイリー配信",
+          name: "夜の配信",
+          schedule: `毎日 ${settings.evening_time}`,
+          nextRun: settings.evening_enabled ? nextDailyRunJstFromTime(settings.evening_time) : null,
+          enabled: settings.evening_enabled,
+          warning: null,
+          href: "/admin/scheduler-settings"
+        },
+        {
+          category: "デイリー配信",
+          name: "未回答リマインダー",
+          schedule: `毎日 ${settings.reminder_time}`,
+          nextRun: settings.reminder_enabled ? nextDailyRunJstFromTime(settings.reminder_time) : null,
+          enabled: settings.reminder_enabled,
+          warning: null,
+          href: "/admin/scheduler-settings"
+        }
+      );
+    }
+    for (const t of templates) {
+      upcoming.push({
+        category: "配信テンプレート",
+        name: t.name,
+        schedule: scheduleLabel(t),
+        nextRun: t.is_enabled ? nextRunJst(t) : null,
+        enabled: t.is_enabled,
+        warning: null,
+        href: "/admin/delivery-templates"
+      });
+    }
+    for (const c of campaigns) {
+      if (!c.scheduled_at) continue;
+      if (c.status !== "draft" && c.status !== "scheduled") continue;
+      const parts = isoToJstParts(c.scheduled_at);
+      upcoming.push({
+        category: "キャンペーン",
+        name: c.name,
+        schedule: "予約日時",
+        nextRun: parts ? `${parts.date} ${parts.time}` : null,
+        enabled: true,
+        warning:
+          "予約の自動実行は未実装です。設定時刻になっても自動では飛ばないため、配信オペレーションから手動実行してください。",
+        href: `/admin/segments/campaigns/${c.id}/edit`
+      });
+    }
+    upcoming.sort((a, b) => (a.nextRun ?? "9999").localeCompare(b.nextRun ?? "9999"));
+
+    const templateById = new Map(templates.map((t) => [t.id, t] as const));
+    const recentLogs = logs.map((log) => ({
+      ...log,
+      templateName: templateById.get(log.template_id)?.name ?? log.template_id
+    }));
+
+    res.render("admin/delivery-calendar/index", {
+      title: "配信カレンダー",
+      today,
+      month,
+      prevMonth: new Date(Date.UTC(year, monthIndex - 1, 1)).toISOString().slice(0, 7),
+      nextMonth: new Date(Date.UTC(year, monthIndex + 1, 1)).toISOString().slice(0, 7),
+      firstWeekday: new Date(Date.UTC(year, monthIndex, 1)).getUTCDay(),
+      lastDay,
+      events,
+      upcoming,
+      recentLogs,
+      hasSchedulerSettings: settings !== null
+    });
+  },
 
   /**
    * デイリーアンケートの配信計画画面（カレンダー＋キューの2ペイン・migration 079）。
@@ -6992,6 +7397,52 @@ export const adminController = {
       flaggedUsers,
       flaggedUserIds: [...flaggedUserIds],
     });
+  },
+
+  /**
+   * 交換申請の経理突合用 CSV。金銭を伴うため一覧のような500件打ち切りをせず、
+   * 1000件ずつ全件を取得する。status クエリで一覧と同じ絞り込みができる。
+   */
+  async exportExchangeRequestsCsv(req: Request, res: Response): Promise<void> {
+    const { pointExchangeRepository } = await import("../repositories/pointExchangeRepository");
+    const statusFilter = typeof req.query.status === "string" ? req.query.status : "all";
+
+    const PAGE = 1000;
+    const all: Awaited<ReturnType<typeof pointExchangeRepository.listAll>> = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const rows = await pointExchangeRepository.listAll(PAGE, offset);
+      all.push(...rows);
+      if (rows.length < PAGE) break;
+    }
+    const rows = statusFilter === "all" ? all : all.filter((r) => r.status === statusFilter);
+
+    const body = toCsvRfc4180(
+      rows.map((r) => ({
+        id: r.id,
+        line_user_id: r.line_user_id,
+        requested_points: r.requested_points,
+        gift_amount_jpy: r.gift_amount_jpy,
+        status: r.status,
+        status_label: statusLabel("exchangeStatus", r.status),
+        gift_provider: r.gift_provider ?? "",
+        gift_code: r.gift_code ?? "",
+        gift_url: r.gift_url ?? "",
+        requested_at_jst: formatDateTimeJst(r.requested_at, ""),
+        approved_at_jst: formatDateTimeJst(r.approved_at, ""),
+        rejected_at_jst: formatDateTimeJst(r.rejected_at, ""),
+        fulfilled_at_jst: formatDateTimeJst(r.fulfilled_at, ""),
+        canceled_at_jst: formatDateTimeJst(r.canceled_at, ""),
+        handled_by: r.handled_by ?? "",
+        admin_memo: r.admin_memo ?? "",
+        failed_reason: r.failed_reason ?? ""
+      }))
+    );
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=exchange-requests-${jstDateString()}.csv`
+    );
+    res.send(body);
   },
 
   /** ヘッダーの通知バッジ用: 申請中(pending)の交換申請件数を返す */
@@ -8418,11 +8869,30 @@ export const adminController = {
       title: `配布用QR - ${clientName || surveyTitle}`,
       storeName: clientName,
       surveyTitle,
+      projectId: project.id,
       entryUrl: buildStoreEntryUrl(project.entry_code),
       entryCode: project.entry_code ?? null,
       isPublished: project.status === "published",
       backUrl: "/admin/store-surveys"
     });
+  },
+
+  // ---- 店舗QRコード（サーバ側生成） ----
+  // 以前は api.qrserver.com へ entry_code 込みの限定URLをクエリで送って生成しており、
+  // 限定URLが第三者サービスに渡る＋サービス停止でQRが表示されなくなる問題があった。
+
+  async storeSurveyQr(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const project = await projectRepository.getById(projectId);
+    const entryUrl = buildStoreEntryUrl(project.entry_code);
+    if (!entryUrl) throw new HttpError(404, "entry_code が未設定のためQRコードを生成できません");
+
+    const sizeRaw = Number.parseInt(String(req.query.size ?? "180"), 10);
+    const width = Number.isFinite(sizeRaw) ? Math.min(Math.max(sizeRaw, 120), 1200) : 180;
+    const png = await QRCode.toBuffer(entryUrl, { type: "png", width, margin: 2 });
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.send(png);
   },
 
   // ---- 店舗マスタ（clients）CRUD ----
@@ -8621,6 +9091,91 @@ export const adminController = {
       }
     }
     res.redirect(`${back}msg=` + encodeURIComponent(`落選にしました${suffix}`));
+  },
+
+  /**
+   * 一括当選/落選。選択された応募を既存の単体処理（applicationService.accept/reject）で
+   * 1件ずつ処理する。選考中でないものはスキップして件数で報告する。
+   */
+  async bulkDecideApplications(req: Request, res: Response): Promise<void> {
+    const backProject = typeof req.body?.back === "string" ? req.body.back : "";
+    const back = `/admin/applications${backProject ? `?project_id=${encodeURIComponent(backProject)}&` : "?"}`;
+    const decision = bodyString(req.body?.decision);
+    const ids = bodyStringArray(req.body?.application_ids);
+    const notify = req.body?.notify === "1";
+    const note = bodyString(req.body?.note).trim() || null;
+
+    if (decision !== "accept" && decision !== "reject") {
+      res.redirect(`${back}err=` + encodeURIComponent("一括操作の種別が不正です"));
+      return;
+    }
+    if (ids.length === 0) {
+      res.redirect(`${back}err=` + encodeURIComponent("応募が1件も選択されていません"));
+      return;
+    }
+
+    let done = 0;
+    let skipped = 0;
+    let notifyFailed = 0;
+    for (const applicationId of ids) {
+      if (decision === "accept") {
+        const result = await applicationService.accept(applicationId);
+        if (!result.ok) {
+          skipped++;
+          continue;
+        }
+        done++;
+        try {
+          const startUrl = buildProjectStartUrl(result.assignmentId);
+          await lineMessagingService.push(result.application.line_user_id, [
+            buildApplicationAcceptedFlex({
+              projectTitle: result.project.user_display_title || result.project.name,
+              rewardPoints: result.project.reward_points,
+              estimatedMinutes:
+                (result.project as unknown as { estimated_minutes?: number | null })
+                  .estimated_minutes ?? null,
+              surveyUrl: startUrl.url,
+            }),
+          ]);
+        } catch (error) {
+          notifyFailed++;
+          logger.warn("applications.bulkAccept: 当選通知の送信に失敗", {
+            applicationId,
+            error: String(error)
+          });
+        }
+      } else {
+        const result = await applicationService.reject(applicationId, note);
+        if (!result.ok) {
+          skipped++;
+          continue;
+        }
+        done++;
+        if (notify) {
+          try {
+            const project = await projectRepository.getById(result.application.project_id);
+            await lineMessagingService.push(result.application.line_user_id, [
+              buildApplicationRejectedFlex({
+                projectTitle: project.user_display_title || project.name,
+                projectsUrl: `${appEnv.APP_BASE_URL}/liff/projects`,
+              }),
+            ]);
+          } catch (error) {
+            notifyFailed++;
+            logger.warn("applications.bulkReject: 落選通知の送信に失敗", {
+              applicationId,
+              error: String(error)
+            });
+          }
+        }
+      }
+    }
+
+    const label = decision === "accept" ? "当選" : "落選";
+    const parts = [`${done}件を${label}にしました`];
+    if (skipped > 0) parts.push(`${skipped}件は選考中でないためスキップ`);
+    if (notifyFailed > 0) parts.push(`LINE通知の失敗 ${notifyFailed}件`);
+    res.redirect(`${back}msg=` + encodeURIComponent(parts.join(" / ")));
   },
 
   // ── ついでスワイプ（設問プール）─────────────────────────────

@@ -27,8 +27,32 @@
     </h2>
   </a>
   <a class="card queue-card" href="/admin/daily-surveys">
-    <div class="muted">デイリー配信キュー</div>
-    <h2 style="font-size:18px">カレンダーを見る</h2>
+    <div class="muted">今日のデイリー配信（見込み含む）</div>
+    <h2>
+      <% if (queue.todayDailyDeliveries === null) { %>
+        <span class="muted" style="font-size:16px">取得できませんでした</span>
+      <% } else { %>
+        <span><%= queue.todayDailyDeliveries.toLocaleString("ja-JP") %></span>
+        <span class="muted" style="font-size:14px">枠</span>
+      <% } %>
+    </h2>
+  </a>
+  <a class="card queue-card" href="/admin/posts?analysis_status=pending">
+    <div class="muted">未分析の投稿</div>
+    <h2>
+      <% if (queue.unanalyzedPosts === null) { %>
+        <span class="muted" style="font-size:16px">取得できませんでした</span>
+      <% } else { %>
+        <span class="<%= queue.unanalyzedPosts > 0 ? "danger-text" : "" %>"><%= queue.unanalyzedPosts.toLocaleString("ja-JP") %></span>
+      <% } %>
+    </h2>
+  </a>
+</section>
+
+<section class="grid" style="margin-top:12px">
+  <a class="card queue-card" href="/admin/delivery-calendar">
+    <div class="muted">配信の全体像</div>
+    <h2 style="font-size:18px">配信カレンダーを見る</h2>
   </a>
   <a class="card queue-card" href="/admin/delivery-operations">
     <div class="muted">配信オペレーション</div>
@@ -42,14 +66,14 @@
     <div class="muted">稼働中プロジェクト</div>
     <h2><%= stats.activeProjects %></h2>
   </a>
-  <div class="card">
+  <a class="card queue-card" href="/admin/sessions?status=active">
     <div class="muted">進行中セッション</div>
     <h2><%= stats.activeSessions %></h2>
-  </div>
-  <div class="card">
+  </a>
+  <a class="card queue-card" href="/admin/sessions?status=completed">
     <div class="muted">完了セッション</div>
     <h2><%= stats.completedSessions %></h2>
-  </div>
+  </a>
   <a class="card queue-card" href="/admin/respondents">
     <div class="muted">回答者数</div>
     <h2><%= stats.totalRespondents %></h2>

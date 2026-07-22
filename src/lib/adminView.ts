@@ -100,11 +100,19 @@ export const STATUS_LABELS: Record<string, Record<string, string>> = {
     completed: "完了"
   },
   sessionStatus: {
+    pending: "開始前",
+    active: "回答中",
     not_started: "未着手",
     in_progress: "回答中",
     completed: "完了",
     abandoned: "中断",
     expired: "期限切れ"
+  },
+  sessionPhase: {
+    question: "設問回答",
+    ai_probe: "AI深掘り",
+    free_comment: "自由コメント",
+    completed: "完了"
   },
   assignmentStatus: {
     ready: "配信可能",

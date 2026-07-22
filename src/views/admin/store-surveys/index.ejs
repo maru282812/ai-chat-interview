@@ -84,7 +84,7 @@ function statusBadge(status) {
               <details style="margin-top:4px">
                 <summary style="cursor:pointer;font-size:12px;color:#2a6">QRコードを表示</summary>
                 <img alt="QR" loading="lazy"
-                     data-src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=<%= encodeURIComponent(row.entryUrl) %>"
+                     data-src="/admin/store-surveys/<%= p.id %>/qr.png?size=180"
                      class="qr-img" style="margin-top:6px;border:1px solid #ddd;border-radius:4px" />
               </details>
               <a href="/admin/store-surveys/<%= p.id %>/flyer" target="_blank" rel="noopener"

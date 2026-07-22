@@ -22,6 +22,25 @@
       <button type="submit" class="btn">追加</button>
     </form>
 
+    <details style="margin-bottom:16px">
+      <summary style="cursor:pointer;font-size:13px;color:#2ca87a;font-weight:600">一括登録（改行区切りで貼り付け）</summary>
+      <form method="post" action="/admin/data-management/ng-words/bulk" style="margin-top:8px"
+            onsubmit="var n=this.words.value.split('\n').filter(function(w){return w.trim()}).length; if(n===0){alert('NGワードが入力されていません');return false;} return confirm(n+'件のNGワードを「'+this.category.options[this.category.selectedIndex].text+'」カテゴリで一括登録しますか？')">
+        <textarea name="words" rows="6" placeholder="1行に1ワードずつ貼り付けてください&#10;空行と登録済みワードは自動でスキップされます"
+                  style="width:100%;box-sizing:border-box;font-size:13px"></textarea>
+        <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+          <select name="category" style="width:130px">
+            <option value="general">一般</option>
+            <option value="violence">暴力</option>
+            <option value="sexual">性的</option>
+            <option value="illegal">違法</option>
+            <option value="other">その他</option>
+          </select>
+          <button type="submit" class="btn">一括登録</button>
+        </div>
+      </form>
+    </details>
+
     <table>
       <thead>
         <tr>

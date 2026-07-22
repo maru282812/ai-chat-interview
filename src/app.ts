@@ -2,6 +2,7 @@ import path from "path";
 import express from "express";
 import { env } from "./config/env";
 import { adminAuthMiddleware } from "./middleware/adminAuth";
+import { adminCsrfMiddleware } from "./middleware/adminCsrf";
 import { adminLocals } from "./middleware/adminLocals";
 import { perfTiming } from "./middleware/perfTiming";
 import { errorHandler } from "./lib/http";
@@ -41,7 +42,7 @@ export function createApp() {
   app.use("/webhooks", webhookRoutes);
   app.use("/api/cron", cronRoutes);
   app.use("/api/mental", mentalProxyRoutes);
-  app.use("/admin", adminAuthMiddleware, adminLocals, adminRoutes);
+  app.use("/admin", adminAuthMiddleware, adminCsrfMiddleware, adminLocals, adminRoutes);
   app.use("/liff", perfTiming, liffRoutes);
 
   app.get("/", (_req, res) => {

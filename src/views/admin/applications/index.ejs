@@ -47,9 +47,34 @@ function fmt(dt) {
   </label>
 </form>
 
+<%#
+  一括当選/落選。行内の単体フォームとネストしないよう、チェックボックスは
+  form 属性でこのフォームに参加させる（対象は「選考中」の行のみ）。
+%>
+<form id="bulk-decide-form" method="post" action="/admin/applications/bulk-decide"
+      class="card" style="margin-bottom:1rem;padding:10px 14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+  <input type="hidden" name="back" value="<%= projectIdFilter || '' %>">
+  <strong style="font-size:13px">一括操作:</strong>
+  <span class="muted" style="font-size:12px">選択中 <span id="bulk-count">0</span> 件</span>
+  <button type="submit" name="decision" value="accept" id="bulk-accept-btn"
+          style="background:#2ca87a;color:#fff;border:none;border-radius:4px;padding:5px 12px;cursor:pointer">
+    選択を当選にする
+  </button>
+  <span style="display:inline-flex;gap:6px;align-items:center">
+    <button type="submit" name="decision" value="reject" id="bulk-reject-btn"
+            style="background:#fff;color:#b14;border:1px solid #b14;border-radius:4px;padding:4px 12px;cursor:pointer">
+      選択を落選にする
+    </button>
+    <label style="font-size:11px"><input type="checkbox" name="notify" value="1"> 落選を通知する</label>
+    <input type="text" name="note" placeholder="落選理由メモ（任意・記録用）"
+           style="font-size:12px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;width:200px">
+  </span>
+</form>
+
 <table class="table" style="width:100%;border-collapse:collapse">
   <thead>
     <tr style="text-align:left;border-bottom:2px solid #ddd">
+      <th style="padding:8px 6px"><input type="checkbox" id="bulk-check-all" title="選考中の応募をすべて選択"></th>
       <th style="padding:8px 6px">応募日時</th>
       <th style="padding:8px 6px">案件</th>
       <th style="padding:8px 6px">応募者（LINE ID）</th>
@@ -60,10 +85,15 @@ function fmt(dt) {
   </thead>
   <tbody>
     <% if (rows.length === 0) { %>
-      <tr><td colspan="6" style="padding:16px 6px;color:#888">応募はまだありません</td></tr>
+      <tr><td colspan="7" style="padding:16px 6px;color:#888">応募はまだありません</td></tr>
     <% } %>
     <% rows.forEach(function(row) { const a = row.application; %>
       <tr style="border-bottom:1px solid #eee">
+        <td style="padding:8px 6px">
+          <% if (a.status === 'applied') { %>
+            <input type="checkbox" class="bulk-check" name="application_ids" value="<%= a.id %>" form="bulk-decide-form">
+          <% } %>
+        </td>
         <td style="padding:8px 6px;white-space:nowrap"><%= fmt(a.applied_at) %></td>
         <td style="padding:8px 6px">
           <% if (row.project) { %>
@@ -95,5 +125,46 @@ function fmt(dt) {
     <% }); %>
   </tbody>
 </table>
+
+<script>
+  (function () {
+    var checkAll = document.getElementById('bulk-check-all');
+    var countEl = document.getElementById('bulk-count');
+    var form = document.getElementById('bulk-decide-form');
+    function checks() { return Array.prototype.slice.call(document.querySelectorAll('.bulk-check')); }
+    function updateCount() {
+      countEl.textContent = String(checks().filter(function (c) { return c.checked; }).length);
+    }
+    if (checkAll) {
+      checkAll.addEventListener('change', function () {
+        checks().forEach(function (c) { c.checked = checkAll.checked; });
+        updateCount();
+      });
+    }
+    document.addEventListener('change', function (e) {
+      if (e.target && e.target.classList && e.target.classList.contains('bulk-check')) updateCount();
+    });
+    form.addEventListener('submit', function (e) {
+      var selected = checks().filter(function (c) { return c.checked; }).length;
+      if (selected === 0) {
+        e.preventDefault();
+        alert('応募が1件も選択されていません。');
+        return;
+      }
+      var decision = e.submitter && e.submitter.value;
+      var message = decision === 'accept'
+        ? '選択した ' + selected + ' 件を当選にして、回答URL付きのLINE通知を送りますか？'
+        : '選択した ' + selected + ' 件を落選にしますか？';
+      if (!confirm(message)) {
+        e.preventDefault();
+        return;
+      }
+      // 二重送信防止
+      document.getElementById('bulk-accept-btn').disabled = true;
+      document.getElementById('bulk-reject-btn').disabled = true;
+    });
+    updateCount();
+  })();
+</script>
 
 <%- include("../../partials/footer") %>
