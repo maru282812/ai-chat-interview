@@ -43,6 +43,26 @@ const TYPE_MAP: Record<string, UserPointTransactionType> = {
 };
 
 /**
+ * 正準台帳（user_points / point_histories）への付与失敗を必ず可視化する。
+ * ここは allSettled で回しているため、ログを出さないと「レガシー台帳だけ増えて
+ * マイページ残高が 0 のまま」という乖離が無言で起きる（実際に起きていた）。
+ */
+function logCanonicalAwardFailures(
+  results: PromiseSettledResult<unknown>[],
+  ctx: { lineUserId: string; sessionId: string; assignmentId?: string },
+): void {
+  const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failures.length === 0) return;
+  logger.error("postComplete.canonicalAward.failed", {
+    ...ctx,
+    failedCount: failures.length,
+    totalCount: results.length,
+    errors: failures.map((f) => String(f.reason)),
+    hint: "user_points/point_histories への書込みが落ちている。レガシー台帳との乖離を確認すること。",
+  });
+}
+
+/**
  * アンケート完了後の非同期後処理。
  * LIFF へのレスポンス返却後に呼び出す。
  * ポイント付与失敗時でも LINE 完了通知は必ず送信する。
@@ -88,7 +108,7 @@ export async function runPostCompleteProcess({
 
       // 新スキーマへの書き込み（user_points / point_histories に統一）
       // idempotency_key = "session:{session_id}:{type}" で二重付与を防止
-      await Promise.allSettled(
+      const canonicalResults = await Promise.allSettled(
         awardResult.transactions.map((tx) => {
           const newType = TYPE_MAP[tx.transaction_type] ?? "manual_adjustment";
           return userPointService.awardPoints({
@@ -102,6 +122,9 @@ export async function runPostCompleteProcess({
           });
         }),
       );
+      // allSettled は失敗を握り潰すため、必ず個別にログへ出す。
+      // 正準台帳だけが落ちるとレガシー台帳との乖離（マイページ残高 0）が無言で発生する。
+      logCanonicalAwardFailures(canonicalResults, { lineUserId, sessionId: session.id, assignmentId });
     } catch (err) {
       logger.error("postComplete.award.failed", {
         assignmentId,
@@ -209,7 +232,7 @@ export async function awardDeferredCompletionsForMember(lineUserId: string): Pro
 
         await rankService.syncRespondentRank(awardResult.updatedRespondent, "session_completed");
 
-        await Promise.allSettled(
+        const canonicalResults = await Promise.allSettled(
           awardResult.transactions.map((tx) => {
             const newType = TYPE_MAP[tx.transaction_type] ?? "manual_adjustment";
             return userPointService.awardPoints({
@@ -223,6 +246,7 @@ export async function awardDeferredCompletionsForMember(lineUserId: string): Pro
             });
           }),
         );
+        logCanonicalAwardFailures(canonicalResults, { lineUserId, sessionId: session.id });
 
         grandTotal += awardResult.totalAwarded;
         logger.info("postComplete.deferredAward.granted", {

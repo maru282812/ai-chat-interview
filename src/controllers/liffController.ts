@@ -40,6 +40,7 @@ import { respondentService } from "../services/respondentService";
 import { screeningService } from "../services/screeningService";
 import { surveyOrderingService } from "../services/surveyOrderingService";
 import { conceptService } from "../services/conceptService";
+import { experienceService } from "../services/experienceService";
 import type { Gender, MaritalStatus, RantTag } from "../types/domain";
 import type { AnswerContext } from "../types/questionSchema";
 import { runPostCompleteProcess } from "../services/postCompleteService";
@@ -237,6 +238,40 @@ async function verifyAssignmentOwnerOrThrow(req: Request, assignmentId: string):
   if (assignment.user_id !== verified.userId) {
     logger.warn("verifyOwner.mismatch", { assignmentId, path: req.path });
     throw new HttpError(403, "本人確認に失敗しました。LINEアプリ内から開き直してください。");
+  }
+}
+
+/**
+ * 書込み系APIで受け取った session_id が、その assignment のものかを突合する。
+ *
+ * 所有者検証（verifyAssignmentOwnerOrThrow）が見るのは body の assignment_id だけなので、
+ * それ単体では「自分の assignment_id ＋ 他人の session_id」という組み合わせを止められず、
+ * 正当なトークンを持つ利用者が他人のセッションへ回答を書き込めてしまう。
+ * supabase は service_role 接続で RLS も効かない（DB 層の二段目が無い）ため、
+ * ここで respondent と project の一致をアプリ層の責任として検証する。
+ */
+function assertSessionMatchesAssignment(
+  session: { id: string; respondent_id: string; project_id: string },
+  assignment: { id: string; respondent_id: string; project_id: string },
+  ctx: { path: string }
+): void {
+  if (
+    session.respondent_id !== assignment.respondent_id ||
+    session.project_id !== assignment.project_id
+  ) {
+    logger.warn("session.assignmentMismatch", {
+      path: ctx.path,
+      sessionId: session.id,
+      assignmentId: assignment.id,
+      sessionRespondentId: session.respondent_id,
+      assignmentRespondentId: assignment.respondent_id,
+      sessionProjectId: session.project_id,
+      assignmentProjectId: assignment.project_id,
+    });
+    throw new HttpError(
+      403,
+      "この回答は現在のアンケートに紐づいていません。LINEから開き直してください。"
+    );
   }
 }
 
@@ -501,6 +536,8 @@ export const liffController = {
     res.render("liff/mypage", {
       title: entry.title,
       entry,
+      // 体験設定（Phase 0）。案件に紐付かないページなので全体既定を解決した値。
+      experience: await experienceService.getGlobal(),
       initialData: {
         appBaseUrl: env.APP_BASE_URL,
         liffId: entry.liffId,
@@ -823,6 +860,8 @@ export const liffController = {
         liffAuthAvailable: liffConfig.liffAuthAvailable,
         authRequired: false,
         skipAllowed: true,
+        // 体験設定（Phase 0）。サーバー権威で解決済みの値だけを渡す。
+        experience: await experienceService.resolveForProjectConfig(project.experience_config),
       });
       return;
     }
@@ -899,6 +938,8 @@ export const liffController = {
         liffAuthAvailable: liffConfig.liffAuthAvailable,
         authRequired: false,
         skipAllowed: true,
+        // 体験設定（Phase 0）。サーバー権威で解決済みの値だけを渡す。
+        experience: await experienceService.resolveForProjectConfig(project.experience_config),
       });
       return;
     }
@@ -1021,6 +1062,9 @@ export const liffController = {
       skipAllowed: liffConfig.skipAllowed,
       // 店舗専用アンケート完了後に「Hibi会員になって参加同意する」CTA を出すための判定（希望者のみ誘導）
       isStoreSurvey: project.visibility_type === "private_store",
+      // 体験設定（Phase 0）: プロジェクト上書き > 全体既定 > コード既定をサーバーで解決済み。
+      // クライアントは window.EXPERIENCE を読むだけ（再解決しない）。
+      experience: await experienceService.resolveForProjectConfig(project.experience_config),
       projectsUrl: "/liff/projects",
       // 店舗回答者をグローバル必須書類の同意フローへ通し、正式な Hibi 会員に昇格させる導線。
       // 既に同意済みなら consent ページが即マイページへリダイレクトする（冪等）。
@@ -1159,16 +1203,24 @@ export const liffController = {
     // 所有者検証（IDOR 防止）と独立リード（session・既存回答）を並行実行する。
     // Promise.all だと「認証エラーより先に session 404 が漏れる」レースが起きるため、
     // allSettled で全結果を受けてから認証エラーを最優先で投げる（既存のエラー応答順を保存）。
-    const [ownerResult, sessionResult, priorAnswersResult] = await Promise.allSettled([
-      verifyAssignmentOwnerOrThrow(req, stringValue(req.body.assignment_id).trim()),
+    const assignmentIdInput = stringValue(req.body.assignment_id).trim();
+    const [ownerResult, sessionResult, priorAnswersResult, assignmentResult] = await Promise.allSettled([
+      verifyAssignmentOwnerOrThrow(req, assignmentIdInput),
       sessionRepository.getById(sessionId),
       answerRepository.listBySession(sessionId),
+      assignmentIdInput ? projectAssignmentRepository.getById(assignmentIdInput) : Promise.resolve(null),
     ]);
     if (ownerResult.status === "rejected") throw ownerResult.reason;
     if (sessionResult.status === "rejected") throw sessionResult.reason;
     if (priorAnswersResult.status === "rejected") throw priorAnswersResult.reason;
+    if (assignmentResult.status === "rejected") throw assignmentResult.reason;
     const session = sessionResult.value;
     const priorAnswers = priorAnswersResult.value;
+    // session と assignment の突合（他人セッションへの書込み防止）。
+    // assignment_id が無いのは liffAuthAvailable=false の構成だけで、その場合は突合材料が無いので飛ばす。
+    if (assignmentResult.value) {
+      assertSessionMatchesAssignment(session, assignmentResult.value, { path: req.path });
+    }
     console.log("ASSIGNMENT_STATE", { session_id: session.id, project_id: session.project_id, status: session.status });
 
     // 進行制御の唯一の正はサーバー（plan §Phase1）。案件全設問と既存回答を読み、
@@ -1392,6 +1444,10 @@ export const liffController = {
       return;
     }
 
+    // 他人のセッション配下に画像を置けないよう、session と assignment を突合する
+    // （storagePath は session_id から組み立てられるため、突合が無いと他人の領域に書ける）。
+    assertSessionMatchesAssignment(session, assignment, { path: req.path });
+
     const buffer = Buffer.from(base64Data, "base64");
     const maxSizeMb = 10;
     if (buffer.byteLength > maxSizeMb * 1024 * 1024) {
@@ -1476,10 +1532,17 @@ export const liffController = {
     // セッションを取得（body 指定 → アクティブ検索 の優先順）
     let session = null as import("../types/domain").Session | null;
     if (sessionIdFromBody) {
+      // 見つからない場合は従来どおりアクティブ検索へフォールバックする（完了は止めない）。
       try {
         session = await sessionRepository.getById(sessionIdFromBody);
       } catch {
         logger.warn("completeSurveyByAssignment.session.notFound", { assignmentId, sessionIdFromBody });
+        session = null;
+      }
+      // ただし「見つかったが他人のセッション」は別物。黙ってアクティブ検索へ流すと
+      // 取り違えが無言で成功扱いになるため、突合して不一致は 403 で止める。
+      if (session) {
+        assertSessionMatchesAssignment(session, assignment, { path: req.path });
       }
     }
     if (!session) {
@@ -1974,6 +2037,9 @@ export const liffController = {
       sessionRepository.getById(sessionId)
     ]);
 
+    // 他人セッションの判定結果を書き換えられないよう、session と assignment を突合する。
+    assertSessionMatchesAssignment(session, assignment, { path: req.path });
+
     // べき等性: 既に判定済みの場合はそのまま結果を返す
     if (session.state_json?.screening_result) {
       res.json({
@@ -2046,6 +2112,8 @@ export const liffController = {
     const surveyId = stringValue(req.query.survey_id).trim();
     res.render("liff/daily-survey", {
       title: "デイリーアンケート",
+      // 体験設定（Phase 0）。デイリーは案件に紐付かないので全体既定を解決した値。
+      experience: await experienceService.getGlobal(),
       initialData: {
         liffId,
         surveyId,
@@ -2501,6 +2569,8 @@ export const liffController = {
     const liffId = process.env.LINE_LIFF_ID_MYPAGE || process.env.LINE_LIFF_ID || null;
     res.render("liff/projects", {
       title: "案件を探す",
+      // 体験設定（Phase 0）。一覧は案件に紐付かないので全体既定を解決した値。
+      experience: await experienceService.getGlobal(),
       initialData: {
         liffId,
         projectsDataUrl: "/liff/projects-data",

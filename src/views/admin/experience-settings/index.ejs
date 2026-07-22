@@ -1,0 +1,100 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+  // 若年層体験パック Phase 0（docs/spec-young-experience-pack.md）の全体既定。
+  // 決定順: プロジェクト上書き > ここ（全体既定） > コード既定。
+  // プロジェクト上書きは各プロジェクトの編集画面「若年層体験オプション」で設定する。
+  const SECTIONS = [
+    { code: 'A', title: 'A 本音の書きやすさ', note: '答えづらさ・不安を減らして自由記述の本音率を上げる' },
+    { code: 'B', title: 'B 書く体験', note: '「尋問される」感を消し、書く負荷を下げる' },
+    { code: 'C', title: 'C 楽しさ', note: '回答そのものの手触りと楽しさを上げる' },
+    { code: 'D', title: 'D 成長ループ', note: '継続・獲得の仕掛け' },
+  ];
+  const SCOPE_LABEL = { global: '全体のみ', project: '案件ごとに上書き可' };
+%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>体験設定（若年層体験パック）</h2>
+</div>
+
+<% if (msg) { %><div class="card" style="background:#eef7f3;border-left:4px solid #2ca87a;margin-bottom:1rem"><p style="margin:0"><%= msg %></p></div><% } %>
+<% if (err) { %><div class="card" style="background:#fdecea;border-left:4px solid #c0392b;margin-bottom:1rem"><p style="margin:0;color:#c0392b"><%= err %></p></div><% } %>
+
+<% if (loadError) { %>
+  <div class="card" style="background:#fdecea;border-left:4px solid #c0392b">
+    <p style="margin:0 0 6px;color:#c0392b;font-weight:700">体験設定を読み込めませんでした。</p>
+    <p style="margin:0;font-size:13px;color:#a33"><%= loadError %></p>
+    <p style="margin:8px 0 0;font-size:13px;color:#789">
+      現在値が不明なまま保存すると全項目が既定値で上書きされるため、フォームは表示していません。
+      復旧後に再読み込みしてください。
+    </p>
+  </div>
+<% } else { %>
+
+<div class="card" style="margin-bottom:1rem;background:#f7fbf9;border-left:4px solid #2ca87a">
+  <p style="margin:0;font-size:13px;color:#456">
+    ここで設定した値は<strong>全体の既定</strong>です。決定順は
+    <code>案件ごとの上書き &gt; 全体既定 &gt; コード既定</code>。
+    「案件ごとに上書き可」の項目は各プロジェクトの編集画面で個別に変更できます。
+    保存はページ全体で 1 回（表示されている全項目がそのまま保存されます）。
+  </p>
+</div>
+
+<form method="post" action="/admin/experience-settings">
+  <% for (const section of SECTIONS) { %>
+    <% const keys = keyList.filter((k) => keyDefs[k].section === section.code); %>
+    <% if (keys.length) { %>
+      <div class="card" style="margin-bottom:1rem">
+        <h3 style="margin:0 0 4px"><%= section.title %></h3>
+        <p style="margin:0 0 12px;font-size:12px;color:#789"><%= section.note %></p>
+
+        <table style="width:100%;border-collapse:collapse">
+          <tbody>
+            <% for (const key of keys) { %>
+              <% const def = keyDefs[key]; const value = values[key]; %>
+              <tr style="border-top:1px solid #e6ecea">
+                <td style="padding:10px 8px 10px 0;vertical-align:top">
+                  <div style="font-weight:600"><%= def.label %></div>
+                  <div style="font-size:12px;color:#789;margin-top:2px"><%= def.description %></div>
+                  <div style="font-size:11px;color:#9aa;margin-top:4px">
+                    <code><%= key %></code>
+                    ・<%= SCOPE_LABEL[def.scope] %>
+                  </div>
+                </td>
+                <td style="padding:10px 0;vertical-align:top;width:240px;text-align:right">
+                  <% if (def.type === 'bool') { %>
+                    <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+                      <input type="checkbox" name="<%= key %>" value="true" <%= value ? 'checked' : '' %> />
+                      <span style="font-size:13px">有効にする</span>
+                    </label>
+                  <% } else if (def.type === 'enum') { %>
+                    <select name="<%= key %>" style="width:100%">
+                      <% for (const v of def.values) { %>
+                        <option value="<%= v %>" <%= value === v ? 'selected' : '' %>><%= v %></option>
+                      <% } %>
+                    </select>
+                  <% } else if (def.type === 'int') { %>
+                    <input type="number" name="<%= key %>" value="<%= value %>" step="1" style="width:100%" />
+                  <% } else { %>
+                    <input type="text" name="<%= key %>" value="<%= value %>" style="width:100%" />
+                  <% } %>
+                </td>
+              </tr>
+            <% } %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  <% } %>
+
+  <div style="position:sticky;bottom:0;background:#fff;border-top:1px solid #e6ecea;padding:12px 0;margin-top:1rem">
+    <button type="submit" class="btn">体験設定を保存</button>
+    <span class="muted" style="font-size:12px;margin-left:10px">
+      保存後、反映まで最大 60 秒かかることがあります（サーバー側キャッシュ）。
+    </span>
+  </div>
+</form>
+
+<% } %>
+
+<%- include("../../partials/footer") %>

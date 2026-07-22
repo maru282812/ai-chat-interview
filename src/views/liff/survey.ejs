@@ -8,6 +8,8 @@
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <%- include('../partials/liff-auth') %>
   <% } %>
+  <%# 体験設定（サーバー権威で解決済み・若年層体験パック Phase 0）。answer-ui より前に読み込む %>
+  <%- include('../partials/experience-inject') %>
   <%# 回答UIプリセットのレンダラ・配線（デイリーアンケートと共通・Phase 3） %>
   <%- include('../partials/answer-ui') %>
   <style>

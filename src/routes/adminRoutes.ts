@@ -276,6 +276,10 @@ adminRoutes.post("/daily-surveys/:surveyId/questions/:questionId", asyncHandler(
 adminRoutes.post("/daily-surveys/:surveyId/questions/:questionId/delete", asyncHandler(adminController.deleteDailySurveyQuestion));
 
 // ついでスワイプ（設問プール）管理。静的セグメント（new / bulk）を :id より先に置く。
+// 体験設定（若年層体験パック Phase 0・グローバル既定）
+adminRoutes.get("/experience-settings", asyncHandler(adminController.experienceSettings));
+adminRoutes.post("/experience-settings", asyncHandler(adminController.updateExperienceSettings));
+
 adminRoutes.get("/pool-questions", asyncHandler(adminController.poolQuestions));
 adminRoutes.get("/pool-questions/new", asyncHandler(adminController.newPoolQuestion));
 adminRoutes.get("/pool-questions/bulk", asyncHandler(adminController.newPoolQuestionsBulk));

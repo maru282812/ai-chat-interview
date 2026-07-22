@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title><%= title %></title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <%# 体験設定（サーバー権威で解決済み・若年層体験パック Phase 0）。演出パーシャルより前に読み込む %>
+    <%- include('../partials/experience-inject') %>
     <script src="/public/rank-icons.js"></script>
     <%# 昇格演出（rank-icons.js の後に読み込む） %>
     <%- include('../partials/rank-celebration') %>

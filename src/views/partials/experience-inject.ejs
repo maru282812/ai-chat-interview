@@ -1,0 +1,14 @@
+<%#
+  若年層体験パック（Phase 0）の解決済み体験設定を window.EXPERIENCE として注入する。
+
+  決定順（プロジェクト上書き > 全体既定 > コード既定）は必ずサーバー側の
+  experienceService / resolveExperience が解決済み。クライアントは値を読むだけで、
+  フォールバックや再解決を行わないこと。
+
+  locals.experience が未設定の描画経路（エラー画面など）では {} を入れる。
+  各機能は `window.EXPERIENCE && window.EXPERIENCE.<key>` で参照し、
+  未設定なら機能 OFF として振る舞うこと。
+%>
+<script>
+  window.EXPERIENCE = <%- JSON.stringify(typeof experience !== 'undefined' && experience ? experience : {}) %>;
+</script>

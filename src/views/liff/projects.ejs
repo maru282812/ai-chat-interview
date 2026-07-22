@@ -7,6 +7,8 @@
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
     <link rel="stylesheet" href="/public/hibi.css" />
+    <%# 体験設定（サーバー権威で解決済み・若年層体験パック Phase 0）。演出パーシャルより前に読み込む %>
+    <%- include('../partials/experience-inject') %>
     <script src="/public/rank-icons.js"></script>
     <%# 昇格演出（共通パーシャル。rank-icons.js の後に読み込む） %>
     <%- include('../partials/rank-celebration') %>

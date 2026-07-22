@@ -6,6 +6,8 @@
     <title><%= title %></title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
+    <%# 体験設定（サーバー権威で解決済み・若年層体験パック Phase 0）。answer-ui より前に読み込む %>
+    <%- include('../partials/experience-inject') %>
     <%# 回答UI（スワイプ・カルーセル・絵文字フェイス…）は案件アンケートと共通・Phase 3 %>
     <%- include('../partials/answer-ui') %>
     <style>

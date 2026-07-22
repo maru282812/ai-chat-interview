@@ -335,6 +335,12 @@ export interface Project {
   apply_mode?: ProjectApplyMode;
   /** 回答UIプリセット casual=A(スワイプ)/standard=B(タップ)/formal=C(従来型) (Migration 075)。未設定は standard 扱い。 */
   answer_ui_preset?: AnswerUiPreset;
+  /**
+   * 若年層体験パックのプロジェクト上書き (Migration 083)。
+   * キーは src/lib/experienceConfig.ts の EXPERIENCE_KEYS。空={}=全て全体既定に従う。
+   * 解決は experienceService（サーバー権威）が行う。
+   */
+  experience_config?: Record<string, unknown>;
   /** 実施形式の表示用テキスト（AIチャット/Google Meet等）(Migration 072) */
   interview_format?: string | null;
   created_at: string;

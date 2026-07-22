@@ -266,13 +266,46 @@
         </label>
         <label>
           回答UIプリセット（1問1画面の survey_question モードのみ適用）
+          <%# C-3: 新規作成時は「全体既定に従う」を初期選択し、保存時に体験設定の
+              default_answer_ui_preset を実体化する（列は not null のまま・実行時解決は増やさない）。
+              既存プロジェクトは保存済みの値がそのまま選択されるので挙動は変わらない。 %>
           <select name="answer_ui_preset">
-            <option value="standard" <%= (project?.answer_ui_preset ?? 'standard') === 'standard' ? "selected" : "" %>>標準（B）タップ操作 — 大型タップカード/チップ/スライダー</option>
+            <option value="" <%= project ? "" : "selected" %>>（全体既定に従う）— 保存時に体験設定の既定を書き込みます</option>
+            <option value="standard" <%= project?.answer_ui_preset === 'standard' ? "selected" : "" %>>標準（B）タップ操作 — 大型タップカード/チップ/スライダー</option>
             <option value="casual" <%= project?.answer_ui_preset === 'casual' ? "selected" : "" %>>カジュアル（A）スワイプ操作 — スワイプ/カルーセル/絵文字</option>
             <option value="formal" <%= project?.answer_ui_preset === 'formal' ? "selected" : "" %>>フォーマル（C）従来のラジオ/チェック/マトリクス（見た目そのまま）</option>
           </select>
           <span class="muted" style="font-size:11px">設問ごとの上書きは各設問の「表示パターン」で指定できます。保存形式はプリセットに関わらず不変です。</span>
         </label>
+
+        <%# ── 若年層体験オプション（Phase 0・プロジェクト上書き）──────────────
+            継承＝experience_config にキーを書かない。ON/OFF を選んだキーだけが保存される。
+            全体既定は /admin/experience-settings。global 専用フラグはここに出さない。 %>
+        <fieldset style="border:1px solid #d8e3e0;border-radius:8px;padding:12px;margin:8px 0">
+          <legend style="font-size:13px;font-weight:700;padding:0 6px">若年層体験オプション（この案件だけの上書き）</legend>
+          <p class="muted" style="font-size:11px;margin:0 0 10px">
+            「継承」のままなら
+            <a href="/admin/experience-settings" target="_blank" rel="noopener">全体既定</a>
+            に従います。ここで ON/OFF を選んだ項目だけがこの案件に保存されます。
+          </p>
+          <% const expCfg = (project && project.experience_config) || {}; %>
+          <% for (const key of experienceProjectKeys) { %>
+            <% const def = experienceKeyDefs[key]; const cur = Object.prototype.hasOwnProperty.call(expCfg, key) ? expCfg[key] : undefined; %>
+            <label style="display:block;margin-bottom:8px">
+              <span style="font-size:13px;font-weight:600"><%= def.label %></span>
+              <% if (def.type === 'bool') { %>
+                <select name="experience_config[<%= key %>]">
+                  <option value="" <%= cur === undefined ? "selected" : "" %>>継承（全体既定）</option>
+                  <option value="true" <%= cur === true ? "selected" : "" %>>ON</option>
+                  <option value="false" <%= cur === false ? "selected" : "" %>>OFF</option>
+                </select>
+              <% } else { %>
+                <input type="text" name="experience_config[<%= key %>]" value="<%= typeof cur === 'string' ? cur : '' %>" placeholder="空欄＝継承（全体既定の文言）" />
+              <% } %>
+              <span class="muted" style="font-size:11px;display:block"><%= def.description %></span>
+            </label>
+          <% } %>
+        </fieldset>
         <label>
           公開区分（店舗専用アンケート）
           <select name="visibility_type" id="visibility_type_select">

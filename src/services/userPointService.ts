@@ -22,8 +22,29 @@ export interface AwardPointsResult {
   balance: UserPoints;
 }
 
+/**
+ * point_histories.line_user_id は user_profiles(line_user_id) への FK なので、
+ * user_profiles に行が無いユーザーへポイントを付与しようとすると 23503 で失敗する。
+ *
+ * user_profiles 行を作るのはマイページ保存（updateMypageData）だけなので、
+ * 店舗専用アンケートをセルフ回答して同意だけで会員化した回答者（プロフィール未入力）は
+ * 行を持たない。その状態だと正準台帳（user_points / point_histories）への書込みだけが落ち、
+ * レガシー台帳（respondents.total_points）だけが増えて「マイページの残高が 0 のまま」になる。
+ *
+ * ポイントを受け取る時点でその LINE ユーザーは会員なので、空のプロフィール行を先に確保する。
+ * 既存行があるときは何もしない（ignoreDuplicates）ため、入力済みプロフィールを壊さない。
+ */
+async function ensureUserProfileRow(lineUserId: string): Promise<void> {
+  const { error } = await supabase
+    .from("user_profiles")
+    .upsert({ line_user_id: lineUserId }, { onConflict: "line_user_id", ignoreDuplicates: true });
+  throwIfError(error);
+}
+
 export const userPointService = {
   async awardPoints(input: AwardPointsInput): Promise<AwardPointsResult> {
+    await ensureUserProfileRow(input.lineUserId);
+
     const row: Record<string, unknown> = {
       line_user_id:     input.lineUserId,
       transaction_type: input.transactionType,

@@ -43,6 +43,14 @@ import { pointService } from "../services/pointService";
 import { assignmentService, type AssignmentRuleFilter } from "../services/assignmentService";
 import { projectRepository } from "../repositories/projectRepository";
 import { clientRepository } from "../repositories/clientRepository";
+import { experienceService } from "../services/experienceService";
+import {
+  EXPERIENCE_KEYS,
+  EXPERIENCE_KEY_LIST,
+  PROJECT_SCOPED_KEYS,
+  type ExperienceValue,
+  sanitizeExperienceConfig,
+} from "../lib/experienceConfig";
 import {
   poolQuestionRepository,
   type PoolChoice,
@@ -204,6 +212,90 @@ function bodyStringArray(value: unknown): string[] {
 
 function parseAnswerUiPreset(value: unknown): "casual" | "standard" | "formal" {
   return value === "standard" || value === "formal" ? value : "casual";
+}
+
+/**
+ * C-3: researchForm の answer_ui_preset を保存値へ解決する。
+ *
+ * - 明示的に casual/standard/formal が選ばれていればそれ
+ * - 空文字（「全体既定に従う」）なら体験設定の default_answer_ui_preset を**保存時に実体化**する
+ *   （projects.answer_ui_preset は not null default 'standard' のまま。実行時解決を増やさない）
+ * - フィールド自体が来ていなければ既存値を維持（新規作成は全体既定）
+ */
+async function resolveAnswerUiPresetForSave(
+  raw: unknown,
+  existing?: import("../types/domain").AnswerUiPreset | null,
+): Promise<import("../types/domain").AnswerUiPreset> {
+  const value = bodyString(raw).trim();
+  if (value === "casual" || value === "standard" || value === "formal") return value;
+  if (raw === undefined && existing) return existing;
+  return await experienceService.getDefaultAnswerUiPreset();
+}
+
+// ── 体験設定（若年層体験パック Phase 0）フォーム解析 ──────────────
+// フォームは文字列しか運べないので、ここで experienceConfig.ts の型へ変換してから
+// sanitizeExperienceConfig（ホワイトリスト＋型検証）に通す。解決そのものは純関数の責務。
+
+/**
+ * /admin/experience-settings の POST。全キーを丸ごと組み立てる（部分更新はしない）。
+ * チェックボックスは未チェックだとフィールドごと送られてこないため「不在＝false」で解釈する。
+ * 不正な数値・文字列空欄はコード既定へ落とす（＝全体既定にコード既定を明示的に書き込む）。
+ */
+function parseGlobalExperienceForm(body: Record<string, unknown>): Record<string, ExperienceValue> {
+  const raw: Record<string, unknown> = {};
+  for (const key of EXPERIENCE_KEY_LIST) {
+    const def = EXPERIENCE_KEYS[key];
+    const value = body[key];
+    switch (def.type) {
+      case "bool":
+        raw[key] = value === "true" || value === "on" || value === true;
+        break;
+      case "int": {
+        const n = Number.parseInt(bodyString(value).trim(), 10);
+        raw[key] = Number.isInteger(n) ? n : def.default;
+        break;
+      }
+      case "enum": {
+        const s = bodyString(value).trim();
+        raw[key] = (def.values as readonly string[]).includes(s) ? s : def.default;
+        break;
+      }
+      default: {
+        const s = bodyString(value).trim();
+        raw[key] = s.length > 0 ? s : def.default;
+        break;
+      }
+    }
+  }
+  return sanitizeExperienceConfig(raw, "global");
+}
+
+/**
+ * researchForm の「若年層体験オプション」。project スコープのキーだけを見る。
+ * 空文字（＝継承）はキーごと書かない ＝ 全体既定に従う、という表現。
+ * body 形式は experience_config[<key>]（express urlencoded extended:true のブラケット記法）。
+ */
+function buildExperienceConfigFromRequest(req: Request): Record<string, ExperienceValue> {
+  const src = req.body?.experience_config;
+  const bag: Record<string, unknown> =
+    src !== null && typeof src === "object" && !Array.isArray(src)
+      ? (src as Record<string, unknown>)
+      : {};
+
+  const raw: Record<string, unknown> = {};
+  for (const key of PROJECT_SCOPED_KEYS) {
+    const def = EXPERIENCE_KEYS[key];
+    const value = bodyString(bag[key]).trim();
+    if (value === "") continue; // 継承: キーを書かない
+    if (def.type === "bool") {
+      if (value === "true") raw[key] = true;
+      else if (value === "false") raw[key] = false;
+      continue; // 想定外の値は捨てる（＝継承）
+    }
+    raw[key] = value;
+  }
+  // 未知キー・型不一致・global 専用キーはここで落ちる
+  return sanitizeExperienceConfig(raw, "project");
 }
 
 // ── ついでスワイプ（設問プール）フォーム解析 ──────────────────────
@@ -826,6 +918,9 @@ function renderProjectResearchForm(
     promptPackages: input.promptPackages ?? [],
     packageFallbackWarning: input.packageFallbackWarning ?? null,
     selectedPromptPackageVersionId: input.selectedPromptPackageVersionId ?? null,
+    // 若年層体験オプション（Phase 0）: project スコープのキーだけをフォームに出す。
+    experienceKeyDefs: EXPERIENCE_KEYS,
+    experienceProjectKeys: PROJECT_SCOPED_KEYS,
   });
 }
 
@@ -2634,6 +2729,9 @@ export const adminController = {
         ai_state_generated_at: new Date().toISOString(),
         screening_config: buildScreeningConfig(req),
         screening_last_question_order: null,
+        // C-3: 新規作成時も全体既定（default_answer_ui_preset）を実体化して保存する。
+        answer_ui_preset: await resolveAnswerUiPresetForSave(req.body.answer_ui_preset),
+        experience_config: buildExperienceConfigFromRequest(req),
         // Phase B: プロジェクト個別の policy / override 編集UIは撤去。プロンプトの真実はパッケージ側。
         ai_prompt_policy_json: null,
         // Phase 6-A: テンプレート編集はパッケージ画面に集約（プロジェクト編集UIから撤去）
@@ -2766,11 +2864,13 @@ export const adminController = {
         screening_last_question_order: existing.screening_last_question_order ?? null,
         is_discoverable: req.body.is_discoverable === "true" || req.body.is_discoverable === "on",
         randomize_question_order: req.body.randomize_question_order === "true" || req.body.randomize_question_order === "on",
-        answer_ui_preset: (["casual", "standard", "formal"] as const).includes(
-          bodyString(req.body.answer_ui_preset) as "casual" | "standard" | "formal",
-        )
-          ? (bodyString(req.body.answer_ui_preset) as "casual" | "standard" | "formal")
-          : "standard",
+        // C-3: 空文字（＝「全体既定に従う」）のときだけ体験設定の既定を実体化する。
+        // 既存プロジェクトはフォームに保存済みの値が選択されているため挙動は変わらない。
+        answer_ui_preset: await resolveAnswerUiPresetForSave(
+          req.body.answer_ui_preset,
+          existing.answer_ui_preset,
+        ),
+        experience_config: buildExperienceConfigFromRequest(req),
         category: bodyString(req.body.category) || null,
         estimated_minutes: parseOptionalInteger(req.body.estimated_minutes) ?? null,
         max_respondents: parseOptionalInteger(req.body.max_respondents) ?? null,
@@ -8325,6 +8425,47 @@ export const adminController = {
   // docs/spec-pool-swipe-questions.md。1設問=1枚の在庫。作成UXは「2択を量産」に最適化。
 
   /** 在庫ボード（一覧）。active 在庫が細っていないかを見る場所。 */
+  // ── 体験設定（若年層体験パック Phase 0・グローバル既定）────────────
+
+  async experienceSettings(req: Request, res: Response): Promise<void> {
+    // 読み込みに失敗したら空フォームを見せない（そのまま保存すると全キーが既定で
+    // 上書きされてしまうため）。フォーム自体を出さずエラーだけ表示する。
+    let values: Awaited<ReturnType<typeof experienceService.getGlobalForAdmin>> | null = null;
+    let loadError: string | null = null;
+    try {
+      values = await experienceService.getGlobalForAdmin();
+    } catch (error) {
+      loadError =
+        error instanceof Error ? error.message : "体験設定の読み込みに失敗しました。";
+      logger.error("experienceSettings: load failed", { error: loadError });
+    }
+
+    res.render("admin/experience-settings/index", {
+      title: "体験設定（若年層体験パック）",
+      keyDefs: EXPERIENCE_KEYS,
+      keyList: EXPERIENCE_KEY_LIST,
+      values,
+      loadError,
+      msg: queryString(req.query.msg) || null,
+      err: queryString(req.query.err) || null,
+    });
+  },
+
+  async updateExperienceSettings(req: Request, res: Response): Promise<void> {
+    try {
+      const values = parseGlobalExperienceForm(req.body as Record<string, unknown>);
+      await experienceService.saveGlobal(values);
+      res.redirect("/admin/experience-settings?msg=" + encodeURIComponent("体験設定を保存しました。"));
+    } catch (error) {
+      const message =
+        error instanceof HttpError || error instanceof Error
+          ? error.message
+          : "体験設定の保存に失敗しました。";
+      logger.error("updateExperienceSettings: save failed", { error: message });
+      res.redirect("/admin/experience-settings?err=" + encodeURIComponent(message));
+    }
+  },
+
   async poolQuestions(req: Request, res: Response): Promise<void> {
     const statusParam = queryString(req.query.status).trim();
     let statuses: PoolQuestionStatus[] | undefined;
