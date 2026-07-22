@@ -97,6 +97,16 @@ export const answerRepository = {
     return (data ?? []) as Answer[];
   },
 
+  /** 設問に紐づく回答件数（公開後の編集・削除ガード用） */
+  async countByQuestion(questionId: string): Promise<number> {
+    const { count, error } = await supabase
+      .from("answers")
+      .select("id", { count: "exact", head: true })
+      .eq("question_id", questionId);
+    throwIfError(error);
+    return count ?? 0;
+  },
+
   async listAll(): Promise<Answer[]> {
     const { data, error } = await supabase
       .from("answers")

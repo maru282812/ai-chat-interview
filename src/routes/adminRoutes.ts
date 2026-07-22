@@ -113,6 +113,8 @@ adminRoutes.post("/questions/:questionId", asyncHandler(adminController.updateQu
 
 adminRoutes.get("/respondents", asyncHandler(adminController.respondents));
 adminRoutes.get("/respondents/:respondentId", asyncHandler(adminController.respondentDetail));
+// 一覧は :sessionId より前に定義する（Express はルート順序依存）
+adminRoutes.get("/sessions", asyncHandler(adminController.sessions));
 adminRoutes.get("/sessions/:sessionId", asyncHandler(adminController.sessionDetail));
 adminRoutes.post("/respondents/:respondentId/points", asyncHandler(adminController.adjustPoints));
 adminRoutes.get("/posts", asyncHandler(adminController.posts));
@@ -206,6 +208,7 @@ adminRoutes.post("/api/ai/generate-user-tags/:respondentId", asyncHandler(adminC
 // Phase 2-D: データ管理（NGワード・カテゴリ）
 adminRoutes.get("/data-management", asyncHandler(adminController.dataManagementPage));
 adminRoutes.post("/data-management/ng-words", asyncHandler(adminController.createNgWord));
+adminRoutes.post("/data-management/ng-words/bulk", asyncHandler(adminController.bulkCreateNgWords));
 adminRoutes.post("/data-management/ng-words/:id/toggle", asyncHandler(adminController.toggleNgWord));
 adminRoutes.post("/data-management/ng-words/:id/delete", asyncHandler(adminController.deleteNgWord));
 adminRoutes.post("/data-management/categories", asyncHandler(adminController.createCategory));
@@ -222,6 +225,7 @@ adminRoutes.get("/user-profiles/login", asyncHandler(adminController.userProfile
 adminRoutes.post("/user-profiles/login", asyncHandler(adminController.userProfilesLogin));
 adminRoutes.post("/user-profiles/logout", asyncHandler(adminController.userProfilesLogout));
 adminRoutes.get("/user-profiles", asyncHandler(adminController.userProfilesAdmin));
+adminRoutes.get("/user-profiles/export.csv", asyncHandler(adminController.userProfilesExportCsv));
 
 // 通知テンプレート管理
 adminRoutes.get("/notification-templates", asyncHandler(adminController.notificationTemplates));
@@ -257,6 +261,7 @@ adminRoutes.post("/daily-question-priorities/:id/delete", asyncHandler(adminCont
 adminRoutes.post("/daily-question-priorities/:id/toggle", asyncHandler(adminController.toggleDailyQuestionPriority));
 
 // デイリーアンケート管理
+adminRoutes.get("/delivery-calendar", asyncHandler(adminController.deliveryCalendar));
 adminRoutes.get("/daily-surveys", asyncHandler(adminController.dailySurveys));
 adminRoutes.get("/daily-surveys/new", asyncHandler(adminController.newDailySurvey));
 adminRoutes.post("/daily-surveys", asyncHandler(adminController.createDailySurvey));
@@ -321,12 +326,14 @@ adminRoutes.get("/documents/:documentId/consent-audit",           asyncHandler(a
 
 // 応募管理（案件検索サイト）
 adminRoutes.get("/applications",                        asyncHandler(adminController.applications));
+adminRoutes.post("/applications/bulk-decide",           asyncHandler(adminController.bulkDecideApplications));
 adminRoutes.post("/applications/:id/accept",            asyncHandler(adminController.acceptApplication));
 adminRoutes.post("/applications/:id/reject",            asyncHandler(adminController.rejectApplication));
 
 // 店舗専用アンケート管理
 adminRoutes.get("/store-surveys",                       asyncHandler(adminController.storeSurveys));
 adminRoutes.get("/store-surveys/:projectId/flyer",      asyncHandler(adminController.storeSurveyFlyer));
+adminRoutes.get("/store-surveys/:projectId/qr.png",     asyncHandler(adminController.storeSurveyQr));
 adminRoutes.post("/store-surveys/mark",                 asyncHandler(adminController.markProjectAsStore));
 adminRoutes.post("/store-surveys/:projectId",           asyncHandler(adminController.updateStoreSurvey));
 adminRoutes.get("/clients/:clientId/overview",          asyncHandler(adminController.clientOverview));
@@ -337,6 +344,7 @@ adminRoutes.post("/store-clients/:clientId/delete",     asyncHandler(adminContro
 // 交換申請管理
 adminRoutes.get("/exchange-requests",                             asyncHandler(adminController.exchangeRequestsPage));
 adminRoutes.get("/exchange-requests/pending-count",               asyncHandler(adminController.pendingExchangeCount));
+adminRoutes.get("/exchange-requests/export.csv",                  asyncHandler(adminController.exportExchangeRequestsCsv));
 adminRoutes.post("/exchange-requests/:id/approve",                asyncHandler(adminController.approveExchange));
 adminRoutes.post("/exchange-requests/:id/reject",                 asyncHandler(adminController.rejectExchange));
 adminRoutes.post("/exchange-requests/:id/fulfill",                asyncHandler(adminController.fulfillExchange));

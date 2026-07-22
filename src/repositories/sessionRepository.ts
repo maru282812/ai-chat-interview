@@ -125,6 +125,65 @@ export const sessionRepository = {
     return (data ?? []) as Session[];
   },
 
+  /**
+   * セッション一覧画面用のページング付き取得。
+   * PostgREST は総件数を超える range を要求すると失敗するため、
+   * 先に count を確定させてから offset を最終ページへ丸める。
+   */
+  async listPaged(params: {
+    projectId?: string;
+    status?: SessionStatus;
+    limit: number;
+    offset: number;
+  }): Promise<{
+    rows: (Session & {
+      project?: { id: string; name: string } | null;
+      respondent?: { id: string; display_name: string | null; line_user_id: string } | null;
+    })[];
+    total: number;
+    offset: number;
+  }> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const applyFilters = (query: any) => {
+      let q = query;
+      if (params.projectId) q = q.eq("project_id", params.projectId);
+      if (params.status) q = q.eq("status", params.status);
+      return q;
+    };
+
+    const { error: countError, count } = await applyFilters(
+      supabase.from("sessions").select("id", { count: "exact", head: true })
+    );
+    throwIfError(countError);
+    const total = count ?? 0;
+    if (total === 0) {
+      return { rows: [], total: 0, offset: 0 };
+    }
+
+    const maxOffset = Math.max(0, Math.floor((total - 1) / params.limit) * params.limit);
+    const offset = Math.min(Math.max(0, params.offset), maxOffset);
+
+    const { data, error } = await applyFilters(
+      supabase
+        .from("sessions")
+        .select(
+          "*, project:projects(id,name), respondent:respondents(id,display_name,line_user_id)"
+        )
+    )
+      .order("last_activity_at", { ascending: false })
+      .range(offset, offset + params.limit - 1);
+    throwIfError(error);
+
+    return {
+      rows: (data ?? []) as (Session & {
+        project?: { id: string; name: string } | null;
+        respondent?: { id: string; display_name: string | null; line_user_id: string } | null;
+      })[],
+      total,
+      offset
+    };
+  },
+
   async countByProject(projectId: string): Promise<number> {
     const { count, error } = await supabase
       .from("sessions")

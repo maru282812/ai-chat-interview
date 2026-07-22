@@ -1,5 +1,8 @@
 ﻿import type { Request, Response } from "express";
 import { HttpError } from "../lib/http";
+import { redirectWithFlash, redirectWithError } from "../lib/adminFlash";
+import { formatDateTimeJst, fromDateTimeLocalJst, statusLabel } from "../lib/adminView";
+import { toCsvRfc4180 } from "../lib/statExport";
 import { logger } from "../lib/logger";
 import { env as appEnv } from "../config/env";
 import { STORAGE_BUCKET } from "../config/storage";
@@ -30,6 +33,13 @@ import {
 } from "../lib/metricCatalog";
 import { getProjectResearchSettings, parseLineSeparatedList } from "../lib/projectResearch";
 import { jstDateString, previewQueueAssignments, slotKey } from "../lib/dailyQueue";
+import {
+  isoToJstParts,
+  nextDailyRunJstFromTime,
+  nextRunJst,
+  scheduleLabel,
+  templateOccurrences
+} from "../lib/deliveryCalendar";
 import { DEFAULT_RAWDATA_STATUSES } from "../lib/rawdataExport";
 import { csvService } from "../services/csvService";
 import { statExportService } from "../services/statExportService";
@@ -59,8 +69,11 @@ import {
   type PoolQuestionType,
 } from "../repositories/poolQuestionRepository";
 import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
+import { answerRepository } from "../repositories/answerRepository";
+import QRCode from "qrcode";
 import { exportJobRepository } from "../repositories/exportJobRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
+import { researchOpsService } from "../services/researchOpsService";
 import { questionRepository } from "../repositories/questionRepository";
 import { collectClientMetrics } from "../lib/aggregationScope";
 import { rankRepository } from "../repositories/rankRepository";
@@ -118,6 +131,7 @@ import {
 } from "../prompts/adminPrompts";
 import { applicationService } from "../services/applicationService";
 import { projectApplicationRepository } from "../repositories/projectApplicationRepository";
+import { sessionRepository } from "../repositories/sessionRepository";
 import { lineMessagingService } from "../services/lineMessagingService";
 import { buildApplicationAcceptedFlex, buildApplicationRejectedFlex } from "../templates/flex";
 import { buildProjectStartUrl } from "../services/liffService";
@@ -405,16 +419,26 @@ async function applyDailySurveyPlacement(
 }
 
 
+/**
+ * 管理画面の `datetime-local` / `date` 入力を UTC の ISO 文字列にする。
+ *
+ * 入力欄の値はタイムゾーンを持たない壁時計時刻（例 "2026-07-22T09:30"）で、
+ * これを `new Date()` に渡すとサーバーのローカルタイムゾーンで解釈される。
+ * 本番は Vercel（UTC）なので JST のつもりで入れた時刻が9時間ずれていた。
+ * 管理画面の入力は常に JST として扱う。
+ */
 function parseNullableDateTime(value: unknown): string | null {
   const text = bodyString(value).trim();
   if (!text) {
     return null;
   }
-  const date = new Date(text);
-  if (Number.isNaN(date.getTime())) {
+  // 日付のみ（"2026-07-22"）は JST の 00:00 とみなす
+  const withTime = /^\d{4}-\d{2}-\d{2}$/.test(text) ? `${text}T00:00` : text;
+  const jst = fromDateTimeLocalJst(withTime.slice(0, 16));
+  if (!jst) {
     throw new HttpError(400, "deadline is invalid");
   }
-  return date.toISOString();
+  return jst;
 }
 
 function parseOptionalNumber(value: unknown): number | null {
@@ -1920,6 +1944,8 @@ function renderQuestionForm(
       columns: { name: string; label: string }[];
       snapshotConfirmed: boolean;
     } | null;
+    /** この設問に付いている回答件数（編集時のみ・取得失敗時は null） */
+    answeredCount?: number | null;
   }
 ): void {
   if (typeof input.statusCode === "number") {
@@ -1933,6 +1959,7 @@ function renderQuestionForm(
     action: input.action,
     form: input.formValues,
     rawdataInfo: input.rawdataInfo ?? null,
+    answeredCount: input.answeredCount ?? null,
     availableQuestions: input.availableQuestions.filter(
       (candidate) => !candidate.is_hidden || candidate.id === input.question?.id
     ),
@@ -2594,6 +2621,48 @@ async function evalGroupIds(db: any, group: SegGroup): Promise<Set<string>> {
   return profIds;
 }
 
+/** この評価器が実際にDBクエリへ落とせるフィールド */
+const SUPPORTED_SEGMENT_FIELDS = new Set([...PROFILE_FIELDS, "total_points"]);
+
+/**
+ * 条件の中に評価器が解釈できないフィールドが混じっていないか検査する。
+ * 実配信の直前に呼び、1つでもあれば実行を中断する（黙って無視すると
+ * 「20代女性向け」のつもりが全会員配信になる）。
+ */
+function findUnsupportedSegmentFields(rawConditions: unknown): string[] {
+  const norm = normalizeSegConds(rawConditions);
+  const unsupported = new Set<string>();
+  for (const group of norm.groups) {
+    for (const cond of group.conditions ?? []) {
+      if (!SUPPORTED_SEGMENT_FIELDS.has(cond.field)) unsupported.add(cond.field);
+    }
+  }
+  return [...unsupported];
+}
+
+/**
+ * 条件に一致する line_user_id の集合を返す。
+ * プレビュー（件数）と実配信（対象者）が同じロジックを通るようにするための共通実装。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function evaluateConditionsIds(db: any, rawConditions: unknown): Promise<Set<string>> {
+  const norm = normalizeSegConds(rawConditions);
+  const sets = await Promise.all(norm.groups.map(g => evalGroupIds(db, g)));
+  if (sets.length === 0) return new Set();
+
+  if (norm.operator === "AND") {
+    let result: Set<string> = sets[0] ?? new Set();
+    for (let i = 1; i < sets.length; i++) {
+      const next = sets[i] ?? new Set<string>();
+      result = new Set([...result].filter(id => next.has(id)));
+    }
+    return result;
+  }
+  const result = new Set<string>();
+  for (const s of sets) if (s) for (const id of s) result.add(id);
+  return result;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function evaluateConditionsCount(db: any, rawConditions: unknown): Promise<number> {
   const norm = normalizeSegConds(rawConditions);
@@ -2614,21 +2683,7 @@ async function evaluateConditionsCount(db: any, rawConditions: unknown): Promise
     return count ?? 0;
   }
 
-  // 通常パス: グループごとに ID 集合を評価して結合
-  const sets = await Promise.all(norm.groups.map(g => evalGroupIds(db, g)));
-  if (sets.length === 0) return 0;
-
-  if (norm.operator === "AND") {
-    let result: Set<string> = sets[0] ?? new Set();
-    for (let i = 1; i < sets.length; i++) {
-      const next = sets[i] ?? new Set<string>();
-      result = new Set([...result].filter(id => next.has(id)));
-    }
-    return result.size;
-  }
-  const result = new Set<string>();
-  for (const s of sets) if (s) for (const id of s) result.add(id);
-  return result.size;
+  return (await evaluateConditionsIds(db, rawConditions)).size;
 }
 
 function buildScheduleConfig(
@@ -2654,10 +2709,96 @@ function buildScheduleConfig(
   };
 }
 
+/**
+ * user_profiles の12条件フィルタを Supabase クエリへ適用する。
+ * 一覧（userProfilesAdmin）と CSV 出力で同じ絞り込みになるよう共通化。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyUserProfileFilters(query: any, q: Record<string, string>): any {
+  if (q.nickname) query = query.ilike("nickname", `%${q.nickname}%`);
+  if (q.gender) query = query.eq("gender", q.gender);
+  if (q.prefecture) query = query.eq("prefecture", q.prefecture);
+  if (q.occupation) query = query.ilike("occupation", `%${q.occupation}%`);
+  if (q.industry) query = query.ilike("industry", `%${q.industry}%`);
+  if (q.marital_status) query = query.eq("marital_status", q.marital_status);
+  if (q.has_children === "true") query = query.eq("has_children", true);
+  if (q.has_children === "false") query = query.eq("has_children", false);
+  if (q.profile_completed === "true") query = query.eq("profile_completed", true);
+  if (q.profile_completed === "false") query = query.eq("profile_completed", false);
+  if (q.age_from) {
+    const yearTo = new Date().getFullYear() - Number(q.age_from);
+    query = query.lte("birth_date", `${yearTo}-12-31`);
+  }
+  if (q.age_to) {
+    const yearFrom = new Date().getFullYear() - Number(q.age_to) - 1;
+    query = query.gte("birth_date", `${yearFrom + 1}-01-01`);
+  }
+  if (q.updated_from) query = query.gte("updated_at", q.updated_from);
+  if (q.updated_to) query = query.lte("updated_at", `${q.updated_to}T23:59:59Z`);
+  return query;
+}
+
 export const adminController = {
   async dashboard(_req: Request, res: Response): Promise<void> {
-    const stats = await adminService.dashboard();
-    res.render("admin/dashboard", { title: "Dashboard", stats });
+    const { pointExchangeRepository } = await import("../repositories/pointExchangeRepository");
+
+    // 「今なにを処理すべきか」が分かるように、未処理の件数をまとめて出す。
+    // 個々の取得は補助表示なので、失敗しても画面全体は落とさない。
+    const safeCount = async (fetch: () => Promise<number>): Promise<number | null> => {
+      try {
+        return await fetch();
+      } catch (err) {
+        logger.error("Failed to fetch dashboard queue count", { error: String(err) });
+        return null;
+      }
+    };
+
+    const { postRepository } = await import("../repositories/postRepository");
+
+    // 今日配信される（見込み含む）デイリーアンケートの枠数。
+    // 日付固定分＋キュー自動補充の見込みを dailySurveys カレンダーと同じロジックで数える。
+    const countTodayDailyDeliveries = async (): Promise<number> => {
+      const today = jstDateString();
+      let eveningAutofillEnabled = false;
+      try {
+        eveningAutofillEnabled = (await notificationSchedulerService.getSettings())
+          .evening_autofill_enabled;
+      } catch {
+        // 設定行が無い場合は「夜枠は補充しない」扱いで続行する
+      }
+      const planning = await dailySurveyService.getPlanningData(today, today);
+      const occupiedSlots = new Set<string>();
+      let deliverable = 0;
+      for (const s of planning.scheduled) {
+        if (!s.scheduled_date || !s.slot) continue;
+        occupiedSlots.add(slotKey(s.scheduled_date, s.slot));
+        if (s.status !== "completed" && s.status !== "paused") deliverable++;
+      }
+      const preview = previewQueueAssignments({
+        startDate: today,
+        days: 1,
+        queueIds: planning.queued.map((s) => s.id),
+        occupiedSlots,
+        eveningAutofillEnabled
+      });
+      return deliverable + preview.size;
+    };
+
+    const [stats, pendingExchanges, pendingApplications, todayDailyDeliveries, unanalyzedPosts] =
+      await Promise.all([
+        adminService.dashboard(),
+        safeCount(() => pointExchangeRepository.countPending()),
+        safeCount(() => projectApplicationRepository.countPending()),
+        safeCount(countTodayDailyDeliveries),
+        safeCount(() => postRepository.countUnanalyzed())
+      ]);
+
+    res.render("admin/dashboard", {
+      title: "ダッシュボード",
+      stats,
+      queue: { pendingExchanges, pendingApplications, todayDailyDeliveries, unanalyzedPosts },
+      generatedAt: new Date().toISOString()
+    });
   },
 
   async projects(req: Request, res: Response): Promise<void> {
@@ -3075,10 +3216,13 @@ export const adminController = {
     // ロウデータ列の対応（導出に失敗しても編集画面は落とさない）
     const rawdataIndex = await statExportService.rawdataColumnIndex(question.project_id).catch(() => null);
     const rawdataEntry = rawdataIndex?.byQuestionId[question.id];
+    // 公開後編集の警告バナー用。取得失敗でも編集画面は落とさない
+    const answeredCount = await answerRepository.countByQuestion(question.id).catch(() => null);
     renderQuestionForm(res, {
       title: "質問編集",
       project,
       question,
+      answeredCount,
       action: `/admin/questions/${question.id}`,
       formValues: buildQuestionFormValues(question),
       availableQuestions,
@@ -3211,9 +3355,35 @@ export const adminController = {
     }
   },
 
-  async respondents(_req: Request, res: Response): Promise<void> {
-    const respondents = await adminService.listRespondents();
-    res.render("admin/respondents/index", { title: "Respondents", respondents });
+  async respondents(req: Request, res: Response): Promise<void> {
+    const PER_PAGE = 50;
+    const page = Math.max(1, Number(queryString(req.query.page)) || 1);
+    const projectId = queryString(req.query.project_id);
+    const status = queryString(req.query.status);
+    const q = queryString(req.query.q);
+
+    const [result, projects] = await Promise.all([
+      researchOpsService.listRespondentOverviewsPaged({
+        projectId: projectId || undefined,
+        status: status || undefined,
+        q: q || undefined,
+        limit: PER_PAGE,
+        offset: (page - 1) * PER_PAGE
+      }),
+      projectRepository.list()
+    ]);
+
+    res.render("admin/respondents/index", {
+      title: "回答者",
+      respondents: result.items,
+      total: result.total,
+      // 範囲外のページを要求された場合はリポジトリ側で最終ページに丸められている
+      page: Math.floor(result.offset / PER_PAGE) + 1,
+      perPage: PER_PAGE,
+      totalPages: Math.max(1, Math.ceil(result.total / PER_PAGE)),
+      projects,
+      filters: { projectId, status, q }
+    });
   },
 
   async projectRespondents(req: Request, res: Response): Promise<void> {
@@ -3312,6 +3482,38 @@ export const adminController = {
     });
   },
 
+  async sessions(req: Request, res: Response): Promise<void> {
+    const PER_PAGE = 50;
+    const page = Math.max(1, Number(queryString(req.query.page)) || 1);
+    const projectId = queryString(req.query.project_id);
+    const statusRaw = queryString(req.query.status);
+    const status = (["pending", "active", "completed", "abandoned"] as const).find(
+      (s) => s === statusRaw
+    );
+
+    const [result, projects] = await Promise.all([
+      sessionRepository.listPaged({
+        projectId: projectId || undefined,
+        status,
+        limit: PER_PAGE,
+        offset: (page - 1) * PER_PAGE
+      }),
+      projectRepository.list()
+    ]);
+
+    res.render("admin/sessions/index", {
+      title: "セッション",
+      sessions: result.rows,
+      total: result.total,
+      // 範囲外のページを要求された場合はリポジトリ側で最終ページに丸められている
+      page: Math.floor(result.offset / PER_PAGE) + 1,
+      perPage: PER_PAGE,
+      totalPages: Math.max(1, Math.ceil(result.total / PER_PAGE)),
+      projects,
+      filters: { projectId, status: status ?? "" }
+    });
+  },
+
   async sessionDetail(req: Request, res: Response): Promise<void> {
     const detail = await adminService.sessionDetail(routeParam(req, "sessionId"));
     res.render("admin/sessions/show", {
@@ -3334,11 +3536,38 @@ export const adminController = {
     res.redirect(`/admin/projects/${projectId}/analysis`);
   },
 
-  async points(_req: Request, res: Response): Promise<void> {
+  async points(req: Request, res: Response): Promise<void> {
+    const PER_PAGE = 50;
+    const page = Math.max(1, Number(queryString(req.query.page)) || 1);
+    const q = queryString(req.query.q);
+    const sortParam = queryString(req.query.sort);
+    const sort = (
+      ["lifetime_points", "total_points", "current_streak", "last_answered_date"] as const
+    ).includes(sortParam as never)
+      ? (sortParam as "lifetime_points" | "total_points" | "current_streak" | "last_answered_date")
+      : "lifetime_points";
+    const dir = queryString(req.query.dir) === "asc" ? "asc" : "desc";
+
     let summaries: Awaited<ReturnType<typeof userPointService.listSummaries>> = [];
+    let stats: Awaited<ReturnType<typeof userPointService.aggregateSummaries>> | null = null;
+    let total = 0;
+    let resolvedOffset = (page - 1) * PER_PAGE;
     let fetchError: string | null = null;
     try {
-      summaries = await userPointService.listSummaries(500);
+      const [pageResult, aggregate] = await Promise.all([
+        userPointService.searchSummaries({
+          q: q || undefined,
+          sort,
+          dir,
+          limit: PER_PAGE,
+          offset: (page - 1) * PER_PAGE
+        }),
+        userPointService.aggregateSummaries()
+      ]);
+      summaries = pageResult.rows;
+      total = pageResult.total;
+      resolvedOffset = pageResult.offset;
+      stats = aggregate;
     } catch (err) {
       logger.error("Failed to fetch point summaries", {
         error: String(err),
@@ -3346,9 +3575,17 @@ export const adminController = {
       });
       fetchError = "ポイント情報の取得に失敗しました。管理者へお問い合わせください。";
     }
+
     res.render("admin/points/index", {
       title: "ポイント管理",
       summaries,
+      stats,
+      total,
+      // 範囲外のページはサービス側で最終ページに丸められている
+      page: Math.floor(resolvedOffset / PER_PAGE) + 1,
+      perPage: PER_PAGE,
+      totalPages: Math.max(1, Math.ceil(total / PER_PAGE)),
+      filters: { q, sort, dir },
       fetchError
     });
   },
@@ -3358,10 +3595,18 @@ export const adminController = {
     const b = req.body as Record<string, string>;
     const points = Number(b.points);
     const reason = bodyString(b.reason) || "管理者調整";
+
+    // 従来はここで黙って /admin/points へ戻していたため、実行できたのかどうかが
+    // 画面から一切分からなかった。
     if (isNaN(points) || points === 0) {
-      res.redirect("/admin/points");
+      redirectWithError(res, "/admin/points", "増減ポイントに 0 以外の数値を入力してください。");
       return;
     }
+    if (Math.abs(points) > 10000) {
+      redirectWithError(res, "/admin/points", "1回の調整は ±10,000pt までです。");
+      return;
+    }
+
     await userPointService.awardPoints({
       lineUserId,
       transactionType: "manual_adjustment",
@@ -3369,7 +3614,11 @@ export const adminController = {
       reason,
       referenceType: "manual"
     });
-    res.redirect("/admin/points");
+    redirectWithFlash(
+      res,
+      "/admin/points",
+      `${points > 0 ? "+" : ""}${points}pt を調整しました（理由: ${reason}）。`
+    );
   },
 
   async badgesPage(_req: Request, res: Response): Promise<void> {
@@ -3381,7 +3630,10 @@ export const adminController = {
     res.render("admin/badges/index", {
       title: "バッジ管理",
       badges,
+      // 従来は slice(0,50) で黙って打ち切っており、51人目以降を見る手段が無かった。
+      // 全件数を一緒に渡して「何名中の何名を表示しているか」を画面に出す。
       userSummaries: userSummaries.slice(0, 50),
+      userSummaryTotal: userSummaries.length,
       awardCounts
     });
   },
@@ -3408,25 +3660,76 @@ export const adminController = {
 
   async adjustPoints(req: Request, res: Response): Promise<void> {
     const respondentId = routeParam(req, "respondentId");
-    await pointService.manualAdjust({
-      respondentId,
-      points: numberField(req.body.points),
-      reason: bodyString(req.body.reason || "Manual adjustment")
-    });
-    res.redirect(`/admin/respondents/${respondentId}`);
+    const points = numberField(req.body.points);
+    const reason = bodyString(req.body.reason) || "管理者調整";
+    const target = `/admin/respondents/${respondentId}`;
+
+    if (!Number.isFinite(points) || points === 0) {
+      redirectWithError(res, target, "増減ポイントに 0 以外の数値を入力してください。");
+      return;
+    }
+    if (Math.abs(points) > 10000) {
+      redirectWithError(res, target, "1回の調整は ±10,000pt までです。");
+      return;
+    }
+
+    await pointService.manualAdjust({ respondentId, points, reason });
+    redirectWithFlash(
+      res,
+      target,
+      `${points > 0 ? "+" : ""}${points}pt を調整しました（理由: ${reason}）。`
+    );
   },
 
   async ranks(_req: Request, res: Response): Promise<void> {
     const ranks = await adminService.listRanks();
-    res.render("admin/ranks/index", { title: "Ranks", ranks });
+    res.render("admin/ranks/index", { title: "ランク設定", ranks });
   },
 
   async updateRank(req: Request, res: Response): Promise<void> {
-    await rankRepository.updateThreshold(routeParam(req, "rankId"), {
-      min_points: numberField(req.body.min_points),
+    const rankId = routeParam(req, "rankId");
+    const minPoints = numberField(req.body.min_points);
+
+    if (!Number.isFinite(minPoints) || minPoints < 0) {
+      redirectWithError(res, "/admin/ranks", "必要ポイントには0以上の数値を入力してください。");
+      return;
+    }
+
+    // 閾値の逆転（シルバー100 > ゴールド50）を保存できてしまっていたので、
+    // 他ランクとの整合をここで検証する。
+    const ranks = await adminService.listRanks();
+    const target = ranks.find((rank) => rank.id === rankId);
+    if (!target) {
+      redirectWithError(res, "/admin/ranks", "対象のランクが見つかりませんでした。");
+      return;
+    }
+
+    const ordered = [...ranks].sort((a, b) => a.min_points - b.min_points);
+    const targetIndex = ordered.findIndex((rank) => rank.id === rankId);
+    const lower = ordered[targetIndex - 1];
+    const upper = ordered[targetIndex + 1];
+    if (lower && minPoints <= lower.min_points) {
+      redirectWithError(
+        res,
+        "/admin/ranks",
+        `${target.rank_name} の必要ポイントは ${lower.rank_name}（${lower.min_points}pt）より大きくしてください。`
+      );
+      return;
+    }
+    if (upper && minPoints >= upper.min_points) {
+      redirectWithError(
+        res,
+        "/admin/ranks",
+        `${target.rank_name} の必要ポイントは ${upper.rank_name}（${upper.min_points}pt）より小さくしてください。`
+      );
+      return;
+    }
+
+    await rankRepository.updateThreshold(rankId, {
+      min_points: minPoints,
       badge_label: bodyString(req.body.badge_label) || null
     });
-    res.redirect("/admin/ranks");
+    redirectWithFlash(res, "/admin/ranks", `${target.rank_name} を更新しました（下限 ${minPoints}pt）。`);
   },
 
   async exportAnswers(_req: Request, res: Response): Promise<void> {
@@ -4282,6 +4585,20 @@ export const adminController = {
     const questionId = routeParam(req, "questionId");
     // Verify question exists (throws HttpError 404 if not)
     await questionRepository.getById(questionId);
+
+    // 回答が付いた設問の物理削除は、収集済み回答との整合とロウデータの列契約
+    // （wide/long/codebook は集計アプリ契約で凍結）を壊すため拒否する
+    const answeredCount = await answerRepository.countByQuestion(questionId).catch(() => null);
+    if (answeredCount === null) {
+      res.status(500).json({ error: "回答件数を確認できなかったため削除を中断しました。再試行してください。" });
+      return;
+    }
+    if (answeredCount > 0) {
+      res.status(409).json({
+        error: `この設問には回答が ${answeredCount} 件付いているため削除できません。設問を外したい場合は「非表示」を使ってください。`
+      });
+      return;
+    }
 
     const { supabase } = await import("../config/supabase");
     const { error } = await supabase
@@ -5308,26 +5625,27 @@ export const adminController = {
     }
 
     // セグメント条件からターゲットユーザーを取得（画面からのsegment_idがあれば優先）
+    //
+    // 以前はここだけ `segment.conditions.conditions` という旧フォーマットを直接読み、
+    // gender / prefecture / is_blocked の3フィールドしか解釈していなかった。現行の
+    // 保存フォーマットは {operator, groups[]} なので条件が丸ごと無視され、
+    // 画面が出す「推定対象人数」と実配信対象が食い違っていた。
+    // プレビューと同じ評価器（evaluateConditionsIds）に一本化する。
     const effectiveSegmentId = segmentIdOverride ?? campaign.segment_id;
     let targetLineUserIds: string[] = [];
 
     if (effectiveSegmentId) {
       const segment = await segmentRepository.getById(effectiveSegmentId);
-      const conds = segment.conditions.conditions as Array<{
-        field: string; op: string; value: unknown;
-      }>;
-
-      let q = db.from("user_profiles").select("line_user_id").eq("profile_completed", true);
-      for (const c of conds) {
-        if (c.field === "gender" && c.op === "in" && Array.isArray(c.value))
-          q = q.in("gender", c.value as string[]);
-        else if (c.field === "prefecture" && c.op === "in" && Array.isArray(c.value))
-          q = q.in("prefecture", c.value as string[]);
-        else if (c.field === "is_blocked")
-          q = q.eq("is_blocked", c.value as boolean);
+      const unsupported = findUnsupportedSegmentFields(segment.conditions);
+      if (unsupported.length > 0) {
+        // 解釈できない条件があるまま配信すると対象が広がる方向に外れるため中断する
+        res.status(400).json({
+          error: `セグメント条件に未対応の項目が含まれています（${unsupported.join(", ")}）。条件を修正するまで配信できません。`
+        });
+        return;
       }
-      const { data } = await q;
-      targetLineUserIds = (data ?? []).map((r: { line_user_id: string }) => r.line_user_id);
+      const ids = await evaluateConditionsIds(db, segment.conditions);
+      targetLineUserIds = [...ids];
     } else {
       // セグメント未指定 → profile_completed 全員
       const { data } = await db
@@ -5336,6 +5654,19 @@ export const adminController = {
         .eq("profile_completed", true)
         .eq("is_blocked", false);
       targetLineUserIds = (data ?? []).map((r: { line_user_id: string }) => r.line_user_id);
+    }
+
+    // ドライラン: 対象件数だけ返して実際のアサインは行わない。
+    // 確認モーダルが「これから何名に配信されるか」を実配信と同じ経路で取得するために使う。
+    if (bodyString(req.body.dry_run) === "1") {
+      res.json({
+        ok: true,
+        dry_run: true,
+        target_count: targetLineUserIds.length,
+        segment_id: effectiveSegmentId ?? null,
+        is_all_members: !effectiveSegmentId
+      });
+      return;
     }
 
     if (targetLineUserIds.length === 0) {
@@ -5404,6 +5735,41 @@ export const adminController = {
     const { supabase: db } = await import("../config/supabase");
     await db.from("ng_words").insert({ word, category });
     res.redirect("/admin/data-management");
+  },
+
+  /**
+   * NGワードの一括登録（改行区切りの貼り付け）。
+   * 空行・重複入力・既存登録済みは除外し、登録件数とスキップ件数をフラッシュで返す。
+   */
+  async bulkCreateNgWords(req: Request, res: Response): Promise<void> {
+    const raw = bodyString(req.body.words).trim();
+    const category = bodyString(req.body.category).trim() || "general";
+    const words = [...new Set(raw.split(/\r?\n/).map((w) => w.trim()).filter(Boolean))];
+    if (words.length === 0) {
+      redirectWithError(res, "/admin/data-management", "NGワードが入力されていません");
+      return;
+    }
+
+    const { supabase: db } = await import("../config/supabase");
+    const { data: existingRows, error: readError } = await db
+      .from("ng_words")
+      .select("word")
+      .in("word", words);
+    if (readError) throw new HttpError(500, readError.message);
+    const existing = new Set((existingRows ?? []).map((r) => String((r as { word: string }).word)));
+    const fresh = words.filter((w) => !existing.has(w));
+
+    if (fresh.length > 0) {
+      const { error } = await db.from("ng_words").insert(fresh.map((word) => ({ word, category })));
+      if (error) throw new HttpError(500, error.message);
+    }
+
+    const skipped = words.length - fresh.length;
+    redirectWithFlash(
+      res,
+      "/admin/data-management",
+      `NGワードを${fresh.length}件登録しました${skipped > 0 ? `（登録済み${skipped}件はスキップ）` : ""}`
+    );
   },
 
   async toggleNgWord(req: Request, res: Response): Promise<void> {
@@ -5545,28 +5911,10 @@ export const adminController = {
     const { supabase: db } = await import("../config/supabase");
     const q = req.query as Record<string, string>;
 
-    let query = db.from("user_profiles").select("*", { count: "exact" });
-
-    if (q.nickname) query = query.ilike("nickname", `%${q.nickname}%`);
-    if (q.gender) query = query.eq("gender", q.gender);
-    if (q.prefecture) query = query.eq("prefecture", q.prefecture);
-    if (q.occupation) query = query.ilike("occupation", `%${q.occupation}%`);
-    if (q.industry) query = query.ilike("industry", `%${q.industry}%`);
-    if (q.marital_status) query = query.eq("marital_status", q.marital_status);
-    if (q.has_children === "true") query = query.eq("has_children", true);
-    if (q.has_children === "false") query = query.eq("has_children", false);
-    if (q.profile_completed === "true") query = query.eq("profile_completed", true);
-    if (q.profile_completed === "false") query = query.eq("profile_completed", false);
-    if (q.age_from) {
-      const yearTo = new Date().getFullYear() - Number(q.age_from);
-      query = query.lte("birth_date", `${yearTo}-12-31`);
-    }
-    if (q.age_to) {
-      const yearFrom = new Date().getFullYear() - Number(q.age_to) - 1;
-      query = query.gte("birth_date", `${yearFrom + 1}-01-01`);
-    }
-    if (q.updated_from) query = query.gte("updated_at", q.updated_from);
-    if (q.updated_to) query = query.lte("updated_at", `${q.updated_to}T23:59:59Z`);
+    const query = applyUserProfileFilters(
+      db.from("user_profiles").select("*", { count: "exact" }),
+      q
+    );
 
     const page = Math.max(1, Number(q.page ?? "1"));
     const perPage = 50;
@@ -5593,9 +5941,271 @@ export const adminController = {
     });
   },
 
+  /**
+   * プロフィール検索の絞り込み結果を CSV 出力する。
+   * 一覧と同じ12条件フィルタ（applyUserProfileFilters）を適用し、
+   * ページングせず全件を1000件ずつ取得して打ち切りを避ける。
+   */
+  async userProfilesExportCsv(req: Request, res: Response): Promise<void> {
+    if (!upAdminIsAuthenticated(req)) {
+      res.redirect("/admin/user-profiles/login");
+      return;
+    }
+
+    const { supabase: db } = await import("../config/supabase");
+    const q = req.query as Record<string, string>;
+
+    const PAGE = 1000;
+    const profiles: import("../types/domain").UserProfile[] = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const { data, error } = await applyUserProfileFilters(
+        db.from("user_profiles").select("*"),
+        q
+      )
+        .order("updated_at", { ascending: false })
+        .range(offset, offset + PAGE - 1);
+      if (error) throw new HttpError(500, error.message);
+      const rows = (data ?? []) as import("../types/domain").UserProfile[];
+      profiles.push(...rows);
+      if (rows.length < PAGE) break;
+    }
+
+    const body = toCsvRfc4180(
+      profiles.map((p) => ({
+        id: p.id,
+        line_user_id: p.line_user_id,
+        nickname: p.nickname ?? "",
+        gender: p.gender ?? "",
+        birth_date: p.birth_date ?? "",
+        prefecture: p.prefecture ?? "",
+        occupation: p.occupation ?? "",
+        industry: p.industry ?? "",
+        marital_status: p.marital_status ?? "",
+        has_children: p.has_children === null ? "" : p.has_children,
+        children_ages: (p.children_ages ?? []).join("|"),
+        household_income: p.household_income ?? "",
+        profile_completed: p.profile_completed,
+        notification_ok: p.notification_ok,
+        is_blocked: p.is_blocked,
+        fraud_flag: p.fraud_flag,
+        quality_score: p.quality_score ?? "",
+        last_login_at_jst: formatDateTimeJst(p.last_login_at, ""),
+        created_at_jst: formatDateTimeJst(p.created_at, ""),
+        updated_at_jst: formatDateTimeJst(p.updated_at, "")
+      }))
+    );
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=user-profiles-${jstDateString()}.csv`
+    );
+    res.send(body);
+  },
+
   // ============================================================
   // デイリーアンケート管理
   // ============================================================
+
+  /**
+   * 配信カレンダー。配信テンプレート・デイリーアンケート（確定＋キュー見込み）・
+   * キャンペーン予約の「次にいつ何が飛ぶか」を1画面へ集約する。
+   * ここに出るのは設定から計算した「予定」であり、実際に自動発火するかは
+   * スケジューラ / cron の構成に依存する（キャンペーン予約は自動実行が未実装）。
+   */
+  async deliveryCalendar(req: Request, res: Response): Promise<void> {
+    const today = jstDateString();
+    const month = queryString(req.query.month).trim() || today.slice(0, 7); // YYYY-MM
+    const [y, m] = month.split("-").map(Number);
+    const year = y ?? Number(today.slice(0, 4));
+    const monthIndex = (m ?? Number(today.slice(5, 7))) - 1;
+    const firstDate = new Date(Date.UTC(year, monthIndex, 1)).toISOString().slice(0, 10);
+    const lastDay = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+    const lastDate = new Date(Date.UTC(year, monthIndex, lastDay)).toISOString().slice(0, 10);
+
+    let settings: Awaited<ReturnType<typeof notificationSchedulerService.getSettings>> | null =
+      null;
+    try {
+      settings = await notificationSchedulerService.getSettings();
+    } catch {
+      // 設定行が無くてもカレンダー自体は出す
+    }
+
+    const [templates, campaigns, planning, logs] = await Promise.all([
+      deliveryTemplateRepository.list().catch(() => []),
+      deliveryCampaignRepository.list().catch(() => []),
+      dailySurveyService.getPlanningData(firstDate, lastDate),
+      deliveryTemplateRepository.listAllLogs(10).catch(() => [])
+    ]);
+
+    interface CalendarEvent {
+      time: string | null;
+      kind: "daily" | "daily_auto" | "template" | "campaign";
+      label: string;
+      href: string | null;
+    }
+    const events: Record<string, CalendarEvent[]> = {};
+    const pushEvent = (date: string, event: CalendarEvent): void => {
+      if (date < firstDate || date > lastDate) return;
+      (events[date] ??= []).push(event);
+    };
+    const slotTime = (slot: "morning" | "evening"): string | null =>
+      slot === "morning" ? settings?.morning_time ?? null : settings?.evening_time ?? null;
+    const slotJa = (slot: "morning" | "evening"): string => (slot === "morning" ? "朝" : "夜");
+
+    // デイリーアンケート: 日付固定分
+    const occupiedSlots = new Set<string>();
+    for (const s of planning.scheduled) {
+      if (!s.scheduled_date || !s.slot) continue;
+      occupiedSlots.add(slotKey(s.scheduled_date, s.slot));
+      pushEvent(s.scheduled_date, {
+        time: slotTime(s.slot),
+        kind: "daily",
+        label: `デイリー${slotJa(s.slot)}: ${s.title}`,
+        href: `/admin/daily-surveys/${s.id}`
+      });
+    }
+
+    // デイリーアンケート: キューから自動補充される見込み（表示専用・DB非保存）
+    const preview = previewQueueAssignments({
+      startDate: today,
+      days: 62,
+      queueIds: planning.queued.map((s) => s.id),
+      occupiedSlots,
+      eveningAutofillEnabled: settings?.evening_autofill_enabled ?? false
+    });
+    for (const [key, id] of preview) {
+      const date = key.slice(0, 10);
+      const slot = key.slice(11) as "morning" | "evening";
+      const s = planning.queued.find((q) => q.id === id);
+      if (!s) continue;
+      pushEvent(date, {
+        time: slotTime(slot),
+        kind: "daily_auto",
+        label: `デイリー${slotJa(slot)}(自動): ${s.title}`,
+        href: `/admin/daily-surveys/${s.id}`
+      });
+    }
+
+    // 配信テンプレート（有効なもののみカレンダーに置く）
+    for (const t of templates) {
+      if (!t.is_enabled) continue;
+      for (const occ of templateOccurrences(t, firstDate, lastDate)) {
+        pushEvent(occ.date, {
+          time: occ.time,
+          kind: "template",
+          label: t.name,
+          href: "/admin/delivery-templates"
+        });
+      }
+    }
+
+    // セグメントキャンペーンの予約（送信済みも当該日に実績として残す）
+    for (const c of campaigns) {
+      if (!c.scheduled_at || c.status === "cancelled") continue;
+      const parts = isoToJstParts(c.scheduled_at);
+      if (!parts) continue;
+      pushEvent(parts.date, {
+        time: parts.time,
+        kind: "campaign",
+        label: `${c.name}${c.status === "sent" ? "（送信済み）" : ""}`,
+        href: `/admin/segments/campaigns/${c.id}/edit`
+      });
+    }
+
+    for (const list of Object.values(events)) {
+      list.sort((a, b) => (a.time ?? "99:99").localeCompare(b.time ?? "99:99"));
+    }
+
+    // 次回実行予定の一覧（カレンダーに乗らない interval 型・無効なものもここで見える）
+    interface UpcomingRow {
+      category: string;
+      name: string;
+      schedule: string;
+      nextRun: string | null;
+      enabled: boolean;
+      warning: string | null;
+      href: string;
+    }
+    const upcoming: UpcomingRow[] = [];
+    if (settings) {
+      upcoming.push(
+        {
+          category: "デイリー配信",
+          name: "朝の配信",
+          schedule: `毎日 ${settings.morning_time}`,
+          nextRun: settings.morning_enabled ? nextDailyRunJstFromTime(settings.morning_time) : null,
+          enabled: settings.morning_enabled,
+          warning: null,
+          href: "/admin/scheduler-settings"
+        },
+        {
+          category: "デイリー配信",
+          name: "夜の配信",
+          schedule: `毎日 ${settings.evening_time}`,
+          nextRun: settings.evening_enabled ? nextDailyRunJstFromTime(settings.evening_time) : null,
+          enabled: settings.evening_enabled,
+          warning: null,
+          href: "/admin/scheduler-settings"
+        },
+        {
+          category: "デイリー配信",
+          name: "未回答リマインダー",
+          schedule: `毎日 ${settings.reminder_time}`,
+          nextRun: settings.reminder_enabled ? nextDailyRunJstFromTime(settings.reminder_time) : null,
+          enabled: settings.reminder_enabled,
+          warning: null,
+          href: "/admin/scheduler-settings"
+        }
+      );
+    }
+    for (const t of templates) {
+      upcoming.push({
+        category: "配信テンプレート",
+        name: t.name,
+        schedule: scheduleLabel(t),
+        nextRun: t.is_enabled ? nextRunJst(t) : null,
+        enabled: t.is_enabled,
+        warning: null,
+        href: "/admin/delivery-templates"
+      });
+    }
+    for (const c of campaigns) {
+      if (!c.scheduled_at) continue;
+      if (c.status !== "draft" && c.status !== "scheduled") continue;
+      const parts = isoToJstParts(c.scheduled_at);
+      upcoming.push({
+        category: "キャンペーン",
+        name: c.name,
+        schedule: "予約日時",
+        nextRun: parts ? `${parts.date} ${parts.time}` : null,
+        enabled: true,
+        warning:
+          "予約の自動実行は未実装です。設定時刻になっても自動では飛ばないため、配信オペレーションから手動実行してください。",
+        href: `/admin/segments/campaigns/${c.id}/edit`
+      });
+    }
+    upcoming.sort((a, b) => (a.nextRun ?? "9999").localeCompare(b.nextRun ?? "9999"));
+
+    const templateById = new Map(templates.map((t) => [t.id, t] as const));
+    const recentLogs = logs.map((log) => ({
+      ...log,
+      templateName: templateById.get(log.template_id)?.name ?? log.template_id
+    }));
+
+    res.render("admin/delivery-calendar/index", {
+      title: "配信カレンダー",
+      today,
+      month,
+      prevMonth: new Date(Date.UTC(year, monthIndex - 1, 1)).toISOString().slice(0, 7),
+      nextMonth: new Date(Date.UTC(year, monthIndex + 1, 1)).toISOString().slice(0, 7),
+      firstWeekday: new Date(Date.UTC(year, monthIndex, 1)).getUTCDay(),
+      lastDay,
+      events,
+      upcoming,
+      recentLogs,
+      hasSchedulerSettings: settings !== null
+    });
+  },
 
   /**
    * デイリーアンケートの配信計画画面（カレンダー＋キューの2ペイン・migration 079）。
@@ -6088,7 +6698,6 @@ export const adminController = {
 
   async schedulerSettings(req: Request, res: Response): Promise<void> {
     const settings = await notificationSchedulerService.getSettings();
-    const flash = req.query.saved ? "設定を保存しました" : null;
     const jobResult = req.query.job
       ? {
           job: req.query.job as string,
@@ -6102,7 +6711,6 @@ export const adminController = {
     res.render("admin/scheduler-settings/index", {
       title: "通知スケジューラ設定",
       settings,
-      flash,
       jobResult,
       activeJobCount: notificationSchedulerService.activeJobCount
     });
@@ -6119,7 +6727,7 @@ export const adminController = {
       reminder_enabled: b.reminder_enabled === "1",
       reminder_time: b.reminder_time || "20:00"
     });
-    res.redirect("/admin/scheduler-settings?saved=1");
+    redirectWithFlash(res, "/admin/scheduler-settings", "設定を保存しました。");
   },
 
   async runSchedulerJob(req: Request, res: Response): Promise<void> {
@@ -6145,8 +6753,7 @@ export const adminController = {
 
   async rewardCampaigns(req: Request, res: Response): Promise<void> {
     const campaigns = await rewardCampaignService.list();
-    const flash = req.query.saved ? "保存しました" : null;
-    res.render("admin/reward-campaigns/index", { title: "報酬キャンペーン", campaigns, flash });
+    res.render("admin/reward-campaigns/index", { title: "報酬キャンペーン", campaigns });
   },
 
   async newRewardCampaign(req: Request, res: Response): Promise<void> {
@@ -6170,11 +6777,12 @@ export const adminController = {
       condition_type: b.condition_type as import("../repositories/rewardCampaignRepository").ConditionType,
       condition_value: conditionValue,
       target_segment_id: b.target_segment_id || null,
-      start_at: b.start_at || null,
-      end_at: b.end_at || null,
+      // datetime-local の値は JST の壁時計時刻。UTC として解釈すると9時間ずれる
+      start_at: parseNullableDateTime(b.start_at),
+      end_at: parseNullableDateTime(b.end_at),
       is_active: b.is_active === "1"
     });
-    res.redirect("/admin/reward-campaigns?saved=1");
+    redirectWithFlash(res, "/admin/reward-campaigns", "保存しました。");
   },
 
   async editRewardCampaign(req: Request, res: Response): Promise<void> {
@@ -6203,11 +6811,12 @@ export const adminController = {
       condition_type: b.condition_type as import("../repositories/rewardCampaignRepository").ConditionType,
       condition_value: conditionValue,
       target_segment_id: b.target_segment_id || null,
-      start_at: b.start_at || null,
-      end_at: b.end_at || null,
+      // datetime-local の値は JST の壁時計時刻。UTC として解釈すると9時間ずれる
+      start_at: parseNullableDateTime(b.start_at),
+      end_at: parseNullableDateTime(b.end_at),
       is_active: b.is_active === "1"
     });
-    res.redirect("/admin/reward-campaigns?saved=1");
+    redirectWithFlash(res, "/admin/reward-campaigns", "保存しました。");
   },
 
   async deleteRewardCampaign(req: Request, res: Response): Promise<void> {
@@ -6228,11 +6837,9 @@ export const adminController = {
 
   async dailyQuestionPriorities(req: Request, res: Response): Promise<void> {
     const questions = await dailyQuestionPriorityService.list();
-    const flash = req.query.saved ? "保存しました" : null;
     res.render("admin/daily-question-priorities/index", {
       title: "デイリー設問優先度",
-      questions,
-      flash
+      questions
     });
   },
 
@@ -6259,7 +6866,7 @@ export const adminController = {
       weight: Number(b.weight ?? 10),
       is_active: b.is_active === "1"
     });
-    res.redirect("/admin/daily-question-priorities?saved=1");
+    redirectWithFlash(res, "/admin/daily-question-priorities", "保存しました。");
   },
 
   async editDailyQuestionPriority(req: Request, res: Response): Promise<void> {
@@ -6290,7 +6897,7 @@ export const adminController = {
       weight: Number(b.weight ?? 10),
       is_active: b.is_active === "1"
     });
-    res.redirect("/admin/daily-question-priorities?saved=1");
+    redirectWithFlash(res, "/admin/daily-question-priorities", "保存しました。");
   },
 
   async deleteDailyQuestionPriority(req: Request, res: Response): Promise<void> {
@@ -6790,6 +7397,52 @@ export const adminController = {
       flaggedUsers,
       flaggedUserIds: [...flaggedUserIds],
     });
+  },
+
+  /**
+   * 交換申請の経理突合用 CSV。金銭を伴うため一覧のような500件打ち切りをせず、
+   * 1000件ずつ全件を取得する。status クエリで一覧と同じ絞り込みができる。
+   */
+  async exportExchangeRequestsCsv(req: Request, res: Response): Promise<void> {
+    const { pointExchangeRepository } = await import("../repositories/pointExchangeRepository");
+    const statusFilter = typeof req.query.status === "string" ? req.query.status : "all";
+
+    const PAGE = 1000;
+    const all: Awaited<ReturnType<typeof pointExchangeRepository.listAll>> = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const rows = await pointExchangeRepository.listAll(PAGE, offset);
+      all.push(...rows);
+      if (rows.length < PAGE) break;
+    }
+    const rows = statusFilter === "all" ? all : all.filter((r) => r.status === statusFilter);
+
+    const body = toCsvRfc4180(
+      rows.map((r) => ({
+        id: r.id,
+        line_user_id: r.line_user_id,
+        requested_points: r.requested_points,
+        gift_amount_jpy: r.gift_amount_jpy,
+        status: r.status,
+        status_label: statusLabel("exchangeStatus", r.status),
+        gift_provider: r.gift_provider ?? "",
+        gift_code: r.gift_code ?? "",
+        gift_url: r.gift_url ?? "",
+        requested_at_jst: formatDateTimeJst(r.requested_at, ""),
+        approved_at_jst: formatDateTimeJst(r.approved_at, ""),
+        rejected_at_jst: formatDateTimeJst(r.rejected_at, ""),
+        fulfilled_at_jst: formatDateTimeJst(r.fulfilled_at, ""),
+        canceled_at_jst: formatDateTimeJst(r.canceled_at, ""),
+        handled_by: r.handled_by ?? "",
+        admin_memo: r.admin_memo ?? "",
+        failed_reason: r.failed_reason ?? ""
+      }))
+    );
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=exchange-requests-${jstDateString()}.csv`
+    );
+    res.send(body);
   },
 
   /** ヘッダーの通知バッジ用: 申請中(pending)の交換申請件数を返す */
@@ -8216,11 +8869,30 @@ export const adminController = {
       title: `配布用QR - ${clientName || surveyTitle}`,
       storeName: clientName,
       surveyTitle,
+      projectId: project.id,
       entryUrl: buildStoreEntryUrl(project.entry_code),
       entryCode: project.entry_code ?? null,
       isPublished: project.status === "published",
       backUrl: "/admin/store-surveys"
     });
+  },
+
+  // ---- 店舗QRコード（サーバ側生成） ----
+  // 以前は api.qrserver.com へ entry_code 込みの限定URLをクエリで送って生成しており、
+  // 限定URLが第三者サービスに渡る＋サービス停止でQRが表示されなくなる問題があった。
+
+  async storeSurveyQr(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const project = await projectRepository.getById(projectId);
+    const entryUrl = buildStoreEntryUrl(project.entry_code);
+    if (!entryUrl) throw new HttpError(404, "entry_code が未設定のためQRコードを生成できません");
+
+    const sizeRaw = Number.parseInt(String(req.query.size ?? "180"), 10);
+    const width = Number.isFinite(sizeRaw) ? Math.min(Math.max(sizeRaw, 120), 1200) : 180;
+    const png = await QRCode.toBuffer(entryUrl, { type: "png", width, margin: 2 });
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.send(png);
   },
 
   // ---- 店舗マスタ（clients）CRUD ----
@@ -8419,6 +9091,91 @@ export const adminController = {
       }
     }
     res.redirect(`${back}msg=` + encodeURIComponent(`落選にしました${suffix}`));
+  },
+
+  /**
+   * 一括当選/落選。選択された応募を既存の単体処理（applicationService.accept/reject）で
+   * 1件ずつ処理する。選考中でないものはスキップして件数で報告する。
+   */
+  async bulkDecideApplications(req: Request, res: Response): Promise<void> {
+    const backProject = typeof req.body?.back === "string" ? req.body.back : "";
+    const back = `/admin/applications${backProject ? `?project_id=${encodeURIComponent(backProject)}&` : "?"}`;
+    const decision = bodyString(req.body?.decision);
+    const ids = bodyStringArray(req.body?.application_ids);
+    const notify = req.body?.notify === "1";
+    const note = bodyString(req.body?.note).trim() || null;
+
+    if (decision !== "accept" && decision !== "reject") {
+      res.redirect(`${back}err=` + encodeURIComponent("一括操作の種別が不正です"));
+      return;
+    }
+    if (ids.length === 0) {
+      res.redirect(`${back}err=` + encodeURIComponent("応募が1件も選択されていません"));
+      return;
+    }
+
+    let done = 0;
+    let skipped = 0;
+    let notifyFailed = 0;
+    for (const applicationId of ids) {
+      if (decision === "accept") {
+        const result = await applicationService.accept(applicationId);
+        if (!result.ok) {
+          skipped++;
+          continue;
+        }
+        done++;
+        try {
+          const startUrl = buildProjectStartUrl(result.assignmentId);
+          await lineMessagingService.push(result.application.line_user_id, [
+            buildApplicationAcceptedFlex({
+              projectTitle: result.project.user_display_title || result.project.name,
+              rewardPoints: result.project.reward_points,
+              estimatedMinutes:
+                (result.project as unknown as { estimated_minutes?: number | null })
+                  .estimated_minutes ?? null,
+              surveyUrl: startUrl.url,
+            }),
+          ]);
+        } catch (error) {
+          notifyFailed++;
+          logger.warn("applications.bulkAccept: 当選通知の送信に失敗", {
+            applicationId,
+            error: String(error)
+          });
+        }
+      } else {
+        const result = await applicationService.reject(applicationId, note);
+        if (!result.ok) {
+          skipped++;
+          continue;
+        }
+        done++;
+        if (notify) {
+          try {
+            const project = await projectRepository.getById(result.application.project_id);
+            await lineMessagingService.push(result.application.line_user_id, [
+              buildApplicationRejectedFlex({
+                projectTitle: project.user_display_title || project.name,
+                projectsUrl: `${appEnv.APP_BASE_URL}/liff/projects`,
+              }),
+            ]);
+          } catch (error) {
+            notifyFailed++;
+            logger.warn("applications.bulkReject: 落選通知の送信に失敗", {
+              applicationId,
+              error: String(error)
+            });
+          }
+        }
+      }
+    }
+
+    const label = decision === "accept" ? "当選" : "落選";
+    const parts = [`${done}件を${label}にしました`];
+    if (skipped > 0) parts.push(`${skipped}件は選考中でないためスキップ`);
+    if (notifyFailed > 0) parts.push(`LINE通知の失敗 ${notifyFailed}件`);
+    res.redirect(`${back}msg=` + encodeURIComponent(parts.join(" / ")));
   },
 
   // ── ついでスワイプ（設問プール）─────────────────────────────

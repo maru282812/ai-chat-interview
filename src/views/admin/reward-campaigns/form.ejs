@@ -109,13 +109,13 @@
       <div class="form-group">
         <label>開始日時（空白=無制限）</label>
         <input type="datetime-local" name="start_at"
-          value="<%= v.start_at ? v.start_at.slice(0,16) : '' %>"
+          value="<%= dtLocal(v.start_at) %>"
           style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
       </div>
       <div class="form-group">
         <label>終了日時（空白=無制限）</label>
         <input type="datetime-local" name="end_at"
-          value="<%= v.end_at ? v.end_at.slice(0,16) : '' %>"
+          value="<%= dtLocal(v.end_at) %>"
           style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
       </div>
     </div>

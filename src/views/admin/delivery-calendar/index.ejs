@@ -1,0 +1,190 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+  const monthLabel = month.replace('-', '年') + '月';
+  const weekdays = ['日','月','火','水','木','金','土'];
+  const leading = firstWeekday;
+  const cells = [];
+  for (let i = 0; i < leading; i++) cells.push(null);
+  for (let d = 1; d <= lastDay; d++) {
+    cells.push(month + '-' + String(d).padStart(2, '0'));
+  }
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  // 種別ごとの見た目。テンプレ / デイリー確定 / デイリー見込み / キャンペーンを1グリッドに重畳する
+  const kindStyle = {
+    daily:      'background:#e8f5ef;color:#1a7a5a;',
+    daily_auto: 'background:#f4f7f6;color:#8aa39b;font-style:italic;',
+    template:   'background:#eef2fb;color:#3455a4;',
+    campaign:   'background:#fdf1e3;color:#b06a12;'
+  };
+%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>配信カレンダー</h2>
+  <div style="display:flex;gap:8px;align-items:center">
+    <a href="/admin/daily-surveys" class="btn-secondary">デイリー配信キュー</a>
+    <a href="/admin/scheduler-settings" class="btn-secondary">配信時刻の設定</a>
+    <a href="/admin/delivery-operations" class="btn">配信オペレーション</a>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:1rem;background:#fdf6ec;border-left:4px solid #d99b2b">
+  <p style="font-size:13px;line-height:1.7;margin:0">
+    ここに出るのは<strong>設定から計算した予定</strong>です。実際に自動配信されるかはスケジューラの稼働状況に依存します。
+    特に<strong>キャンペーン予約は自動実行が未実装</strong>のため、予約日時になっても自動では飛びません（手動実行が必要）。
+  </p>
+</div>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <a href="/admin/delivery-calendar?month=<%= prevMonth %>" class="btn-secondary" style="padding:4px 12px">←</a>
+    <h3 style="margin:0"><%= monthLabel %></h3>
+    <a href="/admin/delivery-calendar?month=<%= nextMonth %>" class="btn-secondary" style="padding:4px 12px">→</a>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">
+    <% for (const w of weekdays) { %>
+      <div style="text-align:center;font-size:12px;font-weight:700;color:#777;padding:4px 0"><%= w %></div>
+    <% } %>
+
+    <% for (const date of cells) { %>
+      <% if (!date) { %>
+        <div></div>
+      <% } else { %>
+        <%
+          const isToday = date === today;
+          const isPast  = date < today;
+          const day = Number(date.slice(8));
+          const dayEvents = events[date] || [];
+        %>
+        <div style="border:1px solid <%= isToday ? '#2ca87a' : '#e3e8e6' %>;border-radius:6px;padding:4px;min-height:88px;background:<%= isPast ? '#fafafa' : '#fff' %>">
+          <div style="font-size:11px;font-weight:700;color:<%= isToday ? '#2ca87a' : '#999' %>;margin-bottom:3px">
+            <%= day %><% if (isToday) { %> 今日<% } %>
+          </div>
+          <% for (const ev of dayEvents) { %>
+            <%
+              const text = (ev.time ? ev.time + ' ' : '') + ev.label;
+              const shortText = text.length > 16 ? text.slice(0, 16) + '…' : text;
+            %>
+            <% if (ev.href) { %>
+              <a href="<%= ev.href %>" title="<%= text %>"
+                 style="display:block;border-radius:3px;padding:1px 4px;margin-bottom:2px;font-size:10px;line-height:1.4;text-decoration:none;<%= kindStyle[ev.kind] || '' %>">
+                <%= shortText %>
+              </a>
+            <% } else { %>
+              <div title="<%= text %>"
+                   style="border-radius:3px;padding:1px 4px;margin-bottom:2px;font-size:10px;line-height:1.4;<%= kindStyle[ev.kind] || '' %>">
+                <%= shortText %>
+              </div>
+            <% } %>
+          <% } %>
+        </div>
+      <% } %>
+    <% } %>
+  </div>
+
+  <p class="muted" style="font-size:11px;margin-top:10px;line-height:1.8">
+    <span style="<%= kindStyle.daily %>padding:1px 6px;border-radius:3px">デイリー（確定）</span>
+    <span style="<%= kindStyle.daily_auto %>padding:1px 6px;border-radius:3px">デイリー（キューからの見込み）</span>
+    <span style="<%= kindStyle.template %>padding:1px 6px;border-radius:3px">配信テンプレート</span>
+    <span style="<%= kindStyle.campaign %>padding:1px 6px;border-radius:3px">キャンペーン予約</span>
+    　時刻はすべて JST。「N分ごと」の interval 型テンプレートはカレンダーに出ません（下の一覧を参照）。
+  </p>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h3 style="margin-top:0">次回実行予定</h3>
+  <% if (!hasSchedulerSettings) { %>
+    <p class="muted" style="font-size:12px">
+      スケジューラ設定が取得できなかったため、デイリー配信（朝・夜・リマインダー）の予定は表示されていません。
+    </p>
+  <% } %>
+  <% if (upcoming.length === 0) { %>
+    <p class="muted" style="margin:8px 0">予定されている配信はありません。</p>
+  <% } else { %>
+    <table>
+      <thead>
+        <tr>
+          <th>種別</th>
+          <th>名前</th>
+          <th>スケジュール</th>
+          <th>次回実行（JST）</th>
+          <th>状態</th>
+          <th>備考</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const row of upcoming) { %>
+          <tr>
+            <td><%= row.category %></td>
+            <td><a href="<%= row.href %>"><%= row.name %></a></td>
+            <td><%= row.schedule %></td>
+            <td>
+              <% if (row.nextRun) { %>
+                <%= row.nextRun %>
+              <% } else if (!row.enabled) { %>
+                <span class="muted">-</span>
+              <% } else { %>
+                <span class="muted">常時（間隔実行）</span>
+              <% } %>
+            </td>
+            <td>
+              <% if (row.enabled) { %>
+                <span class="tag">有効</span>
+              <% } else { %>
+                <span class="tag" style="background:#eee;color:#888">無効</span>
+              <% } %>
+            </td>
+            <td>
+              <% if (row.warning) { %>
+                <span class="danger-text" style="font-size:12px">⚠ <%= row.warning %></span>
+              <% } else { %>
+                <span class="muted">-</span>
+              <% } %>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h3 style="margin-top:0">配信テンプレートの直近実行</h3>
+  <% if (recentLogs.length === 0) { %>
+    <p class="muted" style="margin:8px 0">実行履歴はまだありません。</p>
+  <% } else { %>
+    <table>
+      <thead>
+        <tr>
+          <th>実行日時</th>
+          <th>テンプレート</th>
+          <th>対象案件数</th>
+          <th>対象ユーザー数</th>
+          <th>成功</th>
+          <th>失敗</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const log of recentLogs) { %>
+          <tr>
+            <td><%= fmtDateTime(log.executed_at) %></td>
+            <td><a href="/admin/delivery-templates"><%= log.templateName %></a></td>
+            <td><%= (log.project_ids || []).length %></td>
+            <td><%= log.target_user_count %></td>
+            <td><%= log.success_count %></td>
+            <td>
+              <span class="<%= log.fail_count > 0 ? 'danger-text' : '' %>"><%= log.fail_count %></span>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:12px;margin-top:8px">
+      全履歴は<a href="/admin/delivery-templates">配信テンプレート</a>の画面で確認できます。
+    </p>
+  <% } %>
+</div>
+
+<%- include("../../partials/footer") %>

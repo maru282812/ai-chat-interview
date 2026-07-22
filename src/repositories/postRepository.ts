@@ -263,6 +263,21 @@ export const postRepository = {
     return normalizeUserPosts((data ?? []) as UserPost[]);
   },
 
+  /**
+   * 未分析（post_analysis の行が無い）投稿の件数。
+   * ダッシュボードの要対応キュー用。listAdmin は既定200件取得後のメモリ判定なので
+   * 件数用途には使えない（打ち切り母集団になる）。
+   */
+  async countUnanalyzed(): Promise<number> {
+    const { count, error } = await supabase
+      .from("user_posts")
+      .select("id, post_analysis!left(id)", { count: "exact", head: true })
+      .in("type", ["free_comment", "rant", "diary"])
+      .is("post_analysis", null);
+    throwIfError(error);
+    return count ?? 0;
+  },
+
   async listAdmin(filters: AdminPostFilters = {}): Promise<AdminPostRow[]> {
     const limit = clampLimit(filters.limit);
     let query = supabase

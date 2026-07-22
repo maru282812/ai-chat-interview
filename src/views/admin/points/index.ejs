@@ -6,84 +6,99 @@
 </div>
 <% } %>
 
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:8px;flex-wrap:wrap">
   <h2>ポイント管理</h2>
   <div style="display:flex;gap:8px">
     <a href="/admin/badges" class="btn-secondary">バッジ管理</a>
     <a href="/admin/ranks" class="btn-secondary">ランク設定</a>
-    <a href="/admin/exports/points.csv">points.csv</a>
+    <a href="/admin/exports/points.csv">ポイント一覧をCSVで出力</a>
   </div>
 </div>
 
-<!-- サマリーカード -->
+<!-- サマリーカード。件数・合計はDB側の集計値（従来は先頭500件だけで計算していた） -->
+<% if (stats) { %>
 <section class="grid" style="margin-bottom:1.5rem">
   <div class="card">
     <div class="muted" style="font-size:12px">ユーザー総数</div>
-    <h2><%= summaries.length %></h2>
+    <h2><%= stats.userCount.toLocaleString('ja-JP') %></h2>
   </div>
   <div class="card">
-    <div class="muted" style="font-size:12px">総発行ポイント（合計）</div>
-    <h2><%= summaries.reduce((s, u) => s + u.lifetime_points, 0).toLocaleString() %> pt</h2>
+    <div class="muted" style="font-size:12px">総発行ポイント（累計）</div>
+    <h2><%= stats.lifetimePointsTotal.toLocaleString('ja-JP') %> pt</h2>
   </div>
   <div class="card">
     <div class="muted" style="font-size:12px">回答経験者</div>
-    <h2><%= summaries.filter(u => u.total_answer_days > 0).length %></h2>
+    <h2><%= stats.answeredUserCount.toLocaleString('ja-JP') %></h2>
   </div>
   <div class="card">
     <div class="muted" style="font-size:12px">アクティブストリーク（7日+）</div>
-    <h2><%= summaries.filter(u => u.current_streak >= 7).length %></h2>
+    <h2><%= stats.activeStreakUserCount.toLocaleString('ja-JP') %></h2>
   </div>
 </section>
 
-<!-- ランク別分布 -->
+<!-- ランク別分布。ランク名のハードコードをやめ、実データの分布をそのまま出す -->
 <section class="card" style="margin-bottom:1.5rem">
   <h3 style="margin-bottom:.75rem">ランク別分布</h3>
   <div style="display:flex;gap:12px;flex-wrap:wrap">
-    <% const rankGroups = {}; %>
-    <% for (const u of summaries) { %>
-      <% const rk = u.rank_name || 'ブロンズ'; %>
-      <% rankGroups[rk] = (rankGroups[rk] || 0) + 1; %>
+    <% if (stats.rankDistribution.length === 0) { %>
+      <span class="muted">対象ユーザーがいません。</span>
     <% } %>
-    <% const RANK_ORDER = ['ブロンズ','シルバー','ゴールド','プラチナ','ダイヤモンド']; %>
-    <% for (const rn of RANK_ORDER) { %>
-      <% const cnt = rankGroups[rn] || 0; %>
+    <% for (const row of stats.rankDistribution) { %>
       <div style="text-align:center;padding:12px 20px;background:#f8f9fa;border-radius:8px;min-width:80px">
-        <div style="font-size:20px"><%= summaries.find(u => u.rank_name === rn)?.rank_badge || '🏅' %></div>
-        <div style="font-size:13px;font-weight:600;margin-top:4px"><%= rn %></div>
-        <div style="font-size:20px;font-weight:700;color:#2ca87a"><%= cnt %></div>
+        <div style="font-size:20px"><%= row.rank_badge || '🏅' %></div>
+        <div style="font-size:13px;font-weight:600;margin-top:4px"><%= row.rank_name %></div>
+        <div style="font-size:20px;font-weight:700;color:#2ca87a"><%= row.count.toLocaleString('ja-JP') %></div>
         <div class="muted" style="font-size:11px">人</div>
       </div>
     <% } %>
   </div>
 </section>
+<% } %>
 
 <!-- ユーザー一覧テーブル -->
 <section>
   <h3 style="margin-bottom:.5rem">ユーザー別ポイント一覧</h3>
 
-  <!-- 検索 -->
-  <div style="margin-bottom:.75rem">
-    <input type="text" id="search_input" placeholder="名前・LINE USER IDで検索..."
-           style="width:280px" oninput="filterTable(this.value)">
-  </div>
+  <!-- 検索はサーバー側で行う（従来はクライアント側の display:none フィルタで、
+       取得済みの先頭500件しか検索対象になっていなかった） -->
+  <form method="get" action="/admin/points" style="margin-bottom:.75rem;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <input type="search" name="q" value="<%= filters.q %>" placeholder="名前・LINE USER IDで検索..." style="width:280px">
+    <input type="hidden" name="sort" value="<%= filters.sort %>">
+    <input type="hidden" name="dir" value="<%= filters.dir %>">
+    <button type="submit">検索</button>
+    <% if (filters.q) { %><a class="button-link secondary" href="/admin/points">条件をリセット</a><% } %>
+  </form>
+
+  <%
+    // 並び替えリンク。同じ列を再度押すと昇順/降順が切り替わる
+    const sortLink = (key, label) => {
+      const nextDir = filters.sort === key && filters.dir === 'desc' ? 'asc' : 'desc';
+      const params = new URLSearchParams();
+      if (filters.q) params.set('q', filters.q);
+      params.set('sort', key);
+      params.set('dir', nextDir);
+      const mark = filters.sort === key ? (filters.dir === 'desc' ? ' ▼' : ' ▲') : '';
+      return '<a href="/admin/points?' + params.toString() + '">' + label + mark + '</a>';
+    };
+  %>
 
   <table id="points_table">
     <thead>
       <tr>
         <th>ユーザー</th>
-        <th style="text-align:right">保有 pt</th>
-        <th style="text-align:right">累計 pt</th>
+        <th style="text-align:right"><%- sortLink('total_points', '保有 pt') %></th>
+        <th style="text-align:right"><%- sortLink('lifetime_points', '累計 pt') %></th>
         <th>ランク</th>
-        <th style="text-align:center">連続</th>
+        <th style="text-align:center"><%- sortLink('current_streak', '連続') %></th>
         <th style="text-align:center">最長</th>
         <th style="text-align:center">回答日数</th>
-        <th>最終回答</th>
+        <th><%- sortLink('last_answered_date', '最終回答') %></th>
         <th>操作</th>
       </tr>
     </thead>
     <tbody>
       <% for (const u of summaries) { %>
-      <tr data-search="<%= (u.display_name || '').toLowerCase() + ' ' + u.line_user_id.toLowerCase() %>">
+      <tr>
         <td>
           <div style="font-weight:600"><%= u.display_name || u.line_user_id.slice(0,12) + '...' %></div>
           <div class="muted" style="font-size:11px"><%= u.line_user_id %></div>
@@ -126,10 +141,23 @@
       </tr>
       <% } %>
       <% if (summaries.length === 0) { %>
-        <tr><td colspan="9" class="muted" style="text-align:center">データがありません</td></tr>
+        <tr>
+          <td colspan="9" class="muted" style="text-align:center">
+            条件に一致するユーザーがいません。
+            <% if (filters.q) { %><a href="/admin/points">条件をリセット</a><% } %>
+          </td>
+        </tr>
       <% } %>
     </tbody>
   </table>
+
+  <%- include("../../partials/admin-pagination", {
+    page,
+    totalPages,
+    total,
+    basePath: "/admin/points",
+    query: { q: filters.q, sort: filters.sort, dir: filters.dir }
+  }) %>
 </section>
 
 <!-- ポイント調整モーダル -->
@@ -137,7 +165,7 @@
   <div style="background:#fff;max-width:400px;margin:100px auto;padding:24px;border-radius:8px;position:relative">
     <button onclick="closeAdjust()" style="position:absolute;top:12px;right:12px;background:none;border:none;font-size:20px;cursor:pointer">✕</button>
     <h4 style="margin-bottom:1rem" id="adjust_title">ポイント調整</h4>
-    <form id="adjustForm" method="post" action="">
+    <form id="adjustForm" method="post" action="" onsubmit="return confirmAdjust(this)">
       <div class="form-group">
         <label>ポイント（＋付与 / −減算）</label>
         <input type="number" name="points" required style="width:100%"
@@ -156,17 +184,36 @@
 </div>
 
 <script>
-function filterTable(q) {
-  const lower = q.toLowerCase();
-  document.querySelectorAll('#points_table tbody tr').forEach(tr => {
-    const text = tr.getAttribute('data-search') || '';
-    tr.style.display = text.includes(lower) ? '' : 'none';
-  });
-}
+var adjustTargetName = '';
+
 function openAdjust(lineUserId, name) {
+  adjustTargetName = name;
   document.getElementById('adjust_title').textContent = 'ポイント調整：' + name;
-  document.getElementById('adjustForm').action = '/admin/user-points/' + lineUserId + '/adjust';
+  var form = document.getElementById('adjustForm');
+  form.action = '/admin/user-points/' + lineUserId + '/adjust';
+  form.reset();
+  form.querySelector('button[type="submit"]').disabled = false;
   document.getElementById('adjustModal').style.display = '';
+}
+
+// ポイントは金銭相当なので、確認なし・上限なしでは実行させない。
+function confirmAdjust(form) {
+  var points = Number(form.points.value);
+  var reason = form.reason.value.trim();
+  if (!points || Number.isNaN(points)) {
+    alert('ポイントに 0 以外の数値を入力してください。');
+    return false;
+  }
+  if (Math.abs(points) > 10000) {
+    alert('1回の調整は ±10,000pt までです。桁を確認してください。');
+    return false;
+  }
+  var sign = points > 0 ? '+' : '';
+  if (!confirm(adjustTargetName + ' さんに ' + sign + points + 'pt を調整します。\n理由: ' + reason + '\n\n実行してよろしいですか？')) {
+    return false;
+  }
+  form.querySelector('button[type="submit"]').disabled = true;
+  return true;
 }
 function closeAdjust() {
   document.getElementById('adjustModal').style.display = 'none';

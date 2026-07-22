@@ -236,6 +236,61 @@ async function loadProjectBase(projectId: string) {
 }
 
 export const researchOpsService = {
+  /**
+   * 管理画面の回答者一覧用のページング版。
+   * `listRespondentOverviews` は全回答者＋全セッションをメモリに載せるため一覧画面では使わない
+   * （プロジェクト単位の配信系からは引き続き使われている）。
+   */
+  async listRespondentOverviewsPaged(params: {
+    projectId?: string;
+    status?: string;
+    q?: string;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: RespondentSessionOverview[]; total: number; offset: number }> {
+    const [projects, page] = await Promise.all([
+      projectRepository.list(),
+      respondentRepository.searchPaged(params)
+    ]);
+
+    // セッションはこのページに載る回答者の分だけ引く
+    const sessions = page.rows.length
+      ? await sessionRepository.listByRespondentIds(page.rows.map((r) => r.id))
+      : [];
+
+    const projectMap = new Map(projects.map((project) => [project.id, project]));
+    const sessionsByRespondent = new Map<string, Session[]>();
+    for (const session of sessions) {
+      const list = sessionsByRespondent.get(session.respondent_id) ?? [];
+      list.push(session);
+      sessionsByRespondent.set(session.respondent_id, list);
+    }
+
+    const items = page.rows
+      .map((respondent) => {
+        const project = projectMap.get(respondent.project_id);
+        if (!project) return null;
+        const respondentSessions = sessionsByRespondent.get(respondent.id) ?? [];
+        const latestSession = respondentSessions[0] ?? null;
+        return {
+          respondent,
+          project,
+          sessions: respondentSessions,
+          latestSession,
+          deliverySession: selectDeliverySession(respondentSessions),
+          sessionCount: respondentSessions.length,
+          completedSessionCount: respondentSessions.filter(
+            (session) => session.status === "completed"
+          ).length,
+          lastActivityAt: latestSession?.last_activity_at ?? null
+        };
+      })
+      .filter((item): item is RespondentSessionOverview => Boolean(item));
+
+    // offset はリポジトリ側で丸められている場合があるのでそのまま返す
+    return { items, total: page.total, offset: page.offset };
+  },
+
   async listRespondentOverviews(projectId?: string): Promise<RespondentSessionOverview[]> {
     const [projects, respondents, sessions] = await Promise.all([
       projectRepository.list(),

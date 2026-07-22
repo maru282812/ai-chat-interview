@@ -5,52 +5,68 @@
     <% if (project.user_display_title && project.user_display_title.trim() && project.user_display_title.trim() !== project.name) { %>
     <p class="muted" style="margin-top:4px;font-size:0.85em;">USER表示タイトル: <strong><%= project.user_display_title %></strong></p>
     <% } %>
-    <p class="muted">Assignment-based delivery management</p>
+    <p class="muted">アサインベースの配信管理</p>
     <p>
-      <a href="/admin/projects/<%= project.id %>/respondents">Respondents</a> |
-      <a href="/admin/projects/<%= project.id %>/questions">Questions</a> |
-      <a href="/admin/projects/<%= project.id %>/exports/assignments.csv">Assignments CSV</a> |
-      <a href="/admin/projects/<%= project.id %>/exports/unanswered.csv">Unanswered CSV</a> |
-      <a href="/admin/projects/<%= project.id %>/exports/expired.csv">Expired CSV</a>
+      <a href="/admin/projects/<%= project.id %>/respondents">回答者</a> |
+      <a href="/admin/projects/<%= project.id %>/questions">設問</a> |
+      <a href="/admin/projects/<%= project.id %>/exports/assignments.csv">アサインCSV</a> |
+      <a href="/admin/projects/<%= project.id %>/exports/unanswered.csv">未回答CSV</a> |
+      <a href="/admin/projects/<%= project.id %>/exports/expired.csv">期限切れCSV</a>
     </p>
   </div>
 
   <div class="form-grid">
     <div class="card">
-      <div class="muted">Delivery Targets</div>
+      <div class="muted">配信対象</div>
       <div><strong><%= stats.targetCount %></strong></div>
     </div>
     <div class="card">
-      <div class="muted">Unanswered</div>
+      <div class="muted">未回答</div>
       <div><strong><%= stats.unansweredCount %></strong></div>
     </div>
     <div class="card">
-      <div class="muted">Completed</div>
+      <div class="muted">完了</div>
       <div><strong><%= stats.completedCount %></strong></div>
     </div>
     <div class="card">
-      <div class="muted">Completion Rate</div>
+      <div class="muted">完了率</div>
       <div><strong><%= stats.completionRate %>%</strong></div>
     </div>
   </div>
 
-  <form class="card stack" method="post" action="/admin/projects/<%= project.id %>/delivery/reminders">
+  <form
+    class="card stack"
+    method="post"
+    action="/admin/projects/<%= project.id %>/delivery/reminders"
+    onsubmit="return confirmReminders(this)"
+  >
     <div>
-      <h3>Reminders</h3>
-      <p class="muted">Send reminder messages to all unanswered assignments.</p>
+      <h3>リマインダー送信</h3>
+      <p class="muted">未回答のアサイン全員へリマインドメッセージを送信します。</p>
+    </div>
+    <div class="confirm-panel">
+      対象: <span class="confirm-count"><%= stats.unansweredCount %></span> 名（未回答者全員）<br />
+      <span class="muted" style="font-size:13px">本番のLINEメッセージが実際に送信されます。取り消せません。</span>
     </div>
     <div>
-      <button type="submit">Send Reminders</button>
+      <button type="submit" <%= stats.unansweredCount === 0 ? "disabled" : "" %>>
+        リマインダーを送信
+      </button>
     </div>
   </form>
 
-  <form class="card stack" method="post" action="/admin/projects/<%= project.id %>/delivery/manual">
+  <form
+    class="card stack"
+    method="post"
+    action="/admin/projects/<%= project.id %>/delivery/manual"
+    onsubmit="return confirmManualAssign(this)"
+  >
     <div>
-      <h3>Manual Delivery</h3>
-      <p class="muted">Create or update assignments and send LINE invitations.</p>
+      <h3>手動配信</h3>
+      <p class="muted">選択した回答者にアサインを作成し、LINEで案内を送信します。</p>
     </div>
     <label>
-      Deadline
+      回答期限
       <input type="datetime-local" name="deadline" />
     </label>
     <label>
@@ -62,46 +78,53 @@
       <table>
         <thead>
           <tr>
-            <th>Select</th>
-            <th>Display</th>
-            <th>LINE User</th>
-            <th>Rank</th>
-            <th>Total Points</th>
-            <th>Last Participation</th>
-            <th>Current Status</th>
-            <th>Assignment</th>
+            <th>
+              <input type="checkbox" id="candidate-select-all" onchange="toggleAllCandidates(this)" title="LINE連携済みを全選択" />
+            </th>
+            <th>表示名</th>
+            <th>LINEユーザーID</th>
+            <th>ランク</th>
+            <th>保有ポイント</th>
+            <th>最終参加</th>
+            <th>現在のステータス</th>
+            <th>アサイン</th>
           </tr>
         </thead>
         <tbody>
+          <% if (candidates.length === 0) { %>
+            <tr><td colspan="8"><span class="muted">配信候補の回答者がいません。</span></td></tr>
+          <% } %>
           <% for (const candidate of candidates) { %>
             <tr>
               <td>
                 <input
                   type="checkbox"
                   name="selected_respondent_ids"
+                  class="candidate-check"
                   value="<%= candidate.source_respondent_id %>"
+                  onchange="updateSelectedCount()"
                   <%= candidate.has_line_user_id ? "" : "disabled" %>
                 />
               </td>
               <td>
                 <strong><%= candidate.display_name || "-" %></strong><br />
-                <span class="muted"><code><%= candidate.source_respondent_id %></code></span>
+                <span class="muted"><code title="<%= candidate.source_respondent_id %>"><%= shortId(candidate.source_respondent_id) %></code></span>
               </td>
               <td>
                 <% if (candidate.has_line_user_id) { %>
-                  <code><%= candidate.line_user_id %></code>
+                  <code title="<%= candidate.line_user_id %>"><%= shortId(candidate.line_user_id) %></code>
                 <% } else { %>
-                  <span class="danger-text">not available</span>
+                  <span class="danger-text">LINE未連携（配信不可）</span>
                 <% } %>
               </td>
               <td><%= candidate.rank_name || "-" %></td>
               <td><%= candidate.total_points %> pt</td>
-              <td><%= candidate.last_participated_at || "-" %></td>
-              <td><span class="tag"><%= candidate.status %></span></td>
+              <td><%= fmtDateTime(candidate.last_participated_at) %></td>
+              <td><span class="tag"><%= statusLabel("respondentStatus", candidate.status) %></span></td>
               <td>
                 <% if (candidate.target_assignment_status) { %>
-                  <span class="tag"><%= candidate.target_assignment_status %></span><br />
-                  <span class="muted"><%= candidate.target_assignment_deadline || "-" %></span>
+                  <span class="tag"><%= statusLabel("assignmentStatus", candidate.target_assignment_status) %></span><br />
+                  <span class="muted"><%= fmtDateTime(candidate.target_assignment_deadline) %></span>
                 <% } else { %>
                   <span class="muted">-</span>
                 <% } %>
@@ -111,15 +134,36 @@
         </tbody>
       </table>
     </div>
-    <div>
-      <button type="submit">Assign And Push</button>
+    <%
+      const deliverableCount = candidates.filter((c) => c.has_line_user_id).length;
+      const notDeliverableCount = candidates.length - deliverableCount;
+    %>
+    <p class="muted" style="font-size:13px">
+      配信候補 <%= candidates.length %> 名のうち LINE連携済み <%= deliverableCount %> 名が選択できます。
+      <% if (notDeliverableCount > 0) { %>
+        （LINE未連携の <%= notDeliverableCount %> 名は選択できません）
+      <% } %>
+    </p>
+    <div class="actions-row">
+      <button type="submit">選択した <span id="selected-count">0</span> 名にアサインして送信</button>
     </div>
   </form>
 
-  <form class="card stack" method="post" action="/admin/projects/<%= project.id %>/delivery/rules">
+  <form
+    class="card stack"
+    method="post"
+    action="/admin/projects/<%= project.id %>/delivery/rules"
+    onsubmit="return confirmRuleAssign(this)"
+  >
     <div>
-      <h3>Rule Based Delivery</h3>
-      <p class="muted">Filter respondents and create assignments in bulk.</p>
+      <h3>条件指定での一括配信</h3>
+      <p class="muted">条件で回答者を絞り込み、まとめてアサインを作成します。</p>
+    </div>
+    <div class="confirm-panel">
+      <span class="muted" style="font-size:13px">
+        条件に一致した回答者へ本番のLINEメッセージが送信されます。対象人数は実行するまで確定しません。
+        条件を絞り込まないまま実行すると、全回答者が対象になります。
+      </span>
     </div>
     <div class="form-grid">
       <label>
@@ -210,27 +254,100 @@
       </label>
     </div>
     <div>
-      <button type="submit">Assign By Rule</button>
+      <button type="submit">条件に一致する回答者へ一括アサイン</button>
     </div>
   </form>
 
+<script>
+  // ここは本番のLINE配信が飛ぶ画面だが、確認も対象件数の提示も無く即実行されていた。
+  function lockSubmit(form, label) {
+    var button = form.querySelector('button[type="submit"]');
+    if (button) {
+      button.disabled = true;
+      button.textContent = label;
+    }
+  }
+
+  function confirmReminders(form) {
+    var count = <%= stats.unansweredCount %>;
+    if (count === 0) {
+      alert('未回答の対象者がいません。');
+      return false;
+    }
+    if (!confirm(
+      '未回答者 ' + count + ' 名へリマインダーを送信します。\n\n' +
+      '本番のLINEメッセージが実際に送信され、取り消せません。\n実行してよろしいですか？'
+    )) return false;
+    lockSubmit(form, '送信中...');
+    return true;
+  }
+
+  function confirmManualAssign(form) {
+    var checked = form.querySelectorAll('.candidate-check:checked').length;
+    if (checked === 0) {
+      alert('配信対象の回答者を選択してください。');
+      return false;
+    }
+    if (!confirm(
+      '選択した ' + checked + ' 名にアサインを作成し、LINEで案内を送信します。\n\n' +
+      '実行してよろしいですか？'
+    )) return false;
+    lockSubmit(form, '送信中...');
+    return true;
+  }
+
+  function confirmRuleAssign(form) {
+    if (!confirm(
+      '条件に一致する回答者へ一括でアサインを作成し、LINEで案内を送信します。\n\n' +
+      '対象人数は実行するまで確定しません。条件が空の場合は全回答者が対象になります。\n' +
+      '実行してよろしいですか？'
+    )) return false;
+    lockSubmit(form, '送信中...');
+    return true;
+  }
+
+  function toggleAllCandidates(source) {
+    document.querySelectorAll('.candidate-check:not([disabled])').forEach(function (cb) {
+      cb.checked = source.checked;
+    });
+    updateSelectedCount();
+  }
+
+  function updateSelectedCount() {
+    var count = document.querySelectorAll('.candidate-check:checked').length;
+    var label = document.getElementById('selected-count');
+    if (label) label.textContent = String(count);
+  }
+
+  document.addEventListener('DOMContentLoaded', updateSelectedCount);
+</script>
+
   <div class="card">
-    <h3>Unanswered Assignments</h3>
+    <h3>未回答のアサイン</h3>
+    <% if (!locals.appBaseUrl) { %>
+      <p class="danger-text" style="font-size:13px">
+        APP_BASE_URL が未設定のため、回答URLを絶対URLで表示できません。
+        コピーしても LINE で開けないので、環境変数を設定してください。
+      </p>
+    <% } %>
     <div class="table-scroll">
       <table>
         <thead>
           <tr>
-            <th>User ID</th>
-            <th>Respondent</th>
-            <th>Status</th>
-            <th>Deadline</th>
-            <th>Sent</th>
-            <th>Started</th>
-            <th>Reminder</th>
-            <th>Survey URL</th>
+            <th>LINEユーザーID</th>
+            <th>回答者</th>
+            <th>ステータス</th>
+            <th>回答期限</th>
+            <th>送信日時</th>
+            <th>開始日時</th>
+            <th>リマインド</th>
+            <th>回答URL</th>
           </tr>
         </thead>
         <tbody>
+          <% if (unansweredAssignments.length === 0) { %>
+            <tr><td colspan="8"><span class="muted">未回答のアサインはありません。</span></td></tr>
+          <% } %>
           <% for (const item of unansweredAssignments) { %>
             <%
               const surveyUrl = locals.appBaseUrl
@@ -238,23 +355,25 @@
                 : '/liff/survey/' + item.assignment.id;
             %>
             <tr>
-              <td><code><%= item.assignment.user_id || "-" %></code></td>
+              <td><code title="<%= item.assignment.user_id || "" %>"><%= item.assignment.user_id ? shortId(item.assignment.user_id) : "-" %></code></td>
               <td>
                 <strong><%= item.assignment.respondent?.display_name || "-" %></strong><br />
-                <span class="muted"><code><%= item.assignment.respondent_id %></code></span>
+                <span class="muted"><code title="<%= item.assignment.respondent_id %>"><%= shortId(item.assignment.respondent_id) %></code></span>
               </td>
-              <td><span class="tag"><%= item.assignment.status %></span></td>
-              <td><%= item.assignment.deadline || "-" %></td>
-              <td><%= item.assignment.sent_at || "-" %></td>
-              <td><%= item.assignment.started_at || "-" %></td>
-              <td><%= item.assignment.reminder_sent_at || "-" %></td>
+              <td><span class="tag"><%= statusLabel("assignmentStatus", item.assignment.status) %></span></td>
+              <td><%= fmtDateTime(item.assignment.deadline) %></td>
+              <td><%= fmtDateTime(item.assignment.sent_at) %></td>
+              <td><%= fmtDateTime(item.assignment.started_at) %></td>
+              <td><%= fmtDateTime(item.assignment.reminder_sent_at) %></td>
               <td>
-                <a href="<%= surveyUrl %>" target="_blank" style="font-size:12px;">
-                  Survey URL
-                </a><br />
-                <input type="text" value="<%= surveyUrl %>"
-                  style="font-size:10px;width:200px;border:1px solid #ccc;padding:2px 4px;border-radius:4px;"
-                  readonly onclick="this.select()" />
+                <% if (locals.appBaseUrl) { %>
+                  <a href="<%= surveyUrl %>" target="_blank" style="font-size:12px;">開く</a><br />
+                  <input type="text" value="<%= surveyUrl %>"
+                    style="font-size:10px;width:200px;border:1px solid #ccc;padding:2px 4px;border-radius:4px;"
+                    readonly onclick="this.select()" />
+                <% } else { %>
+                  <span class="muted" style="font-size:12px">URL未生成</span>
+                <% } %>
               </td>
             </tr>
           <% } %>
@@ -264,31 +383,34 @@
   </div>
 
   <div class="card">
-    <h3>Delivery History</h3>
+    <h3>配信履歴</h3>
     <div class="table-scroll">
       <table>
         <thead>
           <tr>
-            <th>User ID</th>
-            <th>Respondent</th>
-            <th>Status</th>
-            <th>Screening</th>
-            <th>Assigned</th>
-            <th>Sent</th>
-            <th>Started</th>
-            <th>Completed</th>
-            <th>Deadline</th>
+            <th>LINEユーザーID</th>
+            <th>回答者</th>
+            <th>ステータス</th>
+            <th>スクリーニング</th>
+            <th>アサイン日時</th>
+            <th>送信日時</th>
+            <th>開始日時</th>
+            <th>完了日時</th>
+            <th>回答期限</th>
           </tr>
         </thead>
         <tbody>
+          <% if (assignments.length === 0) { %>
+            <tr><td colspan="9"><span class="muted">配信履歴はまだありません。</span></td></tr>
+          <% } %>
           <% for (const item of assignments) { %>
             <tr>
-              <td><code><%= item.assignment.user_id || "-" %></code></td>
+              <td><code title="<%= item.assignment.user_id || "" %>"><%= item.assignment.user_id ? shortId(item.assignment.user_id) : "-" %></code></td>
               <td>
                 <strong><%= item.assignment.respondent?.display_name || "-" %></strong><br />
-                <span class="muted"><code><%= item.assignment.respondent_id %></code></span>
+                <span class="muted"><code title="<%= item.assignment.respondent_id %>"><%= shortId(item.assignment.respondent_id) %></code></span>
               </td>
-              <td><span class="tag"><%= item.assignment.status %></span></td>
+              <td><span class="tag"><%= statusLabel("assignmentStatus", item.assignment.status) %></span></td>
               <td>
                 <% if (item.assignment.screening_result === "passed") { %>
                   <span class="tag tag-success">通過</span>
@@ -298,11 +420,11 @@
                   <span class="muted">-</span>
                 <% } %>
               </td>
-              <td><%= item.assignment.assigned_at || "-" %></td>
-              <td><%= item.assignment.sent_at || "-" %></td>
-              <td><%= item.assignment.started_at || "-" %></td>
-              <td><%= item.assignment.completed_at || "-" %></td>
-              <td><%= item.assignment.deadline || "-" %></td>
+              <td><%= fmtDateTime(item.assignment.assigned_at) %></td>
+              <td><%= fmtDateTime(item.assignment.sent_at) %></td>
+              <td><%= fmtDateTime(item.assignment.started_at) %></td>
+              <td><%= fmtDateTime(item.assignment.completed_at) %></td>
+              <td><%= fmtDateTime(item.assignment.deadline) %></td>
             </tr>
           <% } %>
         </tbody>

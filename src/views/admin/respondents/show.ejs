@@ -1,50 +1,82 @@
 <%- include("../../partials/header", { title }) %>
+<p><a href="/admin/respondents">← 回答者一覧に戻る</a></p>
 <section class="grid">
   <div class="card">
     <h2><%= respondent.display_name || respondent.line_user_id %></h2>
-    <p class="muted">Project: <%= project.name %></p>
-    <p class="muted">Research mode: <%= project.research_mode %></p>
-    <p>Status: <span class="tag"><%= respondent.status %></span></p>
-    <p>Points: <strong><%= respondent.total_points %> pt</strong></p>
-    <p>Rank: <strong><%= respondent.current_rank?.rank_name || "-" %></strong></p>
+    <p class="muted">プロジェクト: <%= project.name %></p>
+    <p class="muted">調査形式: <%= statusLabel("researchMode", project.research_mode) %></p>
+    <p>ステータス: <span class="tag"><%= statusLabel("respondentStatus", respondent.status) %></span></p>
+    <p>ポイント: <strong><%= respondent.total_points %> pt</strong></p>
+    <p>ランク: <strong><%= respondent.current_rank?.rank_name || "-" %></strong></p>
   </div>
-  <form class="card" method="post" action="/admin/respondents/<%= respondent.id %>/points">
-    <h2>Adjust Points</h2>
+  <form
+    class="card"
+    method="post"
+    action="/admin/respondents/<%= respondent.id %>/points"
+    onsubmit="return confirmPointAdjust(this)"
+  >
+    <h2>ポイント調整</h2>
     <label>
-      points
-      <input type="number" name="points" value="10" />
+      増減ポイント（マイナスで減算）
+      <input type="number" name="points" placeholder="例: 100" required />
     </label>
     <label>
-      reason
-      <input type="text" name="reason" value="manual adjustment" />
+      理由（履歴に残ります）
+      <input type="text" name="reason" placeholder="例: 不具合のお詫び" required />
     </label>
-    <button type="submit">Apply</button>
+    <button type="submit">この内容で調整する</button>
   </form>
 </section>
+<script>
+  // 初期値が 10 / manual adjustment のまま入りっぱなしで誤送信しやすかったため、
+  // 空欄必須にした上で送信前に内容を読み上げて確認する。
+  function confirmPointAdjust(form) {
+    var points = Number(form.points.value);
+    var reason = form.reason.value.trim();
+    if (!points || Number.isNaN(points)) {
+      alert("増減ポイントに 0 以外の数値を入力してください。");
+      return false;
+    }
+    if (Math.abs(points) > 10000) {
+      alert("1回の調整は ±10,000pt までです。桁を確認してください。");
+      return false;
+    }
+    var name = <%- JSON.stringify(respondent.display_name || respondent.line_user_id) %>;
+    var sign = points > 0 ? "+" : "";
+    if (!confirm(name + " さんに " + sign + points + "pt を付与します。\n理由: " + reason + "\n\n実行してよろしいですか？")) {
+      return false;
+    }
+    form.querySelector('button[type="submit"]').disabled = true;
+    return true;
+  }
+</script>
 
 <section class="stack" style="margin-top: 16px;">
   <div class="card">
-    <h2>Sessions</h2>
+    <h2>セッション <span class="muted" style="font-size:13px">（<%= sessions.length %>件）</span></h2>
     <table>
       <thead>
         <tr>
           <th>ID</th>
-          <th>Status</th>
-          <th>Phase</th>
-          <th>Started</th>
-          <th>Completed</th>
-          <th>Action</th>
+          <th>ステータス</th>
+          <th>フェーズ</th>
+          <th>開始</th>
+          <th>完了</th>
+          <th>操作</th>
         </tr>
       </thead>
       <tbody>
+        <% if (sessions.length === 0) { %>
+          <tr><td colspan="6"><span class="muted">セッションはまだありません。</span></td></tr>
+        <% } %>
         <% for (const session of sessions) { %>
           <tr>
-            <td><code><%= session.id %></code></td>
-            <td><span class="tag"><%= session.status %></span></td>
+            <td><code title="<%= session.id %>"><%= shortId(session.id) %></code></td>
+            <td><span class="tag"><%= statusLabel("sessionStatus", session.status) %></span></td>
             <td><%= session.current_phase %></td>
-            <td><%= session.started_at %></td>
-            <td><%= session.completed_at || "-" %></td>
-            <td><a href="/admin/sessions/<%= session.id %>">Session Detail</a></td>
+            <td><%= fmtDateTime(session.started_at) %></td>
+            <td><%= fmtDateTime(session.completed_at) %></td>
+            <td><a href="/admin/sessions/<%= session.id %>">セッション詳細</a></td>
           </tr>
         <% } %>
       </tbody>
@@ -52,20 +84,23 @@
   </div>
 
   <div class="card">
-    <h2>Point Transactions</h2>
+    <h2>ポイント履歴 <span class="muted" style="font-size:13px">（<%= transactions.length %>件）</span></h2>
     <table>
       <thead>
         <tr>
-          <th>At</th>
-          <th>Type</th>
-          <th>Points</th>
-          <th>Reason</th>
+          <th>日時</th>
+          <th>種別</th>
+          <th>ポイント</th>
+          <th>理由</th>
         </tr>
       </thead>
       <tbody>
+        <% if (transactions.length === 0) { %>
+          <tr><td colspan="4"><span class="muted">ポイント履歴はまだありません。</span></td></tr>
+        <% } %>
         <% for (const tx of transactions) { %>
           <tr>
-            <td><%= tx.created_at %></td>
+            <td><%= fmtDateTime(tx.created_at) %></td>
             <td><%= tx.transaction_type %></td>
             <td><%= tx.points %></td>
             <td><%= tx.reason %></td>
@@ -76,7 +111,7 @@
   </div>
 
   <div class="card">
-    <h2>AI分析 <span class="muted" style="font-size:13px">Phase 2-C</span></h2>
+    <h2>AI分析</h2>
     <p class="muted" style="font-size:13px">このユーザーの投稿履歴からAIタグとペルソナ要約を自動生成します。</p>
     <button id="gen-tags-btn" class="btn" onclick="generateAiTags()">AIタグ生成</button>
     <div id="gen-tags-result" style="margin-top:12px"></div>

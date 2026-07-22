@@ -1,44 +1,110 @@
 <%- include("../../partials/header", { title }) %>
-<table>
-  <thead>
-    <tr>
-      <th>Project</th>
-      <th>Name</th>
-      <th>LINE User</th>
-      <th>Status</th>
-      <th>Sessions</th>
-      <th>Completed</th>
-      <th>Latest Session</th>
-      <th>Points</th>
-      <th>Rank</th>
-      <th>Action</th>
-    </tr>
-  </thead>
-  <tbody>
-    <% for (const item of respondents) { %>
+<h2>回答者</h2>
+
+<form class="card" method="get" action="/admin/respondents">
+  <div class="form-grid">
+    <label>
+      キーワード
+      <input
+        type="search"
+        name="q"
+        value="<%= filters.q %>"
+        placeholder="表示名 / LINEユーザーID"
+      />
+    </label>
+    <label>
+      プロジェクト
+      <select name="project_id">
+        <option value="">すべて</option>
+        <% for (const project of projects) { %>
+          <option value="<%= project.id %>" <%= filters.projectId === project.id ? "selected" : "" %>>
+            <%= project.name %>
+          </option>
+        <% } %>
+      </select>
+    </label>
+    <label>
+      ステータス
+      <select name="status">
+        <option value="">すべて</option>
+        <% for (const value of ["active", "invited", "blocked", "withdrawn", "completed"]) { %>
+          <option value="<%= value %>" <%= filters.status === value ? "selected" : "" %>>
+            <%= statusLabel("respondentStatus", value) %>
+          </option>
+        <% } %>
+      </select>
+    </label>
+  </div>
+  <div class="actions-row">
+    <button type="submit">絞り込む</button>
+    <a class="button-link secondary" href="/admin/respondents">条件をリセット</a>
+  </div>
+</form>
+
+<div class="table-scroll" style="margin-top:16px">
+  <table>
+    <thead>
       <tr>
-        <td>
-          <strong><%= item.project.name %></strong><br />
-          <span class="muted"><%= item.project.research_mode %></span>
-        </td>
-        <td><%= item.respondent.display_name || "-" %></td>
-        <td><code><%= item.respondent.line_user_id %></code></td>
-        <td><span class="tag"><%= item.respondent.status %></span></td>
-        <td><%= item.sessionCount %></td>
-        <td><%= item.completedSessionCount %></td>
-        <td>
-          <% if (item.latestSession) { %>
-            <span class="tag"><%= item.latestSession.status %></span><br />
-            <span class="muted"><%= item.latestSession.last_activity_at %></span>
-          <% } else { %>
-            <span class="muted">-</span>
-          <% } %>
-        </td>
-        <td><%= item.respondent.total_points %> pt</td>
-        <td><%= item.respondent.current_rank?.rank_name || "-" %></td>
-        <td><a href="/admin/respondents/<%= item.respondent.id %>">Detail</a></td>
+        <th>プロジェクト</th>
+        <th>表示名</th>
+        <th>LINEユーザーID</th>
+        <th>ステータス</th>
+        <th>セッション</th>
+        <th>完了</th>
+        <th>最終セッション</th>
+        <th>ポイント</th>
+        <th>ランク</th>
+        <th>操作</th>
       </tr>
-    <% } %>
-  </tbody>
-</table>
+    </thead>
+    <tbody>
+      <% if (respondents.length === 0) { %>
+        <tr>
+          <td colspan="10">
+            <p class="muted" style="margin:8px 0">
+              条件に一致する回答者がいません。
+              <% if (filters.q || filters.projectId || filters.status) { %>
+                <a href="/admin/respondents">条件をリセット</a>して再検索してください。
+              <% } %>
+            </p>
+          </td>
+        </tr>
+      <% } %>
+      <% for (const item of respondents) { %>
+        <tr>
+          <td>
+            <strong><%= item.project.name %></strong><br />
+            <span class="muted"><%= statusLabel("researchMode", item.project.research_mode) %></span>
+          </td>
+          <td><%= item.respondent.display_name || "-" %></td>
+          <td><code title="<%= item.respondent.line_user_id %>"><%= shortId(item.respondent.line_user_id) %></code></td>
+          <td><span class="tag"><%= statusLabel("respondentStatus", item.respondent.status) %></span></td>
+          <td><%= item.sessionCount %></td>
+          <td><%= item.completedSessionCount %></td>
+          <td>
+            <% if (item.latestSession) { %>
+              <span class="tag"><%= statusLabel("sessionStatus", item.latestSession.status) %></span><br />
+              <span class="muted" title="<%= fmtDateTime(item.latestSession.last_activity_at) %>">
+                <%= fmtRelative(item.latestSession.last_activity_at) %>
+              </span>
+            <% } else { %>
+              <span class="muted">-</span>
+            <% } %>
+          </td>
+          <td><%= item.respondent.total_points %> pt</td>
+          <td><%= item.respondent.current_rank?.rank_name || "-" %></td>
+          <td><a href="/admin/respondents/<%= item.respondent.id %>">詳細</a></td>
+        </tr>
+      <% } %>
+    </tbody>
+  </table>
+</div>
+
+<%- include("../../partials/admin-pagination", {
+  page,
+  totalPages,
+  total,
+  basePath: "/admin/respondents",
+  query: { q: filters.q, project_id: filters.projectId, status: filters.status }
+}) %>
 <%- include("../../partials/footer") %>

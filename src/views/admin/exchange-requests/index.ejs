@@ -2,6 +2,10 @@
 
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
   <h2>交換申請管理</h2>
+  <a class="btn-secondary" href="/admin/exchange-requests/export.csv?status=<%= statusFilter %>"
+     title="現在のステータス絞り込みのまま、打ち切りなしで全件をCSV出力します（経理突合用）">
+    CSVダウンロード（<%= statusFilter === 'all' ? '全件' : '絞り込み分' %>）
+  </a>
 </div>
 
 <!-- ステータス別カウント -->

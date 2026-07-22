@@ -138,6 +138,25 @@
   <% if (errorMessage) { %>
     <section class="card subtle-card error-card"><strong><%= errorMessage %></strong></section>
   <% } %>
+  <%
+    // 公開後の編集ガード: 公開中の案件、または既に回答が付いている設問は
+    // 設問文・選択肢・回答形式の変更が収集済み回答やロウデータ列契約を壊す
+    const editGuardCount = (typeof answeredCount !== "undefined" && answeredCount !== null) ? answeredCount : null;
+    const showEditGuard = question && (project.status === "published" || project.status === "paused" || project.status === "closed" || (editGuardCount ?? 0) > 0);
+  %>
+  <% if (showEditGuard) { %>
+    <section class="card subtle-card" style="border:1px solid #e0a13f;background:#fdf6ea;padding:10px 14px;">
+      <strong style="color:#9a6b12;">
+        ⚠ この案件は<%= statusLabel("projectStatus", project.status) %>です。
+        <% if (editGuardCount !== null) { %>この設問には回答が <%= editGuardCount %> 件付いています。<% } %>
+      </strong>
+      <p class="muted" style="margin:4px 0 0;font-size:12.5px;">
+        設問文・選択肢・回答形式を変更すると、収集済み回答との対応やロウデータの列定義
+        （wide / long / codebook は集計アプリとの契約で凍結）が壊れます。
+        文言の誤字修正など意味が変わらない変更に留めてください。設問を外したい場合は削除ではなく「非表示」を使ってください。
+      </p>
+    </section>
+  <% } %>
   <% if (successMessage) { %>
     <section class="card subtle-card success-card">
       <strong class="success-text"><%= successMessage %></strong>
@@ -1195,13 +1214,12 @@
   // ----------------------------------------------------------------
   // タブ切り替え
   // ----------------------------------------------------------------
+  function activateTab(tabId) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === 'tab-' + tabId));
+  }
   document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-    });
+    btn.addEventListener('click', () => activateTab(btn.dataset.tab));
   });
 
   // ----------------------------------------------------------------
@@ -1877,10 +1895,49 @@
 
   // ----------------------------------------------------------------
   // 保存前にタグを自動生成して hidden フィールドへセット
+  //
+  // form.submit() は HTML5 の required 検証も submit イベントも通さないため使わない。
+  // 準備（タグ生成）が終わったらフラグを立てて requestSubmit() し直し、
+  // 2周目はネイティブ送信に任せる（isDirty リセットの submit リスナーも発火する）。
   // ----------------------------------------------------------------
+  let submitPrepared = false;
+  let nativeSubmitStarted = false;
   document.getElementById('mainForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
     const form = e.currentTarget;
+    if (submitPrepared) { submitPrepared = false; nativeSubmitStarted = true; clearDraft(); return; }
+    e.preventDefault();
+
+    if (!form.checkValidity()) {
+      // どのタブにエラーがあるか分かるようにバッジを付け、最初の invalid のタブへ移動してから
+      // ブラウザ標準のエラーバブルを出す（非表示ペイン内のフィールドだとバブルが出ないため）。
+      updateTabErrorBadges();
+      const firstInvalid = form.querySelector(':invalid');
+      const pane = firstInvalid && firstInvalid.closest('.tab-pane');
+      if (pane) activateTab(pane.id.replace('tab-', ''));
+      form.reportValidity();
+      return;
+    }
+
+    // スクリーニング通過対象バリデーション
+    const isScreeningOn = document.getElementById('screeningCheck')?.checked ?? false;
+    const currentQType = document.getElementById('questionType')?.value ?? '';
+    if (isScreeningOn && SCREENING_CHOICE_TYPES_JS.includes(currentQType)) {
+      const passCount = [...document.querySelectorAll('.screening-pass-check')].filter(cb => cb.checked).length;
+      if (passCount === 0) {
+        updateTabErrorBadges(['answer']);
+        activateTab('answer');
+        alert('スクリーニング設問には、最低1つ以上の通過対象回答を設定してください。');
+        return;
+      }
+    }
+
+    // タグ生成の待ち時間中の二重送信を防ぐ
+    const submitButtons = [...form.querySelectorAll('button[type="submit"], input[type="submit"]')];
+    submitButtons.forEach(b => {
+      b.disabled = true;
+      if (b.tagName === 'BUTTON') { b.dataset.originalText = b.textContent; b.textContent = '保存中…'; }
+    });
+
     const formData = collectTagFormData();
     const hasTagInput = Object.values(formData).some(v => v === true || (typeof v === 'string' && v.trim() !== ''));
     if (hasTagInput) {
@@ -1903,18 +1960,18 @@
         console.warn('tag auto-generate on submit failed', err);
       }
     }
-    // スクリーニング通過対象バリデーション
-    const isScreeningOn = document.getElementById('screeningCheck')?.checked ?? false;
-    const currentQType = document.getElementById('questionType')?.value ?? '';
-    if (isScreeningOn && SCREENING_CHOICE_TYPES_JS.includes(currentQType)) {
-      const passCount = [...document.querySelectorAll('.screening-pass-check')].filter(cb => cb.checked).length;
-      if (passCount === 0) {
-        alert('スクリーニング設問には、最低1つ以上の通過対象回答を設定してください。');
-        return;
-      }
-    }
 
-    form.submit();
+    submitPrepared = true;
+    nativeSubmitStarted = false;
+    form.requestSubmit();
+    submitPrepared = false;
+    if (!nativeSubmitStarted) {
+      // 検証に弾かれて送信イベントが発火しなかった場合はボタンを戻す
+      submitButtons.forEach(b => {
+        b.disabled = false;
+        if (b.dataset.originalText) { b.textContent = b.dataset.originalText; delete b.dataset.originalText; }
+      });
+    }
   });
 
   // ----------------------------------------------------------------
@@ -2097,9 +2154,18 @@
   // ----------------------------------------------------------------
   let isDirty = false;
   const mainForm = document.getElementById('mainForm');
-  mainForm.addEventListener('change', () => { isDirty = true; });
-  mainForm.addEventListener('input', () => { isDirty = true; });
+  mainForm.addEventListener('change', () => { isDirty = true; refreshTabErrorBadges(); scheduleDraftSave(); });
+  mainForm.addEventListener('input', () => { isDirty = true; refreshTabErrorBadges(); scheduleDraftSave(); });
   mainForm.addEventListener('submit', () => { isDirty = false; });
+
+  // タブ閉じ・リロード・素の a タグ遷移（「一覧へ戻る」を含む）での全損を防ぐ。
+  // navigateTo() 経由の遷移は confirm 後に isDirty=false になるので二重ダイアログにならない。
+  window.addEventListener('beforeunload', (e) => {
+    if (!isDirty) return;
+    saveDraftNow();
+    e.preventDefault();
+    e.returnValue = '';
+  });
 
   function navigateTo(href) {
     if (isDirty) {
@@ -2125,6 +2191,157 @@
       if (btn) btn.click();
     }
   });
+
+  // ----------------------------------------------------------------
+  // タブエラーバッジ
+  // .tab-btn.has-error / .err-badge の CSS は定義済みだったが、付与する JS が
+  // 無かった（＝設計はあるが未実装）。開いた直後から赤くならないよう、
+  // 最初の送信試行で validationAttempted が立ってから input 連動で更新する。
+  // ----------------------------------------------------------------
+  let validationAttempted = false;
+  function updateTabErrorBadges(extraTabs = []) {
+    validationAttempted = true;
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      const pane = document.getElementById('tab-' + btn.dataset.tab);
+      if (!pane) return;
+      const invalidCount = pane.querySelectorAll('input:invalid, select:invalid, textarea:invalid').length;
+      const flagged = invalidCount > 0 || extraTabs.includes(btn.dataset.tab);
+      let badge = btn.querySelector('.err-badge');
+      if (flagged) {
+        btn.classList.add('has-error');
+        if (!badge) { badge = document.createElement('span'); badge.className = 'err-badge'; btn.appendChild(badge); }
+        badge.textContent = invalidCount > 0 ? String(invalidCount) : '!';
+      } else {
+        btn.classList.remove('has-error');
+        if (badge) badge.remove();
+      }
+    });
+  }
+  function refreshTabErrorBadges() { if (validationAttempted) updateTabErrorBadges(); }
+
+  // ----------------------------------------------------------------
+  // 下書き自動保存（localStorage）
+  // セッション切れ・タブクラッシュ・誤遷移での全損対策。入力のたびに
+  // デバウンス保存し、保存成功（ネイティブ送信開始）で破棄する。
+  // 制約: 画像ファイルとマトリクスの行・列カードは復元対象外
+  // （マトリクスは送信時にカードから hidden へ再同期されるため、復元しても上書きされる）。
+  // ----------------------------------------------------------------
+  const DRAFT_KEY = 'hibi:formV3:draft:<%= project.id %>:<%= question ? question.id : "new" %>';
+  const DYNAMIC_ROW_BUTTONS = {
+    optionRows: 'addOptionRow',
+    extractionRows: 'addExtractionRow',
+    branchRows: 'addBranchRow',
+    visCondRows: 'addVisCondRow',
+    ansRows: 'addAnsRow'
+  };
+  let draftTimer = null;
+
+  function collectDraft() {
+    const fields = [];
+    mainForm.querySelectorAll('input[name], select[name], textarea[name]').forEach(el => {
+      if (el.type === 'file' || el.type === 'submit' || el.type === 'button') return;
+      if (el.name === 'matrix_rows' || el.name === 'matrix_cols') return;
+      fields.push({
+        name: el.name,
+        value: el.value,
+        checked: (el.type === 'checkbox' || el.type === 'radio') ? el.checked : undefined
+      });
+    });
+    const rowCounts = {};
+    Object.keys(DYNAMIC_ROW_BUTTONS).forEach(id => {
+      const c = document.getElementById(id);
+      if (c) rowCounts[id] = c.children.length;
+    });
+    return { savedAt: new Date().toISOString(), fields, rowCounts };
+  }
+
+  function saveDraftNow() {
+    if (!isDirty) return;
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(collectDraft()));
+    } catch (err) { /* private mode / 容量超過では黙って諦める（本保存には影響しない） */ }
+  }
+  function scheduleDraftSave() {
+    if (draftTimer) clearTimeout(draftTimer);
+    draftTimer = setTimeout(saveDraftNow, 800);
+  }
+  function clearDraft() {
+    try { localStorage.removeItem(DRAFT_KEY); } catch (err) { /* noop */ }
+  }
+
+  function restoreDraft(draft) {
+    // 1) 動的行の本数を合わせる（不足分だけ既存の追加ボタンで生成。多い分は触らない）
+    Object.entries(DYNAMIC_ROW_BUTTONS).forEach(([containerId, btnId]) => {
+      const c = document.getElementById(containerId);
+      const btn = document.getElementById(btnId);
+      const want = (draft.rowCounts && draft.rowCounts[containerId]) || 0;
+      if (!c || !btn) return;
+      let guard = 0;
+      while (c.children.length < want && guard++ < 100) btn.click();
+    });
+
+    // 2) name ごとに DOM 順で値を流し込む
+    const groups = {};
+    (draft.fields || []).forEach(f => { (groups[f.name] = groups[f.name] || []).push(f); });
+    Object.entries(groups).forEach(([name, saved]) => {
+      const els = [...mainForm.querySelectorAll('[name="' + CSS.escape(name) + '"]')];
+      if (els.length === 0) return;
+      if (els[0].type === 'radio') {
+        const checkedValue = (saved.find(f => f.checked) || {}).value;
+        els.forEach(el => { el.checked = (el.value === checkedValue); });
+        const sel = els.find(el => el.checked);
+        if (sel) sel.dispatchEvent(new Event('change', { bubbles: true }));
+        return;
+      }
+      els.forEach((el, i) => {
+        const f = saved[i];
+        if (!f) return;
+        if (el.type === 'checkbox') {
+          el.checked = !!f.checked;
+        } else {
+          el.value = f.value;
+        }
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    });
+
+    // 3) 値に依存する表示状態を再同期
+    try { syncTypeVisibility(); } catch (err) { /* noop */ }
+    try { syncScreeningPassUI(); } catch (err) { /* noop */ }
+    isDirty = true;
+  }
+
+  // 復元バナー。下書きがあるときだけフォーム先頭に出す。
+  (function initDraftRestore() {
+    let draft = null;
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (raw) draft = JSON.parse(raw);
+    } catch (err) { /* 壊れた下書きは無視 */ }
+    if (!draft || !Array.isArray(draft.fields) || draft.fields.length === 0) return;
+
+    const banner = document.createElement('section');
+    banner.className = 'card subtle-card';
+    banner.style.cssText = 'background:#fdf6ec;border-left:4px solid #d99b2b;display:flex;gap:12px;align-items:center;flex-wrap:wrap';
+    const savedAt = draft.savedAt ? new Date(draft.savedAt).toLocaleString('ja-JP') : '';
+    const label = document.createElement('span');
+    label.style.fontSize = '13px';
+    label.textContent = '保存されていない下書きがあります' + (savedAt ? '（' + savedAt + ' 時点）' : '') + '。';
+    const restoreBtn = document.createElement('button');
+    restoreBtn.type = 'button';
+    restoreBtn.className = 'button-link secondary';
+    restoreBtn.textContent = '下書きを復元する';
+    restoreBtn.addEventListener('click', () => { restoreDraft(draft); banner.remove(); });
+    const discardBtn = document.createElement('button');
+    discardBtn.type = 'button';
+    discardBtn.className = 'button-link danger';
+    discardBtn.textContent = '破棄する';
+    discardBtn.addEventListener('click', () => { clearDraft(); banner.remove(); });
+    banner.appendChild(label);
+    banner.appendChild(restoreBtn);
+    banner.appendChild(discardBtn);
+    mainForm.insertBefore(banner, mainForm.firstChild);
+  })();
 })();
 </script>
 

@@ -10,7 +10,8 @@
       <a class="button-link secondary" href="/admin/projects/<%= project.id %>/concepts">🔁 コンセプト</a>
       <a class="button-link" href="/admin/projects/<%= project.id %>/questions/new">質問を追加</a>
       <a class="button-link secondary" href="/admin/projects/<%= project.id %>/edit#screening-section">スクリーニング設定</a>
-      <a class="button-link secondary" href="/admin/projects/<%= project.id %>/preview">プレビュー</a>
+      <%# 「プレビュー」は /admin/projects/:id/preview を指していたがそのルートは存在せず、
+          押すと必ず 404 になっていたため撤去した。設問の見え方の確認はフロー設計から行う。 %>
       <a class="button-link secondary" href="/admin/projects/<%= project.id %>/respondents">回答者</a>
     </div>
     <span class="muted"><%= project.name %></span>

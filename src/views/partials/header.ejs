@@ -7,31 +7,99 @@
     <link rel="stylesheet" href="/public/styles.css" />
   </head>
   <body>
+    <%
+      // ナビは22本のフラットな羅列だったため現在地が分からず、さらに user-profiles /
+      // ai-logs / delivery-templates / scheduler-settings / reward-campaigns /
+      // daily-question-priorities はルートが存在するのにリンクが無く到達できなかった。
+      // 業務のまとまりでグループ化し、全ページを載せる。
+      const navGroups = [
+        {
+          label: "調査",
+          items: [
+            { href: "/admin/projects", label: "プロジェクト" },
+            { href: "/admin/daily-surveys", label: "デイリーアンケート" },
+            { href: "/admin/daily-question-priorities", label: "デイリー優先設問" },
+            { href: "/admin/pool-questions", label: "ついでスワイプ" },
+            { href: "/admin/store-surveys", label: "店舗専用アンケート" }
+          ]
+        },
+        {
+          label: "回答者",
+          items: [
+            { href: "/admin/respondents", label: "回答者" },
+            { href: "/admin/sessions", label: "セッション" },
+            { href: "/admin/user-profiles", label: "プロフィール検索" },
+            { href: "/admin/applications", label: "応募管理" },
+            { href: "/admin/attributes", label: "属性管理" }
+          ]
+        },
+        {
+          label: "報酬",
+          items: [
+            { href: "/admin/points", label: "ポイント" },
+            { href: "/admin/ranks", label: "ランク" },
+            { href: "/admin/badges", label: "バッジ" },
+            { href: "/admin/reward-campaigns", label: "報酬キャンペーン" },
+            { href: "/admin/exchange-requests", label: "交換申請", badgeId: "nav-exchange-badge" }
+          ]
+        },
+        {
+          label: "配信",
+          items: [
+            { href: "/admin/delivery-operations", label: "配信オペレーション", primary: true },
+            { href: "/admin/delivery-calendar", label: "配信カレンダー" },
+            { href: "/admin/segments", label: "セグメント配信" },
+            { href: "/admin/delivery-templates", label: "配信テンプレート" },
+            { href: "/admin/notification-templates", label: "通知テンプレート" },
+            { href: "/admin/scheduler-settings", label: "スケジューラ" }
+          ]
+        },
+        {
+          label: "投稿・分析",
+          items: [
+            { href: "/admin/posts", label: "投稿" },
+            { href: "/admin/post-analysis", label: "投稿分析" },
+            { href: "/admin/ai-analysis", label: "AI分析" },
+            { href: "/admin/ai-logs", label: "AI実行ログ" },
+            { href: "/admin/data-management", label: "モデレーション設定" }
+          ]
+        },
+        {
+          label: "設定",
+          items: [
+            { href: "/admin/documents", label: "書類管理" },
+            { href: "/admin/prompt-packages", label: "プロンプトパッケージ" },
+            { href: "/admin/experience-settings", label: "体験設定" }
+          ]
+        }
+      ];
+      const activePath = typeof locals.currentPath === "string" ? locals.currentPath : "";
+      // 「/admin/projects/xxx/edit」でも「プロジェクト」を現在地として点灯させる
+      const isActive = (href) => activePath === href || activePath.startsWith(href + "/");
+    %>
     <header>
-      <h1>LINE AIインタビュー管理画面</h1>
-      <nav>
-        <a href="/admin">ダッシュボード</a>
-        <a href="/admin/projects">プロジェクト</a>
-        <a href="/admin/respondents">回答者</a>
-        <a href="/admin/posts">投稿</a>
-        <a href="/admin/post-analysis">投稿分析</a>
-        <a href="/admin/points">ポイント</a>
-        <a href="/admin/badges">バッジ</a>
-        <a href="/admin/ranks">ランク</a>
-        <a href="/admin/attributes">属性管理</a>
-        <a href="/admin/segments">セグメント配信</a>
-        <a href="/admin/ai-analysis">AI分析</a>
-        <a href="/admin/data-management">データ管理</a>
-        <a href="/admin/daily-surveys">デイリーアンケート</a>
-        <a href="/admin/pool-questions">ついでスワイプ</a>
-        <a href="/admin/experience-settings">体験設定</a>
-        <a href="/admin/applications">応募管理</a>
-        <a href="/admin/store-surveys">店舗専用アンケート</a>
-        <a href="/admin/notification-templates">通知テンプレート</a>
-        <a href="/admin/delivery-operations" style="font-weight:700;color:#fff">配信オペレーション</a>
-        <a href="/admin/documents">書類管理</a>
-        <a href="/admin/exchange-requests">交換申請<span id="nav-exchange-badge" class="nav-badge" style="display:none"></span></a>
-        <a href="/admin/prompt-packages">プロンプトパッケージ</a>
+      <div class="header-bar">
+        <a class="header-title" href="/admin">Hibi 管理画面</a>
+        <span class="header-user" title="ログイン中の管理者">
+          <%= locals.adminUser || "admin" %>
+        </span>
+      </div>
+      <nav aria-label="管理メニュー">
+        <a class="nav-home<%= activePath === "/admin" || activePath === "/admin/" ? " is-active" : "" %>" href="/admin">ダッシュボード</a>
+        <% for (const group of navGroups) { %>
+          <div class="nav-group">
+            <span class="nav-group-label"><%= group.label %></span>
+            <div class="nav-group-items">
+              <% for (const item of group.items) { %>
+                <a
+                  href="<%= item.href %>"
+                  class="<%= isActive(item.href) ? "is-active" : "" %><%= item.primary ? " is-primary" : "" %>"
+                  <%- isActive(item.href) ? 'aria-current="page"' : "" %>
+                ><%= item.label %><% if (item.badgeId) { %><span id="<%= item.badgeId %>" class="nav-badge" style="display:none"></span><% } %></a>
+              <% } %>
+            </div>
+          </div>
+        <% } %>
       </nav>
     </header>
     <script>
@@ -48,5 +116,28 @@
           })
           .catch(function () { /* バッジは補助表示なので失敗しても無視 */ });
       })();
+
+      // 横スクロール対策。テーブルを持つビューは59あるが .table-scroll で包んでいたのは
+      // 5つだけだった。全ビューを個別に書き換える代わりにここで一括ラップする。
+      document.addEventListener("DOMContentLoaded", function () {
+        var tables = document.querySelectorAll("main table");
+        for (var i = 0; i < tables.length; i++) {
+          var table = tables[i];
+          var parent = table.parentElement;
+          if (parent && parent.classList.contains("table-scroll")) continue;
+          // ネストしたテーブル（外側が既にラップ済み）は触らない
+          if (table.closest(".table-scroll")) continue;
+          var wrap = document.createElement("div");
+          wrap.className = "table-scroll";
+          parent.insertBefore(wrap, table);
+          wrap.appendChild(table);
+        }
+      });
     </script>
     <main>
+      <% if (locals.adminFlash) { %>
+        <div class="flash flash-<%= locals.adminFlash.type %>" role="status">
+          <span class="flash-message"><%= locals.adminFlash.message %></span>
+          <button type="button" class="flash-close" aria-label="閉じる" onclick="this.parentElement.remove()">×</button>
+        </div>
+      <% } %>

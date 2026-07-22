@@ -80,9 +80,16 @@
     <strong>ユーザー情報管理</strong>
     <span style="color:#60726f; font-size:13px; margin-left:10px;">全 <%= total %> 件（<%= page %>/<%= totalPages %> ページ）</span>
   </div>
-  <form method="POST" action="/admin/user-profiles/logout" style="margin:0;">
-    <button type="submit" class="logout-btn">ログアウト</button>
-  </form>
+  <div style="display:flex;gap:8px;align-items:center">
+    <a class="btn-sm btn-outline" style="text-decoration:none"
+       href="/admin/user-profiles/export.csv<%= buildQuery({}) %>"
+       title="現在の絞り込み条件のまま、ページングせず全件をCSV出力します">
+      CSVダウンロード（絞り込み結果 <%= total %> 件）
+    </a>
+    <form method="POST" action="/admin/user-profiles/logout" style="margin:0;">
+      <button type="submit" class="logout-btn">ログアウト</button>
+    </form>
+  </div>
 </div>
 
 <div class="up-filter-form">
@@ -216,7 +223,9 @@
         </td>
         <td style="color:#60726f;"><%= fmtDate(p.updated_at) %></td>
         <td>
-          <span class="detail-toggle" onclick="toggleDetail('<%= p.line_user_id.replace(/'/g,'\\'') %>')">詳細</span>
+          <%# 手動のクォートエスケープは不要（EJS の出力タグが ' を &#39; に変換する）。
+              旧実装は JS 文字列として不正で、テンプレート全体がコンパイル不能になっていた %>
+          <span class="detail-toggle" onclick="toggleDetail('<%= p.line_user_id %>')">詳細</span>
         </td>
       </tr>
       <tr id="detail-<%= p.line_user_id.replace(/[^a-zA-Z0-9_-]/g,'_') %>" class="detail-row" style="display:none;">
