@@ -11,9 +11,13 @@ import { liffRoutes } from "./routes/liffRoutes";
 import { webhookRoutes } from "./routes/webhookRoutes";
 import { cronRoutes } from "./routes/cronRoutes";
 import { mentalProxyRoutes } from "./routes/mentalProxyRoutes";
+import { registerAdminChatTools } from "./services/adminChat/registerTools";
 
 export function createApp() {
   const app = express();
+
+  // 管理画面AIチャットが使えるツールを登録する（docs/impl-admin-ai-chat.md）
+  registerAdminChatTools();
 
   app.set("views", path.join(process.cwd(), "src", "views"));
   app.set("view engine", "ejs");

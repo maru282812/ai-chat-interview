@@ -1,0 +1,334 @@
+<%#
+  管理画面AIチャットパネル（docs/impl-admin-ai-chat.md Phase 3）
+
+  footer.ejs から include され、locals.aiChat が渡された画面にだけ表示される。
+  コントローラ側の render で { aiChat: { screenKey, entityId } } を渡すことで有効になる。
+
+  - 会話履歴は sessionStorage 保持（サーバーはステートレス）。キーは screenKey + entityId。
+  - 送信は fetch → POST /admin/api/ai-chat。CSRF は同一オリジンのフェッチメタデータで担保。
+  - 読み取り専用ツールのみ（Tier ゲートはサーバー側で強制）。
+%>
+<style>
+  .aic-fab { position: fixed; right: 20px; bottom: 20px; z-index: 900;
+    width: 56px; height: 56px; border-radius: 50%; border: none; cursor: pointer;
+    background: #1f6f5c; color: #fff; font-size: 13px; font-weight: 700; letter-spacing: .04em;
+    box-shadow: 0 4px 14px rgba(0,0,0,.28); }
+  .aic-fab:hover { background: #18594a; }
+  .aic-fab[aria-expanded="true"] { background: #123e33; }
+
+  .aic-panel { position: fixed; right: 0; top: 0; bottom: 0; z-index: 901;
+    width: min(420px, 100vw); display: none; flex-direction: column;
+    background: #fff; border-left: 1px solid #d8ded9; box-shadow: -6px 0 22px rgba(0,0,0,.14); }
+  .aic-panel.is-open { display: flex; }
+
+  .aic-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 12px 14px; border-bottom: 1px solid #e3e8e4; background: #f6f9f7; }
+  .aic-title { font-size: 14px; font-weight: 700; color: #21372f; }
+  .aic-head-actions { display: flex; gap: 6px; }
+  .aic-head button { border: 1px solid #cfd8d2; background: #fff; border-radius: 6px;
+    padding: 4px 9px; font-size: 12px; cursor: pointer; color: #3b4c45; }
+  .aic-head button:hover { background: #eef3f0; }
+
+  .aic-log { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .aic-empty { color: #7c8b84; font-size: 12.5px; line-height: 1.7; }
+  .aic-empty ul { margin: 8px 0 0; padding-left: 18px; }
+
+  .aic-msg { max-width: 92%; padding: 9px 11px; border-radius: 10px; font-size: 13px;
+    line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+  .aic-msg.user { align-self: flex-end; background: #dff0e8; color: #1d3b31; }
+  .aic-msg.assistant { align-self: flex-start; background: #f2f4f3; color: #232b28; }
+  .aic-msg.error { align-self: stretch; background: #fdecec; color: #8c2f2f; border: 1px solid #f3cccc; }
+
+  /* Tier C の承認カード。押すまで実行されないことが見て分かる強さで出す */
+  .aic-card { align-self: stretch; border: 1px solid #e0c48a; border-radius: 10px;
+    background: #fffaf0; padding: 11px 12px; }
+  .aic-card-head { font-size: 12px; font-weight: 700; color: #8a5a12; margin-bottom: 6px; }
+  .aic-card-summary { font-size: 13px; font-weight: 700; color: #2b2b2b; line-height: 1.5; }
+  .aic-card ul { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; color: #4a4a4a; line-height: 1.7; }
+  .aic-card-count { margin-top: 8px; font-size: 13px; font-weight: 700; color: #8a2f2f; }
+  .aic-card-confirm { margin-top: 10px; font-size: 12.5px; display: flex; align-items: center; gap: 6px; color: #3b4c45; }
+  .aic-card-actions { margin-top: 10px; display: flex; gap: 8px; }
+  .aic-card-run { border: none; border-radius: 8px; background: #b3541e; color: #fff;
+    padding: 8px 14px; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .aic-card-run:disabled { background: #d8bda9; cursor: default; }
+  .aic-card-cancel { border: 1px solid #cfd8d2; background: #fff; border-radius: 8px;
+    padding: 8px 12px; font-size: 13px; cursor: pointer; }
+  .aic-card-done { margin-top: 8px; font-size: 12.5px; font-weight: 700; }
+  .aic-card-done.ok { color: #1f6f5c; }
+  .aic-card-done.ng { color: #a33; }
+
+  .aic-trace { align-self: flex-start; font-size: 11.5px; color: #6d7b74; }
+  .aic-trace .blocked { color: #a35b1c; }
+  .aic-trace .error { color: #a33; }
+
+  .aic-form { border-top: 1px solid #e3e8e4; padding: 10px; display: flex; gap: 8px; align-items: flex-end; }
+  .aic-form textarea { flex: 1; resize: vertical; min-height: 52px; max-height: 160px;
+    padding: 8px; font-size: 13px; font-family: inherit; border: 1px solid #cfd8d2; border-radius: 8px; }
+  .aic-send { border: none; border-radius: 8px; background: #1f6f5c; color: #fff;
+    padding: 10px 14px; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .aic-send:disabled { background: #9db8ae; cursor: default; }
+
+  .aic-spinner { display: inline-block; width: 12px; height: 12px; margin-right: 6px;
+    border: 2px solid rgba(255,255,255,.45); border-top-color: #fff; border-radius: 50%;
+    animation: aic-spin .7s linear infinite; vertical-align: -1px; }
+  @keyframes aic-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .aic-spinner { animation-duration: 3s; } }
+
+  @media (max-width: 640px) {
+    .aic-panel { width: 100vw; border-left: none; }
+    .aic-fab { right: 14px; bottom: 14px; }
+  }
+</style>
+
+<button type="button" class="aic-fab" id="aic-fab" aria-expanded="false" aria-controls="aic-panel"
+  title="この画面のデータについてAIに質問する">AI</button>
+
+<aside class="aic-panel" id="aic-panel" aria-label="AIチャット" hidden>
+  <div class="aic-head">
+    <span class="aic-title">AIに聞く</span>
+    <div class="aic-head-actions">
+      <button type="button" id="aic-reset">履歴クリア</button>
+      <button type="button" id="aic-close" aria-label="閉じる">閉じる</button>
+    </div>
+  </div>
+
+  <div class="aic-log" id="aic-log" aria-live="polite">
+    <div class="aic-empty" id="aic-empty">
+      この画面のデータを読んで答えます（読み取り専用）。例:
+      <ul>
+        <li>この案件の回答傾向をまとめて</li>
+        <li>Q3 の選択肢ごとの件数を出して</li>
+        <li>この回答者の特徴は？</li>
+      </ul>
+    </div>
+  </div>
+
+  <form class="aic-form" id="aic-form">
+    <textarea id="aic-input" placeholder="質問を入力（Ctrl+Enter で送信）" aria-label="質問"></textarea>
+    <button type="submit" class="aic-send" id="aic-send">送信</button>
+  </form>
+</aside>
+
+<script>
+  (function () {
+    var SCREEN_KEY = <%- JSON.stringify(aiChat.screenKey) %>;
+    var ENTITY_ID = <%- JSON.stringify(aiChat.entityId || null) %>;
+    var STORAGE_KEY = "aiChat:" + SCREEN_KEY + ":" + (ENTITY_ID || "-");
+
+    var fab = document.getElementById("aic-fab");
+    var panel = document.getElementById("aic-panel");
+    var log = document.getElementById("aic-log");
+    var empty = document.getElementById("aic-empty");
+    var form = document.getElementById("aic-form");
+    var input = document.getElementById("aic-input");
+    var sendBtn = document.getElementById("aic-send");
+    var messages = [];
+
+    try {
+      var saved = sessionStorage.getItem(STORAGE_KEY);
+      if (saved) messages = JSON.parse(saved) || [];
+    } catch (e) { messages = []; }
+
+    function persist() {
+      try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages)); } catch (e) { /* 保存できなくても会話は続行 */ }
+    }
+
+    function appendBubble(role, text) {
+      var el = document.createElement("div");
+      el.className = "aic-msg " + role;
+      el.textContent = text;
+      log.appendChild(el);
+      log.scrollTop = log.scrollHeight;
+      if (empty) empty.style.display = "none";
+      return el;
+    }
+
+    // Tier C の承認カード。チェックを入れるまで実行ボタンは押せない。
+    // 表示している件数・影響はサーバーが実データから計算したもので、AIの申告値ではない。
+    function appendApprovalCard(action) {
+      var card = document.createElement("div");
+      card.className = "aic-card";
+
+      var head = document.createElement("div");
+      head.className = "aic-card-head";
+      head.textContent = "承認が必要な操作（まだ実行していません）";
+      card.appendChild(head);
+
+      var summary = document.createElement("div");
+      summary.className = "aic-card-summary";
+      summary.textContent = action.summary;
+      card.appendChild(summary);
+
+      if (action.impact && action.impact.length) {
+        var list = document.createElement("ul");
+        for (var i = 0; i < action.impact.length; i++) {
+          var li = document.createElement("li");
+          li.textContent = action.impact[i];
+          list.appendChild(li);
+        }
+        card.appendChild(list);
+      }
+
+      if (typeof action.targetCount === "number") {
+        var count = document.createElement("div");
+        count.className = "aic-card-count";
+        count.textContent = "対象件数: " + action.targetCount + " 件";
+        card.appendChild(count);
+      }
+
+      var confirmRow = document.createElement("label");
+      confirmRow.className = "aic-card-confirm";
+      var checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      var confirmText = document.createElement("span");
+      confirmText.textContent = "内容を確認しました";
+      confirmRow.appendChild(checkbox);
+      confirmRow.appendChild(confirmText);
+      card.appendChild(confirmRow);
+
+      var actions = document.createElement("div");
+      actions.className = "aic-card-actions";
+      var runBtn = document.createElement("button");
+      runBtn.type = "button";
+      runBtn.className = "aic-card-run";
+      runBtn.textContent = "実行する";
+      runBtn.disabled = true;
+      var cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "aic-card-cancel";
+      cancelBtn.textContent = "やめる";
+      actions.appendChild(runBtn);
+      actions.appendChild(cancelBtn);
+      card.appendChild(actions);
+
+      var done = document.createElement("div");
+      done.className = "aic-card-done";
+      card.appendChild(done);
+
+      checkbox.addEventListener("change", function () {
+        runBtn.disabled = !checkbox.checked;
+      });
+
+      cancelBtn.addEventListener("click", function () {
+        actions.remove();
+        confirmRow.remove();
+        done.className = "aic-card-done ng";
+        done.textContent = "実行しませんでした";
+      });
+
+      runBtn.addEventListener("click", function () {
+        runBtn.disabled = true;
+        runBtn.innerHTML = '<span class="aic-spinner"></span>実行中';
+        fetch("/admin/api/ai-chat/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pendingId: action.id })
+        })
+          .then(function (res) {
+            return res.json().catch(function () { return { ok: false, message: "応答を解釈できませんでした" }; });
+          })
+          .then(function (json) {
+            actions.remove();
+            confirmRow.remove();
+            done.className = "aic-card-done " + (json && json.ok ? "ok" : "ng");
+            done.textContent = (json && json.message) || "不明な結果";
+          })
+          .catch(function (err) {
+            runBtn.disabled = false;
+            runBtn.textContent = "実行する";
+            done.className = "aic-card-done ng";
+            done.textContent = "通信に失敗しました: " + (err && err.message ? err.message : err);
+          });
+      });
+
+      log.appendChild(card);
+      log.scrollTop = log.scrollHeight;
+      if (empty) empty.style.display = "none";
+    }
+
+    function appendTrace(trace) {
+      if (!trace || !trace.length) return;
+      var el = document.createElement("div");
+      el.className = "aic-trace";
+      el.textContent = trace.map(function (t) {
+        var mark = t.status === "ok" ? "✓" : t.status === "blocked" ? "⊘" : "✕";
+        return mark + " " + t.name;
+      }).join(" / ");
+      log.appendChild(el);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    for (var i = 0; i < messages.length; i++) {
+      appendBubble(messages[i].role, messages[i].content);
+    }
+
+    function setOpen(open) {
+      panel.classList.toggle("is-open", open);
+      panel.hidden = !open;
+      fab.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) input.focus();
+    }
+
+    fab.addEventListener("click", function () { setOpen(!panel.classList.contains("is-open")); });
+    document.getElementById("aic-close").addEventListener("click", function () { setOpen(false); });
+    document.getElementById("aic-reset").addEventListener("click", function () {
+      messages = [];
+      persist();
+      log.innerHTML = "";
+      if (empty) { log.appendChild(empty); empty.style.display = ""; }
+    });
+
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var text = input.value.trim();
+      if (!text || sendBtn.disabled) return;
+
+      appendBubble("user", text);
+      messages.push({ role: "user", content: text });
+      persist();
+      input.value = "";
+
+      sendBtn.disabled = true;
+      sendBtn.innerHTML = '<span class="aic-spinner"></span>送信中';
+
+      fetch("/admin/api/ai-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ screenKey: SCREEN_KEY, entityId: ENTITY_ID, messages: messages })
+      })
+        .then(function (res) {
+          return res.json().catch(function () { return { ok: false, error: "応答を解釈できませんでした（HTTP " + res.status + "）" }; });
+        })
+        .then(function (json) {
+          if (!json || !json.ok) {
+            appendBubble("error", (json && json.error) || "エラーが発生しました");
+            return;
+          }
+          appendTrace(json.toolTrace);
+          appendBubble("assistant", json.reply);
+          messages.push({ role: "assistant", content: json.reply });
+          persist();
+          // 承認カードは履歴に保存しない（トークンは1回限り・リロード後の再表示は無効）
+          var pending = json.pendingActions || [];
+          for (var p = 0; p < pending.length; p++) {
+            appendApprovalCard(pending[p]);
+          }
+        })
+        .catch(function (err) {
+          appendBubble("error", "通信に失敗しました: " + (err && err.message ? err.message : err));
+        })
+        .then(function () {
+          sendBtn.disabled = false;
+          sendBtn.textContent = "送信";
+          input.focus();
+        });
+    });
+  })();
+</script>

@@ -56,7 +56,16 @@ const envSchema = z.object({
   // staff-voice（企業メンタルチェック・別リポ/別DB）からの Push プロキシ（/api/mental/push）の
   // 認証用シークレット。staff-voice 側の env と同じ値を設定する。
   // 未設定の場合 /api/mental/push は 503 を返し、プロキシは無効。
-  MENTAL_PUSH_PROXY_SECRET: z.string().min(16).optional()
+  MENTAL_PUSH_PROXY_SECRET: z.string().min(16).optional(),
+  // 管理画面AIチャット（docs/impl-admin-ai-chat.md）
+  // 1指示あたりのツール実行往復の上限。超えたら途中結果で打ち切って報告する。
+  ADMIN_CHAT_MAX_TOOL_ROUNDS: z.coerce.number().int().positive().max(20).default(8),
+  // 1指示あたりのソフトタイムアウト（ミリ秒）。Vercel の実行時間内に収めるための自主制限。
+  ADMIN_CHAT_TIMEOUT_MS: z.coerce.number().int().positive().default(45000),
+  // チャットに使うモデル。未設定なら OPENAI_TOOL_MODEL（既定 gpt-4o-mini）を使う。
+  // 既定モデルでも読み取り・集計・実行不可の案内は実測で正しく動く。要約の質を上げたい
+  // ときだけ、他の管理ツール系AIを巻き込まずにここだけ上位モデルへ切り替えられるようにしておく。
+  ADMIN_CHAT_MODEL: z.string().optional()
 });
 
 export const env = envSchema.parse(process.env);

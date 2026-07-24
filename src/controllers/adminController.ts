@@ -48,6 +48,7 @@ import { conceptService } from "../services/conceptService";
 import { projectConceptRepository } from "../repositories/projectConceptRepository";
 import { blockDesignService, type BlockPlan } from "../services/blockDesignService";
 import { validateSurvey } from "../lib/surveyValidation";
+import { adminChatService } from "../services/adminChat/adminChatService";
 import { adminService } from "../services/adminService";
 import { pointService } from "../services/pointService";
 import { assignmentService, type AssignmentRuleFilter } from "../services/assignmentService";
@@ -945,6 +946,8 @@ function renderProjectResearchForm(
     // 若年層体験オプション（Phase 0）: project スコープのキーだけをフォームに出す。
     experienceKeyDefs: EXPERIENCE_KEYS,
     experienceProjectKeys: PROJECT_SCOPED_KEYS,
+    // 管理画面AIチャット（新規作成画面は対象レコードが無いので id は null）
+    aiChat: { screenKey: "research-form", entityId: input.project?.id ?? null },
   });
 }
 
@@ -2629,7 +2632,7 @@ const SUPPORTED_SEGMENT_FIELDS = new Set([...PROFILE_FIELDS, "total_points"]);
  * 実配信の直前に呼び、1つでもあれば実行を中断する（黙って無視すると
  * 「20代女性向け」のつもりが全会員配信になる）。
  */
-function findUnsupportedSegmentFields(rawConditions: unknown): string[] {
+export function findUnsupportedSegmentFields(rawConditions: unknown): string[] {
   const norm = normalizeSegConds(rawConditions);
   const unsupported = new Set<string>();
   for (const group of norm.groups) {
@@ -2663,8 +2666,11 @@ async function evaluateConditionsIds(db: any, rawConditions: unknown): Promise<S
   return result;
 }
 
+// 管理画面AIチャットの承認カードもこの関数で件数を出す。プレビュー・実配信・チャットが
+// 同じ評価器を通ることが「推定と実行対象が食い違う」事故を防ぐ唯一の担保なので、
+// 別実装を作らずここを export して共有する。
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function evaluateConditionsCount(db: any, rawConditions: unknown): Promise<number> {
+export async function evaluateConditionsCount(db: any, rawConditions: unknown): Promise<number> {
   const norm = normalizeSegConds(rawConditions);
 
   // 高速パス: 単一グループ AND かつ全フィールドが user_profiles 上
@@ -2684,6 +2690,121 @@ async function evaluateConditionsCount(db: any, rawConditions: unknown): Promise
   }
 
   return (await evaluateConditionsIds(db, rawConditions)).size;
+}
+
+// ====================================================================
+// キャンペーン配信（LINE / LIFF）の対象解決と実配信
+//
+// executeCampaign の HTTP ハンドラと、管理画面AIチャットの Tier C 配信ツールの
+// 両方がここを通る。プレビュー（承認カードの人数）と実配信が同じ対象解決を
+// 使うことが「推定と実配信対象が食い違う」事故（P0-3）を防ぐ唯一の担保なので、
+// 別実装を作らずこの2関数を共有する。
+// ====================================================================
+
+export interface ResolvedCampaignTargets {
+  campaign: Awaited<ReturnType<typeof deliveryCampaignRepository.getById>>;
+  effectiveProjectId: string;
+  effectiveSegmentId: string | null;
+  targetLineUserIds: string[];
+  isAllMembers: boolean;
+}
+
+/**
+ * キャンペーンの配信対象（LINE user id の集合）を解決する。
+ * 実行不可の条件（送信済み・対象プロジェクト未設定・未対応セグメント項目）は
+ * HttpError で投げる。呼び出し側（HTTP ハンドラ / Tier C ツール）がそれを整形する。
+ */
+export async function resolveCampaignTargets(input: {
+  campaignId: string;
+  segmentIdOverride?: string | null;
+  projectIdOverride?: string | null;
+}): Promise<ResolvedCampaignTargets> {
+  const { supabase: db } = await import("../config/supabase");
+  const campaign = await deliveryCampaignRepository.getById(input.campaignId);
+  if (campaign.status === "sent" || campaign.status === "cancelled") {
+    throw new HttpError(400, "このキャンペーンは実行できません");
+  }
+
+  const effectiveProjectId = input.projectIdOverride ?? campaign.project_id;
+  if (!effectiveProjectId) {
+    throw new HttpError(
+      400,
+      "対象プロジェクトが設定されていません。配信オペレーション画面でプロジェクトを選択してください。"
+    );
+  }
+
+  // セグメント条件からターゲットを取得（画面/ツールからの segment_id があれば優先）。
+  // 旧実装は segment.conditions.conditions（旧フォーマット）を直接読み3項目しか
+  // 解釈せず、条件が丸ごと無視されて「20代女性向け」が全会員配信になりえた。
+  // プレビュー・件数・実配信を同じ評価器（evaluateConditionsIds）に一本化する。
+  const effectiveSegmentId = input.segmentIdOverride ?? campaign.segment_id;
+  let targetLineUserIds: string[] = [];
+
+  if (effectiveSegmentId) {
+    const segment = await segmentRepository.getById(effectiveSegmentId);
+    const unsupported = findUnsupportedSegmentFields(segment.conditions);
+    if (unsupported.length > 0) {
+      throw new HttpError(
+        400,
+        `セグメント条件に未対応の項目が含まれています（${unsupported.join(", ")}）。条件を修正するまで配信できません。`
+      );
+    }
+    const ids = await evaluateConditionsIds(db, segment.conditions);
+    targetLineUserIds = [...ids];
+  } else {
+    const { data } = await db
+      .from("user_profiles")
+      .select("line_user_id")
+      .eq("profile_completed", true)
+      .eq("is_blocked", false);
+    targetLineUserIds = (data ?? []).map((r: { line_user_id: string }) => r.line_user_id);
+  }
+
+  return {
+    campaign,
+    effectiveProjectId,
+    effectiveSegmentId: effectiveSegmentId ?? null,
+    targetLineUserIds,
+    isAllMembers: !effectiveSegmentId,
+  };
+}
+
+/**
+ * 解決済みの対象へ実際に配信する（assignManual が対象ごとに LINE push する）。
+ * campaign を sent に更新して送信数を返す。
+ */
+export async function deliverCampaign(
+  resolved: ResolvedCampaignTargets
+): Promise<{ sentCount: number; failedCount: number }> {
+  if (resolved.targetLineUserIds.length === 0) {
+    return { sentCount: 0, failedCount: 0 };
+  }
+
+  const { supabase: db } = await import("../config/supabase");
+  const { data: respondents } = await db
+    .from("respondents")
+    .select("id, line_user_id")
+    .in("line_user_id", resolved.targetLineUserIds);
+  const respondentIds = (respondents ?? []).map((r: { id: string }) => r.id);
+
+  // assignManual は { sentCount, failedCount } を返し、対象ごとに LINE push する。
+  // （旧 HTTP ハンドラは戻り値を配列と誤認し sent_count を対象数で過大報告していた。
+  //   ここでは実際の送信成功数を使う。campaign_assignment_map の記録は assignManual が
+  //   assignment id を返さないため現状書けない＝将来 assignManual 側の拡張が必要。）
+  const result = await assignmentService.assignManual({
+    projectId: resolved.effectiveProjectId,
+    sourceRespondentIds: respondentIds,
+    deadline: null,
+    deliveryChannel: resolved.campaign.delivery_channel,
+  });
+
+  await deliveryCampaignRepository.update(resolved.campaign.id, {
+    status: "sent",
+    sent_at: new Date().toISOString(),
+    sent_count: result.sentCount,
+  });
+
+  return result;
 }
 
 function buildScheduleConfig(
@@ -3433,8 +3554,13 @@ export const adminController = {
   },
 
   async respondentDetail(req: Request, res: Response): Promise<void> {
-    const detail = await adminService.respondentDetail(routeParam(req, "respondentId"));
-    res.render("admin/respondents/show", { title: "Respondent Detail", ...detail });
+    const respondentId = routeParam(req, "respondentId");
+    const detail = await adminService.respondentDetail(respondentId);
+    res.render("admin/respondents/show", {
+      title: "Respondent Detail",
+      ...detail,
+      aiChat: { screenKey: "respondent-show", entityId: respondentId }
+    });
   },
 
   async posts(req: Request, res: Response): Promise<void> {
@@ -3510,15 +3636,18 @@ export const adminController = {
       perPage: PER_PAGE,
       totalPages: Math.max(1, Math.ceil(result.total / PER_PAGE)),
       projects,
-      filters: { projectId, status: status ?? "" }
+      filters: { projectId, status: status ?? "" },
+      aiChat: { screenKey: "sessions-index", entityId: projectId || null }
     });
   },
 
   async sessionDetail(req: Request, res: Response): Promise<void> {
-    const detail = await adminService.sessionDetail(routeParam(req, "sessionId"));
+    const sessionId = routeParam(req, "sessionId");
+    const detail = await adminService.sessionDetail(sessionId);
     res.render("admin/sessions/show", {
       title: "Session Detail",
-      ...detail
+      ...detail,
+      aiChat: { screenKey: "session-show", entityId: sessionId }
     });
   },
 
@@ -4151,6 +4280,90 @@ export const adminController = {
       warnings:     [...result.warnings, ...validationErrors.filter(e => e.severity === "warning")],
       rawGenerated: result.rawGenerated,
     });
+  },
+
+  /**
+   * POST /admin/api/ai-chat
+   * body: { screenKey, entityId?, messages: [{role, content}] }
+   * → { ok, reply, toolTrace, truncated }
+   *
+   * 会話履歴はクライアント（sessionStorage）が保持して毎回送る＝サーバーはステートレス。
+   * CSRF は /admin 配下に適用済みの adminCsrfMiddleware が担保する。
+   */
+  async aiChatApi(req: Request, res: Response): Promise<void> {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const screenKey = bodyString(body.screenKey).trim();
+    if (!screenKey) {
+      res.status(400).json({ ok: false, error: "screenKey は必須です" });
+      return;
+    }
+
+    const rawMessages = Array.isArray(body.messages) ? body.messages : null;
+    if (!rawMessages || rawMessages.length === 0) {
+      res.status(400).json({ ok: false, error: "messages が空です" });
+      return;
+    }
+
+    const messages: Array<{ role: "user" | "assistant"; content: string }> = [];
+    let totalChars = 0;
+    for (const raw of rawMessages) {
+      const item = (raw ?? {}) as Record<string, unknown>;
+      const role = bodyString(item.role) === "assistant" ? "assistant" : "user";
+      const content = bodyString(item.content);
+      if (!content.trim()) continue;
+      totalChars += content.length;
+      messages.push({ role, content });
+    }
+    if (messages.length === 0) {
+      res.status(400).json({ ok: false, error: "メッセージ本文が空です" });
+      return;
+    }
+    // 8KB 上限（履歴が肥大したままトークンを浪費しないための歯止め）
+    if (totalChars > 8192) {
+      res.status(400).json({
+        ok: false,
+        error: "会話が長くなりすぎました。チャットをリセットしてからもう一度お試しください。",
+      });
+      return;
+    }
+
+    const entityIdRaw = bodyString(body.entityId).trim();
+    try {
+      const result = await adminChatService.runChat({
+        screenKey,
+        entityId: entityIdRaw || null,
+        messages,
+      });
+      res.json({ ok: true, ...result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn("aiChatApi failed", { screenKey, error: message });
+      res.status(500).json({ ok: false, error: message });
+    }
+  },
+
+  /**
+   * POST /admin/api/ai-chat/approve
+   * body: { pendingId }
+   * → { ok, message }
+   *
+   * Tier C（不可逆・対外）を実行できる唯一の経路。承認トークン（pendingId）は
+   * チャット応答の封筒でブラウザにだけ渡っており、AI の出力からは到達できない。
+   */
+  async aiChatApproveApi(req: Request, res: Response): Promise<void> {
+    const pendingId = bodyString((req.body ?? {}).pendingId).trim();
+    if (!pendingId) {
+      res.status(400).json({ ok: false, message: "pendingId は必須です" });
+      return;
+    }
+    try {
+      const result = await adminChatService.approvePendingAction(pendingId);
+      res.status(result.ok ? 200 : 409).json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn("aiChatApproveApi failed", { pendingId, error: message });
+      res.status(500).json({ ok: false, message });
+    }
   },
 
   /**
@@ -5607,108 +5820,35 @@ export const adminController = {
 
   async executeCampaign(req: Request, res: Response): Promise<void> {
     const campaignId = routeParam(req, "campaignId");
-    const segmentIdOverride = bodyString(req.body.segment_id) || null;
-    const projectIdOverride = bodyString(req.body.project_id) || null;
-    const { supabase: db } = await import("../config/supabase");
+    try {
+      const resolved = await resolveCampaignTargets({
+        campaignId,
+        segmentIdOverride: bodyString(req.body.segment_id) || null,
+        projectIdOverride: bodyString(req.body.project_id) || null,
+      });
 
-    const campaign = await deliveryCampaignRepository.getById(campaignId);
-    if (campaign.status === "sent" || campaign.status === "cancelled") {
-      res.status(400).json({ error: "このキャンペーンは実行できません" });
-      return;
-    }
-
-    // 画面で選択したプロジェクトを優先。それもなければキャンペーンのproject_idを使用
-    const effectiveProjectId = projectIdOverride ?? campaign.project_id;
-    if (!effectiveProjectId) {
-      res.status(400).json({ error: "対象プロジェクトが設定されていません。配信オペレーション画面でプロジェクトを選択してください。" });
-      return;
-    }
-
-    // セグメント条件からターゲットユーザーを取得（画面からのsegment_idがあれば優先）
-    //
-    // 以前はここだけ `segment.conditions.conditions` という旧フォーマットを直接読み、
-    // gender / prefecture / is_blocked の3フィールドしか解釈していなかった。現行の
-    // 保存フォーマットは {operator, groups[]} なので条件が丸ごと無視され、
-    // 画面が出す「推定対象人数」と実配信対象が食い違っていた。
-    // プレビューと同じ評価器（evaluateConditionsIds）に一本化する。
-    const effectiveSegmentId = segmentIdOverride ?? campaign.segment_id;
-    let targetLineUserIds: string[] = [];
-
-    if (effectiveSegmentId) {
-      const segment = await segmentRepository.getById(effectiveSegmentId);
-      const unsupported = findUnsupportedSegmentFields(segment.conditions);
-      if (unsupported.length > 0) {
-        // 解釈できない条件があるまま配信すると対象が広がる方向に外れるため中断する
-        res.status(400).json({
-          error: `セグメント条件に未対応の項目が含まれています（${unsupported.join(", ")}）。条件を修正するまで配信できません。`
+      // ドライラン: 対象件数だけ返して実際のアサインは行わない。
+      // 確認モーダルが「これから何名に配信されるか」を実配信と同じ経路で取得するために使う。
+      if (bodyString(req.body.dry_run) === "1") {
+        res.json({
+          ok: true,
+          dry_run: true,
+          target_count: resolved.targetLineUserIds.length,
+          segment_id: resolved.effectiveSegmentId,
+          is_all_members: resolved.isAllMembers,
         });
         return;
       }
-      const ids = await evaluateConditionsIds(db, segment.conditions);
-      targetLineUserIds = [...ids];
-    } else {
-      // セグメント未指定 → profile_completed 全員
-      const { data } = await db
-        .from("user_profiles")
-        .select("line_user_id")
-        .eq("profile_completed", true)
-        .eq("is_blocked", false);
-      targetLineUserIds = (data ?? []).map((r: { line_user_id: string }) => r.line_user_id);
+
+      const result = await deliverCampaign(resolved);
+      res.json({ ok: true, sent_count: result.sentCount });
+    } catch (error) {
+      if (error instanceof HttpError) {
+        res.status(error.statusCode).json({ error: error.message });
+        return;
+      }
+      throw error;
     }
-
-    // ドライラン: 対象件数だけ返して実際のアサインは行わない。
-    // 確認モーダルが「これから何名に配信されるか」を実配信と同じ経路で取得するために使う。
-    if (bodyString(req.body.dry_run) === "1") {
-      res.json({
-        ok: true,
-        dry_run: true,
-        target_count: targetLineUserIds.length,
-        segment_id: effectiveSegmentId ?? null,
-        is_all_members: !effectiveSegmentId
-      });
-      return;
-    }
-
-    if (targetLineUserIds.length === 0) {
-      res.json({ ok: true, sent_count: 0 });
-      return;
-    }
-
-    // respondent ID を取得
-    const { data: respondents } = await db
-      .from("respondents")
-      .select("id, line_user_id")
-      .in("line_user_id", targetLineUserIds);
-
-    const respondentIds = (respondents ?? []).map((r: { id: string }) => r.id);
-
-    // assignmentService でバッチアサイン
-    const createdAssignments = await assignmentService.assignManual({
-      projectId: effectiveProjectId,
-      sourceRespondentIds: respondentIds,
-      deadline: null,
-      deliveryChannel: campaign.delivery_channel,
-    });
-
-    const sentCount = Array.isArray(createdAssignments) ? createdAssignments.length : respondentIds.length;
-
-    // campaign_assignment_map に記録
-    if (Array.isArray(createdAssignments) && createdAssignments.length > 0) {
-      const maps = (createdAssignments as { id: string }[]).map((a) => ({
-        campaign_id: campaignId,
-        assignment_id: a.id,
-      }));
-      await db.from("campaign_assignment_map").insert(maps);
-    }
-
-    // delivery_campaigns を sent に更新
-    await deliveryCampaignRepository.update(campaignId, {
-      status: "sent",
-      sent_at: new Date().toISOString(),
-      sent_count: sentCount,
-    });
-
-    res.json({ ok: true, sent_count: sentCount });
   },
 
   // ============================================================

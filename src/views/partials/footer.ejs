@@ -1,3 +1,7 @@
     </main>
+    <%# 管理画面AIチャット: コントローラが aiChat を渡した画面にだけ出す %>
+    <% if (locals.aiChat && locals.aiChat.screenKey) { %>
+      <%- include("./ai-chat-panel", { aiChat: locals.aiChat }) %>
+    <% } %>
   </body>
 </html>

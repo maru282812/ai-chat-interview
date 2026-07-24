@@ -1714,3 +1714,71 @@ export async function runAdminToolPrompt(params: AdminToolPromptParams): Promise
 
   return text;
 }
+
+// ---------------------------------------------------------------------------
+// 管理画面AIチャット: tool-calling 対応の1ターン呼び出し
+// （docs/impl-admin-ai-chat.md Phase 1）
+//
+// runAdminToolPrompt との違いは response_format を使わず tools を渡す点だけで、
+// モデル（OPENAI_TOOL_MODEL）と gpt-5 系のパラメータ分岐は同じものを使う。
+// ai_logs への記録は会話全体をまとめて adminChatService 側で行うため、ここではしない。
+// ---------------------------------------------------------------------------
+
+/** chat.completions のメッセージ（tool ロールを含む）。SDK 型に依存せず扱う */
+export type AdminChatMessage = Record<string, unknown>;
+
+export interface AdminToolChatResult {
+  /** アシスタントのメッセージ（tool_calls を含みうる）。そのまま履歴に積める形 */
+  message: Record<string, unknown>;
+  content: string | null;
+  toolCalls: Array<{ id: string; name: string; argumentsJson: string }>;
+  tokenUsage: Record<string, unknown> | null;
+}
+
+export async function runAdminToolChat(params: {
+  messages: AdminChatMessage[];
+  tools: Array<Record<string, unknown>>;
+  maxTokens?: number;
+  temperature?: number;
+}): Promise<AdminToolChatResult> {
+  const maxTokens = params.maxTokens ?? 1200;
+  const model = env.ADMIN_CHAT_MODEL || env.OPENAI_TOOL_MODEL;
+  const isGpt5Family = /^gpt-5/.test(model);
+
+  const response = await openai.chat.completions.create({
+    model,
+    // biome-ignore lint/suspicious/noExplicitAny: SDK の厳密なメッセージ型に合わせるとツール履歴の受け渡しが煩雑になるため
+    messages: params.messages as any,
+    // biome-ignore lint/suspicious/noExplicitAny: 同上（tools は JSON Schema をそのまま渡す）
+    ...(params.tools.length > 0 ? { tools: params.tools as any, tool_choice: "auto" as const } : {}),
+    ...(isGpt5Family
+      ? {
+          max_completion_tokens: maxTokens + 1024,
+          reasoning_effort: "low" as const,
+        }
+      : {
+          temperature: params.temperature ?? 0.3,
+          max_tokens: maxTokens,
+        }),
+  });
+
+  const message = (response.choices[0]?.message ?? {}) as Record<string, unknown>;
+  const rawToolCalls = (message["tool_calls"] as Array<Record<string, unknown>> | undefined) ?? [];
+  const toolCalls = rawToolCalls
+    .map((call) => {
+      const fn = call["function"] as Record<string, unknown> | undefined;
+      return {
+        id: String(call["id"] ?? ""),
+        name: String(fn?.["name"] ?? ""),
+        argumentsJson: String(fn?.["arguments"] ?? "{}"),
+      };
+    })
+    .filter((call) => call.id !== "" && call.name !== "");
+
+  return {
+    message,
+    content: (message["content"] as string | null) ?? null,
+    toolCalls,
+    tokenUsage: (response.usage as Record<string, unknown> | undefined) ?? null,
+  };
+}

@@ -153,6 +153,11 @@ adminRoutes.post("/projects/:projectId/blocks/suggest", asyncHandler(adminContro
 adminRoutes.post("/projects/:projectId/blocks/preview", asyncHandler(adminController.previewBlocks));
 adminRoutes.post("/projects/:projectId/blocks/apply",   asyncHandler(adminController.applyBlocks));
 
+// 管理画面AIチャット（partials/ai-chat-panel.ejs から呼び出される）
+adminRoutes.post("/api/ai-chat", asyncHandler(adminController.aiChatApi));
+// Tier C（配信・公開など不可逆な操作）を承認カード経由で実行する唯一の入口
+adminRoutes.post("/api/ai-chat/approve", asyncHandler(adminController.aiChatApproveApi));
+
 // Tag API (formV3.ejs から呼び出される)
 adminRoutes.post("/api/parse-tags",    asyncHandler(adminController.parseTagsApi));
 adminRoutes.post("/api/generate-tags", asyncHandler(adminController.generateTagsApi));

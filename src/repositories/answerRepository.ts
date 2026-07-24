@@ -107,6 +107,39 @@ export const answerRepository = {
     return count ?? 0;
   },
 
+  /**
+   * 設問単位の集計用サンプル取得（管理画面AIチャットの aggregate_answers）。
+   *
+   * 総数は必ず DB 側の count で取り、値の取得は上限付きにする。
+   * 「打ち切った母集団で集計して総数として出す」を避けるため、返り値では
+   * total（真の件数）と sampled（実際に読んだ件数）を分けて返す。
+   */
+  async sampleForAggregate(
+    questionId: string,
+    limit: number
+  ): Promise<{ total: number; rows: Array<Pick<Answer, "answer_text" | "free_text_answer">> }> {
+    const { count, error: countError } = await supabase
+      .from("answers")
+      .select("id", { count: "exact", head: true })
+      .eq("question_id", questionId)
+      .eq("answer_role", "primary");
+    throwIfError(countError);
+
+    const { data, error } = await supabase
+      .from("answers")
+      .select("answer_text, free_text_answer")
+      .eq("question_id", questionId)
+      .eq("answer_role", "primary")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    throwIfError(error);
+
+    return {
+      total: count ?? 0,
+      rows: (data ?? []) as Array<Pick<Answer, "answer_text" | "free_text_answer">>
+    };
+  },
+
   async listAll(): Promise<Answer[]> {
     const { data, error } = await supabase
       .from("answers")
