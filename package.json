@@ -11,7 +11,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "biome check --fix --unsafe .",
     "format": "biome format --write .",
-    "db:migrate": "node scripts/applyMigrations.mjs"
+    "db:migrate": "node scripts/applyMigrations.mjs",
+    "deploy": "wrangler deploy",
+    "preview": "wrangler dev"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
@@ -31,6 +33,7 @@
     "@types/node-cron": "^3.0.11",
     "@types/qrcode": "^1.5.6",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "wrangler": "^4.114.0"
   }
 }
