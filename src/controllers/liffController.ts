@@ -2500,7 +2500,7 @@ export const liffController = {
         consentPageUrl: "/liff/consent",
         surveyBaseUrl: "/liff/survey",
         projectsUrl: "/liff/projects",
-        savedProjectsUrl: "/liff/saved-projects",
+        savedProjectsUrl: "/liff/answer", // 保存は「回答する」タブに合流（旧URLは302で生存）
         interactionsUrl: "/liff/interactions",
         mypageUrl: "/liff/mypage",
       }
@@ -2577,7 +2577,7 @@ export const liffController = {
         projectDetailBaseUrl: "/liff/projects",
         dailyTodayUrl: "/liff/daily-surveys-today",
         poolQuestionsTodayUrl: "/liff/pool-questions-today",
-        savedProjectsUrl: "/liff/saved-projects",
+        savedProjectsUrl: "/liff/answer", // 保存は「回答する」タブに合流（旧URLは302で生存）
         interactionsUrl: "/liff/interactions",
         mypageUrl: "/liff/mypage",
       }
@@ -2754,21 +2754,41 @@ export const liffController = {
     res.json({ ok: true, saved: result.saved });
   },
 
-  // ---- 保存した案件 ----
+  // ---- 回答する（いま回答できるもの＋保存＋結果待ち） ----
 
-  async savedProjectsPage(_req: Request, res: Response): Promise<void> {
+  /**
+   * 「回答する」タブ。回答者が"いま手を動かせるもの"を1画面に集める。
+   * 中断中(started) → 当選未回答(assigned/sent/opened) → 保存 → 結果待ち → 終了 の順で出す。
+   * データは既存の2エンドポイント（interactions-data / saved-projects-data）を
+   * クライアントで束ねるだけで、新しい取得APIは作らない。
+   */
+  async answerPage(_req: Request, res: Response): Promise<void> {
     const liffId = process.env.LINE_LIFF_ID_MYPAGE || process.env.LINE_LIFF_ID || null;
-    res.render("liff/saved-projects", {
-      title: "保存した案件",
+    res.render("liff/answer", {
+      title: "回答する",
       initialData: {
         liffId,
+        interactionsDataUrl: "/liff/interactions-data",
         savedDataUrl: "/liff/saved-projects-data",
+        surveyBaseUrl: "/liff/survey",
         projectDetailBaseUrl: "/liff/projects",
         projectsUrl: "/liff/projects",
-        interactionsUrl: "/liff/interactions",
         mypageUrl: "/liff/mypage",
+        dailyTodayUrl: "/liff/daily-surveys-today",
+        poolQuestionsTodayUrl: "/liff/pool-questions-today",
       }
     });
+  },
+
+  // ---- 保存した案件（旧ページ）----
+
+  /**
+   * 旧「保存」タブ。保存は「回答する」タブに合流したので、ここは恒久リダイレクトにする。
+   * ⚠ ルート自体は消さないこと: LINE で配信済みのメッセージに
+   *   /liff/saved-projects へのリンクが残っており、消すとその導線が死ぬ。
+   */
+  async savedProjectsPage(_req: Request, res: Response): Promise<void> {
+    res.redirect(302, "/liff/answer");
   },
 
   async getSavedProjectsData(req: Request, res: Response): Promise<void> {
@@ -2820,7 +2840,7 @@ export const liffController = {
         interactionsDataUrl: "/liff/interactions-data",
         surveyBaseUrl: "/liff/survey",
         projectsUrl: "/liff/projects",
-        savedProjectsUrl: "/liff/saved-projects",
+        savedProjectsUrl: "/liff/answer", // 保存は「回答する」タブに合流（旧URLは302で生存）
         mypageUrl: "/liff/mypage",
       }
     });

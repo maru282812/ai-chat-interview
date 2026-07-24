@@ -2,16 +2,22 @@
   LIFF共通下部ナビゲーション
   使い方（呼び出し側）: include('../partials/liff-bottom-nav', { active: 'projects' })
   注意: EJSコメント内にEJSタグのデリミタを書くとコメントの閉じ解釈が壊れるため書かないこと
-  active: 'projects' | 'saved' | 'interactions' | 'mypage'
+  active: 'projects' | 'answer' | 'interactions' | 'mypage'
+
+  「保存」は「回答する」に合流した（保存＝あとで回答するつもりのもの）。
+  タブは移動先を表し、単発の操作（保存する/外す）は案件カード側の☆が担う。
+  バッジは「いま手を動かせる件数」だけを出す。保存や選考待ちは足さないこと
+  （数字が対応要否を意味しなくなり、バッジとして読めなくなるため）。
 %>
 <nav class="bottom-nav" id="liff-bottom-nav">
   <a class="bottom-nav__item <%= active === 'projects' ? 'bottom-nav__item--active' : '' %>" href="/liff/projects">
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
     <span>探す</span>
   </a>
-  <a class="bottom-nav__item <%= active === 'saved' ? 'bottom-nav__item--active' : '' %>" href="/liff/saved-projects">
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-    <span>保存</span>
+  <a class="bottom-nav__item <%= active === 'answer' ? 'bottom-nav__item--active' : '' %>" href="/liff/answer">
+    <span class="bottom-nav__badge" id="nav-answer-badge" hidden></span>
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+    <span>回答する</span>
   </a>
   <a class="bottom-nav__item <%= active === 'interactions' ? 'bottom-nav__item--active' : '' %>" href="/liff/interactions">
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -46,6 +52,46 @@
 }
 .bottom-nav__item--active { color: #2ca87a; }
 .bottom-nav__item svg { stroke: currentColor; }
+/* 「いま回答できる件数」バッジ。対応が要るものだけを数える。 */
+.bottom-nav__item { position: relative; }
+.bottom-nav__badge {
+  position: absolute; top: 6px; left: 50%; margin-left: 3px;
+  background: #E5484D; color: #fff;
+  font-size: 9px; font-weight: 800; line-height: 1;
+  min-width: 15px; height: 15px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 4px; box-sizing: border-box;
+}
+.bottom-nav__badge[hidden] { display: none; }
 /* ナビ分の余白 */
 body { padding-bottom: 68px; }
 </style>
+<script>
+  (() => {
+    'use strict';
+    // バッジは「いま回答できる件数」= 中断中 + 当選未回答。
+    // 保存・選考待ちは数えない（待つしかないものを数えると、数字が行動を促さなくなる）。
+    // 認証済みの画面から呼ばれる想定。失敗してもナビは壊さない。
+    window.LiffNavBadge = {
+      async refresh(idToken) {
+        if (!idToken) return;
+        try {
+          const res = await fetch('/liff/interactions-data', {
+            headers: { Authorization: 'Bearer ' + idToken }
+          });
+          if (!res.ok) return;
+          const data = await res.json();
+          const n = (data.in_progress || []).length + (data.pending || []).length;
+          const el = document.getElementById('nav-answer-badge');
+          if (!el) return;
+          if (n > 0) {
+            el.textContent = n > 99 ? '99+' : String(n);
+            el.hidden = false;
+          } else {
+            el.hidden = true;
+          }
+        } catch (_e) { /* noop: 計測でもUIでもない補助表示なので黙って諦める */ }
+      }
+    };
+  })();
+</script>

@@ -2,6 +2,8 @@ import { Router } from "express";
 import { liffController } from "../controllers/liffController";
 import { asyncHandler } from "../lib/http";
 import { logger } from "../lib/logger";
+import { liffAuthService } from "../services/liffAuthService";
+import { recordBehaviorEvents } from "../services/liffBehaviorService";
 
 export const liffRoutes = Router();
 
@@ -22,6 +24,47 @@ liffRoutes.post("/perf-beacon", (req, res) => {
     totalMs: num(b.totalMs), //        ページ読込開始→初期表示完了
     inClient: typeof b.inClient === "boolean" ? b.inClient : undefined,
   });
+  res.status(204).end();
+});
+
+// 行動計測ビーコン（migration 086 / liff_behavior_events）。
+// 目的は「ボトムナビに保存タブが要るか」「探す画面で案件一覧まで到達しているか」を
+// 感覚でなく実データで決めること。リリース前に仕込み、リリース後の実データで判断する。
+//
+// 設計上の約束:
+//  - 認証は任意。id_token があれば本人に紐づけ、無くても匿名イベントとして受ける
+//    （計測のためにログインを強制しない。認証失敗でイベントを捨てない）。
+//  - 何があっても 204 を返す。計測がユーザー体験を壊さないことを最優先する。
+//  - sendBeacon から複数イベントをまとめて受ける想定。
+//  - 壊れた JSON でも 204。パース失敗は app.ts の express.json() 内で throw されるため
+//    ここでは捕まえられない。app.ts 側で本ルートのパースエラーだけを握りつぶしている。
+liffRoutes.post("/behavior-beacon", async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    // 本人紐づけは best-effort。トークンが無い・失効していてもイベント自体は残す
+    // （匿名でも「一覧到達率」「ナビのタップ比率」は判断材料として成立するため）。
+    let lineUserId: string | null = null;
+    const authHeader = req.headers.authorization;
+    const rawToken = typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+      ? authHeader.slice(7).trim()
+      : "";
+    if (rawToken) {
+      try {
+        const user = await liffAuthService.verifyIdToken(rawToken, { path: req.path });
+        lineUserId = user.userId;
+      } catch {
+        /* noop: 認証できなくても匿名イベントとして記録する */
+      }
+    }
+
+    await recordBehaviorEvents(body.events, lineUserId);
+  } catch (err) {
+    // 計測の失敗はユーザーに見せない。気付けるようにログにだけ残す。
+    logger.warn("liff.behavior.beacon_failed", {
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
   res.status(204).end();
 });
 
@@ -141,6 +184,9 @@ liffRoutes.post("/projects/:id/favorite", asyncHandler(liffController.toggleProj
 liffRoutes.post("/projects/:id/apply", asyncHandler(liffController.applyToProject));
 liffRoutes.post("/projects/:id/withdraw", asyncHandler(liffController.withdrawApplication));
 liffRoutes.get("/projects/:id", asyncHandler(liffController.projectDetailPage));
+// 「回答する」タブ。いま回答できるもの・保存・結果待ちを1画面に集める。
+liffRoutes.get("/answer", asyncHandler(liffController.answerPage));
+// 旧「保存」タブ。/answer へ 302。⚠ 配信済みLINEメッセージのリンクが生きているため消さない。
 liffRoutes.get("/saved-projects", asyncHandler(liffController.savedProjectsPage));
 liffRoutes.get("/saved-projects-data", asyncHandler(liffController.getSavedProjectsData));
 liffRoutes.get("/interactions", asyncHandler(liffController.interactionsPage));

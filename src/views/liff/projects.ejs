@@ -16,46 +16,79 @@
     <%- include('../partials/daily-today-card') %>
     <%# ついでスワイプ（脇役。AnswerUI は上の daily-today-card が読み込み済み） %>
     <%- include('../partials/pool-swipe-box') %>
+    <%# 行動計測（HbTrack）。ナビのタップと案件一覧への到達を実データで取る %>
+    <%- include('../partials/behavior-track') %>
     <style>
-      /* 現在のポイントと次ランクまでの距離。回答するとその場で数字が動くのが見えるように、
-         今日の1問カードのすぐ上に置く（回答 → 加算 → 次ランクが近づく、を1画面で見せる）。 */
+      /* 進捗ステータス帯（案B）。pt・ランク・今月の応募数を1行に畳む。
+         以前は pt カード／今月の応募数／今日の1問が縦に3つ並び、いずれも「あなたの進捗」を
+         訴えていたため視線が割れ、案件一覧が初期表示に入らなかった。ここを1行にして
+         「回答 → 加算 → 次ランクが近づく」は保ったまま、一覧を画面内へ持ち上げる。 */
       .hb-pt {
-        display: block; margin: 10px 12px 6px; padding: 14px 16px;
-        background: #fff; border: 1px solid #e2ece8; border-radius: 16px;
-        box-shadow: 0 2px 8px rgba(20,73,58,.06);
+        display: flex; align-items: center; gap: 10px;
+        margin: 0; padding: 9px 16px;
+        background: #fff; border-bottom: 1px solid #e2ece8;
         text-decoration: none; color: inherit;
       }
-      .hb-pt .caprow { display: flex; align-items: baseline; gap: 6px; }
-      .hb-pt .cap { font-size: 12px; font-weight: 700; color: #6b8c81; }
-      .hb-pt .val { font-size: 26px; font-weight: 900; color: #14493a; line-height: 1.1; }
-      .hb-pt .unit { font-size: 13px; font-weight: 800; color: #14493a; margin-left: -2px; }
-
-      /* 現在ランク → 次ランク の「旅路」。バー両端のメダルが現在地／目的地を表すので、
-         メダル単体でも「今どこにいて次はどこか」が説明なしで伝わる。 */
-      .hb-pt .journey { display: flex; align-items: flex-start; gap: 9px; margin: 12px 0 6px; }
-      .hb-pt .stop { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 66px; }
-      .hb-pt .stop .m { font-size: 22px; line-height: 0; }
-      .hb-pt .stop .n { margin-top: 3px; font-size: 9.5px; font-weight: 800; white-space: nowrap; }
-      .hb-pt .stop.cur .n { color: #14493a; }
-      .hb-pt .stop.nxt { opacity: .9; }
-      .hb-pt .stop.nxt .m { filter: grayscale(.25); }
-      .hb-pt .stop.nxt .n { color: #6b8c81; }
+      .hb-pt .medal { font-size: 19px; flex-shrink: 0; line-height: 1; }
+      .hb-pt .meat { flex: 1; min-width: 0; }
+      .hb-pt .line1 { display: flex; align-items: baseline; gap: 3px; }
+      .hb-pt .val { font-size: 17px; font-weight: 900; color: #14493a; line-height: 1.2; font-variant-numeric: tabular-nums; }
+      .hb-pt .unit { font-size: 11px; font-weight: 800; color: #14493a; }
+      .hb-pt .togo { margin-left: auto; font-size: 10.5px; color: #4d7a6b; white-space: nowrap; }
+      .hb-pt .togo b { color: #1f8f66; font-weight: 800; }
       .hb-pt .bar {
-        flex: 1; margin-top: 17px; height: 8px; border-radius: 20px;
-        background: #edf3f1; overflow: hidden;
+        height: 5px; border-radius: 20px; background: #edf3f1;
+        overflow: hidden; margin-top: 4px;
       }
       .hb-pt .bar i {
         display: block; height: 100%; border-radius: 20px;
         background: linear-gradient(90deg, #2ca87a, #1f8f66);
         transition: width .45s ease;
       }
-      .hb-pt .togo { text-align: right; font-size: 12px; color: #4d7a6b; }
-      .hb-pt .togo b { color: #1f8f66; font-weight: 800; }
+      /* 現在地と行き先は文字でも読めるようにする（メダルの色・絵柄だけに意味を載せない）。 */
+      .hb-pt .line2 {
+        display: flex; align-items: baseline; gap: 8px;
+        margin-top: 3px; font-size: 9.5px; font-weight: 700;
+      }
+      .hb-pt .line2 .cur { color: #14493a; }
+      .hb-pt .line2 .nxt { color: #6b8c81; font-weight: 600; }
+      .hb-pt .line2 .mon { margin-left: auto; color: #6b8c81; font-weight: 600; white-space: nowrap; }
+      .hb-pt .line2 .mon b { color: #1f8f66; font-weight: 800; }
       .hb-pt .gain {
-        display: inline-block; margin-left: 6px; font-size: 12px; font-weight: 800;
+        display: inline-block; margin-left: 4px; font-size: 11px; font-weight: 800;
         color: #1f8f66; animation: hb-pt-pop 1.6s ease;
       }
       .hb-h .hb-h-ico { align-self: center; color: #1f8f66; flex-shrink: 0; }
+
+      /* すきま時間に（案Q2）。電車の中など短時間で開いた人に、その場で終わる案件だけを
+         横スクロールで差し出す。「探す」操作をさせずに目に入ることが狙いなので、
+         チップでの絞り込みではなく常設の帯にする。該当0件なら帯ごと出さない。 */
+      .hb-quick { padding: 6px 0 2px; }
+      .hb-quick .rail {
+        display: flex; gap: 10px; overflow-x: auto;
+        padding: 6px 12px 12px; scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+      }
+      .hb-quick .rail::-webkit-scrollbar { display: none; }
+      .hb-quick .qcard {
+        flex-shrink: 0; width: 150px; background: #fff;
+        border: 1px solid #e2ece8; border-radius: 14px; padding: 12px;
+        box-shadow: 0 2px 8px rgba(20,73,58,.06);
+        text-decoration: none; color: inherit;
+      }
+      .hb-quick .qtop { display: flex; align-items: baseline; gap: 4px; }
+      .hb-quick .qpt { font-size: 19px; font-weight: 900; color: var(--hb-teal); font-variant-numeric: tabular-nums; }
+      .hb-quick .qunit { font-size: 10.5px; font-weight: 800; color: var(--hb-teal); }
+      /* 所要時間は色でなく数字で伝える（色だけに意味を載せない）。 */
+      .hb-quick .qmin {
+        margin-left: auto; font-size: 10px; font-weight: 800; color: #fff;
+        background: var(--hb-teal); padding: 2px 7px; border-radius: 20px; white-space: nowrap;
+      }
+      .hb-quick .qttl {
+        font-size: 12px; font-weight: 700; line-height: 1.45; margin-top: 7px;
+        display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+      }
+
       @keyframes hb-pt-pop {
         0% { opacity: 0; transform: translateY(6px); }
         20% { opacity: 1; transform: translateY(0); }
@@ -64,7 +97,7 @@
       }
     </style>
   </head>
-  <body class="hibi">
+  <body class="hibi" data-track-page="projects">
     <div class="hb-shell">
       <header class="hb-appbar">
         <span class="hb-logo">Hibi</span>
@@ -80,13 +113,9 @@
         <button class="hb-chip" data-filter="instant" data-category="urgent">即回答OK</button>
       </nav>
 
-      <section class="hb-progress" id="progress" style="display:none">
-        <div class="row"><span>💡 今月の応募数</span><span class="num"><b id="monthly-count">0</b><small> /<span id="monthly-reco">10</span>件</small></span></div>
-        <div class="bar"><i id="monthly-bar" style="width:0%"></i></div>
-      </section>
-
       <div id="daily-area"></div>
       <div id="pool-swipe-area"></div>
+      <div id="quick-area"></div>
       <div id="pick-area"></div>
       <div class="hb-h" id="list-head" style="display:none">
         <svg class="hb-h-ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v9"/><path d="M8 8l4 4 4-4"/><path d="M3 14v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4h-5l-1.4 2h-5.2L8 14z"/></svg>
@@ -162,6 +191,67 @@
           </a>`;
       }
 
+      // すきま時間枠の抽出規則。src/lib/quickPickSelection.ts と同じ規則をブラウザ側でも持つ
+      // （テストは純関数側にある。ここを変えるときは向こうも直す）。
+      // ⚠ estimated_minutes が未設定の案件は絶対に入れない。「3分で終わるはずが終わらない」が
+      //    最も信頼を損なうため、「短いと分かっているもの」だけを枠に入れる。
+      const QUICK_MAX_MIN = 5;
+      const QUICK_LIMIT = 8;
+      function isQuickPick(p) {
+        const m = p.estimated_minutes;
+        return typeof m === 'number' && Number.isFinite(m) && m > 0 && m <= QUICK_MAX_MIN;
+      }
+      function selectQuickPicks(list) {
+        return list
+          .filter(isQuickPick)
+          .sort((a, b) => {
+            const d = (a.estimated_minutes ?? 0) - (b.estimated_minutes ?? 0);
+            return d !== 0 ? d : (b.reward_points ?? 0) - (a.reward_points ?? 0);
+          })
+          .slice(0, QUICK_LIMIT);
+      }
+
+      /**
+       * 「すきま時間に」帯を描く。該当0件なら帯ごと消す
+       * （見出しだけ残すと空虚に見えるため、セクションごと空にする）。
+       */
+      function renderQuickPicks(list) {
+        const area = document.getElementById('quick-area');
+        if (!area) return;
+        const picks = selectQuickPicks(list);
+        if (picks.length === 0) { area.innerHTML = ''; return; }
+
+        area.innerHTML = `
+          <section class="hb-quick">
+            <div class="hb-h">
+              <svg class="hb-h-ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              <span>すきま時間に</span>
+              <span class="why">${QUICK_MAX_MIN}分以内 · ${picks.length}件</span>
+            </div>
+            <div class="rail">
+              ${picks.map(p => `
+                <a class="qcard" href="${esc(projectDetailBaseUrl)}/${esc(p.id)}" data-quick-id="${esc(p.id)}">
+                  <div class="qtop">
+                    <span class="qpt">${(p.reward_points ?? 0).toLocaleString()}</span>
+                    <span class="qunit">pt</span>
+                    <span class="qmin">${esc(String(p.estimated_minutes))}分</span>
+                  </div>
+                  <div class="qttl">${esc(p.title)}</div>
+                </a>`).join('')}
+            </div>
+          </section>`;
+
+        // すきま帯からの流入を一覧タップと区別できるよう接頭辞を付けて計測する。
+        area.querySelectorAll('[data-quick-id]').forEach(el => {
+          el.addEventListener('click', () => {
+            if (window.HbTrack) {
+              window.HbTrack.push('card_tap', 'quick:' + el.dataset.quickId, null);
+              window.HbTrack.flush();
+            }
+          });
+        });
+      }
+
       function renderProjects(list) {
         const listEl = document.getElementById('project-list');
         document.getElementById('loading-overlay').style.display = 'none';
@@ -194,9 +284,20 @@
             </article>`;
         }).join('');
 
+        // 案件一覧の見出しに到達したかを1度だけ記録する。
+        // 「進捗ブロックが多すぎて一覧まで届いていないのでは」を実データで検証するための計測
+        // （value_num にその時点のスクロール量が入るので、どれだけ下げて着いたかも残る）。
+        if (window.HbTrack) {
+          window.HbTrack.observeReach(document.getElementById('list-head'), 'list_reach', 'project_list');
+        }
+
         listEl.querySelectorAll('.hb-card').forEach(card => {
           card.addEventListener('click', e => {
             if (e.target.closest('.hb-save')) return;
+            if (window.HbTrack) {
+              window.HbTrack.push('card_tap', card.dataset.id, null);
+              window.HbTrack.flush();
+            }
             window.location.href = `${projectDetailBaseUrl}/${card.dataset.id}`;
           });
         });
@@ -214,6 +315,9 @@
               btn.className = `hb-save${json.saved ? ' saved' : ''}`;
               const proj = allProjects.find(p => p.id === projectId);
               if (proj) proj.is_saved = json.saved;
+              // 保存が実際に使われているかの実データ。ボトムナビから保存タブを外してよいかの根拠になる
+              // （value_num: 1=保存した / 0=解除した）。
+              if (window.HbTrack) window.HbTrack.push('save_toggle', projectId, json.saved ? 1 : 0);
             } catch (err) { console.error('save failed', err); }
           });
         });
@@ -240,6 +344,10 @@
           const bt = b.recruit_deadline ? new Date(b.recruit_deadline).getTime() : Infinity;
           return at - bt;
         });
+        // すきま時間帯は「いま絞り込んでいる結果」の中から出す。
+        // 検索・カテゴリを当てた状態で無関係な案件が横帯に残ると、絞り込んだ意味が消えるため。
+        renderQuickPicks(list);
+
         // 先頭1件をヒーローに、残りをリストに（1件しかない場合はヒーローのみ）
         renderPick(list[0] ?? null);
         renderProjects(list.slice(1));
@@ -310,18 +418,36 @@
         }
 
         el.href = d.mypageUrl || '#';
+        // 初期 style="display:none" を外す。CSS 側の flex を効かせるため空文字で戻す
+        // （'block' を入れると1行レイアウトが崩れる）。
         el.style.display = '';
+        // 1行のステータス帯（案B）。以前は pt カードと「今月の応募数」が別々の大きなブロックで、
+        // 「あなたの進捗」を訴える要素が3つ縦に並び、案件一覧が初期表示に入らなかった。
+        // ここに pt・ランク・今月の応募数を畳んで、一覧を画面内へ持ち上げる。
         el.innerHTML = `
-          <div class="caprow">
-            <span class="cap">現在のポイント</span>
-            <span class="val">${esc(String(status.available_points ?? 0))}</span><span class="unit">pt</span>${gainTag}
-          </div>
-          <div class="journey">
-            <span class="stop cur"><span class="m">${curMedal}</span><span class="n">${curLabel}</span></span>
+          <span class="medal">${curMedal}</span>
+          <div class="meat">
+            <div class="line1">
+              <span class="val">${esc(String(status.available_points ?? 0))}</span><span class="unit">pt</span>${gainTag}
+              <span class="togo">${togo}</span>
+            </div>
             <div class="bar"><i style="width:${fill}%"></i></div>
-            <span class="stop nxt"><span class="m">${nextMedal}</span><span class="n">${nextName}</span></span>
-          </div>
-          <div class="togo">${togo}</div>`;
+            <div class="line2">
+              <span class="cur">${curLabel}</span>
+              <span class="nxt">次: ${nextMedal} ${nextName}</span>
+              <span class="mon" id="monthly-inline"></span>
+            </div>
+          </div>`;
+        renderMonthlyInline();
+      }
+
+      // 今月の応募数。旧 .hb-progress ブロックの中身を1行帯の中に畳んだもの
+      // （数字は残すが、独立したブロックとしては主張させない）。
+      let monthlyState = { count: 0, reco: 10 };
+      function renderMonthlyInline() {
+        const el = document.getElementById('monthly-inline');
+        if (!el) return;
+        el.innerHTML = `今月 <b>${monthlyState.count}</b>/${monthlyState.reco}件`;
       }
 
       async function load() {
@@ -344,6 +470,9 @@
             } catch (e) { console.error('rank celebration failed', e); }
           };
 
+          // 「回答する」タブのバッジ（いま回答できる件数）。一覧表示はブロックしない。
+          if (window.LiffNavBadge) LiffNavBadge.refresh(idToken);
+
           DailyToday.mount({ idToken, url: d.dailyTodayUrl, onAnswered: onPointGained });
 
           // ついでスワイプ（脇役）。今日の1問と同じく一覧表示はブロックしない。
@@ -357,16 +486,14 @@
           const data = await res.json();
           const _dataMs = performance.now() - _fetchStart;
           allProjects = data.projects || [];
-          renderPointCard(data.point_status, 0);
 
+          // 今月の応募数はステータス帯の中に畳んで出すので、描画前に値を入れておく
+          // （renderPointCard が帯ごと組み立て直すため、順序が逆だと反映されない）。
           const monthly = data.monthly_applications;
           if (monthly) {
-            document.getElementById('progress').style.display = '';
-            document.getElementById('monthly-count').textContent = monthly.count;
-            document.getElementById('monthly-reco').textContent = monthly.recommended;
-            document.getElementById('monthly-bar').style.width =
-              Math.min(100, Math.round((monthly.count / monthly.recommended) * 100)) + '%';
+            monthlyState = { count: monthly.count, reco: monthly.recommended };
           }
+          renderPointCard(data.point_status, 0);
           const _renderStart = performance.now();
           applyFilters();
           try { LiffAuth.reportPerf('/liff/projects', { dataMs: _dataMs, renderMs: performance.now() - _renderStart }); } catch (_e) {}

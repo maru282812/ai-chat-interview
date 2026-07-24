@@ -7,6 +7,8 @@
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
     <link rel="stylesheet" href="/public/hibi.css" />
+    <%# 行動計測。4タブの表示数を横並びで比較するための分母 %>
+    <%- include('../partials/behavior-track') %>
     <%- include('../partials/daily-today-card') %>
     <style>
       .hb-tabs { display: flex; background: #FFFDF6; border-bottom: 2px solid var(--hb-line); position: sticky; top: 49px; z-index: 19; }
@@ -22,7 +24,7 @@
       .item .act .hb-btn { padding: 11px; font-size: 14px; border-radius: 10px; }
     </style>
   </head>
-  <body class="hibi">
+  <body class="hibi" data-track-page="interactions">
     <div class="hb-shell">
       <header class="hb-appbar">
         <span class="hb-logo">Hibi</span>
@@ -176,6 +178,14 @@
           const res = await fetch(interactionsDataUrl, { headers: { Authorization: `Bearer ${idToken}` } });
           const data = await res.json();
           renderAll(data);
+
+          // 「回答する」タブのバッジ。同じデータを持っているので再取得しない。
+          const badge = document.getElementById('nav-answer-badge');
+          if (badge) {
+            const n = (data.in_progress || []).length + (data.pending || []).length;
+            if (n > 0) { badge.textContent = n > 99 ? '99+' : String(n); badge.hidden = false; }
+            else { badge.hidden = true; }
+          }
         } catch (err) {
           document.getElementById('loading-overlay').style.display = 'none';
           const el = document.getElementById('tab-applications');
