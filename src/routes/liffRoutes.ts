@@ -36,6 +36,8 @@ liffRoutes.post("/perf-beacon", (req, res) => {
 //    （計測のためにログインを強制しない。認証失敗でイベントを捨てない）。
 //  - 何があっても 204 を返す。計測がユーザー体験を壊さないことを最優先する。
 //  - sendBeacon から複数イベントをまとめて受ける想定。
+//  - 壊れた JSON でも 204。パース失敗は app.ts の express.json() 内で throw されるため
+//    ここでは捕まえられない。app.ts 側で本ルートのパースエラーだけを握りつぶしている。
 liffRoutes.post("/behavior-beacon", async (req, res) => {
   try {
     const body = (req.body ?? {}) as Record<string, unknown>;

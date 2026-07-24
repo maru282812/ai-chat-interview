@@ -34,6 +34,18 @@ export function createApp() {
   app.use("/public", express.static(path.join(process.cwd(), "src", "public")));
   app.use("/webhooks/line", express.raw({ type: "application/json" }));
   app.use(express.json({ limit: "10mb" }));
+  // 計測ビーコンだけは「壊れた JSON でも 204」を守る。express.json() はパース失敗を
+  // throw し、それはルートの try/catch より前で起きるためルート側では捕まえられない。
+  // ここで本ルートのパースエラーだけを body={} に丸め、計測が 500 を出さないようにする
+  // （他のエンドポイントの 400/500 挙動は変えない）。
+  app.use((err: unknown, req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    if (req.path === "/liff/behavior-beacon" && err instanceof SyntaxError) {
+      req.body = {};
+      next();
+      return;
+    }
+    next(err);
+  });
   app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
   app.get("/health", (_req, res) => {
