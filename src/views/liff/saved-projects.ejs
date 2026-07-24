@@ -7,6 +7,8 @@
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
     <%- include('../partials/daily-today-card') %>
+    <%# 行動計測。この画面の表示数が「保存タブが最上位ナビに要るか」の直接の根拠になる %>
+    <%- include('../partials/behavior-track') %>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body {
@@ -75,7 +77,7 @@
       @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
-  <body>
+  <body data-track-page="saved">
     <div class="page-header">
       <h1>保存した案件</h1>
     </div>

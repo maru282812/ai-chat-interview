@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <%- include('../partials/liff-auth') %>
+    <link rel="stylesheet" href="/public/hibi.css" />
+    <%# 体験設定（サーバー権威で解決済み）。演出パーシャルより前に読み込む %>
+    <%- include('../partials/experience-inject') %>
+    <script src="/public/rank-icons.js"></script>
+    <%# 昇格演出（rank-icons.js の後） %>
+    <%- include('../partials/rank-celebration') %>
+    <%# 今日の1問（answer-ui もこの中で読み込まれる） %>
+    <%- include('../partials/daily-today-card') %>
+    <%# ついでスワイプ（AnswerUI は上の daily-today-card が読み込み済み） %>
+    <%- include('../partials/pool-swipe-box') %>
+    <%# 行動計測 %>
+    <%- include('../partials/behavior-track') %>
+    <style>
+      /* 群の見出し。「いま回答できる」だけを強調し、待ち・終了は静かに置く。 */
+      .hb-grp {
+        display: flex; align-items: baseline; gap: 8px;
+        padding: 16px 16px 6px; font-size: 11.5px; font-weight: 800;
+        color: var(--hb-sub); letter-spacing: .04em;
+      }
+      .hb-grp.strong { color: var(--hb-teal); font-size: 13px; }
+      .hb-grp .cnt { margin-left: auto; font-weight: 700; color: var(--hb-sub); }
+
+      /* 状態カード。1行目=案件名、2行目=状態の説明、右端=状態ラベル。
+         状態は色だけでなく必ず文字でも示す。 */
+      .hb-st {
+        display: flex; gap: 12px; align-items: flex-start;
+        padding: 13px 16px; background: #fff;
+        border-bottom: 1px solid var(--hb-line);
+        text-decoration: none; color: inherit;
+      }
+      .hb-st .ic {
+        width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 15px; font-weight: 800;
+      }
+      .hb-st .ic.resume { background: var(--hb-teal-weak); color: var(--hb-teal); }
+      .hb-st .ic.wait { background: #FFF4E0; color: #A9701A; }
+      .hb-st .ic.ng { background: #F2F2F2; color: #8A8A8A; }
+      .hb-st .ic.save { background: var(--hb-cream); color: var(--hb-brand-text); }
+      .hb-st .bd { flex: 1; min-width: 0; }
+      .hb-st h4 { font-size: 12.5px; font-weight: 700; line-height: 1.45; margin: 0 0 3px; }
+      .hb-st .sub { font-size: 11px; color: var(--hb-sub); }
+      .hb-st .pill {
+        font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 20px;
+        white-space: nowrap; flex-shrink: 0;
+      }
+      .hb-st .pill.wait { background: #FFF4E0; color: #A9701A; }
+      .hb-st .pill.ng { background: #EFEFEF; color: #8A8A8A; }
+      .hb-st .cta {
+        display: block; margin-top: 8px; text-align: center;
+        background: var(--hb-teal); color: #fff; font-size: 12px; font-weight: 800;
+        padding: 9px; border-radius: 10px; text-decoration: none;
+      }
+      .hb-st .pt { font-size: 11px; font-weight: 800; color: var(--hb-teal); }
+
+      /* 空状態。案件がゼロでも今日の1問・スワイプがあるので「何もない」とは書かない。 */
+      .hb-none {
+        text-align: center; padding: 28px 24px; color: var(--hb-sub); font-size: 12.5px; line-height: 1.7;
+      }
+      .hb-none .go {
+        display: inline-block; margin-top: 12px; background: var(--hb-teal); color: #fff;
+        font-size: 13px; font-weight: 800; padding: 10px 20px; border-radius: 22px; text-decoration: none;
+      }
+    </style>
+  </head>
+  <body class="hibi" data-track-page="answer">
+    <div class="hb-shell">
+      <header class="hb-appbar">
+        <span class="hb-title">回答する</span>
+      </header>
+
+      <%# 今日の1問・ついでスワイプは「探す」と同じくここにも出す。
+          回答済みのものはサーバーが返さないので、両方に置いても二重にはならない %>
+      <div id="daily-area"></div>
+      <div id="pool-swipe-area"></div>
+
+      <div class="hb-loading" id="loading-overlay">読み込み中…</div>
+      <main id="content" style="display:none"></main>
+
+      <%- include('../partials/liff-bottom-nav', { active: 'answer' }) %>
+    </div>
+
+    <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+
+    <script>
+    (() => {
+      'use strict';
+      const d = JSON.parse(document.getElementById('initial-data').dataset.json || '{}');
+      const {
+        liffId, interactionsDataUrl, savedDataUrl,
+        surveyBaseUrl, projectDetailBaseUrl, projectsUrl
+      } = d;
+
+      let idToken = null;
+
+      function esc(v) {
+        return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+      }
+      function fmtDate(iso) {
+        if (!iso) return '';
+        const dt = new Date(iso);
+        return `${dt.getMonth() + 1}月${dt.getDate()}日`;
+      }
+      function minsLabel(m) {
+        return typeof m === 'number' && m > 0 ? `約${m}分` : '';
+      }
+
+      /** 「いま回答できる」1件。中断中は残りが見えるよう文言を変える。 */
+      function answerableCard(a) {
+        const resuming = a.status === 'started';
+        const bits = [
+          resuming ? '回答が途中です' : '当選・未回答',
+          minsLabel(a.estimated_minutes),
+          a.reward_points ? `${Number(a.reward_points).toLocaleString()}pt` : ''
+        ].filter(Boolean);
+        return `
+          <div class="hb-st">
+            <div class="ic resume">${resuming ? '▶' : '✎'}</div>
+            <div class="bd">
+              <h4>${esc(a.title)}</h4>
+              <div class="sub">${esc(bits.join(' · '))}</div>
+              <a class="cta" href="${esc(surveyBaseUrl)}/${esc(a.assignment_id)}"
+                 data-answer-id="${esc(a.assignment_id)}">
+                ${resuming ? '続きから回答する' : '回答をはじめる ⚡'}
+              </a>
+            </div>
+          </div>`;
+      }
+
+      function savedCard(p) {
+        const bits = [minsLabel(p.estimated_minutes), p.reward_points ? `${Number(p.reward_points).toLocaleString()}pt` : '']
+          .filter(Boolean);
+        return `
+          <a class="hb-st" href="${esc(projectDetailBaseUrl)}/${esc(p.id)}" data-saved-id="${esc(p.id)}">
+            <div class="ic save">★</div>
+            <div class="bd">
+              <h4>${esc(p.title)}</h4>
+              <div class="sub">${esc(bits.join(' · ')) || '保存した案件'}</div>
+            </div>
+            ${p.is_active ? '' : '<span class="pill ng">募集終了</span>'}
+          </a>`;
+      }
+
+      function waitingCard(a) {
+        return `
+          <div class="hb-st">
+            <div class="ic wait">⏳</div>
+            <div class="bd">
+              <h4>${esc(a.title)}</h4>
+              <div class="sub">${esc(fmtDate(a.applied_at))} 応募 · 結果はLINEでお知らせします</div>
+            </div>
+            <span class="pill wait">選考中</span>
+          </div>`;
+      }
+
+      /** 終了群。落選・対象外・完了・期限切れをまとめて静かに置く。 */
+      function finishedCard(item) {
+        const LABEL = {
+          rejected:  '落選',
+          completed: '回答済み',
+          expired:   '期限切れ',
+          cancelled: '取消',
+        };
+        const label = LABEL[item.status] || '終了';
+        const when = item.decided_at || item.completed_at || item.applied_at;
+        return `
+          <div class="hb-st">
+            <div class="ic ng">—</div>
+            <div class="bd">
+              <h4>${esc(item.title)}</h4>
+              <div class="sub">${esc(when ? fmtDate(when) : '')}</div>
+            </div>
+            <span class="pill ng">${esc(label)}</span>
+          </div>`;
+      }
+
+      function render(inter, saved) {
+        const el = document.getElementById('content');
+        document.getElementById('loading-overlay').style.display = 'none';
+        el.style.display = '';
+
+        // 「いま回答できる」= 中断中を先に、次に当選未回答。
+        // 途中まで答えたものを最優先で拾えるようにする（取りこぼしが最も惜しいため）。
+        const answerable = [...(inter.in_progress || []), ...(inter.pending || [])];
+        const waiting    = (inter.applications || []).filter(a => a.status === 'applied');
+        const finished   = [
+          ...(inter.applications || []).filter(a => a.status === 'rejected'),
+          ...(inter.completed || []),
+        ];
+        const savedList  = saved.projects || [];
+
+        const parts = [];
+
+        if (answerable.length > 0) {
+          parts.push(`<div class="hb-grp strong"><span>▶ いま回答できる</span><span class="cnt">${answerable.length}件</span></div>`);
+          parts.push(answerable.map(answerableCard).join(''));
+        }
+
+        if (savedList.length > 0) {
+          parts.push(`<div class="hb-grp"><span>★ 保存した案件</span><span class="cnt">${savedList.length}件</span></div>`);
+          parts.push(savedList.map(savedCard).join(''));
+        }
+
+        if (waiting.length > 0) {
+          parts.push(`<div class="hb-grp"><span>⏳ 結果を待っている</span><span class="cnt">${waiting.length}件</span></div>`);
+          parts.push(waiting.map(waitingCard).join(''));
+        }
+
+        if (finished.length > 0) {
+          parts.push(`<div class="hb-grp"><span>— 終了した応募</span><span class="cnt">${finished.length}件</span></div>`);
+          parts.push(finished.map(finishedCard).join(''));
+        }
+
+        // 案件が1件も無い状態。今日の1問・スワイプは上に出ているので、
+        // 「何もない」ではなく「案件を探す」導線を出す。
+        if (parts.length === 0) {
+          parts.push(`
+            <div class="hb-none">
+              まだ応募した案件はありません。<br>
+              気になる案件を探してみましょう。
+              <a class="go" href="${esc(projectsUrl)}">案件を探す</a>
+            </div>`);
+        }
+
+        el.innerHTML = parts.join('');
+
+        // 回答開始・再開のタップを計測（ナビ改善の効果測定に使う）。
+        el.querySelectorAll('[data-answer-id]').forEach(a => {
+          a.addEventListener('click', () => {
+            if (window.HbTrack) {
+              window.HbTrack.push('apply_tap', 'answer:' + a.dataset.answerId, null);
+              window.HbTrack.flush();
+            }
+          });
+        });
+        el.querySelectorAll('[data-saved-id]').forEach(a => {
+          a.addEventListener('click', () => {
+            if (window.HbTrack) {
+              window.HbTrack.push('card_tap', 'saved:' + a.dataset.savedId, null);
+              window.HbTrack.flush();
+            }
+          });
+        });
+      }
+
+      async function load() {
+        try {
+          const token = await LiffAuth.initLiffOrWebAuth(liffId);
+          if (!token) return;
+          idToken = token;
+
+          const headers = { Authorization: `Bearer ${idToken}` };
+
+          // 今日の1問・ついでスワイプは案件一覧の取得をブロックしない
+          // （失敗してもカードを出さないだけ）。
+          const onPointGained = (result) => {
+            try {
+              if (window.RankCelebration) RankCelebration.maybePlay(null, result.pointStatus);
+            } catch (e) { console.error('rank celebration failed', e); }
+          };
+          DailyToday.mount({ idToken, url: d.dailyTodayUrl, onAnswered: onPointGained });
+          if (window.PoolSwipe) {
+            PoolSwipe.mount({ idToken, url: d.poolQuestionsTodayUrl, onAnswered: onPointGained });
+          }
+
+          // 既存の2エンドポイントを並列で取り、クライアントで束ねる（新規APIを作らない）。
+          // 片方が落ちても、もう片方は描けるようにする。
+          const [interRes, savedRes] = await Promise.allSettled([
+            fetch(interactionsDataUrl, { headers }).then(r => r.json()),
+            fetch(savedDataUrl, { headers }).then(r => r.json()),
+          ]);
+
+          const inter = interRes.status === 'fulfilled' ? interRes.value : {};
+          const saved = savedRes.status === 'fulfilled' ? savedRes.value : {};
+          render(inter, saved);
+
+          // バッジはいま取得したデータから直接更新する（同じ内容を再取得しない）。
+          const el = document.getElementById('nav-answer-badge');
+          if (el) {
+            const n = (inter.in_progress || []).length + (inter.pending || []).length;
+            if (n > 0) { el.textContent = n > 99 ? '99+' : String(n); el.hidden = false; }
+            else { el.hidden = true; }
+          }
+        } catch (err) {
+          console.error('load failed', err);
+          document.getElementById('loading-overlay').style.display = 'none';
+          const el = document.getElementById('content');
+          el.style.display = '';
+          el.innerHTML = '<div class="hb-none">読み込みに失敗しました。時間をおいて開き直してください。</div>';
+        }
+      }
+
+      load();
+    })();
+    </script>
+  </body>
+</html>

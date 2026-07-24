@@ -12,6 +12,8 @@
     <%- include('../partials/rank-celebration') %>
     <%- include('../partials/liff-auth') %>
     <%- include('../partials/daily-today-card') %>
+    <%# 行動計測。4タブの表示数を横並びで比較するための分母 %>
+    <%- include('../partials/behavior-track') %>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body {
@@ -283,7 +285,7 @@
       .confirm-btns  { display: flex; gap: 10px; }
     </style>
   </head>
-  <body>
+  <body data-track-page="mypage">
     <div class="container">
       <div id="daily-area"></div>
       <div id="loading-view">
@@ -1285,6 +1287,9 @@
 
           // プロフィール表示・登録の前に規約同意を確認（未同意なら同意画面へ離脱）
           if (await ensureGlobalConsent()) return;
+
+          // 「回答する」タブのバッジ（いま回答できる件数）。この画面の表示はブロックしない。
+          if (window.LiffNavBadge) LiffNavBadge.refresh(idToken);
 
           // 今日の1問は同意を通った後にだけ出す（マイページの表示はブロックしない）。
           // 回答でランク/段位が上がったら昇格演出を出す（回答前ランク prev と付与後 next を比較）。

@@ -1,0 +1,146 @@
+<%#
+  LIFF 行動計測タグ（migration 086 / POST /liff/behavior-beacon）
+  使い方: 各 LIFF ページの <head> で include('../partials/behavior-track')
+  そのあと本文の任意の場所で HbTrack.* を呼ぶ。
+
+  目的: 「ボトムナビに保存タブが要るか」「探す画面で案件一覧まで到達しているか」を
+  実データで判断する。リリース前に仕込み、リリース後のデータで提案1・2を決める。
+
+  約束:
+   - 計測はユーザー体験より優先度が低い。例外が出てもページを壊さない。
+   - 送信はまとめて1回（sendBeacon）。1イベントごとに fetch しない。
+   - 個人を追跡する目的ではない。session_key は表示ごとの使い捨てで永続化しない。
+  注意: EJSコメント内にEJSタグのデリミタを書くとコメントの閉じ解釈が壊れるため書かないこと
+%>
+<script>
+(() => {
+  'use strict';
+
+  // 表示ごとの使い捨てID。ファネル（表示→一覧到達→カードtap）を1回の閲覧として束ねるため。
+  // localStorage には保存しない＝ページを開き直せば別セッションになる。
+  const sessionKey = Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+
+  // ページ名は body の data-track-page があればそれを、無ければパス末尾を使う。
+  const page = (document.body && document.body.dataset && document.body.dataset.trackPage)
+    || (location.pathname.split('/').filter(Boolean).pop() || 'unknown');
+
+  let queue = [];
+  let flushTimer = null;
+  // 同じイベントを何度も送らないための既送フラグ（list_reach など1表示1回でよいもの用）。
+  const onceSent = new Set();
+
+  function idToken() {
+    // liff-auth.ejs の window.LiffAuth からトークンを借りる。
+    // 認証前・未ログインなら null が返るので、その場合は匿名イベントとして送る
+    // （計測のためにログインを待たない＝ page_view を取りこぼさない）。
+    try {
+      if (window.LiffAuth && typeof window.LiffAuth.getCurrentAuthToken === 'function') {
+        return window.LiffAuth.getCurrentAuthToken();
+      }
+    } catch (_) { /* noop */ }
+    return null;
+  }
+
+  function flush(useBeacon) {
+    if (queue.length === 0) return;
+    const events = queue;
+    queue = [];
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+
+    const url = '/liff/behavior-beacon';
+    const payload = JSON.stringify({ events });
+    const token = idToken();
+
+    try {
+      // ページ離脱時は sendBeacon でないと送信が破棄される。
+      // ただし sendBeacon は Authorization ヘッダを付けられないため、
+      // 離脱時のイベントは匿名で送る（＝集計は匿名込みで見る前提）。
+      if (useBeacon && navigator.sendBeacon) {
+        navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }));
+        return;
+      }
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      fetch(url, { method: 'POST', headers, body: payload, keepalive: true }).catch(() => {});
+    } catch (_) { /* noop: 計測でページを壊さない */ }
+  }
+
+  function push(eventType, target, valueNum) {
+    try {
+      queue.push({
+        event_type: eventType,
+        page: page,
+        target: target == null ? null : String(target),
+        value_num: typeof valueNum === 'number' ? valueNum : null,
+        session_key: sessionKey,
+      });
+      // すぐには送らずまとめる。1.5秒静かになったら送信。
+      if (flushTimer) clearTimeout(flushTimer);
+      flushTimer = setTimeout(() => flush(false), 1500);
+    } catch (_) { /* noop */ }
+  }
+
+  function pushOnce(eventType, target, valueNum) {
+    const key = eventType + ':' + (target == null ? '' : target);
+    if (onceSent.has(key)) return;
+    onceSent.add(key);
+    push(eventType, target, valueNum);
+  }
+
+  /**
+   * 要素が画面内に入ったら1度だけ記録する（一覧到達の判定に使う）。
+   * value_num にはその時点のスクロール量(px)を入れ、「どれだけ下げたら着いたか」を残す。
+   */
+  function observeReach(el, eventType, target) {
+    if (!el || !('IntersectionObserver' in window)) return;
+    try {
+      const io = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            pushOnce(eventType, target, Math.round(window.scrollY || 0));
+            io.disconnect();
+            break;
+          }
+        }
+      }, { threshold: 0.01 });
+      io.observe(el);
+    } catch (_) { /* noop */ }
+  }
+
+  // ボトムナビのタップを自動で拾う。各ページで個別配線しなくて済むよう
+  // ナビの href からタブ名を推定する（liff-bottom-nav.ejs の構造に依存）。
+  document.addEventListener('click', (ev) => {
+    try {
+      const navLink = ev.target && ev.target.closest && ev.target.closest('.bottom-nav__item');
+      if (!navLink) return;
+      const href = navLink.getAttribute('href') || '';
+      const tab = href.split('/').filter(Boolean).pop() || 'unknown';
+      push('nav_tap', tab, null);
+      // 遷移で失われないよう即時送信する。
+      flush(true);
+    } catch (_) { /* noop */ }
+  }, true);
+
+  // ページ離脱・バックグラウンド化のタイミングで取りこぼしを送る。
+  // LIFF は LINE アプリ内なので visibilitychange のほうが確実に発火する。
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush(true);
+  });
+  window.addEventListener('pagehide', () => flush(true));
+
+  window.HbTrack = {
+    /** 任意のイベントを記録する。 */
+    push: push,
+    /** 同一表示で1度だけ記録する（重複を避けたいもの）。 */
+    once: pushOnce,
+    /** 要素が画面に入ったら1度だけ記録する。 */
+    observeReach: observeReach,
+    /** 溜まっているイベントを今すぐ送る。 */
+    flush: () => flush(true),
+    sessionKey: sessionKey,
+  };
+
+  // ページ表示そのものを1件記録する。分母（表示数）が無いと到達率が出せない。
+  push('page_view', null, null);
+})();
+</script>
