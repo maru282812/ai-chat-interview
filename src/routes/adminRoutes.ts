@@ -290,6 +290,11 @@ adminRoutes.post("/daily-surveys/:surveyId/questions/:questionId/delete", asyncH
 adminRoutes.get("/experience-settings", asyncHandler(adminController.experienceSettings));
 adminRoutes.post("/experience-settings", asyncHandler(adminController.updateExperienceSettings));
 
+// 品質係数（品質ファースト構想）。設定と、効き具合の確認。
+adminRoutes.get("/quality-scoring", asyncHandler(adminController.qualityScoringSettings));
+adminRoutes.get("/quality-scoring/recent", asyncHandler(adminController.qualityScoringRecent));
+adminRoutes.post("/quality-scoring", asyncHandler(adminController.updateQualityScoringSettings));
+
 adminRoutes.get("/pool-questions", asyncHandler(adminController.poolQuestions));
 adminRoutes.get("/pool-questions/new", asyncHandler(adminController.newPoolQuestion));
 adminRoutes.get("/pool-questions/bulk", asyncHandler(adminController.newPoolQuestionsBulk));

@@ -111,6 +111,9 @@ export async function runPostCompleteProcess({
       const canonicalResults = await Promise.allSettled(
         awardResult.transactions.map((tx) => {
           const newType = TYPE_MAP[tx.transaction_type] ?? "manual_adjustment";
+          // 品質係数は案件完了ポイント本体にだけ適用しているので、その明細にだけ内訳を残す。
+          const isCompletion = tx.transaction_type === "project_completion";
+          const q = awardResult?.quality;
           return userPointService.awardPoints({
             lineUserId,
             transactionType:  newType,
@@ -119,6 +122,9 @@ export async function runPostCompleteProcess({
             referenceType:    "session",
             referenceId:      session.id,
             idempotencyKey:   `session:${session.id}:${tx.transaction_type}`,
+            ...(isCompletion && q
+              ? { qualityFactor: q.factor, basePoints: q.basePoints, qualityReasons: q.reasons }
+              : {}),
           });
         }),
       );

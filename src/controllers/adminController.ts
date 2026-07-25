@@ -55,6 +55,8 @@ import { assignmentService, type AssignmentRuleFilter } from "../services/assign
 import { projectRepository } from "../repositories/projectRepository";
 import { clientRepository } from "../repositories/clientRepository";
 import { experienceService } from "../services/experienceService";
+import { qualityScoringService } from "../services/qualityScoringService";
+import { resolveQualityConfig, type QualityScoringConfig } from "../lib/qualityScore";
 import {
   EXPERIENCE_KEYS,
   EXPERIENCE_KEY_LIST,
@@ -9361,6 +9363,85 @@ export const adminController = {
       logger.error("updateExperienceSettings: save failed", { error: message });
       res.redirect("/admin/experience-settings?err=" + encodeURIComponent(message));
     }
+  },
+
+  /**
+   * 品質係数の設定画面（品質ファースト構想）。
+   * 読み込みに失敗したらフォームを出さない（現在値不明のまま保存＝全項目が既定で上書きされる）。
+   */
+  async qualityScoringSettings(req: Request, res: Response): Promise<void> {
+    let values: QualityScoringConfig | null = null;
+    let loadError: string | null = null;
+    try {
+      values = await qualityScoringService.getConfig();
+    } catch (error) {
+      loadError = error instanceof Error ? error.message : "品質設定の読み込みに失敗しました。";
+      logger.error("qualityScoringSettings: load failed", { error: loadError });
+    }
+
+    res.render("admin/quality-scoring/index", {
+      title: "品質係数の設定",
+      values,
+      loadError,
+      msg: queryString(req.query.msg) || null,
+      err: queryString(req.query.err) || null,
+    });
+  },
+
+  async updateQualityScoringSettings(req: Request, res: Response): Promise<void> {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const num = (key: string): number | undefined => {
+        const raw = bodyString(body[key]).trim();
+        if (raw === "") return undefined;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : undefined;
+      };
+
+      // チェックボックスは未チェックだとキー自体が来ない＝false として扱う。
+      const candidate: Record<string, unknown> = {
+        enabled: bodyString(body.enabled) === "true",
+        detectStraightlining: bodyString(body.detectStraightlining) === "true",
+      };
+      for (const key of [
+        "minSecondsPerQuestion",
+        "minTextLength",
+        "penaltyTooFast",
+        "penaltyTooShort",
+        "penaltyStraightline",
+        "penaltyInconsistent",
+        "bonusHonest",
+        "consistencyBonusThreshold",
+        "consistencyPenaltyThreshold",
+        "maxPenaltyPoints",
+        "maxBonusPoints",
+        "minBaseForPenalty",
+      ]) {
+        const v = num(key);
+        if (v !== undefined) candidate[key] = v;
+      }
+
+      // 範囲外・型不一致は resolveQualityConfig が既定へ落とす（saveConfig 内で実施）。
+      await qualityScoringService.saveConfig(resolveQualityConfig(candidate));
+      res.redirect("/admin/quality-scoring?msg=" + encodeURIComponent("品質設定を保存しました。"));
+    } catch (error) {
+      const message =
+        error instanceof HttpError || error instanceof Error
+          ? error.message
+          : "品質設定の保存に失敗しました。";
+      logger.error("updateQualityScoringSettings: save failed", { error: message });
+      res.redirect("/admin/quality-scoring?err=" + encodeURIComponent(message));
+    }
+  },
+
+  /** 品質判定を通した直近の付与＋効き具合サマリ。閾値変更後の確認用。 */
+  async qualityScoringRecent(_req: Request, res: Response): Promise<void> {
+    const rows = await qualityScoringService.listRecentAwards();
+    res.render("admin/quality-scoring/recent", {
+      title: "品質係数：最近の付与",
+      rows,
+      summary: qualityScoringService.summarizeAwards(rows),
+    });
   },
 
   async poolQuestions(req: Request, res: Response): Promise<void> {

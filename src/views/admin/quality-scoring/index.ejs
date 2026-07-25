@@ -1,0 +1,140 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+  // 品質係数の設定（品質ファースト・アンケート構想 2026-07-10）。
+  // 思想は「ポイ活の排除」ではなく“正直が最も得な報酬設計”。ランク基準は動かさず
+  // （＝「次のランクまであと◯pt」が成立する）、これから貰うポイントに係数を掛ける。
+  //
+  // 乗算だけだと罰則/ボーナスが単価に比例してしまうため、増減幅を絶対値でも頭打ちにする。
+  const SECTIONS = [
+    {
+      title: '① 判定を動かすか',
+      note: '緊急時はここを切れば全付与が満額に戻る（コード変更なしで止められる）。',
+      keys: ['enabled'],
+    },
+    {
+      title: '② 何を「手抜き」とみなすか',
+      note: 'ここで決めた線を下回った回答に、下の減点幅が適用される。',
+      keys: ['minSecondsPerQuestion', 'minTextLength', 'detectStraightlining'],
+    },
+    {
+      title: '③ 減点・加点の幅（係数）',
+      note: '中立 1.0 から引く/足す値。複数の違反は足し合わさる。係数は 0〜1.2 に収まる。',
+      keys: ['penaltyTooFast', 'penaltyTooShort', 'penaltyStraightline', 'penaltyInconsistent', 'bonusHonest'],
+    },
+    {
+      title: '④ 整合性（ついでスワイプとの突合）',
+      note: '低ステークスの平常時回答＝ほぼ真値、との一致度。素材が足りない人は判定対象外（減点しない）。',
+      keys: ['consistencyPenaltyThreshold', 'consistencyBonusThreshold'],
+    },
+    {
+      title: '⑤ 増減の絶対キャップ（重要）',
+      note: '単価に比例した罰ゲーム化を防ぐ安全弁。500pt 案件で 1 回の手抜きが -250pt になるような事故を止める。',
+      keys: ['maxPenaltyPoints', 'maxBonusPoints', 'minBaseForPenalty'],
+    },
+  ];
+
+  const LABELS = {
+    enabled:                     ['品質判定を有効にする', 'OFF にすると係数を掛けず常に満額付与になる。'],
+    minSecondsPerQuestion:       ['1設問あたりの最低秒数', 'これ×設問数を下回る回答を「速すぎ」とみなす。'],
+    minTextLength:               ['自由記述の最低文字数', 'これ未満の記述を「短すぎ」とみなす。同じ文字の連打も検出する。'],
+    detectStraightlining:        ['ストレートライン検出', '3問以上で全て同じ選択肢だった場合に減点する。'],
+    penaltyTooFast:              ['減点：速すぎ', '係数から引く値（0.3＝30%減）。'],
+    penaltyTooShort:             ['減点：記述が短い', '係数から引く値。'],
+    penaltyStraightline:         ['減点：ストレートライン', '係数から引く値。'],
+    penaltyInconsistent:         ['減点：整合性が低い', '係数から引く値。'],
+    bonusHonest:                 ['加点：誠実ボーナス', '違反ゼロのときに足す値（0.1＝10%増）。構想の「誠実ボーナス」方式の本体。'],
+    consistencyPenaltyThreshold: ['減点する整合性スコア', 'これ未満で「矛盾」として減点する（0〜1）。'],
+    consistencyBonusThreshold:   ['ボーナス対象の整合性スコア', 'これ以上で誠実ボーナスの対象（0〜1）。'],
+    maxPenaltyPoints:            ['減点の上限（pt）', '基準ポイントからこれ以上は引かない。高単価案件の罰ゲーム化を防ぐ要。'],
+    maxBonusPoints:              ['加点の上限（pt）', '基準ポイントからこれ以上は足さない。'],
+    minBaseForPenalty:           ['判定対象の最低ポイント', 'これ未満の付与は常に満額。ついでスワイプ（1〜3pt）の真値性を守るための除外。'],
+  };
+
+  const BOOL_KEYS = ['enabled', 'detectStraightlining'];
+  const STEP_01   = ['penaltyTooFast','penaltyTooShort','penaltyStraightline','penaltyInconsistent','bonusHonest','consistencyPenaltyThreshold','consistencyBonusThreshold'];
+%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>品質係数の設定</h2>
+  <a href="/admin/quality-scoring/recent" class="btn" style="font-size:13px">最近の付与を確認 →</a>
+</div>
+
+<% if (msg) { %><div class="card" style="background:#eef7f3;border-left:4px solid #2ca87a;margin-bottom:1rem"><p style="margin:0"><%= msg %></p></div><% } %>
+<% if (err) { %><div class="card" style="background:#fdecea;border-left:4px solid #c0392b;margin-bottom:1rem"><p style="margin:0;color:#c0392b"><%= err %></p></div><% } %>
+
+<% if (loadError) { %>
+  <div class="card" style="background:#fdecea;border-left:4px solid #c0392b">
+    <p style="margin:0 0 6px;color:#c0392b;font-weight:700">品質設定を読み込めませんでした。</p>
+    <p style="margin:0;font-size:13px;color:#a33"><%= loadError %></p>
+    <p style="margin:8px 0 0;font-size:13px;color:#789">
+      現在値が不明なまま保存すると全項目が既定値で上書きされるため、フォームは表示していません。
+    </p>
+  </div>
+<% } else { %>
+
+<div class="card" style="margin-bottom:1rem;background:#f7fbf9;border-left:4px solid #2ca87a">
+  <p style="margin:0 0 6px;font-size:13px;color:#456">
+    付与ポイント ＝ <code>基準pt × 品質係数</code> を、さらに
+    <code>基準pt −減点上限 〜 基準pt ＋加点上限</code> で頭打ちにした値です。
+  </p>
+  <p style="margin:0;font-size:13px;color:#456">
+    <strong>ランクの基準（次のランクまで◯pt）は一切動かしません。</strong>
+    係数が掛かるのは「これから貰うポイント」だけなので、進捗表示は常に成立します。
+  </p>
+</div>
+
+<form method="post" action="/admin/quality-scoring">
+  <% for (const section of SECTIONS) { %>
+    <div class="card" style="margin-bottom:1rem">
+      <h3 style="margin:0 0 4px"><%= section.title %></h3>
+      <p style="margin:0 0 12px;font-size:12px;color:#789"><%= section.note %></p>
+
+      <table style="width:100%;border-collapse:collapse">
+        <tbody>
+          <% for (const key of section.keys) { %>
+            <% const label = LABELS[key]; const value = values[key]; %>
+            <tr style="border-top:1px solid #e6ecea">
+              <td style="padding:10px 8px 10px 0;vertical-align:top">
+                <div style="font-weight:600"><%= label[0] %></div>
+                <div style="font-size:12px;color:#789;margin-top:2px"><%= label[1] %></div>
+                <div style="font-size:11px;color:#9aa;margin-top:4px"><code><%= key %></code></div>
+              </td>
+              <td style="padding:10px 0;vertical-align:top;width:220px;text-align:right">
+                <% if (BOOL_KEYS.indexOf(key) >= 0) { %>
+                  <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+                    <input type="checkbox" name="<%= key %>" value="true" <%= value ? 'checked' : '' %> />
+                    <span style="font-size:13px">有効にする</span>
+                  </label>
+                <% } else { %>
+                  <input
+                    type="number"
+                    name="<%= key %>"
+                    value="<%= value %>"
+                    step="<%= STEP_01.indexOf(key) >= 0 ? '0.05' : '1' %>"
+                    min="0"
+                    style="width:120px;padding:6px 8px;text-align:right"
+                  />
+                <% } %>
+              </td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+
+  <div class="card" style="margin-bottom:1rem;background:#fffdf5;border-left:4px solid #e0a800">
+    <p style="margin:0;font-size:13px;color:#654">
+      判定を厳しくしすぎると、正直に答えている人まで減点されて離脱します。
+      変更後は「最近の付与を確認」で<strong>減額された割合</strong>を必ず見てください。
+      減額が多すぎる場合は閾値（②）を緩める方が、減点幅（③）を下げるより安全です。
+    </p>
+  </div>
+
+  <button type="submit" class="btn btn-primary">保存する</button>
+</form>
+
+<% } %>
+
+<%- include("../../partials/footer") %>

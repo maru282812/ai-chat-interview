@@ -15,6 +15,13 @@ export interface AwardPointsInput {
   referenceType?: "daily_survey_answer" | "project_assignment" | "campaign" | "session" | "manual" | "exchange_request" | "pool_question_answer";
   referenceId?: string;
   idempotencyKey?: string;
+  /**
+   * 品質係数の内訳（migration 087）。品質判定を通した付与だけが渡す。
+   * 未指定＝NULL で保存＝「品質判定を通していない付与」を意味する（1.0 と区別する）。
+   */
+  qualityFactor?: number;
+  basePoints?: number;
+  qualityReasons?: string[];
 }
 
 export interface AwardPointsResult {
@@ -55,6 +62,16 @@ export const userPointService = {
     };
     if (input.idempotencyKey) {
       row.idempotency_key = input.idempotencyKey;
+    }
+    // 品質判定を通した付与だけ内訳を残す（NULL＝未判定と区別できるようにする）
+    if (typeof input.qualityFactor === "number") {
+      row.quality_factor = input.qualityFactor;
+    }
+    if (typeof input.basePoints === "number") {
+      row.base_points = input.basePoints;
+    }
+    if (Array.isArray(input.qualityReasons)) {
+      row.quality_reasons = input.qualityReasons;
     }
 
     const { data: historyData, error: histErr } = await supabase

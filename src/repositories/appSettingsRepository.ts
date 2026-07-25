@@ -8,10 +8,14 @@ import { throwIfError } from "./baseRepository";
  *
  * 現行キー:
  *   - 'experience_defaults' … 若年層体験パックの全体既定（src/lib/experienceConfig.ts の EXPERIENCE_KEYS）
+ *   - 'quality_scoring'     … 品質係数の判定パラメータ（src/lib/qualityScore.ts の QualityScoringConfig）
  */
 
 /** 若年層体験パックの全体既定を格納する app_settings のキー。 */
 export const EXPERIENCE_DEFAULTS_KEY = "experience_defaults";
+
+/** 品質係数の判定パラメータを格納する app_settings のキー。 */
+export const QUALITY_SCORING_KEY = "quality_scoring";
 
 export interface AppSetting {
   key: string;

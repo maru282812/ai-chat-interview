@@ -79,6 +79,13 @@
       .stat-unit  { font-size: 12px; color: #2ca87a; font-weight: 600; }
       .stat-label { font-size: 11px; color: #60726f; margin-top: 2px; }
 
+      /* 回答の安定度（誠実度）。粒度は5段階まで落としてある＝判定式は見せない。 */
+      .honesty-head { display: flex; align-items: center; justify-content: space-between; }
+      .honesty-title { font-size: 12px; font-weight: 700; color: #1a2f2a; }
+      .honesty-stars { font-size: 14px; color: #2ca87a; letter-spacing: 1px; }
+      .honesty-stars .off { color: #d6e5df; }
+      .honesty-note { font-size: 11px; color: #60726f; margin-top: 5px; line-height: 1.5; }
+
       .progress-section { margin-bottom: 4px; }
       .progress-label {
         display: flex; justify-content: space-between;
@@ -396,6 +403,18 @@
           ? `次のランク: ${esc(s.next_rank_name)}（あと ${s.next_rank_min_points - s.total_points}pt）`
           : `最高ランク達成！`;
 
+        // 誠実度（5段階）。素材が足りないうちはサーバーが null を返すので、その間は出さない。
+        // 生の係数や判定理由は出さない＝式が見えると対策され、回答の真値性が落ちるため。
+        const h = s.honesty;
+        const honestyHtml = !h ? "" : `
+          <div class="card honesty-card">
+            <div class="honesty-head">
+              <span class="honesty-title">回答の安定度</span>
+              <span class="honesty-stars">${"★".repeat(Math.max(0, Math.min(5, h.stars)))}<span class="off">${"★".repeat(5 - Math.max(0, Math.min(5, h.stars)))}</span></span>
+            </div>
+            <div class="honesty-note">${esc(h.label)}／ていねいな回答ほどポイントが貯まりやすくなります。</div>
+          </div>`;
+
         const badgeHtml = badges.length === 0
           ? `<p style="font-size:12px;color:#999;text-align:center;padding:8px 0">まだバッジがありません</p>`
           : badges.slice(0, 6).map(b => `
@@ -444,6 +463,8 @@
               </div>
             </div>
           </div>
+
+          ${honestyHtml}
 
           <div class="monthly-card" id="monthly-stats-card" style="display:none">
             <div class="monthly-title">今月の応募状況</div>

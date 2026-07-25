@@ -53,6 +53,12 @@
   .hb-daily.done .s { font-size: 12px; color: #4d7a6b; margin-top: 2px; }
   .hb-daily.done .rewards { margin-left: auto; text-align: right; }
   .hb-daily.done .rewards b { font-size: 17px; font-weight: 900; color: #1f8f66; }
+  /* 品質の一言（画面②）。満額/ボーナス時は前向きな緑、減額時は落ち着いた橙で出す。 */
+  .hb-daily.done .qnote {
+    font-size: 11px; margin-top: 4px; font-weight: 700;
+    color: #a5642a;
+  }
+  .hb-daily.done .qnote.full { color: #1f8f66; }
 </style>
 <script>
   (() => {
@@ -72,11 +78,31 @@
         : `+${s.reward_min_points}〜${s.reward_max_points}pt`;
     }
 
+    /**
+     * 品質の内訳を一言にする（画面②）。
+     * 「ちゃんと答えると貯まりやすく、適当だともらえない」を体験として伝えるのが狙い。
+     * 判定の詳細（閾値・式）は明かさない＝対策されると素材の真値性が落ちるため、
+     * 何が効いたかだけを短く返す。
+     */
+    function qualityNote(q) {
+      if (!q) return '';
+      const reasons = Array.isArray(q.reasons) ? q.reasons : [];
+      if (reasons.indexOf('honest_bonus') >= 0) return '🌱 ていねいな回答ボーナス';
+      if (q.isFullAmount) return '';
+      if (reasons.indexOf('too_fast') >= 0) return '回答が早すぎたため一部対象外';
+      if (reasons.indexOf('too_short') >= 0) return '記述が短かったため一部対象外';
+      if (reasons.indexOf('straightline') >= 0) return '同じ選択が続いたため一部対象外';
+      if (reasons.indexOf('inconsistent') >= 0) return '回答の傾向が不安定なため一部対象外';
+      return '';
+    }
+
     /** 1件ぶんのカード。設問を1問ずつ進め、最後の回答で送信する。 */
     function mountCard(item, slotEl, idToken, onAnswered) {
       const { survey, questions, delivery, answerUrl } = item;
       const answers = {};
       let idx = 0;
+      // 品質判定の材料。最初の設問を描いた時点から測る（サーバー側で閾値判定する参考値）。
+      const startedAt = Date.now();
 
       function done(result) {
         const r = result || {};
@@ -85,12 +111,15 @@
           try { onAnswered(r); } catch (e) { console.error('onAnswered failed', e); }
         }
         const bonus = r.streakBonusAwarded ? ` (+${r.streakBonusAwarded}pt ボーナス)` : '';
+        const note = qualityNote(r.quality);
+        const full = r.quality && r.quality.isFullAmount;
         slotEl.className = 'hb-daily done';
         slotEl.innerHTML = `
           <div class="icon">✅</div>
           <div>
             <div class="t">今日の1問に回答しました</div>
             <div class="s">${r.currentStreak ? esc(String(r.currentStreak)) + '日連続' : 'また明日'}${esc(bonus)}</div>
+            ${note ? `<div class="qnote${full ? ' full' : ''}">${esc(note)}</div>` : ''}
           </div>
           <div class="rewards"><b>+${esc(String(r.pointsAwarded ?? 0))}</b><small>pt</small></div>`;
       }
@@ -104,7 +133,8 @@
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
             body: JSON.stringify({
               deliveryId: delivery.id,
-              answers: Object.entries(answers).map(([questionId, answerValue]) => ({ questionId, answerValue }))
+              answers: Object.entries(answers).map(([questionId, answerValue]) => ({ questionId, answerValue })),
+              answerMs: Date.now() - startedAt
             })
           });
           if (!res.ok) {

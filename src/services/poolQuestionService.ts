@@ -7,6 +7,7 @@ import {
   type PoolQuestion,
   type PoolQuestionExposure,
 } from "../repositories/poolQuestionRepository";
+import { qualityScoringService } from "./qualityScoringService";
 import { userPointService } from "./userPointService";
 import { userRankService } from "./userRankService";
 
@@ -168,18 +169,32 @@ export const poolQuestionService = {
     await poolQuestionRepository.markExposureStatus(exposureId, "answered", new Date().toISOString());
 
     // 3. ポイント付与（reward_points > 0 のときだけ・正準経路）
+    //    品質の入口は通すが、ついでスワイプは低単価（既定 1〜3pt）＝ minBaseForPenalty 未満なので
+    //    実質は常に満額になる。ここを削ると「低ステークス＝平常時≒真値」という
+    //    信頼スコアの前提が壊れるため、意図的に減点対象にしない。
     let pointsAwarded = 0;
     if (question.reward_points > 0) {
+      const award = await qualityScoringService.resolveAward({
+        basePoints: question.reward_points,
+        lineUserId,
+        signals: {
+          answers: [{ questionId: question.id, answerValue }],
+          timeSec: typeof answerMs === "number" && answerMs >= 0 ? answerMs / 1000 : null,
+        },
+      });
       await userPointService.ensureRow(lineUserId);
       await userPointService.awardPoints({
         lineUserId,
         transactionType: "pool_question",
-        points: question.reward_points,
+        points: award.points,
         reason: "ついでスワイプ回答",
         referenceType: "pool_question_answer",
         referenceId: exposureId,
+        qualityFactor: award.factor,
+        basePoints: award.basePoints,
+        qualityReasons: award.reasons,
       });
-      pointsAwarded = question.reward_points;
+      pointsAwarded = award.points;
     }
 
     // 4. ランク同期（ストリークは更新しない＝連続日数はデイリーの領分）
