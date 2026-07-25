@@ -123,6 +123,29 @@ export const poolQuestionRepository = {
     return (data ?? []) as Array<{ question_id: string; answered_at: string }>;
   },
 
+  /**
+   * 信頼スコア（整合性）の素材。直近 N 件を新しい順で返す。
+   * test-retest 一致率と即答すぎ率を出すのに必要な列だけを取る。
+   */
+  async listTrustSamples(
+    lineUserId: string,
+    limit = 100,
+  ): Promise<Array<{ question_id: string; answer_value: unknown; answer_ms: number | null; answered_at: string }>> {
+    const { data, error } = await supabase
+      .from("pool_question_answers")
+      .select("question_id, answer_value, answer_ms, answered_at")
+      .eq("line_user_id", lineUserId)
+      .order("answered_at", { ascending: false })
+      .limit(limit);
+    throwIfError(error);
+    return (data ?? []) as Array<{
+      question_id: string;
+      answer_value: unknown;
+      answer_ms: number | null;
+      answered_at: string;
+    }>;
+  },
+
   async getExposureById(id: string): Promise<PoolQuestionExposure | null> {
     const { data, error } = await supabase
       .from("pool_question_exposures")

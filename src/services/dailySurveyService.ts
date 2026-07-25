@@ -12,7 +12,8 @@ import {
   queuePositions
 } from "../lib/dailyQueue";
 import { HttpError } from "../lib/http";
-import { qualityWeightedPoints } from "../lib/qualityScore";
+import type { QualityReasonCode } from "../lib/qualityScore";
+import { qualityScoringService } from "./qualityScoringService";
 import { buildDailyQuestionFlex } from "../templates/flex";
 import { throwIfError } from "../repositories/baseRepository";
 import {
@@ -426,12 +427,21 @@ export const dailySurveyService = {
     surveyId: string;
     deliveryId: string;
     answers: Array<{ questionId: string; answerValue: unknown }>;
+    /** 回答に要したミリ秒（クライアント計測）。未計測は null＝速すぎ判定をしない。 */
+    answerMs?: number | null;
   }): Promise<{
     pointsAwarded: number;
     streakBonusAwarded: number;
     rankChanged: boolean;
     newRankName: string | null;
     newBadges: string[];
+    /** 品質の内訳（回答直後のフィードバック表示に使う）。 */
+    quality: {
+      basePoints: number;
+      factor: number;
+      reasons: QualityReasonCode[];
+      isFullAmount: boolean;
+    };
   }> {
     const survey = await dailySurveyRepository.getById(input.surveyId);
 
@@ -462,9 +472,21 @@ export const dailySurveyService = {
         ? Math.floor(Math.random() * (survey.reward_max_points - survey.reward_min_points + 1)) +
           survey.reward_min_points
         : survey.reward_points;
-    // 「有効回答 × 品質」の受け皿を必ず通す。品質判定の本設計はここ（qualityScore.ts）に入れる。
-    // 現状は係数 1.0（仮）＝ basePoints と一致するので挙動は変わらない。
-    const pointsAwarded = qualityWeightedPoints(basePoints, { answers: input.answers });
+    // 「有効回答 × 品質」を通す（品質ファースト構想の核）。判定パラメータと整合性スコアは
+    // サーバー権威で解決する。判定に失敗しても満額になる＝こちらの都合でユーザーを損させない。
+    const answerMs =
+      typeof input.answerMs === "number" && Number.isFinite(input.answerMs) && input.answerMs >= 0
+        ? input.answerMs
+        : null;
+    const award = await qualityScoringService.resolveAward({
+      basePoints,
+      lineUserId: input.lineUserId,
+      signals: {
+        answers: input.answers,
+        timeSec: answerMs === null ? null : answerMs / 1000,
+      },
+    });
+    const pointsAwarded = award.points;
 
     await userPointService.ensureRow(input.lineUserId);
     await userPointService.awardPoints({
@@ -473,13 +495,16 @@ export const dailySurveyService = {
       points:           pointsAwarded,
       reason:           `デイリーアンケート回答：${survey.title}`,
       referenceType:    "daily_survey_answer",
-      referenceId:      input.deliveryId
+      referenceId:      input.deliveryId,
+      qualityFactor:    award.factor,
+      basePoints:       award.basePoints,
+      qualityReasons:   award.reasons
     });
 
-    // 配信レコードにポイントを記録
+    // 配信レコードにポイントと所要時間を記録（所要時間は判定を作り直すためのログ）
     await supabase
       .from("daily_survey_deliveries")
-      .update({ points_awarded: pointsAwarded })
+      .update({ points_awarded: pointsAwarded, answer_ms: answerMs })
       .eq("id", input.deliveryId);
 
     // 4. ストリーク更新
@@ -510,7 +535,13 @@ export const dailySurveyService = {
       streakBonusAwarded,
       rankChanged:  rankResult.changed,
       newRankName:  rankResult.newRank?.rank_name ?? null,
-      newBadges:    badgeResult.newlyAwarded.map((a) => a.badge_code)
+      newBadges:    badgeResult.newlyAwarded.map((a) => a.badge_code),
+      quality: {
+        basePoints:   award.basePoints,
+        factor:       award.factor,
+        reasons:      award.reasons,
+        isFullAmount: award.isFullAmount
+      }
     };
   },
 

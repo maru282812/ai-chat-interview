@@ -1,0 +1,131 @@
+<%- include("../../partials/header", { title }) %>
+
+<%
+  // 品質判定を通した付与の実績。閾値を変えたあと「効きすぎていないか」を見る画面。
+  // quality_factor が NULL の付与（判定を通していない＝旧データ・手動調整）は出さない。
+  const REASON_LABELS = {
+    too_fast:     '速すぎ',
+    too_short:    '記述が短い',
+    straightline: 'ストレートライン',
+    inconsistent: '整合性が低い',
+    honest_bonus: '誠実ボーナス',
+  };
+  const TYPE_LABELS = {
+    daily_survey:       'デイリー',
+    pool_question:      'ついでスワイプ',
+    project_completion: '案件完了',
+  };
+  const pct = (n) => (n * 100).toFixed(1) + '%';
+%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>品質係数：最近の付与</h2>
+  <a href="/admin/quality-scoring" class="btn" style="font-size:13px">← 設定に戻る</a>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
+  <h3 style="margin:0 0 10px;font-size:15px">効き具合（直近 <%= summary.total %> 件）</h3>
+  <% if (summary.total === 0) { %>
+    <p style="margin:0;font-size:13px;color:#789">
+      まだ品質判定を通した付与がありません。migration 087 の適用後、
+      デイリー回答や案件完了が発生するとここに出ます。
+    </p>
+  <% } else { %>
+    <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px">
+      <div>
+        <div style="font-size:11px;color:#789">満額（減額なし）</div>
+        <div style="font-size:20px;font-weight:700;color:#2ca87a"><%= summary.fullAmount %></div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:#789">減額あり</div>
+        <div style="font-size:20px;font-weight:700;color:<%= summary.reducedRate > 0.3 ? '#c0392b' : '#654' %>">
+          <%= summary.reduced %>
+          <span style="font-size:13px;font-weight:500">（<%= pct(summary.reducedRate) %>）</span>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:#789">ボーナスあり</div>
+        <div style="font-size:20px;font-weight:700;color:#2ca87a"><%= summary.bonused %></div>
+      </div>
+    </div>
+
+    <% if (summary.reducedRate > 0.3) { %>
+      <div style="background:#fdecea;border-left:4px solid #c0392b;padding:10px;margin-bottom:12px">
+        <p style="margin:0;font-size:13px;color:#a33">
+          減額の割合が 30% を超えています。判定が厳しすぎて正直な回答者まで削っている可能性があります。
+          設定画面の②（何を手抜きとみなすか）の閾値を緩める方向で見直してください。
+        </p>
+      </div>
+    <% } %>
+
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="border-bottom:2px solid #e6ecea;text-align:left">
+          <th style="padding:6px 0">理由</th>
+          <th style="padding:6px 0;text-align:right">件数</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% const codes = Object.keys(summary.reasonCounts); %>
+        <% if (codes.length === 0) { %>
+          <tr><td colspan="2" style="padding:8px 0;color:#789">理由コードの記録がありません。</td></tr>
+        <% } %>
+        <% for (const code of codes) { %>
+          <tr style="border-top:1px solid #f0f4f3">
+            <td style="padding:6px 0"><%= REASON_LABELS[code] || code %></td>
+            <td style="padding:6px 0;text-align:right"><%= summary.reasonCounts[code] %></td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<% if (rows.length > 0) { %>
+<div class="card">
+  <h3 style="margin:0 0 10px;font-size:15px">明細</h3>
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px;white-space:nowrap">
+      <thead>
+        <tr style="border-bottom:2px solid #e6ecea;text-align:left">
+          <th style="padding:6px 10px 6px 0">日時</th>
+          <th style="padding:6px 10px 6px 0">種別</th>
+          <th style="padding:6px 10px 6px 0;text-align:right">基準pt</th>
+          <th style="padding:6px 10px 6px 0;text-align:right">付与pt</th>
+          <th style="padding:6px 10px 6px 0;text-align:right">係数</th>
+          <th style="padding:6px 10px 6px 0">理由</th>
+          <th style="padding:6px 0">ユーザー</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const r of rows) { %>
+          <%
+            const base = r.base_points;
+            const diff = (typeof base === 'number') ? r.points - base : null;
+            const color = diff === null || diff === 0 ? '#456' : (diff < 0 ? '#c0392b' : '#2ca87a');
+          %>
+          <tr style="border-top:1px solid #f0f4f3">
+            <td style="padding:6px 10px 6px 0;color:#789"><%= new Date(r.created_at).toLocaleString('ja-JP') %></td>
+            <td style="padding:6px 10px 6px 0"><%= TYPE_LABELS[r.transaction_type] || r.transaction_type %></td>
+            <td style="padding:6px 10px 6px 0;text-align:right"><%= base ?? '—' %></td>
+            <td style="padding:6px 10px 6px 0;text-align:right;font-weight:700;color:<%= color %>">
+              <%= r.points %><% if (diff) { %><span style="font-size:11px;font-weight:500"> (<%= diff > 0 ? '+' : '' %><%= diff %>)</span><% } %>
+            </td>
+            <td style="padding:6px 10px 6px 0;text-align:right"><%= r.quality_factor === null ? '—' : Number(r.quality_factor).toFixed(2) %></td>
+            <td style="padding:6px 10px 6px 0">
+              <% for (const code of (r.quality_reasons || [])) { %>
+                <span style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:10px;margin-right:3px;background:<%= code === 'honest_bonus' ? '#eaf6f1' : '#fdf0e6' %>;color:<%= code === 'honest_bonus' ? '#1f8f66' : '#a5642a' %>">
+                  <%= REASON_LABELS[code] || code %>
+                </span>
+              <% } %>
+            </td>
+            <td style="padding:6px 0;color:#9aa;font-family:monospace;font-size:11px"><%= String(r.line_user_id).slice(0, 12) %>…</td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+<% } %>
+
+<%- include("../../partials/footer") %>

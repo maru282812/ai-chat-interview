@@ -89,6 +89,25 @@
         display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
       }
 
+      /* 品質ノート帯。進捗ステータス帯のすぐ下に、控えめな高さで常設する。
+         一覧を画面内に保つ設計（案B）を壊さないよう 1 行に収める。 */
+      .hb-qnote {
+        display: flex; align-items: flex-start; gap: 6px;
+        margin: 0; padding: 7px 16px;
+        background: #f2f9f6; border-bottom: 1px solid #e2ece8;
+        font-size: 10.5px; line-height: 1.5; color: #4d7a6b;
+      }
+      .hb-qnote .ico { flex-shrink: 0; font-size: 11px; }
+      .hb-qnote b { color: #14493a; font-weight: 800; }
+
+      /* 謝礼の「満額」チップ。額そのものではなく“満額で取れる額”だと示す。 */
+      .hb-card .pt .qchip {
+        margin-top: 5px; font-size: 9px; font-weight: 800;
+        color: #1f8f66; background: #eaf6f1;
+        border-radius: 20px; padding: 2px 6px; white-space: nowrap;
+      }
+      .hb-card .pt.hot .qchip { background: rgba(255,255,255,.9); }
+
       @keyframes hb-pt-pop {
         0% { opacity: 0; transform: translateY(6px); }
         20% { opacity: 1; transform: translateY(0); }
@@ -105,6 +124,14 @@
       </header>
 
       <a class="hb-pt" id="point-card" href="#" style="display:none"></a>
+
+      <%# 品質ノート帯（品質ファースト構想の必須要件）。
+          「ちゃんと答えると貯まりやすく、適当だともらえない」を仕組みだけでなく画面で伝える。
+          判定の詳細（閾値・式）は書かない＝対策されると回答の真値性が落ちるため。 %>
+      <div class="hb-qnote">
+        <span class="ico">🌱</span>
+        <span>ていねいに答えるほど貯まります。<b>極端に速い回答や中身のない記述は対象外</b>になることがあります。</span>
+      </div>
 
       <nav class="hb-chips" id="chip-bar">
         <button class="hb-chip on" data-filter="all">すべて</button>
@@ -272,6 +299,7 @@
                 <small>${isAuto ? '⚡即回答' : '謝礼'}</small>
                 <b>${(p.reward_points ?? 0).toLocaleString()}<small>pt</small></b>
                 ${p.estimated_minutes ? `<div class="min">⏱ ${esc(String(p.estimated_minutes))}分</div>` : ''}
+                <div class="qchip">🌱 満額</div>
               </div>
               <div class="body">
                 <h3>${esc(p.title)}</h3>

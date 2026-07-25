@@ -41,6 +41,7 @@ import { screeningService } from "../services/screeningService";
 import { surveyOrderingService } from "../services/surveyOrderingService";
 import { conceptService } from "../services/conceptService";
 import { experienceService } from "../services/experienceService";
+import { qualityScoringService } from "../services/qualityScoringService";
 import type { Gender, MaritalStatus, RantTag } from "../types/domain";
 import type { AnswerContext } from "../types/questionSchema";
 import { runPostCompleteProcess } from "../services/postCompleteService";
@@ -677,7 +678,7 @@ export const liffController = {
     const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
     const lineUserId = verifiedUser.userId;
 
-    const [profile, respondents, ranks, streakRow, earnedAwards, badgeDefs, pointBalance] = await Promise.all([
+    const [profile, respondents, ranks, streakRow, earnedAwards, badgeDefs, pointBalance, honesty] = await Promise.all([
       userProfileRepository.getByLineUserId(lineUserId),
       respondentRepository.listByLineUserId(lineUserId),
       rankRepository.list(),
@@ -685,6 +686,9 @@ export const liffController = {
       userBadgeService.listEarned(lineUserId).catch(() => []),
       userBadgeService.listAllDefinitions().catch(() => []),
       userPointService.getBalance(lineUserId).catch(() => null),
+      // 誠実度は 5 段階に丸めた粗い指標だけ（判定の詳細は回答者へ非公開が原則）。
+      // 取得失敗・素材不足は null＝画面に何も出さない。
+      qualityScoringService.getHonestyDisplay(lineUserId).catch(() => null),
     ]);
     const badgeDefMap = new Map(badgeDefs.map(d => [d.badge_code, d]));
     const awardedBadges = earnedAwards.map(a => ({
@@ -735,6 +739,7 @@ export const liffController = {
         next_rank_code: nextRank?.rank_code ?? null,
         current_streak: streakRow?.current_streak ?? 0,
         longest_streak: streakRow?.longest_streak ?? 0,
+        honesty: honesty ?? null,
       },
       awarded_badges: awardedBadges,
       recent_transactions: recentTransactions,
@@ -2287,11 +2292,20 @@ export const liffController = {
 
     const answers = rawAnswers as Array<{ questionId: string; answerValue: unknown }>;
 
+    // 回答所要時間（クライアント自己申告）。品質判定の材料だが、あくまで参考値として扱い
+    // 判定の閾値はサーバー側（qualityScore.ts）に置く。異常値は捨てる。
+    const rawAnswerMs = body.answerMs;
+    const answerMs =
+      typeof rawAnswerMs === "number" && Number.isFinite(rawAnswerMs) && rawAnswerMs >= 0
+        ? Math.min(rawAnswerMs, 24 * 60 * 60 * 1000)
+        : null;
+
     const result = await dailySurveyService.recordAnswer({
       lineUserId: verifiedUser.userId,
       surveyId,
       deliveryId,
       answers,
+      answerMs,
     });
 
     const [streakRow, pointStatus] = await Promise.all([
