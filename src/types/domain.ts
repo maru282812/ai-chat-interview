@@ -325,6 +325,12 @@ export interface Project {
   entry_code: string | null;
   /** 企業/店舗マスタへの参照（任意） (Migration 064) */
   client_id: UUID | null;
+  /**
+   * パートナーAPI（hibi-portal・X-Partner-Key）経由で作成された案件の所有店舗ID (Migration 089)。
+   * ポータル側 stores.id をそのまま入れる。null は非パートナー案件（管理画面で作った案件）。
+   * /api/partner/* の :id 系は必ずこの値の一致を検証する（他店舗の案件を触れない）。
+   */
+  partner_store_id?: string | null;
   /** 検索サイト表示タグ（#顔出し必須 等）(Migration 072) */
   tags?: string[];
   /** NG条件（自由記述・改行区切り表示）(Migration 072) */

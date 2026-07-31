@@ -57,6 +57,11 @@ const envSchema = z.object({
   // 認証用シークレット。staff-voice 側の env と同じ値を設定する。
   // 未設定の場合 /api/mental/push は 503 を返し、プロキシは無効。
   MENTAL_PUSH_PROXY_SECRET: z.string().min(16).optional(),
+  // パートナーAPI（/api/partner/*・docs/partner-api.md）の認証キー。
+  // 会員ポータル（hibi-portal）がサーバー側からのみ X-Partner-Key ヘッダに載せて送る。
+  // 未設定の場合 /api/partner/* は全て 503 を返す（起動は妨げない）。
+  // 値は十分にランダムな文字列にすること（例: openssl rand -hex 32）。
+  PARTNER_API_KEY: z.string().min(16).optional(),
   // 管理画面AIチャット（docs/impl-admin-ai-chat.md）
   // 1指示あたりのツール実行往復の上限。超えたら途中結果で打ち切って報告する。
   ADMIN_CHAT_MAX_TOOL_ROUNDS: z.coerce.number().int().positive().max(20).default(8),

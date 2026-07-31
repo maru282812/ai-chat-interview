@@ -58,6 +58,8 @@ interface ProjectMutationInput {
   visibility_type?: 'public' | 'private_store';
   entry_code?: string | null;
   client_id?: string | null;
+  /** パートナーAPI経由案件の所有店舗ID（Migration 089）。 */
+  partner_store_id?: string | null;
   concept_rotation_mode?: 'off' | 'latin' | 'full';
   randomize_question_order?: boolean;
   answer_ui_preset?: import("../types/domain").AnswerUiPreset;
@@ -306,6 +308,25 @@ export const projectRepository = {
       .eq("entry_code", entryCode)
       .eq("visibility_type", "private_store")
       .eq("status", "published")
+      .maybeSingle();
+    throwIfError(error);
+    return (data as Project | null) ?? null;
+  },
+
+  /**
+   * パートナーAPI（Migration 089）の所有チェック付き取得。
+   * partner_store_id が一致する案件のみ返す。存在しない・他店舗のものはどちらも null
+   * （呼び出し側で 404 に丸め、他店舗案件の存在を漏らさない）。
+   */
+  async getPartnerProject(id: string, partnerStoreId: string): Promise<Project | null> {
+    const projectId = id.trim();
+    const storeId = partnerStoreId.trim();
+    if (!projectId || !storeId) return null;
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("id", projectId)
+      .eq("partner_store_id", storeId)
       .maybeSingle();
     throwIfError(error);
     return (data as Project | null) ?? null;
