@@ -85,6 +85,110 @@
 
 ---
 
+## 3.5 設問文の画像（`question_text_image`）
+
+**設問タイプは上の4種のまま増えない。`text_with_image` のような専用タイプは存在しない。
+代わりに、4種すべての設問に画像を添えられる**（「画像付きの単一選択」も作れる）。
+
+### リクエスト（`POST /surveys` / `PUT /surveys/:id` の各設問に付ける）
+
+```jsonc
+{
+  "question_text": "この写真の料理について、満足度を教えてください。",
+  "question_type": "single_choice",
+  "answer_options": [
+    { "value": "5", "label": "とても満足" },
+    { "value": "1", "label": "とても不満" }
+  ],
+  "sort_order": 1,
+  "question_text_image": {
+    "main_url": "https://portal.example.com/api/public/question-images/0f2b...-uuid",
+    "additional_urls": [
+      "https://portal.example.com/api/public/question-images/1a3c...-uuid"
+    ],
+    "caption": "7月の新メニュー"
+  }
+}
+```
+
+| フィールド | 型 | 制約 |
+|---|---|---|
+| `main_url` | `string \| null` | URL 形式・最大 2000 文字。**許可ホストの `https:` のみ**（下記） |
+| `additional_urls` | `string[]` | **最大 4 件**。既定 `[]`。各要素は `main_url` と同じ制約 |
+| `caption` | `string \| null` | 最大 200 文字 |
+
+- `question_text_image` 自体が **任意**（省略・`null` いずれも可）。**後方互換**のため、
+  このフィールドを一切送らない従来のリクエストはこれまでと完全に同じ挙動になる。
+- `caption` だけ（画像URLなし）でも送れる。
+- 内部では `question_config.question_text_image`（camelCase: `mainUrl` / `additionalUrls` / `caption`）
+  に保存される。回答画面（LIFF）は既にこの形を描画する。
+- **性年代の固定2問には画像を付けられない**（サーバーが毎回再構築するため、
+  リクエストに何を書いても反映されない）。
+
+### レスポンス
+
+`SurveyView` の各設問に `question_text_image` が **必ず含まれる**（画像が無ければ `null`）。
+形はリクエストと同じ snake_case。
+
+```jsonc
+{
+  "question_code": "pq1",
+  "question_text": "この写真の料理について、満足度を教えてください。",
+  "question_type": "single_choice",
+  "answer_options": [ … ],
+  "sort_order": 10,
+  "is_required": true,
+  "is_fixed": false,
+  "question_text_image": {
+    "main_url": "https://portal.example.com/api/public/question-images/0f2b...-uuid",
+    "additional_urls": [],
+    "caption": "7月の新メニュー"
+  }
+}
+```
+
+### URL のホスト制限（セキュリティ要件）
+
+画像URLは**回答画面の `<img>` の向き先**になる。任意の外部URLを通すと、
+パートナーAPIキーが漏れた場合や将来パートナーが増えた場合に
+**トラッキング・回答者IPの収集・不適切画像の差し込み**に使われる。
+そのため受け入れるURLのホストを許可リストに限定している。
+
+- 環境変数 `PARTNER_IMAGE_URL_ALLOWED_HOSTS`（カンマ区切りのホスト名）に一致するホストのみ通す。
+- **完全一致**。サブドメインは自動で許可しない（`portal.example.com` を許可しても
+  `evil.portal.example.com` は通らない）。
+- **`https:` のみ**。`http:` / `data:` / `javascript:` は通らない。
+- **`PARTNER_IMAGE_URL_ALLOWED_HOSTS` が未設定なら、画像URLを含むリクエストは全て 400**
+  （fail-closed。設定漏れが「何でも通る」状態にならないようにしている）。
+  画像フィールドを送らない従来のリクエストは、未設定でもこれまでどおり通る。
+
+### 400 になる条件（まとめ）
+
+| 条件 | 例 |
+|---|---|
+| ホストが許可リストにない | `https://evil.example.com/a.png` |
+| `https` 以外のスキーム | `http://portal.example.com/a.png` |
+| `PARTNER_IMAGE_URL_ALLOWED_HOSTS` 未設定なのに画像URLを送った | 任意のURL |
+| URL 形式でない | `"not a url"` / `"javascript:alert(1)"` |
+| `main_url` が 2000 文字超 | |
+| `additional_urls` が 5 件以上 | |
+| `caption` が 200 文字超 | |
+
+エラーメッセージは
+`question_text_image: image url must be https and its host must be listed in PARTNER_IMAGE_URL_ALLOWED_HOSTS`。
+
+### 全置換であることの注意（重要）
+
+`PUT /surveys/:id` に `questions` を送ると、`question_config` は**毎回ゼロから組み直される**。
+したがって **画像フィールドを送らなかった設問の画像は消える**（差分更新ではない）。
+
+ポータル側は、PUT を組み立てるたびにサーバー側で画像を合成し直し、
+**全設問について画像フィールドを毎回そろえて送る**こと。
+クライアントから来た画像URLをそのまま流すのではなく、ポータルDBを正として組み立てる
+（そうしないと、店舗の自動保存で運営が付けた画像が消える）。
+
+---
+
 ## 4. 性年代設問（サーバー固定・パートナーは編集不可）
 
 パートナー経由で作成したアンケートには、**作成時にサーバーが必ず2問を自動付与**する。
@@ -208,7 +312,8 @@ draft を作成する。
       "answer_options": [ { "value": "female", "label": "女性" }, … ],
       "sort_order": 1,
       "is_required": true,
-      "is_fixed": true
+      "is_fixed": true,
+      "question_text_image": null       // 画像が無ければ null（3.5 参照）
     },
     { "question_code": "__partner_age__",  "…": "…", "sort_order": 2,  "is_fixed": true },
     { "question_code": "pq1", "…": "…", "sort_order": 10, "is_fixed": false },
@@ -337,6 +442,7 @@ draft を更新する。`title` と `questions` は**どちらか一方だけで
 | 変数 | 必須 | 内容 |
 |---|---|---|
 | `PARTNER_API_KEY` | パートナーAPIを使うなら必須 | `X-Partner-Key` と照合する固定キー。16文字以上。`openssl rand -hex 32` 推奨 |
+| `PARTNER_IMAGE_URL_ALLOWED_HOSTS` | 設問文画像を使うなら必須 | 画像URLとして受け入れるホストのカンマ区切り許可リスト（例: `portal.example.com`）。**未設定だと画像URLは全て 400**（fail-closed）。3.5 参照 |
 | `APP_BASE_URL` | 既存 | `answer_url` のフォールバック生成に使う |
 | `LINE_LIFF_ID_SURVEY` / `LINE_LIFF_ID` | 既存・任意 | 設定されていれば `answer_url` を LIFF 恒久URLにする |
 
@@ -358,6 +464,7 @@ draft を更新する。`title` と `questions` は**どちらか一方だけで
 | store_id（所有者） | `projects.partner_store_id`（**migration 089 で追加**） |
 | entry_code / answer_url | `projects.entry_code`（`p-` プレフィックス）＋ 既存の `/liff/store` 導線 |
 | 設問 | `questions` 各行 |
+| question_text_image | `questions.question_config.question_text_image`（camelCase に変換して保存） |
 | 回答 | `sessions` / `answers`（既存の LIFF 回答フローがそのまま書く） |
 
 回答導線は既存の `storeEntryService`（`/liff/store?entry_code=...`）を再利用しているため、

@@ -16,9 +16,14 @@ import {
 import { PARTNER_PACKAGES, findPartnerPackage } from "../lib/partnerPackages";
 import {
   PARTNER_QUESTION_TYPES,
+  type PartnerQuestionTextImage,
   buildPartnerQuestionConfig,
+  collectDisallowedImageUrls,
+  isAllowedImageUrl,
+  parseImageUrlAllowedHosts,
   partnerTypeRequiresOptions,
   toInternalQuestionType,
+  toPartnerQuestionTextImage,
   toPartnerQuestionType
 } from "../lib/partnerQuestions";
 import type { Question } from "../types/domain";
@@ -223,6 +228,180 @@ test("buildPartnerQuestionConfig: free_text は選択肢も presentation も付�
   const config = buildPartnerQuestionConfig("free_text", null);
   assert.equal(config?.options, undefined);
   assert.equal(config?.presentation, undefined);
+});
+
+// ------------------------------------------------------------------
+// 設問文画像（Phase 4）
+//
+// 「設問タイプは4種のまま。4種すべてに画像を添えられる」が方針。
+// text_with_image のような新しい question_type は作らない。
+// ------------------------------------------------------------------
+
+const ALLOWED_HOSTS = ["portal.example.com", "portal-staging.example.com"];
+
+const SAMPLE_IMAGE: PartnerQuestionTextImage = {
+  main_url: "https://portal.example.com/api/public/question-images/abc",
+  additional_urls: ["https://portal.example.com/api/public/question-images/def"],
+  caption: "店内の様子"
+};
+
+test("画像を渡さないと question_text_image は付かない（従来形式が完全に従来通り）", () => {
+  for (const type of PARTNER_QUESTION_TYPES) {
+    const options = partnerTypeRequiresOptions(type)
+      ? [
+          { value: "1", label: "A" },
+          { value: "2", label: "B" }
+        ]
+      : null;
+    // 第3引数を省略した既存の呼び出し形
+    const omitted = buildPartnerQuestionConfig(type, options);
+    assert.equal(omitted?.question_text_image, undefined, `${type}: 省略時に画像が付いている`);
+    // 明示的に null を渡した場合も同じ
+    const explicitNull = buildPartnerQuestionConfig(type, options, null);
+    assert.equal(explicitNull?.question_text_image, undefined, `${type}: null で画像が付いている`);
+    assert.deepEqual(explicitNull, omitted, `${type}: 省略と null で結果が違う`);
+  }
+});
+
+test("性年代の固定2問には画像が付かない（第3引数なしで呼ばれる）", () => {
+  // ensureDemographicQuestions と同じ呼び出し形
+  const config = buildPartnerQuestionConfig("single_choice", [...GENDER_OPTIONS]);
+  assert.equal(config?.question_text_image, undefined);
+  assert.equal(config?.options?.length, GENDER_OPTIONS.length);
+});
+
+test("画像を渡すと question_config.question_text_image に camelCase で入る", () => {
+  const config = buildPartnerQuestionConfig("free_text", null, SAMPLE_IMAGE);
+  assert.deepEqual(config?.question_text_image, {
+    mainUrl: "https://portal.example.com/api/public/question-images/abc",
+    additionalUrls: ["https://portal.example.com/api/public/question-images/def"],
+    caption: "店内の様子"
+  });
+});
+
+test("4種すべてに画像を添えられる（scale は presentation と共存する）", () => {
+  for (const type of PARTNER_QUESTION_TYPES) {
+    const options = partnerTypeRequiresOptions(type)
+      ? [
+          { value: "1", label: "A" },
+          { value: "2", label: "B" }
+        ]
+      : null;
+    const config = buildPartnerQuestionConfig(type, options, SAMPLE_IMAGE);
+    assert.equal(
+      config?.question_text_image?.mainUrl,
+      SAMPLE_IMAGE.main_url,
+      `${type}: 画像が入っていない`
+    );
+    // 種別は写像されたまま。新しい question_type は増えていない。
+    const stored = question({
+      question_type: toInternalQuestionType(type),
+      question_config: config
+    });
+    assert.equal(toPartnerQuestionType(stored), type, `${type}: 画像で種別が変わっている`);
+  }
+});
+
+test("GET のレスポンス変換: camelCase → snake_case。無ければ null", () => {
+  const config = buildPartnerQuestionConfig("single_choice", null, SAMPLE_IMAGE);
+  assert.deepEqual(toPartnerQuestionTextImage(config?.question_text_image), SAMPLE_IMAGE);
+  // 画像が無い設問は null（キー欠損ではない）
+  assert.equal(toPartnerQuestionTextImage(undefined), null);
+  assert.equal(toPartnerQuestionTextImage(null), null);
+});
+
+test("画像の往復変換で値が失われない", () => {
+  const config = buildPartnerQuestionConfig("multi_choice", null, SAMPLE_IMAGE);
+  const roundTripped = toPartnerQuestionTextImage(config?.question_text_image);
+  const again = buildPartnerQuestionConfig("multi_choice", null, roundTripped);
+  assert.deepEqual(again?.question_text_image, config?.question_text_image);
+});
+
+test("PUT で画像を送らないと画像が消える（全置換の仕様どおり）", () => {
+  // 1回目: 画像つきで保存
+  const withImage = buildPartnerQuestionConfig("single_choice", null, SAMPLE_IMAGE);
+  assert.ok(withImage?.question_text_image);
+
+  // 2回目（PUT）: 同じ設問を画像なしで送る。question_config はゼロから組み直されるので
+  // 直前の画像は引き継がれない。
+  const replaced = buildPartnerQuestionConfig("single_choice", null);
+  assert.equal(replaced?.question_text_image, undefined);
+  assert.equal(toPartnerQuestionTextImage(replaced?.question_text_image), null);
+  // → ポータル側は PUT を組み立てるたびにサーバー側で画像を合成し直す必要がある（Phase 5）。
+});
+
+// --- URL のホスト検証 ---
+
+test("parseImageUrlAllowedHosts: カンマ区切り・空白・大文字を正規化する", () => {
+  assert.deepEqual(parseImageUrlAllowedHosts(" A.example.com , b.example.com "), [
+    "a.example.com",
+    "b.example.com"
+  ]);
+  assert.deepEqual(parseImageUrlAllowedHosts("a.example.com,,"), ["a.example.com"]);
+  assert.deepEqual(parseImageUrlAllowedHosts(""), []);
+  assert.deepEqual(parseImageUrlAllowedHosts(undefined), []);
+});
+
+test("許可リストが空（env 未設定）なら画像URLは一切通らない（fail-closed）", () => {
+  assert.equal(isAllowedImageUrl("https://portal.example.com/x.png", []), false);
+  assert.deepEqual(collectDisallowedImageUrls(SAMPLE_IMAGE, []), [
+    SAMPLE_IMAGE.main_url,
+    ...SAMPLE_IMAGE.additional_urls
+  ]);
+});
+
+test("許可ホストの https URL だけが通る", () => {
+  assert.equal(isAllowedImageUrl("https://portal.example.com/a.png", ALLOWED_HOSTS), true);
+  assert.equal(isAllowedImageUrl("https://PORTAL.example.com/a.png", ALLOWED_HOSTS), true);
+  assert.equal(isAllowedImageUrl("https://portal-staging.example.com/a.png", ALLOWED_HOSTS), true);
+});
+
+test("許可外ホストの URL は拒否（400 になる）", () => {
+  assert.equal(isAllowedImageUrl("https://evil.example.com/a.png", ALLOWED_HOSTS), false);
+  // サブドメインは自動で許可しない（完全一致のみ）
+  assert.equal(isAllowedImageUrl("https://evil.portal.example.com/a.png", ALLOWED_HOSTS), false);
+  // ホスト名の後方一致でごまかせない
+  assert.equal(isAllowedImageUrl("https://notportal.example.com/a.png", ALLOWED_HOSTS), false);
+});
+
+test("http:// は許可ホストでも拒否（400 になる）", () => {
+  assert.equal(isAllowedImageUrl("http://portal.example.com/a.png", ALLOWED_HOSTS), false);
+});
+
+test("https 以外のスキーム・壊れたURLは拒否", () => {
+  assert.equal(isAllowedImageUrl("data:image/png;base64,AAAA", ALLOWED_HOSTS), false);
+  assert.equal(isAllowedImageUrl("javascript:alert(1)", ALLOWED_HOSTS), false);
+  assert.equal(isAllowedImageUrl("not a url", ALLOWED_HOSTS), false);
+  assert.equal(isAllowedImageUrl("", ALLOWED_HOSTS), false);
+});
+
+test("collectDisallowedImageUrls: additional_urls の1件でも許可外なら弾く", () => {
+  assert.deepEqual(collectDisallowedImageUrls(null, ALLOWED_HOSTS), []);
+  assert.deepEqual(collectDisallowedImageUrls(SAMPLE_IMAGE, ALLOWED_HOSTS), []);
+  assert.deepEqual(
+    collectDisallowedImageUrls(
+      { main_url: null, additional_urls: [], caption: "文字だけ" },
+      ALLOWED_HOSTS
+    ),
+    []
+  );
+  assert.deepEqual(
+    collectDisallowedImageUrls(
+      {
+        main_url: "https://portal.example.com/ok.png",
+        additional_urls: ["https://evil.example.com/ng.png"]
+      },
+      ALLOWED_HOSTS
+    ),
+    ["https://evil.example.com/ng.png"]
+  );
+  assert.deepEqual(
+    collectDisallowedImageUrls(
+      { main_url: "http://portal.example.com/ng.png", additional_urls: [] },
+      ALLOWED_HOSTS
+    ),
+    ["http://portal.example.com/ng.png"]
+  );
 });
 
 // ------------------------------------------------------------------

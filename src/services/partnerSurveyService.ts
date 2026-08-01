@@ -14,10 +14,12 @@ import {
   summarizeDemographics
 } from "../lib/partnerDemographics";
 import {
+  type PartnerQuestionTextImage,
   type PartnerQuestionType,
   type PartnerQuestionView,
   buildPartnerQuestionConfig,
   toInternalQuestionType,
+  toPartnerQuestionTextImage,
   toPartnerQuestionType
 } from "../lib/partnerQuestions";
 import { answerRepository } from "../repositories/answerRepository";
@@ -50,6 +52,8 @@ export interface PartnerQuestionInput {
   answer_options: QuestionOption[] | null;
   sort_order: number;
   is_required?: boolean;
+  /** 設問文に添える画像（任意）。省略・null なら画像なしで保存される。 */
+  question_text_image?: PartnerQuestionTextImage | null;
 }
 
 export interface CreateSurveyInput {
@@ -216,7 +220,13 @@ async function replacePartnerQuestions(
   for (const [index, input] of ordered.entries()) {
     const questionCode = partnerQuestionCode(index);
     const internalType = toInternalQuestionType(input.question_type);
-    const config = buildPartnerQuestionConfig(input.question_type, input.answer_options);
+    // 画像は毎回この入力から組み立て直す（question_config は全置換される）。
+    // 送られてこなければ画像は消える＝呼び出し側が毎回そろえて送る責務を持つ。
+    const config = buildPartnerQuestionConfig(
+      input.question_type,
+      input.answer_options,
+      input.question_text_image ?? null
+    );
     const payload = {
       question_text: input.question_text,
       question_role: "main" as const,
@@ -272,7 +282,8 @@ async function loadPartnerQuestionViews(projectId: string): Promise<PartnerQuest
       answer_options: question.question_config?.options ?? null,
       sort_order: question.sort_order,
       is_required: question.is_required,
-      is_fixed: isDemographicQuestion(question)
+      is_fixed: isDemographicQuestion(question),
+      question_text_image: toPartnerQuestionTextImage(question.question_config?.question_text_image)
     });
   }
   return views.sort((left, right) => left.sort_order - right.sort_order);

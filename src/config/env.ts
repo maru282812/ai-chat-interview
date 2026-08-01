@@ -62,6 +62,14 @@ const envSchema = z.object({
   // 未設定の場合 /api/partner/* は全て 503 を返す（起動は妨げない）。
   // 値は十分にランダムな文字列にすること（例: openssl rand -hex 32）。
   PARTNER_API_KEY: z.string().min(16).optional(),
+  // パートナーAPI で受け付ける設問文画像URLのホスト許可リスト（カンマ区切り・ホスト名のみ）。
+  // 例: PARTNER_IMAGE_URL_ALLOWED_HOSTS=portal.example.com,portal-staging.example.com
+  //
+  // 回答画面（LIFF）に差し込まれる <img> の向き先なので、任意の外部URLを通すと
+  // トラッキング・回答者IPの収集・不適切画像の差し込みに使われる。
+  // パートナーAPIキーが漏れた場合や将来パートナーが増えた場合の被害を抑えるため、
+  // **未設定なら画像URLを一切受け付けない（fail-closed）**。https のみ許可。
+  PARTNER_IMAGE_URL_ALLOWED_HOSTS: z.string().optional(),
   // 管理画面AIチャット（docs/impl-admin-ai-chat.md）
   // 1指示あたりのツール実行往復の上限。超えたら途中結果で打ち切って報告する。
   ADMIN_CHAT_MAX_TOOL_ROUNDS: z.coerce.number().int().positive().max(20).default(8),

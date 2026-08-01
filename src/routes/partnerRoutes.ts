@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { env } from "../config/env";
 import { HttpError, asyncHandler } from "../lib/http";
 import {
   AGE_OPTIONS,
@@ -7,9 +8,14 @@ import {
   RESERVED_QUESTION_CODES
 } from "../lib/partnerDemographics";
 import { PARTNER_PACKAGES } from "../lib/partnerPackages";
-import { PARTNER_QUESTION_TYPES, partnerTypeRequiresOptions } from "../lib/partnerQuestions";
+import {
+  PARTNER_QUESTION_TYPES,
+  collectDisallowedImageUrls,
+  parseImageUrlAllowedHosts,
+  partnerTypeRequiresOptions
+} from "../lib/partnerQuestions";
 import { partnerAuthMiddleware, requirePartner } from "../middleware/partnerAuth";
-import { partnerSurveyService } from "../services/partnerSurveyService";
+import { type PartnerQuestionInput, partnerSurveyService } from "../services/partnerSurveyService";
 
 /**
  * partnerRoutes.ts
@@ -38,15 +44,43 @@ const answerOptionSchema = z.object({
   exclusive: z.boolean().optional()
 });
 
+/**
+ * 設問文画像。**設問タイプは4種のまま。どの種別にも添えられる**。
+ *
+ * URL のホストは `PARTNER_IMAGE_URL_ALLOWED_HOSTS` の許可リストに限定する。
+ * 回答画面に差し込まれる <img> の向き先なので、任意の外部URLを通すと
+ * トラッキング・回答者IPの収集・不適切画像の差し込みに使われるため。
+ * env 未設定なら画像URLは一切通らない（fail-closed）。
+ */
+const questionTextImageSchema = z.object({
+  main_url: z.string().url().max(2000).nullable().optional(),
+  additional_urls: z.array(z.string().url().max(2000)).max(4).optional(),
+  caption: z.string().max(200).nullable().optional()
+});
+
 const questionSchema = z
   .object({
     question_text: z.string().min(1).max(2000),
     question_type: z.enum(PARTNER_QUESTION_TYPES),
     answer_options: z.array(answerOptionSchema).max(50).nullable().optional(),
     sort_order: z.number().int().min(0).max(1000),
-    is_required: z.boolean().optional()
+    is_required: z.boolean().optional(),
+    question_text_image: questionTextImageSchema.nullable().optional()
   })
   .superRefine((value, ctx) => {
+    const disallowed = collectDisallowedImageUrls(
+      value.question_text_image ?? null,
+      parseImageUrlAllowedHosts(env.PARTNER_IMAGE_URL_ALLOWED_HOSTS)
+    );
+    if (disallowed.length > 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["question_text_image"],
+        message:
+          "image url must be https and its host must be listed in PARTNER_IMAGE_URL_ALLOWED_HOSTS"
+      });
+    }
+
     const options = value.answer_options ?? null;
     if (partnerTypeRequiresOptions(value.question_type)) {
       if (!options || options.length < 2) {
@@ -77,6 +111,10 @@ const questionSchema = z
   });
 
 const questionListSchema = z.array(questionSchema).min(1).max(50);
+
+/** テストから参照する（HTTP を立てずに 400 判定を検証するため）。 */
+export const partnerQuestionSchemaForTest = questionSchema;
+export const partnerToQuestionInputForTest = toQuestionInput;
 
 const createSurveySchema = z.object({
   title: z.string().min(1).max(200),
@@ -125,6 +163,28 @@ function parseSurveyId(raw: string | string[] | undefined): string {
 }
 
 /**
+ * 検証済みの設問ボディ → サービス層の入力。
+ * POST / PUT で同じ写像を使う（片方だけ画像を落とす事故を防ぐ）。
+ */
+function toQuestionInput(question: z.infer<typeof questionSchema>): PartnerQuestionInput {
+  const image = question.question_text_image;
+  return {
+    question_text: question.question_text,
+    question_type: question.question_type,
+    answer_options: question.answer_options ?? null,
+    sort_order: question.sort_order,
+    is_required: question.is_required,
+    question_text_image: image
+      ? {
+          main_url: image.main_url ?? null,
+          additional_urls: image.additional_urls ?? [],
+          caption: image.caption ?? null
+        }
+      : null
+  };
+}
+
+/**
  * パートナーが予約 question_code（性年代設問）を横取りしないことを保証する。
  * question_code はサーバーが採番するため通常は届かないが、将来の入力拡張への防御。
  */
@@ -167,13 +227,7 @@ partnerRoutes.post(
       partnerStoreId: partner.storeId,
       title: body.title,
       packageId: body.package_id ?? null,
-      questions: body.questions.map((question) => ({
-        question_text: question.question_text,
-        question_type: question.question_type,
-        answer_options: question.answer_options ?? null,
-        sort_order: question.sort_order,
-        is_required: question.is_required
-      })),
+      questions: body.questions.map(toQuestionInput),
       store: {
         name: body.store.name,
         industry: body.store.industry ?? null
@@ -209,13 +263,7 @@ partnerRoutes.put(
       partnerStoreId: partner.storeId,
       surveyId,
       title: body.title,
-      questions: body.questions?.map((question) => ({
-        question_text: question.question_text,
-        question_type: question.question_type,
-        answer_options: question.answer_options ?? null,
-        sort_order: question.sort_order,
-        is_required: question.is_required
-      }))
+      questions: body.questions?.map(toQuestionInput)
     });
 
     res.json(survey);
