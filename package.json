@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "test": "tsx src/tests/questionSchemaRedesign.test.ts && tsx src/tests/partnerApi.test.ts && tsx src/tests/partnerApiSchema.test.ts",
+    "test": "tsx src/tests/questionSchemaRedesign.test.ts && tsx src/tests/partnerApi.test.ts && tsx src/tests/partnerApiSchema.test.ts && tsx src/tests/partnerAdminApi.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "biome check --fix --unsafe .",
     "format": "biome format --write .",

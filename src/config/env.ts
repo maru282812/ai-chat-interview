@@ -62,6 +62,13 @@ const envSchema = z.object({
   // 未設定の場合 /api/partner/* は全て 503 を返す（起動は妨げない）。
   // 値は十分にランダムな文字列にすること（例: openssl rand -hex 32）。
   PARTNER_API_KEY: z.string().min(16).optional(),
+  // 運営専用API（/api/partner-admin/*・docs/partner-api.md §8）の認証キー。
+  // ACI 管理画面で作った未割り当て案件を、ポータルの運営画面（/ops）から店舗に割り当てる
+  // ためだけに使う。**PARTNER_API_KEY とは別物で、フォールバックは一切しない**
+  // （店舗スコープのキーで全社の案件が引けてはいけないため）。
+  // 未設定の場合 /api/partner-admin/* は全て 503 を返す（起動は妨げない）。
+  // 値は十分にランダムな文字列にすること（例: openssl rand -hex 32）。
+  PARTNER_ADMIN_API_KEY: z.string().min(16).optional(),
   // パートナーAPI で受け付ける設問文画像URLのホスト許可リスト（カンマ区切り・ホスト名のみ）。
   // 例: PARTNER_IMAGE_URL_ALLOWED_HOSTS=portal.example.com,portal-staging.example.com
   //

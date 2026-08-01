@@ -9,6 +9,7 @@ import type {
   ProjectProbePolicy,
   ProjectResponseStyle,
   ProjectStatus,
+  ResearchHypothesis,
   ResearchMode,
   ScreeningConfig
 } from "../types/domain";
@@ -35,6 +36,8 @@ interface ProjectMutationInput {
   ai_state_json?: ProjectAIState | null;
   ai_state_template_key?: string | null;
   ai_state_generated_at?: string | null;
+  /** 調査仮説シート（P13・Migration 088） */
+  research_hypothesis_json?: ResearchHypothesis | null;
   screening_config?: ScreeningConfig | null;
   screening_last_question_order?: number | null;
   is_discoverable?: boolean;
@@ -366,5 +369,101 @@ export const projectRepository = {
       .single();
     throwIfError(error);
     return data as Project;
+  },
+
+  /**
+   * 運営専用API（/api/partner-admin/*）の「店舗へ割り当てられる候補」一覧。
+   *
+   * listStoreProjects() とは別関数にする。あちらは管理画面 /admin/store-surveys の
+   * 表示条件（visibility_type='private_store'）で、こちらは「まだどこにも属していない
+   * 案件」を探すため条件がまったく違う。
+   *
+   * 抽出条件:
+   * - partner_store_id is null … まだ店舗に割り当てられていない
+   * - client_id is null … 他社クライアントの案件を候補に出さない
+   * - status in ('draft','ready') … 公開済み/締切済みは割り当てさせない
+   * - is_discoverable = false … 一般の「探す」一覧に出している案件は店舗専用に転用しない
+   */
+  async listAssignableForPartner(): Promise<Project[]> {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .is("partner_store_id", null)
+      .is("client_id", null)
+      .in("status", ["draft", "ready"])
+      .eq("is_discoverable", false)
+      .order("created_at", { ascending: false });
+    throwIfError(error);
+    return (data ?? []) as Project[];
+  },
+
+  /**
+   * 既に店舗へ割り当て済みの案件一覧（運営の整合性チェック用）。
+   * ポータル側に対応行が無い＝片側だけ書けた状態を /ops から検出できるようにする。
+   */
+  async listAssignedToPartner(): Promise<Project[]> {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .not("partner_store_id", "is", null)
+      .order("created_at", { ascending: false });
+    throwIfError(error);
+    return (data ?? []) as Project[];
+  },
+
+  /**
+   * 未割り当ての案件だけを店舗に割り当てる**条件付きUPDATE**。
+   *
+   * `where id = ? and partner_store_id is null` を DB に評価させることで、
+   * 同時に2つの運営操作が走っても後勝ちで上書きされない（二重割り当てを DB で防ぐ）。
+   * migration を増やさずに済ませるための作法。
+   *
+   * 更新行が0件のとき null を返す。呼び出し側は「既に割り当て済み」として 409 にする
+   * （例外にしないのは、正常な競合と DB エラーを区別したいため）。
+   */
+  async assignPartnerStore(
+    projectId: string,
+    storeId: string,
+    patch: {
+      visibility_type: 'public' | 'private_store';
+      is_discoverable: boolean;
+      entry_code: string;
+    }
+  ): Promise<Project | null> {
+    const id = projectId.trim();
+    const store = storeId.trim();
+    if (!id || !store) return null;
+    const { data, error } = await supabase
+      .from("projects")
+      .update({ partner_store_id: store, ...patch })
+      .eq("id", id)
+      .is("partner_store_id", null)
+      .select("*");
+    throwIfError(error);
+    const rows = (data ?? []) as Project[];
+    return rows[0] ?? null;
+  },
+
+  /**
+   * 割り当てを取り消して未割り当てへ戻す。
+   * ポータル側の INSERT が失敗したときの巻き戻し（補償トランザクション）にも使う。
+   * 安全側に倒すため entry_code も落とす（古いQRで回答が入り続けるのを防ぐ）。
+   */
+  async unassignPartnerStore(projectId: string): Promise<Project | null> {
+    const id = projectId.trim();
+    if (!id) return null;
+    const { data, error } = await supabase
+      .from("projects")
+      .update({
+        partner_store_id: null,
+        visibility_type: "public",
+        entry_code: null,
+        is_discoverable: false
+      })
+      .eq("id", id)
+      .select("*");
+    throwIfError(error);
+    const rows = (data ?? []) as Project[];
+    return rows[0] ?? null;
   }
 };

@@ -442,6 +442,7 @@ draft を更新する。`title` と `questions` は**どちらか一方だけで
 | 変数 | 必須 | 内容 |
 |---|---|---|
 | `PARTNER_API_KEY` | パートナーAPIを使うなら必須 | `X-Partner-Key` と照合する固定キー。16文字以上。`openssl rand -hex 32` 推奨 |
+| `PARTNER_ADMIN_API_KEY` | 運営専用API（§8）を使うなら必須 | `X-Partner-Admin-Key` と照合する固定キー。16文字以上。**`PARTNER_API_KEY` とは必ず別の値**。未設定だと `/api/partner-admin/*` は全て 503。フォールバックはしない |
 | `PARTNER_IMAGE_URL_ALLOWED_HOSTS` | 設問文画像を使うなら必須 | 画像URLとして受け入れるホストのカンマ区切り許可リスト（例: `portal.example.com`）。**未設定だと画像URLは全て 400**（fail-closed）。3.5 参照 |
 | `APP_BASE_URL` | 既存 | `answer_url` のフォールバック生成に使う |
 | `LINE_LIFF_ID_SURVEY` / `LINE_LIFF_ID` | 既存・任意 | 設定されていれば `answer_url` を LIFF 恒久URLにする |
@@ -469,3 +470,188 @@ draft を更新する。`title` と `questions` は**どちらか一方だけで
 
 回答導線は既存の `storeEntryService`（`/liff/store?entry_code=...`）を再利用しているため、
 パートナー経由アンケート専用の回答画面は無い。
+
+---
+
+## 8. 運営専用API（`/api/partner-admin/*`）
+
+**ACI の管理画面で運営（YOTTO）が作った案件を、ポータルの運営画面（`/ops`）から
+店舗へ割り当てる**ためのAPI。店舗（ポータルの一般ユーザー）は使わない。
+
+実装:
+- ルータ … `src/routes/partnerAdminRoutes.ts`（`src/app.ts` で `/api/partner-admin` にマウント）
+- 認証 … `src/middleware/partnerAdminAuth.ts`
+- ユースケース … `src/services/partnerAssignmentService.ts`
+- リポジトリ … `src/repositories/projectRepository.ts`
+  （`listAssignableForPartner` / `listAssignedToPartner` / `assignPartnerStore` / `unassignPartnerStore`）
+- テスト … `src/tests/partnerAdminApi.test.ts`
+
+**migration は増やしていない**。割り当ての実体は既存列 `projects.partner_store_id`（migration 089）。
+
+### 8.1 認証
+
+| ヘッダ | 必須 | 内容 |
+|---|---|---|
+| `X-Partner-Admin-Key` | ○ | 環境変数 `PARTNER_ADMIN_API_KEY` と一致する固定キー |
+
+- `X-Partner-Store-Id` は **不要**（このルータは店舗スコープを持たない。未割り当て案件が対象で、
+  割り当て先の店舗はボディの `store_id` で受け取る）。
+- 比較は `/api/partner/*` と同じ SHA-256 ダイジェスト同士の `timingSafeEqual`。
+- **`PARTNER_ADMIN_API_KEY` 未設定なら全エンドポイントが 503**
+  （`{"error":"partner admin API is not configured"}`）。
+  **`PARTNER_API_KEY` へのフォールバックは一切しない**（fail-closed）。
+  店舗スコープの鍵で全社の案件が引ける穴を作らないため。
+- 店舗用の `PARTNER_API_KEY` の値を `X-Partner-Admin-Key` に載せても **401**。
+
+### 8.2 エラー形式
+
+`/api/partner/*` と同じ `{ "error": "..." }`。
+
+| ステータス | 意味 |
+|---|---|
+| 400 | `store_id` が UUID でない / 未指定 |
+| 401 | `X-Partner-Admin-Key` 不一致・未提示 |
+| 404 | `:id` が UUID でない / 案件が存在しない |
+| 409 | 割り当てガード違反（8.5 参照） |
+| 503 | `PARTNER_ADMIN_API_KEY` 未設定 |
+
+### 8.3 `GET /api/partner-admin/assignable-surveys`
+
+割り当て候補の一覧。**設問本文は含まない**（一覧は選ぶためのもので、専門家が練った
+設問文を割り当て前に丸ごと露出させない）。中身を見るときは 8.5 の 1件取得を明示的に叩く。
+
+DB 側の抽出条件（`listAssignableForPartner`）:
+`partner_store_id is null` かつ `client_id is null` かつ
+`status in ('draft','ready')` かつ `is_discoverable = false`。
+並びは `created_at` 降順。
+
+**レスポンス 200**
+
+```jsonc
+{
+  "surveys": [
+    {
+      "survey_id": "0f2b...-uuid",
+      "title": "飲食店 満足度調査（汎用）",
+      "status": "draft",                 // "draft" | "ready"
+      "question_count": 8,               // 4種に写像できる設問数（性年代の固定2問は含まない）
+      "created_at": "2026-08-01T00:00:00.000Z",
+      "assignable": true,                // false ならそのままでは割り当てられない
+      "blocked_reason": null             // assignable=false のときだけ理由が入る
+    }
+  ]
+}
+```
+
+`blocked_reason` に入り得る文字列（`assign` の 409 メッセージと同じ文言）:
+
+| 値 | 意味 |
+|---|---|
+| `"already assigned to a store"` | 既に別の店舗に割り当て済み |
+| `"project belongs to a client"` | `client_id` 付き（他社クライアントの案件） |
+| `"status must be draft or ready (current: <status>)"` | `published` / `closed` / `archived` 等 |
+| `"project is discoverable in the public list"` | 「探す」一覧に出している案件 |
+| `"contains N question(s) not representable as partner question types"` | 4種に写像できない設問がある |
+
+### 8.4 `GET /api/partner-admin/assigned-surveys`
+
+割り当て済み案件の一覧（`partner_store_id is not null`）。
+ポータル側の対応行と突き合わせる**整合性チェック**用。設問本文は含まない。
+
+**レスポンス 200**
+
+```jsonc
+{
+  "surveys": [
+    {
+      "survey_id": "0f2b...-uuid",
+      "title": "飲食店 満足度調査（汎用）",
+      "status": "ready",
+      "store_id": "3333...-uuid",        // ポータル側 stores.id
+      "entry_code": "p-abc123",          // 未採番なら null
+      "created_at": "2026-08-01T00:00:00.000Z",
+      "updated_at": "2026-08-02T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+### 8.5 `GET /api/partner-admin/surveys/:id`
+
+割り当て前プレビュー（**設問込み**）。運営が「店舗のエディタで開いたら何が見えるか」を
+割り当て前に確認するためのもの。
+
+レスポンスは店舗向け `GET /api/partner/surveys/:id` と**同じ `SurveyView`**（5.2 参照）。
+未割り当ての案件では `store_id` が空文字、`entry_code` / `answer_url` が `null` になる。
+
+- `:id` が UUID でない / 存在しない → **404** `{"error":"survey not found"}`
+- 所有者スコープの検査はしない（未割り当て案件を見るのが目的のため）。
+  だからこの鍵は運営サーバー側だけで使う。
+
+### 8.6 `POST /api/partner-admin/surveys/:id/assign`
+
+店舗に割り当てる。
+
+**リクエスト**
+
+```jsonc
+{ "store_id": "3333...-uuid" }   // ポータル側 stores.id。UUID 必須（違反は 400）
+```
+
+**ガード（すべて満たさないと 409）**
+
+| # | 条件 | 409 のメッセージ |
+|---|---|---|
+| 1 | `partner_store_id is null` | `"already assigned to a store"` |
+| 2 | `client_id is null` | `"project belongs to a client"` |
+| 3 | `status` が `draft` / `ready` | `"status must be draft or ready (current: published)"` |
+| 4 | `is_discoverable = false` | `"project is discoverable in the public list"` |
+| 5 | **完了セッションが0件** | `"survey already has N completed session(s)"` |
+| 6 | **全設問が4種に写像できる** | `"survey contains question types not supported by the partner editor: q2(matrix_single), ..."` |
+
+- 5 は「回答済み案件を店舗に渡すと、他所で集めた回答者データがその店舗に見えてしまう」事故を塞ぐ。
+- 6 は `toPartnerQuestionType()` が `null` を返す設問（マトリクス・画像アップロード等）。
+  黙って落とすと店舗のエディタで設問が減り、次の保存（全置換）で内部からも消えるため
+  **409 にして、どの設問かを `question_code(question_type)` の形で返す**。
+- 1 は最終的に**条件付きUPDATE**（`where id = ? and partner_store_id is null`）でも担保する。
+  同時に2つの運営操作が走っても更新行が0件になり、後勝ちの二重割り当てにならない。
+  この場合も `"already assigned to a store"` の 409。
+
+**更新内容**
+
+| 列 | 値 |
+|---|---|
+| `partner_store_id` | リクエストの `store_id` |
+| `visibility_type` | `'private_store'` |
+| `is_discoverable` | `false` |
+| `entry_code` | 既存があればそのまま。無ければ `p-xxxxxx` を採番 |
+
+**`status` は変更しない（`published` にしない）。**
+QR を発行する前に回答が集まると、店舗が意図しないままチケットが消費される穴になるため。
+公開は店舗が `POST /api/partner/surveys/:id/publish` を叩いたときだけ行われる。
+
+割り当て後、`ensureDemographicQuestions()` を呼んで性年代の固定2問をそろえる
+（ポータルから作った案件と同じ不変条件にする）。
+
+**レスポンス 200** … `SurveyView`（5.2 と同形）。`store_id` に割り当てた店舗ID、
+`status` は割り当て前のまま（`draft` か `ready`）。
+
+### 8.7 `POST /api/partner-admin/surveys/:id/unassign`
+
+割り当てを取り消す。ボディ不要。
+**ポータル側の書き込みが失敗したときの巻き戻し（補償トランザクション）にも使う。**
+
+更新内容（安全側に倒す）:
+
+| 列 | 値 |
+|---|---|
+| `partner_store_id` | `null` |
+| `visibility_type` | `'public'` |
+| `entry_code` | `null`（古いQRで回答が入り続けるのを防ぐ） |
+| `is_discoverable` | `false` |
+
+- **冪等**。既に未割り当ての案件に呼んでも UPDATE を投げずに 200 を返す
+  （巻き戻しが二重に走っても落ちない）。
+- `:id` が UUID でない / 存在しない → **404**
+
+**レスポンス 200** … `SurveyView`。`store_id` は空文字、`entry_code` / `answer_url` は `null`。

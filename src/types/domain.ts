@@ -331,6 +331,12 @@ export interface Project {
    * /api/partner/* の :id 系は必ずこの値の一致を検証する（他店舗の案件を触れない）。
    */
   partner_store_id?: string | null;
+  /**
+   * 「探す」一覧に出すか（管理画面の「一覧に出す」チェック）。
+   * listDiscoverable / getDiscoverableById の抽出条件であり、
+   * 運営専用API の割り当て候補（listAssignableForPartner）では false のものだけを対象にする。
+   */
+  is_discoverable?: boolean;
   /** 検索サイト表示タグ（#顔出し必須 等）(Migration 072) */
   tags?: string[];
   /** NG条件（自由記述・改行区切り表示）(Migration 072) */

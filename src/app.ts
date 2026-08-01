@@ -11,6 +11,7 @@ import { liffRoutes } from "./routes/liffRoutes";
 import { webhookRoutes } from "./routes/webhookRoutes";
 import { cronRoutes } from "./routes/cronRoutes";
 import { mentalProxyRoutes } from "./routes/mentalProxyRoutes";
+import { partnerAdminRoutes } from "./routes/partnerAdminRoutes";
 import { partnerRoutes } from "./routes/partnerRoutes";
 import { registerAdminChatTools } from "./services/adminChat/registerTools";
 
@@ -62,6 +63,9 @@ export function createApp() {
   // 会員ポータル（hibi-portal）向けパートナーAPI（docs/partner-api.md）。
   // 認証は X-Partner-Key（partnerRoutes 内でルータ全体に適用）。
   app.use("/api/partner", partnerRoutes);
+  // 運営専用API（docs/partner-api.md §8）。ポータルの /ops から案件を店舗へ割り当てる。
+  // 認証は X-Partner-Admin-Key（PARTNER_ADMIN_API_KEY・店舗用の鍵とは別物）。
+  app.use("/api/partner-admin", partnerAdminRoutes);
   app.use("/admin", adminAuthMiddleware, adminCsrfMiddleware, adminLocals, adminRoutes);
   app.use("/liff", perfTiming, liffRoutes);
 

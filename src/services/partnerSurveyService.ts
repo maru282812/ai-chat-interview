@@ -130,7 +130,7 @@ async function loadOwnedProject(surveyId: string, partnerStoreId: string): Promi
  * 既存の管理画面（adminController.generateUniqueEntryCode）と同じ体裁にそろえ、
  * パートナー経由であることが分かる `p-` プレフィックスを付ける。
  */
-async function generatePartnerEntryCode(): Promise<string> {
+export async function generatePartnerEntryCode(): Promise<string> {
   const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
   for (let attempt = 0; attempt < 8; attempt++) {
     let suffix = "";
@@ -163,7 +163,7 @@ export function buildPartnerAnswerUrl(entryCode: string | null | undefined): str
 }
 
 /** 性年代設問（サーバー固定）を、この案件に対して常に正しい形へそろえる。 */
-async function ensureDemographicQuestions(projectId: string): Promise<void> {
+export async function ensureDemographicQuestions(projectId: string): Promise<void> {
   for (const [index, spec] of DEMOGRAPHIC_QUESTION_SPECS.entries()) {
     const sortOrder = index + 1;
     const existing = await questionRepository.getByProjectAndCode(projectId, spec.question_code);
@@ -265,7 +265,7 @@ async function replacePartnerQuestions(
 }
 
 /** パートナーに見せる設問一覧（性年代設問を先頭・固定として含む）。 */
-async function loadPartnerQuestionViews(projectId: string): Promise<PartnerQuestionView[]> {
+export async function loadPartnerQuestionViews(projectId: string): Promise<PartnerQuestionView[]> {
   const questions = await questionRepository.listByProject(projectId, { includeHidden: false });
   const views: PartnerQuestionView[] = [];
   for (const question of questions) {
@@ -289,7 +289,7 @@ async function loadPartnerQuestionViews(projectId: string): Promise<PartnerQuest
   return views.sort((left, right) => left.sort_order - right.sort_order);
 }
 
-function toSurveyView(project: Project, questions: PartnerQuestionView[]): PartnerSurveyView {
+export function toSurveyView(project: Project, questions: PartnerQuestionView[]): PartnerSurveyView {
   return {
     survey_id: project.id,
     title: project.user_display_title || project.name,
