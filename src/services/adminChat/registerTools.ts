@@ -7,6 +7,7 @@
  */
 
 import { registerAnswerTools } from "./tools/answerTools";
+import { registerBehaviorEvidenceTools } from "./tools/behaviorEvidenceTools";
 import { registerDailyQueueTools } from "./tools/dailyQueueTools";
 import { registerDeliveryTools } from "./tools/deliveryTools";
 import { registerPoolQuestionTools } from "./tools/poolQuestionTools";
@@ -19,6 +20,8 @@ export function registerAdminChatTools(): void {
   if (registered) return;
   // Tier A: 回答分析
   registerAnswerTools();
+  // Tier A: 顧客発見（P13）の判定支援。判定はせず材料だけ返す
+  registerBehaviorEvidenceTools();
   // Tier B: 設問の下書き編集 / デイリーのキュー積み / セグメント・キャンペーン下書き
   registerQuestionWriteTools();
   registerDailyQueueTools();

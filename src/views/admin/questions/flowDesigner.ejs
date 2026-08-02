@@ -86,6 +86,10 @@
         <span class="tb-icon">✨</span>
         <span class="tb-label">AI生成</span>
       </button>
+      <button class="tb-btn" id="tb-discovery-flow" title="調査仮説から「行動を聞く」需要検証フローを生成（P13）">
+        <span class="tb-icon">🔍</span>
+        <span class="tb-label">顧客発見</span>
+      </button>
     </div>
 
     <!-- モード表示 -->
@@ -272,6 +276,107 @@
         <div class="fd-working">
           <div class="fd-spinner"></div>
           <p>AIがフロー構成を生成中です。しばらくお待ちください…</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- モーダル: 行動証拠による顧客発見（P13）                        -->
+<!-- 標準のAI生成とは別モーダルにしてある。入力が別物（調査仮説シート）で、 -->
+<!-- 生成されるフローの性格も別のため。                              -->
+<!-- ============================================================ -->
+<div id="discoveryFlowModal" class="fd-modal-overlay" style="display:none">
+  <div class="fd-modal">
+    <div class="fd-modal-header">
+      <h3>顧客発見フローを生成（行動証拠）</h3>
+      <button class="fd-modal-close" id="discoveryModalClose">✕</button>
+    </div>
+    <div class="fd-modal-body">
+
+      <!-- 入力画面 -->
+      <div id="discoveryStep1">
+        <div class="fd-callout">
+          このモードは<strong>意見ではなく行動</strong>を聞くフローを作ります。
+          「あったら便利ですか」ではなく「直近でそれをしたのはいつ、何をしたか」を尋ね、
+          頻度・時間・金額を数値で取ります。<br>
+          仮説は AI が視点を絞るための材料です。<strong>回答者には提示されません。</strong>
+          製品名・機能案の入力欄はありません（この段階で製品を見せないため）。
+        </div>
+
+        <div class="fd-field">
+          <label class="fd-field-label" for="discSegment">対象者（セグメント）<span class="fd-field-required">*</span></label>
+          <span class="fd-field-hint">誰に聞くのか。「中小企業」ではなく「1〜3教室を運営する塾の経営者」程度まで絞る。</span>
+          <input type="text" id="discSegment" placeholder="例: 従業員5〜20名で、経理担当が1人しかいない工務店の経営者">
+        </div>
+
+        <div class="fd-field">
+          <label class="fd-field-label" for="discScene">調べる業務・場面<span class="fd-field-required">*</span></label>
+          <span class="fd-field-hint">どの場面の行動を再現してもらうか。1つに絞るほど具体的な話が出る。</span>
+          <input type="text" id="discScene" placeholder="例: 月末の請求書作成から送付までの作業">
+        </div>
+
+        <div class="fd-field">
+          <label class="fd-field-label" for="discProblem">課題仮説<span class="fd-field-required">*</span></label>
+          <span class="fd-field-hint">何に困っていると予想するか。外れていても構いません（外れたと分かることに価値があります）。</span>
+          <textarea id="discProblem" rows="2" placeholder="例: 手作業の転記に時間がかかり、月末に残業が発生している"></textarea>
+        </div>
+
+        <div class="fd-field">
+          <label class="fd-field-label" for="discCurrent">現行手段の仮説<span class="fd-field-required">*</span></label>
+          <span class="fd-field-hint">今どうやって対処していると思うか。Excel / 紙 / 外注 / 何もしていない など。</span>
+          <input type="text" id="discCurrent" placeholder="例: Excelの自作テンプレートと手打ち、一部は税理士に外注">
+        </div>
+
+        <div class="fd-field fd-field-emphasis">
+          <label class="fd-field-label" for="discStop">失敗条件<span class="fd-field-required">*</span></label>
+          <span class="fd-field-hint">
+            <strong>何が確認できなければ、この案件を STOP するか。</strong>
+            調査を始める前に書いておくのがこの手法の核です。後から書くと、結果に合わせて基準が動きます。
+          </span>
+          <textarea id="discStop" rows="2" placeholder="例: 5人中3人以上から「直近1か月以内に実際に困った具体例」が出てこなければ STOP"></textarea>
+        </div>
+
+        <div class="fd-field">
+          <label class="fd-field-label" for="discBuyer">利用者と購入者（任意）</label>
+          <span class="fd-field-hint">別なら、決裁者にたどり着けるかが判定材料になります。</span>
+          <select id="discBuyer">
+            <option value="">未回答</option>
+            <option value="same">同一（使う人が自分で買える）</option>
+            <option value="different">別（別に決裁者がいる）</option>
+          </select>
+        </div>
+
+        <div id="discoveryError" class="fd-error" style="display:none"></div>
+
+        <p style="font-size:11px;color:#8aacaa;margin-top:8px">
+          ※生成には20〜40秒かかる場合があります。既存の質問に追加されます。入力内容は案件に保存され、次回この画面に復元されます。
+        </p>
+        <div class="fd-modal-footer">
+          <button class="fd-btn-secondary" id="discoveryModalCancel">キャンセル</button>
+          <button class="fd-btn-primary" id="discoveryExecute">顧客発見フローを生成する</button>
+        </div>
+      </div>
+
+      <!-- 処理中 -->
+      <div id="discoveryStep2" style="display:none">
+        <div class="fd-working">
+          <div class="fd-spinner"></div>
+          <p>行動を聞く設問フローを生成中です。しばらくお待ちください…</p>
+        </div>
+      </div>
+
+      <!-- 生成結果の型チェック -->
+      <div id="discoveryStep3" style="display:none">
+        <p class="fd-modal-desc">生成しました。構造の充足状況は次のとおりです。</p>
+        <div id="discoveryCoverage" class="fd-coverage"></div>
+        <p style="font-size:11px;color:#8aacaa;margin-top:10px">
+          ※不足がある場合は、生成された設問を編集するか、仮説シートを具体化して再生成してください。
+        </p>
+        <div class="fd-modal-footer">
+          <button class="fd-btn-primary" id="discoveryDone">閉じて確認する</button>
         </div>
       </div>
 

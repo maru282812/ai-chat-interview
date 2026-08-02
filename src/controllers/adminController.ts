@@ -82,6 +82,7 @@ import { collectClientMetrics } from "../lib/aggregationScope";
 import { rankRepository } from "../repositories/rankRepository";
 import { analysisService } from "../services/analysisService";
 import type {
+  FlowGenerationMode,
   PostActionability,
   PostInsightType,
   PostSentiment,
@@ -131,7 +132,14 @@ import {
   buildSurveyOptionsPrompt,
   buildAdjustQuestionsPrompt,
   buildGenerateFlowPrompt,
+  buildGenerateFlowBehaviorEvidencePrompt,
+  type AdminPromptResult,
 } from "../prompts/adminPrompts";
+import {
+  describeBuyerIsUser,
+  summarizeFlowP13Coverage,
+  validateResearchHypothesis,
+} from "../lib/behaviorEvidence";
 import { applicationService } from "../services/applicationService";
 import { projectApplicationRepository } from "../repositories/projectApplicationRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
@@ -4460,6 +4468,8 @@ export const adminController = {
         objective: project.objective ?? null,
         display_mode: project.display_mode ?? null,
       },
+      // 調査仮説シート（P13）。再生成のたびに書き直させないようフォームへ復元する
+      researchHypothesis: project.research_hypothesis_json ?? null,
       questions: allQuestions.map((q) => ({
         id:               q.id,
         question_code:    q.question_code,
@@ -5110,6 +5120,10 @@ export const adminController = {
   /**
    * POST /admin/api/projects/:projectId/flow/generate
    * プロジェクト名と調査目的からAIがフローを自動生成する
+   *
+   * mode（要件 §6.1）:
+   * - 未指定 / "standard": 従来どおり。挙動・プロンプトとも無変更
+   * - "behavior_evidence": P13。調査仮説シート必須。別プロンプトで生成する
    */
   async apiGenerateFlow(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
@@ -5126,20 +5140,65 @@ export const adminController = {
       return;
     }
 
-    const built = buildGenerateFlowPrompt(
-      { projectName: project.name, objective: project.objective ?? "" },
-      project
-    );
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const mode: FlowGenerationMode =
+      body.mode === "behavior_evidence" ? "behavior_evidence" : "standard";
+
+    let built: AdminPromptResult;
+
+    if (mode === "behavior_evidence") {
+      // 失敗条件を書かせずに生成へ進めることは差し戻し条件（§10）。ここで確実に止める。
+      const validation = validateResearchHypothesis(body.hypothesis);
+      if (!validation.ok || !validation.value) {
+        res.status(400).json({
+          error: validation.message ?? "調査仮説シートの入力内容を確認してください",
+          missing_fields: validation.missing,
+        });
+        return;
+      }
+      const hypothesis = validation.value;
+
+      // 判定支援レポート（§6.6）が「何が確認できれば GO だったか」を後から参照できるよう保存する。
+      // 生成が失敗しても入力は残したいので、AI 呼び出しより前に保存する。
+      await projectRepository.update(projectId, {
+        research_hypothesis_json: {
+          ...hypothesis,
+          saved_at: new Date().toISOString(),
+        },
+      });
+
+      built = buildGenerateFlowBehaviorEvidencePrompt(
+        {
+          segment: hypothesis.segment,
+          scene: hypothesis.scene,
+          problemHypothesis: hypothesis.problem_hypothesis,
+          currentMethod: hypothesis.current_method,
+          stopCondition: hypothesis.stop_condition,
+          buyerIsUser: describeBuyerIsUser(hypothesis.buyer_is_user),
+        },
+        project
+      );
+    } else {
+      built = buildGenerateFlowPrompt(
+        { projectName: project.name, objective: project.objective ?? "" },
+        project
+      );
+    }
 
     let generatedList: Array<Record<string, unknown>> = [];
 
     try {
       const raw = await runAdminToolPrompt({
-        purpose: "flow_generation",
+        purpose:
+          mode === "behavior_evidence"
+            ? "flow_generation_behavior_evidence"
+            : "flow_generation",
         systemPrompt: built.systemPrompt,
         userPrompt: built.userPrompt,
-        maxTokens: 4000,
-        temperature: 0.7,
+        // P13 は12〜16問＋役割タグ付き research_goal で standard より出力が長い
+        maxTokens: mode === "behavior_evidence" ? 6000 : 4000,
+        // 型を守らせたいので P13 側は揺れを抑える
+        temperature: mode === "behavior_evidence" ? 0.4 : 0.7,
         promptKey: built.promptKey,
         templateMode: built.templateMode,
         renderedPrompt: built.renderedPrompt,
@@ -5218,10 +5277,23 @@ export const adminController = {
       createdQuestions.push(created);
     }
 
+    // P13 モードでは「型が崩れていないか」を生成直後に数えて返す（§9 受け入れ条件の機械チェック）。
+    // 判定はしない。何が欠けたかを管理者に見せて、生成し直すかどうかは人間が決める。
+    const p13Coverage =
+      mode === "behavior_evidence"
+        ? summarizeFlowP13Coverage(
+            generatedList.map((gen) => ({
+              research_goal: String(gen.research_goal ?? ""),
+            }))
+          )
+        : null;
+
     res.json({
       ok: true,
+      mode,
       questions: createdQuestions,
       generated_count: createdQuestions.length,
+      p13_coverage: p13Coverage,
     });
   },
 

@@ -34,9 +34,11 @@ import {
 import { resolvePromptMeta } from "../services/aiService";
 import type { Project } from "../types/domain";
 
-// Phase 7-B で管理ツール系4キー、Phase I-B で型別深掘りガイダンス5キー、
-// 管理画面AIチャットで adminChatCommon 1キーが増えて全27キー。
-const TOTAL_KEYS = 27;
+// キー数は BASE_PROMPT_TEMPLATES から導出する。
+// 件数を直書きすると、キーを1つ足すたびに「コードは正しいのにテストが落ちる」偽陽性が出る
+// （実際に adminChatCommon 追加時に発生した）。ここで見たいのは「全キーが実体化されるか」であって
+// 「キーが何個あるか」ではない。
+const TOTAL_KEYS = Object.keys(BASE_PROMPT_TEMPLATES).length;
 
 // ---------------------------------------------------------------------------
 // Test 1: BASE標準セット生成（空Version撲滅）

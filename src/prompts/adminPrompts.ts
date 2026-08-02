@@ -148,6 +148,56 @@ export function buildGenerateFlowPrompt(
 }
 
 // ---------------------------------------------------------------------------
+// 3-B. AIフロー生成（行動証拠による顧客発見 / P13）
+//
+// standard とは別キー・別ビルダーにしてある（要件 §6.3）。分岐で1本にまとめると
+// P13 の生成規則が standard 側の文言に薄められるため。
+// ---------------------------------------------------------------------------
+
+export interface GenerateFlowBehaviorEvidencePromptParams {
+  /**
+   * 調査仮説シート（§6.2）。必須5項目はコントローラ側で検証済みであること。
+   *
+   * projectName / objective は意図的に受け取らない。案件名・調査目的が scene とズレていると
+   * モデルがそちらを主題に据えて別の話題の設問を作る（実測で再現した）。
+   * P13 の主題は常に scene 一本にする。
+   */
+  segment: string;
+  scene: string;
+  problemHypothesis: string;
+  currentMethod: string;
+  stopCondition: string;
+  /** 利用者と購入者の関係。未入力は「未回答」として渡す */
+  buyerIsUser: string;
+}
+
+export function buildGenerateFlowBehaviorEvidencePrompt(
+  params: GenerateFlowBehaviorEvidencePromptParams,
+  project?: Pick<Project, "ai_prompt_templates_json"> | null
+): AdminPromptResult {
+  const key: BasePromptKey = "buildGenerateFlowBehaviorEvidencePrompt";
+  const def = BASE_PROMPT_TEMPLATES[key];
+  const { template, mode } = resolveTemplate(project, key);
+
+  const userPrompt = renderPromptTemplate(template, {
+    segment: params.segment,
+    scene: params.scene,
+    problemHypothesis: params.problemHypothesis,
+    currentMethod: params.currentMethod,
+    stopCondition: params.stopCondition,
+    buyerIsUser: params.buyerIsUser,
+  });
+
+  return {
+    systemPrompt: def.systemPrompt,
+    userPrompt,
+    promptKey: key,
+    templateMode: mode,
+    renderedPrompt: userPrompt,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // 4. 属性不足設問提案
 // ---------------------------------------------------------------------------
 

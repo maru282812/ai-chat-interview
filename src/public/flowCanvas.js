@@ -1774,6 +1774,7 @@
     on('tb-fit',      'click', function () { setZoom(1); $canvasWrapper.scrollTo(0, 0); });
     on('tb-import-flow',   'click', openImportFlowModal);
     on('tb-generate-flow', 'click', openGenerateFlowModal);
+    on('tb-discovery-flow','click', openDiscoveryFlowModal);
   }
 
   function setZoom(z) {
@@ -1984,6 +1985,12 @@
     on('generateModalCancel', 'click', closeGenerateFlowModal);
     on('generateExecute',     'click', executeGenerateFlow);
 
+    // 顧客発見（行動証拠）モーダル
+    on('discoveryModalClose',  'click', closeDiscoveryFlowModal);
+    on('discoveryModalCancel', 'click', closeDiscoveryFlowModal);
+    on('discoveryExecute',     'click', executeDiscoveryFlow);
+    on('discoveryDone',        'click', closeDiscoveryFlowModal);
+
     // 選択肢流用モーダル
     on('optionReuseModalClose', 'click', closeOptionReuseModal);
     on('optionReuseCancel',     'click', closeOptionReuseModal);
@@ -2042,6 +2049,161 @@
     } catch (e) {
       closeGenerateFlowModal();
       showStatus('AI生成中にエラー: ' + e.message, 'error');
+    }
+  }
+
+  // ═══════════════════════════════════════════════
+  // ─── 顧客発見フロー生成モーダル（行動証拠 / P13）─
+  // ═══════════════════════════════════════════════
+
+  // 入力欄IDとサーバー側フィールド名の対応。
+  // ラベルはサーバーのエラー（missing_fields）を画面の文言に戻すために持つ。
+  var DISCOVERY_FIELDS = [
+    { id: 'discSegment', key: 'segment',            label: '対象者（セグメント）' },
+    { id: 'discScene',   key: 'scene',              label: '調べる業務・場面' },
+    { id: 'discProblem', key: 'problem_hypothesis', label: '課題仮説' },
+    { id: 'discCurrent', key: 'current_method',     label: '現行手段の仮説' },
+    { id: 'discStop',    key: 'stop_condition',     label: '失敗条件' },
+  ];
+
+  function showDiscoveryStep(n) {
+    document.getElementById('discoveryStep1').style.display = n === 1 ? '' : 'none';
+    document.getElementById('discoveryStep2').style.display = n === 2 ? '' : 'none';
+    document.getElementById('discoveryStep3').style.display = n === 3 ? '' : 'none';
+  }
+
+  function setDiscoveryError(message) {
+    var el = document.getElementById('discoveryError');
+    if (!el) return;
+    if (!message) {
+      el.style.display = 'none';
+      el.textContent = '';
+      return;
+    }
+    el.textContent = message;
+    el.style.display = '';
+  }
+
+  function openDiscoveryFlowModal() {
+    setDiscoveryError('');
+    showDiscoveryStep(1);
+
+    // 保存済みの仮説シートを復元する。再生成のたびに書き直させない
+    var saved = DATA.researchHypothesis || {};
+    DISCOVERY_FIELDS.forEach(function (field) {
+      var el = document.getElementById(field.id);
+      if (el) el.value = saved[field.key] || '';
+    });
+    var buyerEl = document.getElementById('discBuyer');
+    if (buyerEl) buyerEl.value = saved.buyer_is_user || '';
+
+    document.getElementById('discoveryFlowModal').style.display = 'flex';
+  }
+
+  function closeDiscoveryFlowModal() {
+    document.getElementById('discoveryFlowModal').style.display = 'none';
+  }
+
+  /** 入力を集める。空欄はサーバー側でも弾くが、往復を1回減らすためここでも見る */
+  function collectDiscoveryHypothesis() {
+    var hypothesis = {};
+    var missing = [];
+    DISCOVERY_FIELDS.forEach(function (field) {
+      var el = document.getElementById(field.id);
+      var value = el ? el.value.trim() : '';
+      hypothesis[field.key] = value;
+      if (value === '') missing.push(field.label);
+    });
+    var buyerEl = document.getElementById('discBuyer');
+    hypothesis.buyer_is_user = buyerEl ? buyerEl.value : '';
+    return { hypothesis: hypothesis, missing: missing };
+  }
+
+  /** 生成直後の構造チェック結果を出す。判定はしない（何が欠けたかを見せるだけ） */
+  function renderDiscoveryCoverage(coverage, generatedCount) {
+    var el = document.getElementById('discoveryCoverage');
+    if (!el) return;
+    if (!coverage) {
+      el.textContent = generatedCount + ' 件の設問を生成しました。';
+      return;
+    }
+
+    var ECONOMIC_LABELS = {
+      'economic_value/frequency':    '発生頻度',
+      'economic_value/time_loss':    '時間損失',
+      'economic_value/money_loss':   '金銭損失・現行支出',
+      'economic_value/satisfaction': '現行手段への満足度',
+    };
+
+    var rows = [];
+    rows.push(line(true, '生成数: ' + generatedCount + ' 件'));
+    rows.push(line(
+      coverage.tagged === coverage.total,
+      '役割タグ付き設問: ' + coverage.tagged + ' / ' + coverage.total + ' 件'
+    ));
+    rows.push(line(coverage.hasRecentBehavior, '直近の1回を再現する設問'));
+    rows.push(line(coverage.hasCommitment, '購入に近い行動の要求'));
+
+    var missingEV = coverage.missingEconomicValue || [];
+    rows.push(line(
+      missingEV.length === 0,
+      missingEV.length === 0
+        ? '経済価値4要素すべてあり'
+        : '経済価値の不足: ' + missingEV.map(function (k) { return ECONOMIC_LABELS[k] || k; }).join('・')
+    ));
+
+    el.innerHTML = rows.join('');
+
+    function line(ok, text) {
+      var cls = ok ? 'fd-coverage-ok' : 'fd-coverage-warn';
+      var mark = ok ? '✓' : '△';
+      return '<div class="' + cls + '">' + mark + ' ' + esc(text) + '</div>';
+    }
+  }
+
+  async function executeDiscoveryFlow() {
+    setDiscoveryError('');
+    var collected = collectDiscoveryHypothesis();
+    if (collected.missing.length > 0) {
+      setDiscoveryError('必須項目が未入力です: ' + collected.missing.join('・'));
+      return;
+    }
+
+    showDiscoveryStep(2);
+    try {
+      var resp = await fetch('/admin/api/projects/' + DATA.projectId + '/flow/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'behavior_evidence',
+          hypothesis: collected.hypothesis,
+        }),
+      });
+      var data = await resp.json();
+      if (!resp.ok) {
+        showDiscoveryStep(1);
+        setDiscoveryError(data.error || resp.statusText);
+        return;
+      }
+
+      // 次回この画面を開いたときに復元できるよう、送った内容を手元にも残す
+      DATA.researchHypothesis = collected.hypothesis;
+
+      var newQs = data.questions || [];
+      newQs.forEach(function (q) {
+        if (!questions.find(function (x) { return x.id === q.id; })) {
+          questions.push(q);
+        }
+      });
+      computeInitialPositions();
+      renderAll();
+
+      renderDiscoveryCoverage(data.p13_coverage, newQs.length);
+      showDiscoveryStep(3);
+      showStatus(newQs.length + ' 件の顧客発見設問を生成しました ✓', 'success');
+    } catch (e) {
+      showDiscoveryStep(1);
+      setDiscoveryError('生成中にエラー: ' + e.message);
     }
   }
 

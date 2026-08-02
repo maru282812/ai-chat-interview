@@ -1047,3 +1047,76 @@
 .fd-loading { padding: 16px; text-align: center; color: #8aacaa; font-size: 12px; }
 .fd-empty   { padding: 16px; text-align: center; color: #8aacaa; font-size: 12px; }
 .fd-error   { padding: 10px 12px; color: #c04040; font-size: 11px; }
+
+/* ─── 調査仮説シート（顧客発見モーダル）────────── */
+.fd-field { margin-bottom: 12px; }
+
+.fd-field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a3330;
+  margin-bottom: 3px;
+}
+
+.fd-field-required {
+  color: #c04040;
+  font-weight: 700;
+  margin-left: 3px;
+}
+
+.fd-field-hint {
+  display: block;
+  font-size: 11px;
+  color: #60726f;
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
+.fd-field input[type="text"],
+.fd-field textarea,
+.fd-field select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border: 1px solid #c8d8d5;
+  border-radius: 5px;
+  font-size: 12px;
+  font-family: inherit;
+  color: #1a3330;
+  background: #fff;
+}
+
+.fd-field textarea { resize: vertical; min-height: 52px; line-height: 1.6; }
+
+.fd-field input[type="text"]:focus,
+.fd-field textarea:focus,
+.fd-field select:focus {
+  outline: none;
+  border-color: #0b7a75;
+  box-shadow: 0 0 0 2px rgba(11, 122, 117, .12);
+}
+
+/* 失敗条件は P13 の核。他の欄と同じ見た目にすると「とりあえず埋める欄」になるので目立たせる */
+.fd-field-emphasis {
+  background: #fffaf0;
+  border: 1px solid #e8d5a8;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.fd-callout {
+  background: #f0f4f3;
+  border-left: 3px solid #0b7a75;
+  border-radius: 4px;
+  padding: 8px 11px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #3d5a57;
+  margin-bottom: 14px;
+}
+
+/* 生成直後の型チェック結果（§9 受け入れ条件の機械チェック） */
+.fd-coverage { font-size: 12px; line-height: 1.8; color: #1a3330; }
+.fd-coverage-ok   { color: #0b7a55; }
+.fd-coverage-warn { color: #b06a10; }

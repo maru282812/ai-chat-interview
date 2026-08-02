@@ -276,6 +276,37 @@ export interface ScreeningCondition {
   created_at: string;
 }
 
+/**
+ * 調査仮説シート（P13「行動証拠による顧客発見」の Phase 1 = 調査仮説の1枚化）。
+ * docs/要件定義_AIフロー作成_行動証拠による顧客発見_2026-07-27.md §6.2 / Migration 088。
+ *
+ * 製品名・機能案のフィールドは意図的に持たない。型に無ければ生成プロンプトにも渡せず、
+ * 「製品を見せない・説明しない」（同 §3-3）がデータ構造のレベルで守られる。
+ */
+export interface ResearchHypothesis {
+  /** 対象者（セグメント）。「1〜3教室の塾経営者」程度まで絞った記述 */
+  segment: string;
+  /** 調べる業務・場面。どの場面の行動を再現させるか */
+  scene: string;
+  /** 課題仮説。何に困っていると予想するか */
+  problem_hypothesis: string;
+  /** 現行手段の仮説（Excel / 紙 / 外注 など） */
+  current_method: string;
+  /** 失敗条件。何が確認できなければ STOP か。先に書かせるのが P13 の核 */
+  stop_condition: string;
+  /** 利用者と購入者が同一か（任意）。BtoB で「購入者の困り」を判定するために使う */
+  buyer_is_user?: 'same' | 'different' | null;
+  /** 最終保存日時（ISO8601） */
+  saved_at?: string | null;
+}
+
+/**
+ * AIフロー自動生成のモード（要件 §6.1）。
+ * - standard: 既存。挙動・プロンプトとも無変更
+ * - behavior_evidence: P13。行動を聞く／経済価値／購入に近い行動
+ */
+export type FlowGenerationMode = 'standard' | 'behavior_evidence';
+
 export interface Project {
   id: UUID;
   name: string;
@@ -301,6 +332,8 @@ export interface Project {
   ai_state_json: ProjectAIState | null;
   ai_state_template_key: string | null;
   ai_state_generated_at: string | null;
+  /** 調査仮説シート（P13フロー生成の入力・判定支援レポートの基準）(Migration 088) */
+  research_hypothesis_json?: ResearchHypothesis | null;
   screening_config: ScreeningConfig | null;
   screening_last_question_order: number | null;
   /** AIプロンプト方針設定 */

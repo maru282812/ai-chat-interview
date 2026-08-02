@@ -100,6 +100,8 @@ test("全テンプレートに可視化メタ情報が定義されている", ()
     "buildSurveyOptionsPrompt",
     "buildAdjustQuestionsPrompt",
     "buildGenerateFlowPrompt",
+    // P13（行動証拠）のフロー生成。管理ツール系なので同じくポリシー軸を持たない
+    "buildGenerateFlowBehaviorEvidencePrompt",
     "buildMissingAttributeSuggestionsPrompt",
   ]);
   // 純散文テンプレート（本文に {{変数}} を持たない）は usedPolicies / allowedPlaceholders とも空でよい。

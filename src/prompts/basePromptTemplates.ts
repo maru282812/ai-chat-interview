@@ -42,6 +42,8 @@ export type BasePromptKey =
   | "buildSurveyOptionsPrompt"
   | "buildAdjustQuestionsPrompt"
   | "buildGenerateFlowPrompt"
+  // P13: 行動証拠による顧客発見モードのフロー生成（standard とは別テンプレート）
+  | "buildGenerateFlowBehaviorEvidencePrompt"
   | "buildMissingAttributeSuggestionsPrompt"
   // 管理画面AIチャット（docs/impl-admin-ai-chat.md）
   | "adminChatCommon";
@@ -892,6 +894,161 @@ JSON以外を一切出力しないこと。
 注意: options は選択型のみ設定。research_goal は全設問に設定すること。`
   },
 
+  // ============================================================
+  // P13: 行動証拠による顧客発見モードのフロー生成
+  // docs/要件定義_AIフロー作成_行動証拠による顧客発見_2026-07-27.md §6.3
+  //
+  // standard（buildGenerateFlowPrompt）とは別キーにしてある。同じキーに分岐を足すと
+  // 「一般的な良いアンケート」に均された文言が混ざり、P13 の核（行動を聞く・経済価値・
+  // 購入に近い行動）が薄まるため（同 §3-1 / §10 差し戻し条件）。
+  // ============================================================
+
+  buildGenerateFlowBehaviorEvidencePrompt: {
+    label: "AIフロー生成プロンプト（行動証拠による顧客発見）",
+    description:
+      "調査仮説シート（対象者・場面・課題仮説・現行手段・失敗条件）から、意見でなく行動を聞くP13構造の設問フローを生成する",
+    callTiming:
+      "フローデザイナーの「顧客発見」ボタン→仮説シート入力後（adminController.apiGenerateFlow / mode=behavior_evidence）",
+    impactScope:
+      "behavior_evidence モードで新規作成される設問一覧のみ。standard モードのフロー生成には影響しない",
+    outputFormat: "JSON（questions 配列。research_goal に [P13:...] 役割タグ付き）",
+    usedPolicies: [],
+    systemPrompt: [
+      "あなたは需要検証インタビューの設計専門家です。YC「How To Talk To Users」の型に従います。",
+      "この調査の目的は、回答者の意見・願望を集めることではなく、すでに起きた行動の証拠を集めることです。",
+      "設問は「直近の具体的な1回」を再現させる形で構成し、思い出せる事実だけを尋ねてください。",
+      "回答者の基本情報（生年月日・年齢、性別、お住まいの都道府県、職業）はマイページのプロフィール登録で取得済みです。これらを直接尋ねる設問は生成しないでください。ただし調査目的上どうしても必要な、より踏み込んだ派生設問（例: 職種の具体、業種、可処分所得帯など）は生成して構いません。",
+      "日本語で出力し、必ずJSON形式のみで回答してください。",
+    ].join("\n"),
+    // projectName / objective は意図的に渡さない。
+    // 案件名・調査目的が仮説シートの「調べる業務・場面」とズレていると、
+    // モデルがそちらを主題として拾い、別の話題の設問を作ってしまう（実測で再現）。
+    // P13 の主題は常に scene であり、案件メタ情報は判断材料として不要。
+    allowedPlaceholders: [
+      "segment",
+      "scene",
+      "problemHypothesis",
+      "currentMethod",
+      "stopCondition",
+      "buyerIsUser",
+    ],
+    template: `【今回の調査の主題】
+{{scene}}
+
+【対象者】
+{{segment}}
+
+上に書かれた主題（1つだけ）について、回答者が直近に実際に行った1回を
+再現させる設問フローを 12〜16問で設計してください。
+
+【設問文の書き方（最重要）】
+- すべての設問は上の主題について尋ねてください。他の話題に置き換えたり一般化したりしてはいけません。
+- 1問目の設問文には、主題の文字列
+    {{scene}}
+  をそのまま書き写してください。回答者は仮説シートを見ておらず、
+  「その業務」「その行動」「業務・場面」のような言い方では何を聞かれているか分かりません。
+  この行に書かれた文字列を、要約も言い換えもせずそのまま設問文に入れること。
+  （書き方の参考: 主題が「朝の開店準備」なら1問目は
+    「直近で朝の開店準備を行ったのはいつですか？」となります。
+    ここに出てくる『朝の開店準備』は書式を示すための別の例なので、
+    実際の設問には使わず、必ず上の主題の文字列を使ってください。）
+- 2問目以降は「そのとき」で受けて構いませんが、話題は最後まで主題に固定してください。
+
+【参考情報（設問文には書かない）】
+以下はあなたが視点を絞るための材料です。**設問文に書くと誘導になります。**
+「〜だと思いますが」のような前置きに使うことも禁止です。
+- 課題仮説: {{problemHypothesis}}
+- 現行手段の仮説: {{currentMethod}}
+- 失敗条件（これが確認できなければ調査は STOP）: {{stopCondition}}
+- 利用者と購入者: {{buyerIsUser}}
+
+【フローの構成（この順序で作る）】
+
+(A) 直近の1回の特定（フローの中心・最優先）
+次の観点を1問ずつ、この順序で必ず含めてください。各設問は「直近」「最後に」など時点を特定する
+語を必ず含め、一般論として答えられない形にしてください。
+1. 直近でそれを行ったのはいつか
+   ※この1問目だけは、主題の文字列（{{scene}}）をそのまま設問文に含めること。
+2. そのとき最初から最後まで何をしたか（時系列で）
+3. そのとき誰が関わったか
+4. どこで手が止まった・時間がかかったか
+5. その1回に何時間かかったか（金額は (B) で別に聞くので、ここでは時間だけを尋ねる）
+6. それが失敗すると何が起きるか
+7. そのやり方を変えると決められるのは誰か
+8. 過去にやり方を変えようとしたことがあるか
+9. （変えようとした場合）なぜその方法をやめたか
+10. 次に同じことをするのはいつか
+
+(B) 経済価値の定量設問（4要素すべて必須・集計できる形式で）
+- 発生頻度: single_choice（例のような選択肢を並べる。「週に数回」「月1回程度」など期間の刻み）
+- 1回あたりの時間損失: numeric（単位を設問文に明記する。分 または 時間）
+- 金銭損失・外注費など現行の支出: numeric（単位を設問文に明記する。円／月 など）
+- 現行手段への満足度: single_choice（段階評価）
+この4問は free_text_short / free_text_long で作ってはいけません。集計できなくなります。
+**この4問は1問も省略できません。** (A) で時間を尋ねていても、(B) の時間損失は別に必ず作ってください
+（(A) は特定の1回の実績、(B) は集計するための定量値で、役割が違います）。
+出力する前に、role タグ economic_value/frequency・economic_value/time_loss・
+economic_value/money_loss・economic_value/satisfaction の4つがすべて含まれているか数えてください。
+
+(C) 購入に近い行動の要求（フロー末尾）
+「良いと思うか」「使いたいか」ではなく、実際の行動の可否を尋ねます。次を含めてください。
+- 30分程度の追加ヒアリングに協力できるか（single_choice）
+- 実際に使っている資料・データを見せてもらえるか（single_choice）
+- やり方を変えると決められる人を紹介してもらえるか（single_choice）
+これらは is_required を false にしてください。
+
+【生成禁止（違反した設問は1問でも出さないこと）】
+- 意見・願望・仮定の設問を作らない。「欲しいですか」「あったら便利ですか」「使ってみたいですか」
+  「いくらなら払いますか」「もし〜だったら」の形は禁止。
+- 製品・サービス・機能・コンセプトの説明を設問文に含めない。この調査で何かを提案してはいけない。
+- 「普段どうしていますか」「一般的にどうですか」型の一般化質問で (A) を代替しない。
+  必ず直近の特定の1回に紐づけて尋ねる。
+- 満足度以外の「〜についてどう思いますか」型の感想設問を作らない。
+- 選択式の選択肢に、回答者がまだ言っていない解決策・製品カテゴリ名を混ぜない。
+
+【research_goal の書式】
+research_goal は「役割タグ + 半角スペース + この設問で知りたいこと」の形にしてください。
+役割タグは次のいずれかを必ず1つ先頭に置きます。
+- [P13:recent_behavior] … (A) 直近の1回の再現
+- [P13:economic_value/frequency] … 発生頻度
+- [P13:economic_value/time_loss] … 時間損失
+- [P13:economic_value/money_loss] … 金銭損失・現行支出
+- [P13:economic_value/satisfaction] … 現行手段への満足度
+- [P13:decision_maker] … 決裁者の特定
+- [P13:past_attempt] … 過去の対策と断念理由
+- [P13:commitment] … (C) 購入に近い行動
+- [P13:screening] … 対象セグメントの確認
+例: "[P13:recent_behavior] 直近の実施時期を特定し、記憶が新しい1回に会話を固定する"
+
+【AI深掘りの設定】
+(A) の時系列・所要時間・関係者・過去の断念理由に関する設問は ai_probe_enabled を true に
+してください。(B) の数値設問と (C) は false にしてください。
+
+以下のJSON形式のみで回答してください（前後に余分な文字を入れないこと）:
+{
+  "questions": [
+    {
+      "question_text": "設問文",
+      "question_type": "single_choice|multi_choice|free_text_short|free_text_long|numeric",
+      "question_role": "screening|main|attribute|free_comment",
+      "is_required": true,
+      "ai_probe_enabled": false,
+      "research_goal": "[P13:recent_behavior] この設問で知りたいこと（必須）",
+      "options": ["選択肢1", "選択肢2"]
+    }
+  ]
+}
+
+回答形式:
+- single_choice: 単一選択（options必須）
+- multi_choice: 複数選択（options必須）
+- free_text_short: 短文自由記述
+- free_text_long: 長文自由記述
+- numeric: 数値入力
+
+注意: options は選択型のみ設定。research_goal は全設問に設定すること。`
+  },
+
   buildMissingAttributeSuggestionsPrompt: {
     label: "属性不足設問提案プロンプト",
     description: "カバレッジ不足のユーザー属性に対して、LINEデイリーアンケート用の設問を提案する",
@@ -1118,6 +1275,10 @@ export const PROMPT_KEY_PLACEMENT: Record<BasePromptKey, PromptKeyPlacement> = {
     family: "admin_tool", contexts: ["AIフロー自動生成"],
     dormant: false, probeImpact: false, managedBy: "base",
   },
+  buildGenerateFlowBehaviorEvidencePrompt: {
+    family: "admin_tool", contexts: ["AIフロー生成（行動証拠による顧客発見）"],
+    dormant: false, probeImpact: false, managedBy: "base",
+  },
   buildMissingAttributeSuggestionsPrompt: {
     family: "admin_tool", contexts: ["属性不足設問の提案"],
     dormant: false, probeImpact: false, managedBy: "base",
@@ -1139,7 +1300,8 @@ export type PromptPresetKey =
   | "interview"
   | "animal_hospital"
   | "non_leading"
-  | "young_casual";
+  | "young_casual"
+  | "behavior_evidence";
 
 export interface PromptPreset {
   label: string;
@@ -1301,6 +1463,76 @@ export function buildYoungCasualTemplateOverrides(): Partial<Record<BasePromptKe
 /** 若年層プリセットで本文を上書きするキー（10件・非誘導と同一） */
 export const YOUNG_CASUAL_OVERRIDE_KEYS: BasePromptKey[] = [...NON_LEADING_OVERRIDE_KEYS];
 
+// ============================================================
+// 行動証拠プリセット（P13 深掘り）
+// docs/要件定義_AIフロー作成_行動証拠による顧客発見_2026-07-27.md §6.4
+//
+// 非誘導（例示の排除）を土台に、P13 の深掘り流儀を重ねる二段構成。
+// 対象キー・追記方式は若年層プリセットと同一（BASE 本文＋非誘導ルール＋P13ルール）。
+//
+// なぜ非誘導が土台なのか:
+//   P13 の失敗モードは「AIが先に具体例を出し、回答者がそれに乗って答える」こと。
+//   例示が混じった瞬間、それは行動の証拠ではなくAIの仮説の追認になる。
+//   非誘導を外した「P13のみ」の版は用意しない。
+//
+// 確定事項:
+// - 「たとえば？」で掘らない。時期・関係者・所要時間・金額という具体の軸を名指しで取りに行く
+// - 一般論・願望が返ってきたら直近の実例に引き戻す
+// - 回答者が思い出せない数値をこちらから提示して確認させない（記憶の捏造を招く）
+// ============================================================
+
+/** 回答者向け文面を出す英語テンプレートへの追記ルール（P13 深掘り） */
+const BEHAVIOR_EVIDENCE_RULE_EN = `
+Behavior-evidence rule (P13):
+- This interview collects evidence of what the respondent actually did, not what they want or think.
+- When an answer is general ("usually", "in most cases", "we tend to"), pull it back to one concrete
+  occurrence: ask when the most recent time was, and keep the rest of the conversation on that one time.
+- When an answer is a wish or an opinion, do not follow it. Return to the last actual occurrence instead.
+- Probe for missing specifics by naming the axis you need: the date or timing, who else was involved,
+  how long it took, how much it cost, and what happened next. Do not ask "for example?" — that invites
+  invention rather than recall.
+- Never supply a number, a duration, a price range, or a tool name for the respondent to confirm.
+  A number the respondent did not produce themselves is not evidence.
+- If the respondent says they do not remember, accept it and move on. An admitted gap is more useful
+  than a guess, and pressing produces fabricated precision.
+- Do not describe, propose, or evaluate any product, service, or feature. Do not ask whether something
+  would be useful, wanted, or worth paying for.`;
+
+/** 深掘りガイダンス（日本語断片）への追記ルール（P13 深掘り） */
+const BEHAVIOR_EVIDENCE_RULE_JA = `
+【行動証拠の深掘り（P13）】
+- この調査で集めるのは「実際にやったこと」であって、意見・要望・予定ではない。
+- 一般論（「だいたい」「普段は」「たいてい」）が返ってきたら、直近の1回に引き戻す。
+  「最後にそれをしたのはいつでしたか」と時点を特定し、以降はその1回の話に固定する。
+- 要望・願望（「〜があればいいのに」）が返ってきたら、それを追わない。
+  代わりに、直近でその不便が起きたときに実際どうしたかを尋ねる。
+- 具体が足りないときは、必要な軸を名指しで聞く。時期／関わった人／かかった時間／かかった金額／
+  そのあとどうなったか。「たとえば？」では聞かない（思い出しでなく作話を招くため）。
+- 数値・期間・金額・ツール名をこちらから出して確認させない。
+  回答者が自分で出していない数値は証拠にならない。
+- 「覚えていない」と言われたら受け入れて次へ進む。曖昧なまま残す方が、推測で埋めるより価値がある。
+- 製品・サービス・機能の説明や提案をしない。良いと思うか・使いたいか・いくら払うかを尋ねない。`;
+
+/**
+ * 行動証拠プリセットの本文上書きを生成する（非誘導への追記方式）。
+ * 非誘導と同じキー群に、非誘導ルールの後ろへ P13 ルールを足す。
+ * BASE 本文・非誘導ルールはそのまま保持されるので、双方の改訂を自動で引き継ぐ。
+ */
+export function buildBehaviorEvidenceTemplateOverrides(): Partial<Record<BasePromptKey, string>> {
+  const base = buildNonLeadingTemplateOverrides();
+  const overrides: Partial<Record<BasePromptKey, string>> = {};
+  for (const key of [...NON_LEADING_EN_KEYS, ...NON_LEADING_EN_STRIP_KEYS]) {
+    overrides[key] = `${base[key]}\n${BEHAVIOR_EVIDENCE_RULE_EN}`;
+  }
+  for (const key of NON_LEADING_JA_KEYS) {
+    overrides[key] = `${base[key]}\n${BEHAVIOR_EVIDENCE_RULE_JA}`;
+  }
+  return overrides;
+}
+
+/** 行動証拠プリセットで本文を上書きするキー（10件・非誘導と同一） */
+export const BEHAVIOR_EVIDENCE_OVERRIDE_KEYS: BasePromptKey[] = [...NON_LEADING_OVERRIDE_KEYS];
+
 /**
  * 用途プリセット定義。category（分類タグ）とは別概念で、
  * パッケージ作成時に Version 1 の初期テンプレート＋ポリシーを生成するための「型」。
@@ -1379,6 +1611,25 @@ export const PROMPT_PRESETS: Record<PromptPresetKey, PromptPreset> = {
       priority: "respondent_comfort_first",
     },
     templateOverrides: buildYoungCasualTemplateOverrides(),
+  },
+  behavior_evidence: {
+    label: "行動証拠による顧客発見（P13）",
+    description:
+      "需要検証インタビュー向け。意見・要望ではなく直近に実際にやったことを聞く。一般論・願望が返ったら直近の1回に引き戻し、時期・関係者・時間・金額の具体を名指しで取りに行く。回答例は出さず（非誘導）、数値をこちらから提示して確認させない。",
+    policy: {
+      researchType: "interview_research",
+      audience: "business",
+      // 「どう判断したか」を掘る軸が P13 の決裁者・断念理由の設問と噛み合う。
+      probeStyle: "decision_process",
+      // ambiguousAnswerRule は既定のまま。concrete_example（「たとえばどんな状況でしたか」）は
+      // P13 の「『たとえば？』では聞かない」と正面から衝突するため当てない。
+      // 曖昧回答の扱いは templateOverrides 側で「軸を名指しで聞く」と規定している。
+      noneAnswerPolicy: "accept",
+      restrictions: ["no_leading_question", "one_question_only", "no_internal_codes"],
+      // 記憶の再現には負荷がかかるが、精度を落とすと調査自体が無意味になる。
+      priority: "research_quality_first",
+    },
+    templateOverrides: buildBehaviorEvidenceTemplateOverrides(),
   },
 };
 
