@@ -50,7 +50,7 @@
 | 400 | リクエスト不正（zod 検証失敗・ヘッダ形式不正） | `"questions.0.answer_options: question_type=single_choice requires at least 2 answer_options"` |
 | 401 | `X-Partner-Key` 不一致・未提示 | `"unauthorized"` |
 | 404 | 対象なし or 他店舗のもの | `"survey not found"` |
-| 409 | 状態的に不許可 | `"closed survey cannot be updated"` |
+| 409 | 状態的に不許可 | `"closed survey cannot be updated"` / `"version conflict"`（§5.4.1） |
 | 500 | サーバー内部エラー | |
 | 503 | `PARTNER_API_KEY` 未設定 | `"partner API is not configured"` |
 
@@ -320,11 +320,16 @@ draft を作成する。
     { "question_code": "pq2", "…": "…", "sort_order": 11, "is_fixed": false }
   ],
   "created_at": "2026-07-29T01:23:45.678Z",
-  "updated_at": "2026-07-29T01:23:45.678Z"
+  "updated_at": "2026-07-29T01:23:45.678Z",
+  "version": "sha256:9f2c..."           // 楽観ロック用の版（5.4.1 参照）
 }
 ```
 
 `questions` は `sort_order` 昇順。性年代の2問が必ず先頭に入る。
+
+`version` は設問内容から算出した版。`PUT` の `base_version` にそのまま渡すと
+楽観ロックが効く（§5.4.1）。**`updated_at` を競合判定に使わないこと**
+（設問だけの変更では動かないため）。
 
 ---
 
@@ -343,7 +348,8 @@ draft を更新する。`title` と `questions` は**どちらか一方だけで
 ```jsonc
 {
   "title": "○○食堂 お客様アンケート（7月）",   // 任意
-  "questions": [ /* 5.2 と同じ形。全置換 */ ]   // 任意
+  "questions": [ /* 5.2 と同じ形。全置換 */ ], // 任意
+  "base_version": "sha256:9f2c…"              // 任意。楽観ロック（5.4.1）
 }
 ```
 
@@ -351,8 +357,47 @@ draft を更新する。`title` と `questions` は**どちらか一方だけで
 - 性年代設問は毎回サーバーが再構築するので、送らなくても消えない・送っても壊せない。
 - 設問数を減らした場合、余った既存設問は物理削除ではなく非表示化する（既存回答の参照を壊さないため）。
 - `status` が `closed` / `archived` の場合 **409**。
+- `base_version` のみで `title` も `questions` も無い場合は **400**（更新内容が無いため）。
 
 **レスポンス 200** … `SurveyView`
+
+---
+
+### 5.4.1 楽観ロック（`base_version`）
+
+**解決したい問題**: ACI の管理画面では運営が、ポータルでは店舗が、**同じ
+`projects` / `questions` の行**を編集している。`PUT` は全置換なので、店舗が
+古い内容を持ったまま保存すると**運営の変更が黙って消える**。
+
+**使い方**: 直前の `GET` / `PUT` で受け取った `SurveyView.version` を
+`base_version` として送る。サーバー側の現在版と一致しなければ更新せず 409 を返す。
+
+**409 のレスポンス**（マージに必要な情報を同梱する）
+
+```jsonc
+{
+  "error": "version conflict",
+  "current_version": "sha256:1a7b…",
+  "survey": { /* SurveyView。現在のサーバー側の内容 */ }
+}
+```
+
+ポータルはこの `survey` と自分の編集内容を突き合わせてマージし、
+`base_version` に `current_version` を入れて再送する。
+
+**`version` の性質**（`src/lib/partnerSurveyVersion.ts`）
+
+- 設問の**内容**から算出する（`sha256:` ＋16進64文字）
+- **`updated_at` は使えない**。`updated_at` はテーブルごとのトリガで動くため、
+  設問だけ編集すると `questions` 側しか動かず `projects.updated_at` は据え置きになる。
+  つまり「運営が設問だけ直した」という一番検知したい競合をすり抜ける
+- 版に含めるもの … 設問文 / 種別 / 必須 / 選択肢（value・label）/ **並び順**
+- 版に含めないもの … タイトル、`question_code`（保存のたびに再採番されるため）、
+  **性年代の固定2問**（サーバーが毎回再構築するので、含めると常に競合する）
+- 前後の空白・改行コードの揺れ、`answer_options` の `null` と `[]` の違いは版に影響しない
+
+**後方互換**: `base_version` は**任意**。送らなければ従来どおり無条件で更新する。
+そのため ACI を先にデプロイしても既存のポータルは壊れない。
 
 ---
 

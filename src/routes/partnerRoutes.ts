@@ -115,6 +115,8 @@ const questionListSchema = z.array(questionSchema).min(1).max(50);
 /** テストから参照する（HTTP を立てずに 400 判定を検証するため）。 */
 export const partnerQuestionSchemaForTest = questionSchema;
 export const partnerToQuestionInputForTest = toQuestionInput;
+/** `base_version`（楽観ロック）の受け入れ規則をテストから検証するために公開する。 */
+export const partnerUpdateSurveySchemaForTest = () => updateSurveySchema;
 
 const createSurveySchema = z.object({
   title: z.string().min(1).max(200),
@@ -129,7 +131,15 @@ const createSurveySchema = z.object({
 const updateSurveySchema = z
   .object({
     title: z.string().min(1).max(200).optional(),
-    questions: questionListSchema.optional()
+    questions: questionListSchema.optional(),
+    /**
+     * 楽観ロック用の版（任意）。直前に受け取った `SurveyView.version` を送る。
+     * サーバーの現在版と不一致なら 409。省略すれば従来どおり無条件更新（後方互換）。
+     *
+     * refine の条件には**含めない**。base_version だけを送って
+     * title も questions も無い PUT は、これまでどおり 400 のままにする。
+     */
+    base_version: z.string().min(1).max(200).optional()
   })
   .refine((value) => value.title !== undefined || value.questions !== undefined, {
     message: "title or questions is required"
@@ -263,7 +273,8 @@ partnerRoutes.put(
       partnerStoreId: partner.storeId,
       surveyId,
       title: body.title,
-      questions: body.questions?.map(toQuestionInput)
+      questions: body.questions?.map(toQuestionInput),
+      baseVersion: body.base_version
     });
 
     res.json(survey);

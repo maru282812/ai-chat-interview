@@ -103,6 +103,8 @@
   .display-mode-card .dm-sub   { font-size:11px; color:#60726f; }
 </style>
 
+<%- include("../../partials/partner-store-warning", { project }) %>
+
 <form class="card stack" method="post" action="<%= action %>" id="mainForm">
   <input type="hidden" name="question_code" value="<%= safeForm.question_code || '' %>" />
 

@@ -224,3 +224,39 @@ test("caption だけ（画像URLなし）は通る", () => {
   );
   assert.equal(parsed.success, true);
 });
+
+// ------------------------------------------------------------------
+// base_version（楽観ロック）
+// ------------------------------------------------------------------
+
+const updateSurveySchema = routes.partnerUpdateSurveySchemaForTest();
+
+test("base_version は省略できる（後方互換：従来のPUTがそのまま通る）", () => {
+  const parsed = updateSurveySchema.safeParse({ title: "新しいタイトル" });
+  assert.equal(parsed.success, true);
+  if (parsed.success) {
+    assert.equal(parsed.data.base_version, undefined);
+  }
+});
+
+test("base_version を付けた PUT は通る", () => {
+  const parsed = updateSurveySchema.safeParse({
+    title: "新しいタイトル",
+    base_version: `sha256:${"a".repeat(64)}`
+  });
+  assert.equal(parsed.success, true);
+  if (parsed.success) {
+    assert.equal(parsed.data.base_version, `sha256:${"a".repeat(64)}`);
+  }
+});
+
+test("base_version だけで title も questions も無い PUT は 400（refine を緩めていない）", () => {
+  // base_version が refine の条件に混ざると「更新内容ゼロのPUT」が通ってしまう
+  const parsed = updateSurveySchema.safeParse({ base_version: `sha256:${"a".repeat(64)}` });
+  assert.equal(parsed.success, false);
+});
+
+test("base_version が空文字なら 400", () => {
+  const parsed = updateSurveySchema.safeParse({ title: "T", base_version: "" });
+  assert.equal(parsed.success, false);
+});

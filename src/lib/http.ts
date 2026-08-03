@@ -3,10 +3,21 @@ import { logger } from "./logger";
 
 export class HttpError extends Error {
   public readonly statusCode: number;
+  /**
+   * エラー応答の JSON に追加で載せるフィールド（任意）。
+   *
+   * 既定の応答は `{ error: message }` だけ。呼び出し側がエラーから復帰するために
+   * 追加データが要る場合にだけ使う（例: パートナーAPI の 409 version conflict は
+   * マージのために現在版と現在の設問内容を返す必要がある）。
+   *
+   * **`error` キーは上書きできない**（errorHandler 側で必ず message が勝つ）。
+   */
+  public readonly details?: Record<string, unknown>;
 
-  constructor(statusCode: number, message: string) {
+  constructor(statusCode: number, message: string, details?: Record<string, unknown>) {
     super(message);
     this.statusCode = statusCode;
+    this.details = details;
   }
 }
 
@@ -75,7 +86,11 @@ export function errorHandler(
     return;
   }
 
+  // details を持つ HttpError は、その中身を平坦に載せて返す（error は必ず message が勝つ）。
+  // パートナーAPI の 409 version conflict が current_version / survey を返すのに使う。
+  const details = error instanceof HttpError ? error.details : undefined;
   res.status(statusCode).json({
+    ...details,
     error: error.message
   });
 }

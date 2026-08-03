@@ -70,6 +70,13 @@ function statusBadge(status) {
             <% if (p.status !== 'published') { %>
               <br><span style="color:#b14;font-size:11px">⚠ 公開中でないため回答できません</span>
             <% } %>
+            <%
+              /* 会員ポータル（hibi-site）の店舗にも割り当て済み＝店舗側でも編集される案件。
+                 ここで設問を直すと店舗の画面にも即反映されるので、一覧の段階で分かるようにする。 */
+            %>
+            <% if (p.partner_store_id) { %>
+              <br><span style="display:inline-block;margin-top:3px;background:#c8851b;color:#fff;font-size:10px;padding:1px 6px;border-radius:3px">店舗が編集中</span>
+            <% } %>
           </td>
           <td><%= row.clientName || '—' %></td>
           <td><code><%= p.entry_code || '—' %></code></td>

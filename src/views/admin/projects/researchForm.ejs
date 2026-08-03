@@ -115,6 +115,8 @@
   }
 </style>
 
+<%- include("../../partials/partner-store-warning", { project }) %>
+
 <form class="card stack" method="post" action="<%= action %>" onsubmit="return confirmPromptPackageSelection();">
   <% if (successMessage) { %>
     <section class="card subtle-card success-card">
