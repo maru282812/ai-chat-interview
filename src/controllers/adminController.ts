@@ -749,6 +749,13 @@ function parseResearchMode(value: string): ResearchMode {
   return "survey_interview";
 }
 
+function parseDisplayMode(value: string): import("../types/domain").DisplayMode {
+  if (value === "survey_question" || value === "survey_page" || value === "interview_chat") {
+    return value;
+  }
+  return "survey_question";
+}
+
 function parseQuestionRole(value: string): QuestionRole {
   if (
     value === "screening" ||
@@ -788,6 +795,7 @@ type ProjectFormOverrides = Partial<{
   status: string;
   reward_points_text: string;
   research_mode: string;
+  display_mode: string;
   comparison_constraints_text: string;
   deep_probe_enabled: boolean;
   max_probe_depth_text: string;
@@ -874,6 +882,7 @@ function buildProjectForm(project: Project | null, overrides: ProjectFormOverrid
     status: overrides.status ?? project?.status ?? "draft",
     reward_points_text: overrides.reward_points_text ?? String(project?.reward_points ?? 30),
     research_mode: researchMode,
+    display_mode: parseDisplayMode(overrides.display_mode ?? project?.display_mode ?? "survey_question"),
     comparison_constraints_text: comparisonConstraintsText,
     deep_probe_enabled: deepProbeEnabled,
     max_probe_depth_text:
@@ -901,6 +910,7 @@ function buildProjectFormOverridesFromRequest(req: Request): ProjectFormOverride
     status: bodyString(req.body.status) || "draft",
     reward_points_text: bodyString(req.body.reward_points) || "30",
     research_mode: bodyString(req.body.research_mode) || "survey_interview",
+    display_mode: bodyString(req.body.display_mode) || "survey_question",
     comparison_constraints_text: bodyString(req.body.comparison_constraints),
     deep_probe_enabled: req.body.deep_probe_enabled === "on",
     max_probe_depth_text: bodyString(req.body.max_probe_depth) || "1",
@@ -1527,7 +1537,6 @@ interface QuestionFormValues {
   question_text_image_url: string;
   question_text_extra_image_urls: string;
   question_text_caption: string;
-  question_display_mode: string;
   page_group_id: string;
   // --- スクリーニング ---
   is_screening_question: boolean;
@@ -1731,7 +1740,6 @@ function buildQuestionFormValues(
     tag_len_val: overrides.tag_len_val ?? (question?.display_tags_parsed?.lengthRule?.value != null ? String(question.display_tags_parsed.lengthRule.value) : ""),
     tag_bf: overrides.tag_bf ?? (question?.display_tags_parsed?.beforeText ?? ""),
     tag_af: overrides.tag_af ?? (question?.display_tags_parsed?.afterText ?? ""),
-    question_display_mode: overrides.question_display_mode ?? "",
     page_group_id: overrides.page_group_id ?? (question?.page_group_id ?? ""),
     // 画像拡張フィールド
     matrix_row_image_urls: overrides.matrix_row_image_urls ?? (() => {
@@ -1923,7 +1931,6 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     tag_len_val:        bodyString(req.body.tag_len_val),
     tag_bf:             bodyString(req.body.tag_bf),
     tag_af:             bodyString(req.body.tag_af),
-    question_display_mode: bodyString(req.body.question_display_mode),
     page_group_id:      bodyString(req.body.page_group_id),
     is_screening_question: req.body.is_screening_question === "1",
     option_screening_pass: (() => {
@@ -2977,6 +2984,7 @@ export const adminController = {
         status: bodyString(req.body.status || "draft") as import("../types/domain").ProjectStatus,
         reward_points: numberField(req.body.reward_points),
         research_mode: researchMode,
+        display_mode: parseDisplayMode(bodyString(req.body.display_mode)),
         primary_objectives: objective ? [objective] : [],
         secondary_objectives: [],
         comparison_constraints: comparisonConstraints,
@@ -3119,6 +3127,7 @@ export const adminController = {
         status: bodyString(req.body.status || "draft") as import("../types/domain").ProjectStatus,
         reward_points: numberField(req.body.reward_points),
         research_mode: researchMode,
+        display_mode: parseDisplayMode(bodyString(req.body.display_mode) || existing.display_mode),
         primary_objectives: objective ? [objective] : [],
         secondary_objectives: [],
         comparison_constraints: comparisonConstraints,
@@ -4069,16 +4078,22 @@ export const adminController = {
   // 送付前バリデーション (§4/§5/§6/§13)。JSONでレポートを返す。
   async validateProjectSurvey(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
-    const questions = await questionRepository.listByProject(projectId);
-    res.json(validateSurvey(questions));
+    const [project, questions] = await Promise.all([
+      projectRepository.getById(projectId),
+      questionRepository.listByProject(projectId)
+    ]);
+    res.json(validateSurvey(questions, project));
   },
 
   // 送付前「確定（凍結＋検証ゲート）」(§1/§6)。
   // 検証で error があれば 400 でブロック（?force=1 で警告のみ無視して凍結も可）。
   async createProjectSnapshot(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
-    const questions = await questionRepository.listByProject(projectId);
-    const report = validateSurvey(questions);
+    const [project, questions] = await Promise.all([
+      projectRepository.getById(projectId),
+      questionRepository.listByProject(projectId)
+    ]);
+    const report = validateSurvey(questions, project);
     const force = bodyString(req.query.force) === "1";
     if (!report.ok && !force) {
       res.status(400).json({ ok: false, blocked: true, report });

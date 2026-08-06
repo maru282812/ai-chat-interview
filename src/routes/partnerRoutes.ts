@@ -2,12 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { env } from "../config/env";
 import { HttpError, asyncHandler } from "../lib/http";
-import {
-  AGE_OPTIONS,
-  GENDER_OPTIONS,
-  RESERVED_QUESTION_CODES
-} from "../lib/partnerDemographics";
-import { PARTNER_PACKAGES } from "../lib/partnerPackages";
+import { RESERVED_QUESTION_CODES } from "../lib/partnerDemographics";
 import {
   PARTNER_QUESTION_TYPES,
   collectDisallowedImageUrls,
@@ -210,20 +205,12 @@ function assertNoReservedQuestionText(questions: { question_text: string }[]): v
 // ルート
 // ------------------------------------------------------------------
 
-/** 業種別パッケージ一覧（設問テンプレ・消費チケット枚数マスタ）。 */
-partnerRoutes.get(
-  "/packages",
-  asyncHandler(async (_req, res) => {
-    res.json({
-      packages: PARTNER_PACKAGES,
-      // 性年代設問はサーバーが自動付与する固定設問。ポータルは編集不可の行として描画する。
-      fixed_demographic_questions: {
-        gender: { options: GENDER_OPTIONS },
-        age: { options: AGE_OPTIONS }
-      }
-    });
-  })
-);
+// `GET /packages`（業種別パッケージ一覧）は削除した。
+// パッケージマスタ（設問テンプレ・消費チケット枚数・画像）は会員ポータル hibi 側の
+// packages テーブルへ移管され、ポータルは自 DB を読むのでこの API を呼ばなくなった
+// （ハードコード `partnerPackages.ts` と hibi `aci-mock.ts` の写しという二重管理の解消）。
+// `package_id` はここでは検証せず不透明な文字列として projects.objective に保持するだけなので、
+// マスタが hibi 側に移っても draft 作成・取得の挙動は変わらない。
 
 /** draft 作成。 */
 partnerRoutes.post(

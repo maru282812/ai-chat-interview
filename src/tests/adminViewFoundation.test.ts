@@ -25,6 +25,7 @@ import {
   adminViewHelpers
 } from "../lib/adminView";
 import { redirectWithFlash, readFlashFromQuery } from "../lib/adminFlash";
+import { getPortalOpsUrl, portalOpsHref, portalOpsNavLinks } from "../lib/portalOpsLinks";
 
 const VIEWS_ROOT = path.join(process.cwd(), "src", "views");
 
@@ -162,6 +163,106 @@ test("header: ナビが現在地を点灯させ、全ページへのリンクを
   ]) {
     assert.ok(html.includes(`href="${href}"`), `${href} へのリンクが無い`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// アンケでYOTTO（hibi）運営画面へのリンク
+// ---------------------------------------------------------------------------
+
+/** PORTAL_OPS_URL を差し替えて実行し、必ず元に戻す */
+async function withPortalOpsUrl<T>(value: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const before = process.env.PORTAL_OPS_URL;
+  if (value === undefined) delete process.env.PORTAL_OPS_URL;
+  else process.env.PORTAL_OPS_URL = value;
+  try {
+    return await fn();
+  } finally {
+    if (before === undefined) delete process.env.PORTAL_OPS_URL;
+    else process.env.PORTAL_OPS_URL = before;
+  }
+}
+
+test("portalOpsLinks: 未設定・非 http(s) ならリンクを一切出さない（fail-closed）", async () => {
+  for (const value of [undefined, "", "   ", "javascript:alert(1)", "ftp://example.com"]) {
+    await withPortalOpsUrl(value, async () => {
+      assert.equal(getPortalOpsUrl(), null, `PORTAL_OPS_URL=${String(value)} を通してはいけない`);
+      assert.equal(portalOpsHref("/ops/assignments"), null);
+      assert.deepEqual(portalOpsNavLinks(), []);
+    });
+  }
+});
+
+test("portalOpsLinks: 設定時は末尾スラッシュを落として絶対URLを組み立てる", async () => {
+  await withPortalOpsUrl("http://localhost:3333/", async () => {
+    assert.equal(getPortalOpsUrl(), "http://localhost:3333");
+    assert.equal(portalOpsHref("/ops/assignments"), "http://localhost:3333/ops/assignments");
+    // 先頭スラッシュ無しでも壊れない
+    assert.equal(portalOpsHref("ops/ledger"), "http://localhost:3333/ops/ledger");
+
+    // hibi に実在する6ルートを全て出す
+    const hrefs = portalOpsNavLinks().map((l) => l.href);
+    assert.deepEqual(hrefs, [
+      "http://localhost:3333/ops/projects",
+      "http://localhost:3333/ops/surveys",
+      "http://localhost:3333/ops/assignments",
+      "http://localhost:3333/ops/ledger",
+      "http://localhost:3333/ops/packages",
+      "http://localhost:3333/ops/members"
+    ]);
+  });
+});
+
+test("header: PORTAL_OPS_URL 未設定なら「アンケでYOTTO」グループが出ない", async () => {
+  await withPortalOpsUrl(undefined, async () => {
+    const html = await render("partials/header.ejs", { ...baseLocals(), title: "t" });
+    assert.ok(!html.includes("アンケでYOTTO"), "env 未設定でリンク群が出ている");
+    assert.ok(!html.includes("/ops/"), "env 未設定で /ops へのリンクが出ている");
+  });
+});
+
+test("header: PORTAL_OPS_URL 設定時は hibi の6画面へ同一タブで遷移できる", async () => {
+  await withPortalOpsUrl("http://localhost:3333", async () => {
+    const html = await render("partials/header.ejs", { ...baseLocals(), title: "t" });
+    assert.ok(html.includes("アンケでYOTTO"));
+    for (const path of [
+      "/ops/projects",
+      "/ops/surveys",
+      "/ops/assignments",
+      "/ops/ledger",
+      "/ops/packages",
+      "/ops/members"
+    ]) {
+      assert.ok(
+        html.includes(`href="http://localhost:3333${path}"`),
+        `${path} へのリンクが無い`
+      );
+    }
+    // 同一タブ（別タブ化しない）
+    assert.ok(!html.includes('target="_blank"'));
+  });
+});
+
+test("store-surveys 一覧: 割り当て導線は env 設定時だけ出る", async () => {
+  const data = {
+    ...baseLocals({ currentPath: "/admin/store-surveys" }),
+    title: "店舗専用アンケート管理",
+    rows: [],
+    clients: [],
+    clientsError: null,
+    convertibleProjects: [],
+    msg: null,
+    err: null
+  };
+
+  await withPortalOpsUrl(undefined, async () => {
+    const html = await render("admin/store-surveys/index.ejs", data);
+    assert.ok(!html.includes("/ops/assignments"));
+  });
+
+  await withPortalOpsUrl("http://localhost:3333", async () => {
+    const html = await render("admin/store-surveys/index.ejs", data);
+    assert.ok(html.includes('href="http://localhost:3333/ops/assignments"'));
+  });
 });
 
 test("header: フラッシュメッセージはエスケープされて描画される", async () => {

@@ -45,13 +45,6 @@
   const SCREENING_CHOICE_TYPES = ["single_choice","multi_choice"];
   const optionScreeningPass = Array.isArray(safeForm.option_screening_pass)
     ? safeForm.option_screening_pass : [];
-  const DISPLAY_MODES = [
-    { value: "survey_question", label: "1問ずつ表示 (survey_question)" },
-    { value: "survey_page",     label: "ページ単位表示 (survey_page)" },
-    { value: "interview_chat",  label: "チャット形式 (interview_chat)" },
-  ];
-  // 質問側display_mode（project優先、個別上書き用）
-  const qDisplayMode = safeForm.question_display_mode || "";
 %>
 
 <style>
@@ -90,17 +83,6 @@
   .tag-error-list li.error   { color:#8a0000; }
   .tag-error-list li.warning { color:#8a5b00; }
   .form-3col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
-  .display-mode-cards { display:flex; gap:10px; flex-wrap:wrap; }
-  .display-mode-card {
-    flex:1; min-width:140px; padding:12px 14px;
-    border:2px solid #d8e3e0; border-radius:12px; cursor:pointer;
-    text-align:center; transition:all 0.15s; background:#fff;
-  }
-  .display-mode-card.selected { border-color:#2ca87a; background:#f0faf6; }
-  .display-mode-card input[type=radio] { display:none; }
-  .display-mode-card .dm-icon { font-size:24px; margin-bottom:4px; }
-  .display-mode-card .dm-label { font-size:13px; font-weight:600; }
-  .display-mode-card .dm-sub   { font-size:11px; color:#60726f; }
 </style>
 
 <%- include("../../partials/partner-store-warning", { project }) %>
@@ -972,37 +954,10 @@
     <section class="authoring-section stack">
       <h2>4. 表示モード・装飾</h2>
 
-      <h3>表示モード（プロジェクト設定を上書きする場合のみ）</h3>
       <p class="helper-text">
-        通常はプロジェクトの表示モード（<strong><%= project.display_mode || 'survey_question' %></strong>）が適用されます。
-        この設問だけ別モードにしたい場合のみ選択してください。
+        表示モード（1問1答 / ページ型 / AIチャット）はプロジェクト編集画面で設定します。
+        現在のプロジェクト設定: <strong><%= project.display_mode || 'survey_question' %></strong>
       </p>
-      <div class="display-mode-cards" id="displayModeCards">
-        <label class="display-mode-card <%= !qDisplayMode ? 'selected' : '' %>">
-          <input type="radio" name="question_display_mode" value="" <%= !qDisplayMode ? 'checked' : '' %> />
-          <div class="dm-icon">🔗</div>
-          <div class="dm-label">プロジェクト設定に従う</div>
-          <div class="dm-sub">推奨</div>
-        </label>
-        <label class="display-mode-card <%= qDisplayMode === 'survey_question' ? 'selected' : '' %>">
-          <input type="radio" name="question_display_mode" value="survey_question" <%= qDisplayMode === 'survey_question' ? 'checked' : '' %> />
-          <div class="dm-icon">📋</div>
-          <div class="dm-label">1問ずつ表示</div>
-          <div class="dm-sub">survey_question</div>
-        </label>
-        <label class="display-mode-card <%= qDisplayMode === 'survey_page' ? 'selected' : '' %>">
-          <input type="radio" name="question_display_mode" value="survey_page" <%= qDisplayMode === 'survey_page' ? 'checked' : '' %> />
-          <div class="dm-icon">📄</div>
-          <div class="dm-label">ページ単位</div>
-          <div class="dm-sub">survey_page</div>
-        </label>
-        <label class="display-mode-card <%= qDisplayMode === 'interview_chat' ? 'selected' : '' %>">
-          <input type="radio" name="question_display_mode" value="interview_chat" <%= qDisplayMode === 'interview_chat' ? 'checked' : '' %> />
-          <div class="dm-icon">💬</div>
-          <div class="dm-label">チャット形式</div>
-          <div class="dm-sub">interview_chat</div>
-        </label>
-      </div>
 
       <hr style="border:none;border-top:1px solid #d8e3e0;margin:12px 0;" />
 
@@ -1256,16 +1211,6 @@
     radio.addEventListener('change', () => {
       const isCard = document.querySelector('[name="display_format"]:checked')?.value === 'card';
       document.getElementById('gridColsField').style.display = isCard ? '' : 'none';
-    });
-  });
-
-  // ----------------------------------------------------------------
-  // 表示モードカード選択
-  // ----------------------------------------------------------------
-  document.querySelectorAll('.display-mode-card input[type=radio]').forEach(radio => {
-    radio.addEventListener('change', () => {
-      document.querySelectorAll('.display-mode-card').forEach(c => c.classList.remove('selected'));
-      radio.closest('.display-mode-card')?.classList.add('selected');
     });
   });
 

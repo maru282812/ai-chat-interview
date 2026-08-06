@@ -13,7 +13,6 @@ import {
   normalizeDemographicValue,
   summarizeDemographics
 } from "../lib/partnerDemographics";
-import { PARTNER_PACKAGES, findPartnerPackage } from "../lib/partnerPackages";
 import {
   PARTNER_QUESTION_TYPES,
   type PartnerQuestionTextImage,
@@ -404,38 +403,3 @@ test("collectDisallowedImageUrls: additional_urls の1件でも許可外なら�
   );
 });
 
-// ------------------------------------------------------------------
-// パッケージマスタ
-// ------------------------------------------------------------------
-
-test("パッケージ: id は一意で、設問は4種のみ・選択肢の整合が取れている", () => {
-  const ids = PARTNER_PACKAGES.map((entry) => entry.id);
-  assert.equal(new Set(ids).size, ids.length, "package id が重複している");
-
-  for (const pkg of PARTNER_PACKAGES) {
-    assert.ok(pkg.ticket_cost >= 1, `${pkg.id}: ticket_cost は1以上`);
-    assert.ok(pkg.questions.length > 0, `${pkg.id}: 設問が空`);
-    const orders = pkg.questions.map((q) => q.sort_order);
-    assert.equal(new Set(orders).size, orders.length, `${pkg.id}: sort_order が重複している`);
-
-    for (const q of pkg.questions) {
-      assert.ok(
-        PARTNER_QUESTION_TYPES.includes(q.question_type),
-        `${pkg.id}: 未知の question_type ${q.question_type}`
-      );
-      if (partnerTypeRequiresOptions(q.question_type)) {
-        assert.ok(
-          (q.answer_options?.length ?? 0) >= 2,
-          `${pkg.id}: ${q.question_type} は選択肢が2つ以上必要`
-        );
-      } else {
-        assert.equal(q.answer_options, null, `${pkg.id}: free_text に選択肢が付いている`);
-      }
-    }
-  }
-});
-
-test("findPartnerPackage: 既知IDは引けて、未知IDは null", () => {
-  assert.equal(findPartnerPackage("general_basic")?.id, "general_basic");
-  assert.equal(findPartnerPackage("no_such_package"), null);
-});

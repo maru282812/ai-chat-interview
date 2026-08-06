@@ -39,6 +39,19 @@ function statusBadge(status) {
   <br>※ 回答を受け付けるにはステータスが<strong>公開中</strong>である必要があります。
 </p>
 
+<%
+// hibi 会員店舗への割り当ては、ここではなくアンケでYOTTO 運営画面で行う。
+// env PORTAL_OPS_URL が未設定なら null が返り、リンクごと出さない（リンク切れを見せない）。
+const opsAssignmentsHref = typeof locals.portalOpsHref === "function" ? locals.portalOpsHref("/ops/assignments") : null;
+%>
+<% if (opsAssignmentsHref) { %>
+  <p class="muted" style="margin-bottom:1.5rem">
+    hibi 会員店舗への割り当ては
+    <a href="<%= opsAssignmentsHref %>">アンケでYOTTO 運営画面（/ops/assignments）</a>
+    で行います。
+  </p>
+<% } %>
+
 <!-- ============================================================ -->
 <!-- 店舗専用アンケート一覧 -->
 <!-- ============================================================ -->

@@ -7,7 +7,7 @@
 - ルータ … `src/routes/partnerRoutes.ts`（`src/app.ts` で `/api/partner` にマウント）
 - 認証 … `src/middleware/partnerAuth.ts`
 - ユースケース … `src/services/partnerSurveyService.ts`
-- 純関数 … `src/lib/partnerDemographics.ts` / `src/lib/partnerQuestions.ts` / `src/lib/partnerPackages.ts`
+- 純関数 … `src/lib/partnerDemographics.ts` / `src/lib/partnerQuestions.ts`
 - migration … `supabase/migrations/089_partner_api_store_scope.sql`
 
 ---
@@ -208,51 +208,16 @@
 
 ## 5. エンドポイント
 
-### 5.1 `GET /api/partner/packages`
+### 5.1 `GET /api/partner/packages`（削除済み）
 
-業種別パッケージ一覧（設問テンプレ・消費チケット枚数マスタ）。マスタは
-`src/lib/partnerPackages.ts` がコード上の唯一の正（専用テーブルは無い）。
+**このエンドポイントは削除した（2026-08-06）。** 業種別パッケージ（設問テンプレ・消費
+チケット枚数・画像）のマスタは会員ポータル hibi 側の `packages` テーブルへ移管され、
+ポータルは自 DB を読む。ACI 側のハードコード `src/lib/partnerPackages.ts` と hibi 側の
+写しという二重管理を解消するための削除。
 
-**レスポンス 200**
-
-```jsonc
-{
-  "packages": [
-    {
-      "id": "restaurant_basic",
-      "industry": "restaurant",
-      "industry_label": "飲食店",
-      "name": "飲食店 基本セット",
-      "description": "満足度・再来店意向・認知経路を押さえた定番構成。…",
-      "ticket_cost": 1,
-      "questions": [
-        {
-          "question_text": "本日のご利用の総合的な満足度を教えてください。",
-          "question_type": "scale",
-          "answer_options": [
-            { "value": "5", "label": "とても満足" },
-            { "value": "4", "label": "やや満足" },
-            { "value": "3", "label": "ふつう" },
-            { "value": "2", "label": "やや不満" },
-            { "value": "1", "label": "とても不満" }
-          ],
-          "sort_order": 1,
-          "is_required": true
-        }
-      ]
-    }
-  ],
-  "fixed_demographic_questions": {
-    "gender": { "options": [ { "value": "female", "label": "女性" }, … ] },
-    "age":    { "options": [ { "value": "under20", "label": "20代未満" }, … ] }
-  }
-}
-```
-
-現在の `id` 一覧: `restaurant_basic` / `salon_basic` / `retail_basic` / `clinic_basic` / `general_basic`。
-
-**パッケージの `questions` は「下書きの初期値」**。サーバーは `package_id` から設問を
-勝手に差し込まない。ポータルが編集した結果を `POST /surveys` の `questions` で送ること。
+`package_id` は引き続き `POST /surveys` で受け付ける。ACI はこれを検証せず、記録用の
+不透明な文字列として保持してレスポンスで返すだけなので、マスタの所在が変わっても
+draft 作成・取得の挙動は変わらない。
 
 ---
 
