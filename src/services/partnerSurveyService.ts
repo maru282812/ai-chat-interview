@@ -22,6 +22,7 @@ import {
   toPartnerQuestionTextImage,
   toPartnerQuestionType
 } from "../lib/partnerQuestions";
+import { computeSurveyVersion } from "../lib/partnerSurveyVersion";
 import { answerRepository } from "../repositories/answerRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { questionRepository } from "../repositories/questionRepository";
@@ -74,6 +75,15 @@ export interface UpdateSurveyInput {
   surveyId: string;
   title?: string;
   questions?: PartnerQuestionInput[];
+  /**
+   * 楽観ロック用の版（任意）。
+   * 直前に GET / PUT で受け取った `SurveyView.version` をそのまま送る。
+   * サーバー側の現在版と一致しなければ 409（version conflict）。
+   *
+   * **任意**にしてあるのは後方互換のため。送らなければ従来どおり無条件で更新する。
+   * これにより ACI を先にデプロイしてもポータル側は壊れない。
+   */
+  baseVersion?: string;
 }
 
 // ------------------------------------------------------------------
@@ -92,6 +102,12 @@ export interface PartnerSurveyView {
   questions: PartnerQuestionView[];
   created_at: string;
   updated_at: string;
+  /**
+   * 設問内容から算出した版（`sha256:...`）。楽観ロックに使う。
+   * `updated_at` は projects 側しか動かず設問編集を検知できないため、
+   * 競合判定にはこちらを使うこと（`lib/partnerSurveyVersion.ts` 参照）。
+   */
+  version: string;
 }
 
 export interface PartnerStatsView {
@@ -301,7 +317,8 @@ export function toSurveyView(project: Project, questions: PartnerQuestionView[])
     answer_url: project.status === "published" ? buildPartnerAnswerUrl(project.entry_code) : null,
     questions,
     created_at: project.created_at,
-    updated_at: project.updated_at
+    updated_at: project.updated_at,
+    version: computeSurveyVersion(questions)
   };
 }
 
@@ -379,6 +396,24 @@ export const partnerSurveyService = {
     const project = await loadOwnedProject(input.surveyId, input.partnerStoreId);
     if (project.status === "closed" || project.status === "archived") {
       throw new HttpError(409, "closed survey cannot be updated");
+    }
+
+    // 楽観ロック。**必ず書き込みの前**に判定する。
+    // base_version が送られてこなければ従来どおり無条件で更新する（後方互換）。
+    //
+    // 現在版はここで読んだ設問から算出する。ポータルが最後に見た版と違えば、
+    // その間に誰か（運営が管理画面で、あるいは別タブの店舗が）変更している。
+    // 上書きすると相手の変更が黙って消えるので 409 で止め、
+    // 現在版と現在の内容を返してポータル側でマージさせる。
+    if (input.baseVersion !== undefined) {
+      const current = await loadPartnerQuestionViews(project.id);
+      const currentVersion = computeSurveyVersion(current);
+      if (currentVersion !== input.baseVersion) {
+        throw new HttpError(409, "version conflict", {
+          current_version: currentVersion,
+          survey: toSurveyView(project, current)
+        });
+      }
     }
 
     if (input.title !== undefined) {

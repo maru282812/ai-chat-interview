@@ -1197,8 +1197,15 @@ export const liffController = {
     const answerValue = req.body.answer_value;
     const freeTextRaw = stringValue(req.body.free_text_answer).trim() || null;
     const normalizedAnswerRaw = req.body.normalized_answer;
+    // Phase 5: 深掘り（AI probe）返信は本回答を上書きせず別行で保存する。
+    // ワイヤ上の 'probe' は DB/domain の AnswerRole 'ai_probe' に対応（LINE webhook 経路と同じ値に揃える。
+    // 統計エクスポート・ctx 組み立ては 'ai_probe' を基準に primary と分離している）。
+    const answerRoleRaw = stringValue(req.body.answer_role).trim();
+    const isProbeAnswer = answerRoleRaw === "probe" || answerRoleRaw === "ai_probe";
+    const probeIndexRaw = Number(req.body.probe_index);
+    const probeIndex = Number.isFinite(probeIndexRaw) && probeIndexRaw > 0 ? Math.floor(probeIndexRaw) : null;
 
-    console.log("RECEIVED_ANSWER", { sessionId, questionCode, answerValue, freeTextRaw });
+    console.log("RECEIVED_ANSWER", { sessionId, questionCode, answerValue, freeTextRaw, answerRole: isProbeAnswer ? "ai_probe" : "primary" });
 
     if (!sessionId || !questionCode) {
       res.status(400).json({ ok: false, error: "session_id と question_code は必須です。" });
@@ -1246,7 +1253,8 @@ export const liffController = {
     }
 
     // 排他制御 (multi_choice): フロント制御を直叩きで回避した不正な組み合わせをサーバ側で拒否する。
-    if (question.question_type === "multi_choice" && Array.isArray(answerValue)) {
+    // 深掘り返信は設問型に関わらず自由文なので、選択肢由来の検査は対象外（Phase 5）。
+    if (!isProbeAnswer && question.question_type === "multi_choice" && Array.isArray(answerValue)) {
       const options = question.question_config?.options ?? [];
       const violation = findExclusionViolation(answerValue.map((v) => String(v)), options);
       if (violation) {
@@ -1260,7 +1268,7 @@ export const liffController = {
 
     // 新設問形式（migration 075）のサーバー権威バリデーション。
     // クライアントは answer_value に JSON 文字列で構造化回答を送る（保存形式は matrix と同じ慣例）。
-    if (isNewAnswerType(question.question_type)) {
+    if (!isProbeAnswer && isNewAnswerType(question.question_type)) {
       let parsed: unknown;
       try {
         parsed = typeof answerValue === "string" ? JSON.parse(answerValue) : answerValue;
@@ -1307,6 +1315,35 @@ export const liffController = {
       typeof normalizedAnswerRaw === "object"
         ? (normalizedAnswerRaw as Record<string, unknown>)
         : null;
+
+    // Phase 5: 深掘り返信は primary を上書きせず別行 insert（LINE webhook 経路と同形式）。
+    // parent_answer_id は同一 session×question の primary 行に張り、エクスポートの
+    // group（primaryAnswer / probeAnswers）で正しく束ねられるようにする。
+    if (isProbeAnswer) {
+      const parentPrimary = priorAnswers
+        .filter((a) => a.question_id === question.id && (a.answer_role ?? "primary") === "primary")
+        .slice(-1)[0] ?? null;
+      const probeNormalized: Record<string, unknown> = { ...(normalizedAnswer ?? {}) };
+      if (probeNormalized.source === undefined) probeNormalized.source = "ai_probe";
+      if (probeIndex !== null && probeNormalized.probe_index === undefined) {
+        probeNormalized.probe_index = probeIndex;
+      }
+      await answerRepository.create({
+        session_id: sessionId,
+        question_id: question.id,
+        answer_text: answerText,
+        answer_role: "ai_probe",
+        parent_answer_id: parentPrimary ? parentPrimary.id : null,
+        normalized_answer: probeNormalized,
+      });
+
+      // current_question_id は現状維持（probe 中も設問位置は同じ）。
+      await sessionRepository.update(sessionId, { current_question_id: question.id });
+
+      // 分岐は primary の値で評価する。probe は ctx を書き換えないので next は返さない。
+      res.json({ ok: true, answer_role: "ai_probe", next: null });
+      return;
+    }
 
     // 同一設問への再回答は上書き（重複行を作らない）
     await answerRepository.upsertPrimary({
@@ -1637,6 +1674,22 @@ export const liffController = {
       res.json({ probe_question: null });
       return;
     }
+
+    // 所有者検証（IDOR 防止）。深掘り生成は AI 呼び出しを伴う書込み相当の操作なので、
+    // 他の書込み系API（/survey/answer, /complete, /image, /judge-screening）と同じ二段検証を通す。
+    // assignment は body 任せにせず session から引く（1問1答経路は assignment_id を送らないため）。
+    // 判定基準は verifyAssignmentOwnerOrThrow に集約されており、
+    // liffAuthAvailable=false / authRequired=false の運用でも従来どおり素通りする
+    // （ページ側とサーバー側で認証要否の基準を分けない）。
+    const chatAssignment = await projectAssignmentRepository.getByProjectAndRespondent(
+      session.project_id,
+      session.respondent_id
+    );
+    if (!chatAssignment) {
+      throw new HttpError(404, "アンケートが見つかりません。");
+    }
+    await verifyAssignmentOwnerOrThrow(req, chatAssignment.id);
+    assertSessionMatchesAssignment(session, chatAssignment, { path: req.path });
 
     const currentQuestionId = session.current_question_id;
     if (!currentQuestionId) {

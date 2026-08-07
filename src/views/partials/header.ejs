@@ -74,8 +74,16 @@
           ]
         }
       ];
+      // アンケでYOTTO（hibi）運営画面への外部リンク群。env PORTAL_OPS_URL が未設定・
+      // 非 http(s) なら空配列が返り、グループごと出ない（fail-closed。リンク切れを見せない）。
+      // 同一タブ遷移。hibi 側の運営認可（allowlist・404）はそのまま効き、何もバイパスしない。
+      const portalOpsLinks = typeof locals.portalOpsNavLinks === "function" ? locals.portalOpsNavLinks() : [];
+      if (portalOpsLinks.length > 0) {
+        navGroups.push({ label: "アンケでYOTTO", items: portalOpsLinks, external: true });
+      }
       const activePath = typeof locals.currentPath === "string" ? locals.currentPath : "";
-      // 「/admin/projects/xxx/edit」でも「プロジェクト」を現在地として点灯させる
+      // 「/admin/projects/xxx/edit」でも「プロジェクト」を現在地として点灯させる。
+      // 外部リンク（絶対URL）は activePath と一致し得ないので点灯しない。
       const isActive = (href) => activePath === href || activePath.startsWith(href + "/");
     %>
     <header>

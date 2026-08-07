@@ -69,6 +69,13 @@
     }
     .scale-btn.selected { background: #2ca87a; color: #fff; border-color: #2ca87a; }
     .nav-btns          { display: flex; gap: 10px; margin-top: 16px; }
+    /* 回答送信失敗の可視化（Phase 2）。従来は fetch 失敗を握りつぶして先へ進めていたため
+       回答が静かに欠損していた。失敗時はここに理由を出し、カーソルを進めずに再送させる。 */
+    .answer-error      {
+      display: none; margin: 12px 0 0; padding: 10px 12px;
+      border: 1px solid #f0b4b4; border-radius: 10px; background: #fdf2f2;
+      color: #c53030; font-size: 13px; line-height: 1.6;
+    }
     .btn-next          {
       flex: 1; padding: 14px; background: #2ca87a; color: #fff;
       border: none; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer;
@@ -441,6 +448,8 @@
         </div>
       </div>
     </div>
+
+    <p id="answerError" class="answer-error" role="alert"></p>
 
     <div class="nav-btns">
       <button class="btn-back" id="btnBack" style="display:none">← 戻る</button>
@@ -881,6 +890,52 @@
       }
     }
     return rule.default_next || null;
+  }
+
+  // ---- 分岐解決を「可視リスト上の index」に変換（Phase 3）----
+  // 現在位置は question_code で持ち、添字は毎回「今の可視リスト」から引き直す。
+  // QUESTIONS の添字を visibleQs の添字として使うと、非表示設問がある案件で
+  // 分岐先が丸ごとずれる（設問を飛ばす／同じ設問に戻る）ため、必ずこの関数を通す。
+  //
+  // @param {object} q          いま回答し終えた設問
+  // @param {Array}  visList    再評価済みの可視設問リスト（QUESTIONS.filter(isVisible)）
+  // @returns {number} visList 上の次 index。完了なら visList.length を返す。
+  function resolveNextIndex(q, visList) {
+    const list = visList || [];
+    // 「いまの設問」の可視リスト上の位置。可視でなくなっていても QUESTIONS 順で近似できるよう
+    // 見つからない場合は QUESTIONS 上の位置から次の可視設問を探す。
+    const curVisIdx = list.findIndex(qq => qq.question_code === q.question_code);
+    const nextCode = resolveNext(q);
+
+    if (!nextCode) {
+      if (curVisIdx >= 0) return curVisIdx + 1;
+      // 現在設問が可視リストにない（回答により自分自身が非表示化した等）:
+      // QUESTIONS 順で自分の次以降の最初の可視設問へ。
+      return firstVisibleIndexFrom(QUESTIONS.findIndex(qq => qq.question_code === q.question_code) + 1, list);
+    }
+
+    // 分岐先が可視ならそこへ。
+    const directIdx = list.findIndex(qq => qq.question_code === nextCode);
+    if (directIdx >= 0) return directIdx;
+
+    // 分岐先が非表示: QUESTIONS 上で nextCode 以降を順に走査し、最初の可視設問へ。
+    const nextQIdx = QUESTIONS.findIndex(qq => qq.question_code === nextCode);
+    if (nextQIdx >= 0) return firstVisibleIndexFrom(nextQIdx, list);
+
+    // 分岐先コードが設問群に存在しない（設定ミス）: 素直に次の設問へフォールバック。
+    console.warn('[survey] branch target not found:', nextCode);
+    return curVisIdx >= 0 ? curVisIdx + 1 : list.length;
+  }
+
+  /** QUESTIONS の startQIdx 以降で最初に可視な設問の、visList 上の index。無ければ visList.length（=完了）。 */
+  function firstVisibleIndexFrom(startQIdx, visList) {
+    const list = visList || [];
+    if (startQIdx < 0) return list.length;
+    for (let i = startQIdx; i < QUESTIONS.length; i++) {
+      const idx = list.findIndex(qq => qq.question_code === QUESTIONS[i].question_code);
+      if (idx >= 0) return idx;
+    }
+    return list.length;
   }
 
   // ---- 設問文画像 HTML 生成 ----
@@ -1375,19 +1430,46 @@
   }
 
   // ---- 回答送信 ----
-  async function submitAnswer(questionCode, answerValue) {
-    console.log('SUBMIT_START', { questionCode });
+  // 送信結果の共通表現（Phase 2）。呼び出し元は必ず ok を見て、false ならカーソルを進めない。
+  const SUBMIT_FALLBACK_MESSAGE = '回答を送信できませんでした。通信環境をご確認のうえ、もう一度お試しください。';
+  const SUBMIT_AUTH_MESSAGE = '認証の有効期限が切れた可能性があります。LINEから開き直してもう一度お試しください。';
+
+  /**
+   * サーバー応答から表示用メッセージを取り出す。
+   * エラー本文は { ok:false, error } 形式（submitSurveyAnswer）と
+   * { ok:false, code, message } 形式（LIFF 認証系）の2種類があるため両方見る。
+   */
+  function extractSubmitErrorMessage(status, data) {
+    // 401 は既存の再認証フロー（liff-auth.ejs の exp 検査 ＋ apiHeaders() のライブトークン再取得）
+    // が回復を担当する。ここでは追加のリダイレクトを起こさず、案内文言だけを返す。
+    if (status === 401) return SUBMIT_AUTH_MESSAGE;
+    const msg = data && (data.error || data.message);
+    return (typeof msg === 'string' && msg.trim()) ? msg.trim() : SUBMIT_FALLBACK_MESSAGE;
+  }
+
+  /**
+   * 回答送信。opts.answerRole==='probe' のときは AI 深掘りへの返信として送る（Phase 5）。
+   * probe はサーバー側で別行 insert され、本回答（primary）を上書きしない。
+   * クライアント側でも answerCtx.answers を probe 文字列で汚さない＝分岐は primary の値のまま評価される。
+   */
+  async function submitAnswer(questionCode, answerValue, opts) {
+    const answerRole = (opts && opts.answerRole === 'probe') ? 'probe' : 'primary';
+    const isProbe = answerRole === 'probe';
+    console.log('SUBMIT_START', { questionCode, answerRole });
     console.log('INPUT_VALUE', answerValue);
-    answerCtx.answers[questionCode.toLowerCase()] = answerValue;
+    if (!isProbe) {
+      answerCtx.answers[questionCode.toLowerCase()] = answerValue;
+    }
 
     const q = QUESTIONS.find(qq => qq.question_code === questionCode);
     const qType = q ? q.question_type : '';
     const isTextType = q && !CHOICE_TYPES.includes(qType) && !IMAGE_UPLOAD_TYPES.includes(qType);
-    const freeText = isTextType ? String(answerValue || '') : '';
+    // probe 返信は設問型に関わらず自由文として扱う。
+    const freeText = (isProbe || isTextType) ? String(answerValue || '') : '';
 
     let normalizedAnswer = null;
     let freeTextOverride = null;
-    if (IMAGE_UPLOAD_TYPES.includes(qType) && Array.isArray(answerValue)) {
+    if (!isProbe && IMAGE_UPLOAD_TYPES.includes(qType) && Array.isArray(answerValue)) {
       const supplementText = answerCtx.imageTexts[questionCode.toLowerCase()] || '';
       const textMode = q?.question_config?.image_upload_config?.text_input_mode || 'hidden';
       if (textMode !== 'hidden' && supplementText) {
@@ -1406,6 +1488,8 @@
           session_id: SESSION_ID,
           assignment_id: ASSIGNMENT_ID,
           question_code: questionCode,
+          answer_role: answerRole,
+          probe_index: (opts && opts.probeIndex) || undefined,
           answer_value: Array.isArray(answerValue)
             ? answerValue.join(',')
             : (answerValue !== null && typeof answerValue === 'object'
@@ -1417,8 +1501,15 @@
       });
       const data = await response.json().catch(() => ({}));
       console.log('API_RESPONSE', data);
+      if (!response.ok) {
+        const message = extractSubmitErrorMessage(response.status, data);
+        console.error('[survey] answer submit rejected', { status: response.status, questionCode, message });
+        return { ok: false, status: response.status, message: message };
+      }
+      return { ok: true, status: response.status, message: '' };
     } catch(e) {
       console.error('answer submit failed', e);
+      return { ok: false, status: 0, message: SUBMIT_FALLBACK_MESSAGE };
     }
   }
 
@@ -1443,6 +1534,26 @@
     const btnBack = document.getElementById('btnBack');
     const progressBar = document.getElementById('progressBar');
     const completeScreen = document.getElementById('completeScreen');
+    const answerErrorEl = document.getElementById('answerError');
+
+    // 送信失敗の表示制御（Phase 2）。表示中はカーソルを進めていないので、
+    // 「次へ」を再有効化してそのまま再送できる状態に戻す。
+    function showAnswerError(message) {
+      if (!answerErrorEl) return;
+      answerErrorEl.textContent = message || SUBMIT_FALLBACK_MESSAGE;
+      answerErrorEl.style.display = 'block';
+      try { answerErrorEl.scrollIntoView({ block: 'nearest' }); } catch (_e) {}
+    }
+    function clearAnswerError() {
+      if (!answerErrorEl) return;
+      answerErrorEl.style.display = 'none';
+      answerErrorEl.textContent = '';
+    }
+    /** 送信失敗時に「次へ」を押せる状態へ戻す（ラベルも確認中...から戻す） */
+    function recoverNextButton() {
+      btnNext.textContent = '次へ →';
+      btnNext.disabled = false;
+    }
 
     // 完了処理が IDトークン失効(401)で失敗し、再ログインして戻ってきた場合は、
     // アンケートを最初から再表示せず、完了確定(サーバー側で idempotent)だけを
@@ -1512,6 +1623,7 @@
 
     function renderQuestionMode() {
       btnNext.textContent = '次へ →';
+      clearAnswerError();
       visibleQs = QUESTIONS.filter(isVisible); // 再評価
       if (cursor >= visibleQs.length) { showComplete(); return; }
       const q = visibleQs[cursor];
@@ -1525,6 +1637,7 @@
 
     function renderPageMode() {
       btnNext.textContent = '次へ →';
+      clearAnswerError();
       const allPages = groupByPage(QUESTIONS);
       const visiblePagesNow = allPages.map(p => ({
         ...p,
@@ -1815,6 +1928,9 @@
     // probe 状態管理（survey_question モード用）
     let probeActiveQ = null;
     let probeNextCursor = null;
+    // 深掘り返信の表示用テキスト（Phase 5）。answerCtx.answers は primary の値のままにするため、
+    // probe 本文はこの変数だけで持つ。設問コード -> 返信文の配列。
+    const probeTextsByCode = {};
     const probeArea     = document.getElementById('probeArea');
     const probeQuestionText = document.getElementById('probeQuestionText');
     const probeAnswerInput  = document.getElementById('probeAnswerInput');
@@ -1827,10 +1943,13 @@
     async function checkAndShowProbe(q, val, nextCursor) {
       if (!q.ai_probe_enabled) return false;
       try {
+        // 他の書込み系APIと同じ apiHeaders()（Authorization: Bearer <id_token>）を付ける。
+        // サーバー側は session から assignment を引いて所有者検証するので assignment_id は必須ではないが、
+        // チャット経路と形を揃えて送っておく。
         const res = await fetch('/liff/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: SESSION_ID, message: String(val || '') })
+          headers: apiHeaders(),
+          body: JSON.stringify({ session_id: SESSION_ID, assignment_id: ASSIGNMENT_ID, message: String(val || '') })
         });
         const data = await res.json().catch(() => ({}));
         console.log('PROBE_RESPONSE', data);
@@ -1854,7 +1973,21 @@
       const probeText = probeAnswerInput.value.trim();
       if (!probeText || !probeActiveQ) return;
       probeSubmitBtn.disabled = true;
-      await submitAnswer(probeActiveQ.question_code, probeText);
+      clearAnswerError();
+      const probeCode = probeActiveQ.question_code.toLowerCase();
+      const probeList = probeTextsByCode[probeCode] || (probeTextsByCode[probeCode] = []);
+      // Phase 5: probe は別行保存。answerCtx.answers[code]（primary の値）は上書きしない。
+      const probeResult = await submitAnswer(probeActiveQ.question_code, probeText, {
+        answerRole: 'probe',
+        probeIndex: probeList.length + 1,
+      });
+      if (!probeResult.ok) {
+        // 深掘り回答も保存失敗ならカーソル（probeNextCursor）を消費せず、その場で再送させる。
+        showAnswerError(probeResult.message);
+        probeSubmitBtn.disabled = false;
+        return;
+      }
+      probeList.push(probeText);
       probeArea.style.display = 'none';
       probeActiveQ = null;
       cursor = probeNextCursor;
@@ -1870,6 +2003,7 @@
         return;
       }
 
+      clearAnswerError();
       btnNext.disabled = true;
       btnNext.textContent = '確認しています...';
 
@@ -1877,9 +2011,16 @@
         const allPages = groupByPage(QUESTIONS);
         const page = allPages.filter(p => p.questions.filter(isVisible).length > 0)[pageCursor];
         if (page) {
+          // 1問でも保存に失敗したらページを進めない（未保存のまま次ページへ行くと回答が静かに欠ける）。
           for (const q of page.questions.filter(isVisible)) {
             const val = answerCtx.answers[q.question_code.toLowerCase()];
-            if (val !== undefined) await submitAnswer(q.question_code, val);
+            if (val === undefined) continue;
+            const result = await submitAnswer(q.question_code, val);
+            if (!result.ok) {
+              showAnswerError(result.message);
+              recoverNextButton();
+              return;
+            }
           }
         }
         pageCursor++;
@@ -1888,16 +2029,18 @@
         const q = visibleQs[cursor];
         if (q) {
           const val = answerCtx.answers[q.question_code.toLowerCase()];
-          await submitAnswer(q.question_code, val);
-          const nextCode = resolveNext(q);
-          console.log('NEXT_QUESTION_ID', nextCode ?? '(end)');
-          let nextCursor;
-          if (nextCode) {
-            const nextIdx = QUESTIONS.findIndex(qq => qq.question_code === nextCode);
-            nextCursor = nextIdx >= 0 ? nextIdx : cursor + 1;
-          } else {
-            nextCursor = cursor + 1;
+          const result = await submitAnswer(q.question_code, val);
+          if (!result.ok) {
+            showAnswerError(result.message);
+            recoverNextButton();
+            return;
           }
+          // 回答が入ったことで表示条件が変わるため、可視リストを再評価してから次位置を決める。
+          // nextCursor は「この再評価後の visibleQs 上の index」。renderQuestionMode() が
+          // 同じ条件で再度 filter するので意味が一致する（probe 経由の遅延適用も同様）。
+          visibleQs = QUESTIONS.filter(isVisible);
+          const nextCursor = resolveNextIndex(q, visibleQs);
+          console.log('NEXT_QUESTION_ID', (resolveNext(q) ?? '(end)'), '-> idx', nextCursor);
           const probeShown = await checkAndShowProbe(q, val, nextCursor);
           if (probeShown) return;
           cursor = nextCursor;
@@ -2059,10 +2202,35 @@
     const chatNext       = document.getElementById('chatNext');
 
     let chatQueueIndex = 0;
-    const visibleQs = QUESTIONS.filter(isVisible);
+    // 可視設問は回答のたびに変わりうる（visibility_conditions）ため、初回固定の const にせず
+    // 参照するたびに評価する（Phase 3）。chatQueueIndex はこの都度評価リスト上の index。
+    function getVisibleQs() { return QUESTIONS.filter(isVisible); }
 
     function scrollToBottom() {
       chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    /**
+     * 回答送信失敗の共通後始末（Phase 2）。
+     * chatQueueIndex は進めず、AIバブルで理由を伝えて入力/ボタンを再有効化し、
+     * ユーザーがそのまま同じ設問に再回答できる状態に戻す。
+     * @param {{message?: string}} result submitAnswer の戻り値
+     * @param {{unfreezeBlock?: boolean}} [opts] unfreezeBlock=true で直前の設問ブロックの入力も戻す
+     */
+    function handleChatSubmitFailure(result, opts) {
+      addBubble((result && result.message) || SUBMIT_FALLBACK_MESSAGE, 'ai');
+      if (opts && opts.unfreezeBlock) unfreezeLatestQuestionBlock();
+      scrollToBottom();
+    }
+
+    /** freezeLatestQuestionBlock の逆操作。送信失敗時に直前の設問ブロックを再度触れるようにする。 */
+    function unfreezeLatestQuestionBlock() {
+      const blocks = chatMessages.querySelectorAll('.chat-question-block');
+      const latestBlock = blocks[blocks.length - 1];
+      if (!latestBlock) return;
+      latestBlock.querySelectorAll('input, textarea, button').forEach(el => {
+        el.disabled = false;
+      });
     }
 
     function showTypingIndicator() {
@@ -2115,7 +2283,7 @@
     }
 
     function checkChatNextEnabled() {
-      const q = visibleQs[chatQueueIndex];
+      const q = getVisibleQs()[chatQueueIndex];
       if (!q) return;
       const answered = isChatAnswered(q);
       chatNext.disabled = !answered;
@@ -2299,7 +2467,13 @@
           }
           inlineSubmitBtn.disabled = true;
           const val = answerCtx.answers[q.question_code.toLowerCase()];
-          await submitAnswer(q.question_code, val);
+          const result = await submitAnswer(q.question_code, val);
+          if (!result.ok) {
+            // 保存できていないので chatQueueIndex を進めず、同じ設問のまま再送させる。
+            handleChatSubmitFailure(result, { unfreezeBlock: true });
+            inlineSubmitBtn.disabled = false;
+            return;
+          }
           freezeLatestQuestionBlock();
 
           const displayText = formatAnswerForDisplay(val, q);
@@ -2357,6 +2531,7 @@
     }
 
     function askCurrentQuestion() {
+      const visibleQs = getVisibleQs(); // 都度評価（Phase 3）
       if (chatQueueIndex >= visibleQs.length) {
         // スクリーニングフェーズ終了: judge-screening を呼んで境界メッセージを表示
         if (SURVEY_PHASE === 'screening') {
@@ -2421,6 +2596,12 @@
       chatSend.disabled = chatInput.value.trim() === '';
     });
 
+    // 深掘り状態（Phase 5）。probe 表示中は chatTextRow の送信＝probe 返信になるので、
+    // sendChatAnswer が primary と probe を取り違えないようここで明示的に持つ。
+    // 表示用の probe 本文も answerCtx とは別にここへ溜める（分岐は primary の値で評価する）。
+    let chatProbeActiveQ = null;
+    const chatProbeTextsByCode = {};
+
     async function advanceAfterAnswer(q, displayText) {
       addBubble(displayText, 'user');
       const typingWrap = showTypingIndicator();
@@ -2429,12 +2610,13 @@
         try {
           const res = await fetch('/liff/chat', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: apiHeaders(),
             body: JSON.stringify({ session_id: SESSION_ID, assignment_id: ASSIGNMENT_ID, message: displayText }),
           });
           const data = await res.json();
           if (data.probe_question) {
             hideTypingIndicator(typingWrap);
+            chatProbeActiveQ = q;
             addBubble(data.probe_question, 'ai');
             chatTextRow.style.display = 'flex';
             chatNextRow.style.display = 'none';
@@ -2451,14 +2633,10 @@
       }
 
       hideTypingIndicator(typingWrap);
-      // 次の質問へ
-      const nextCode = resolveNext(q);
-      if (nextCode) {
-        const nextIdx = QUESTIONS.findIndex(qq => qq.question_code === nextCode);
-        chatQueueIndex = nextIdx >= 0 ? nextIdx : chatQueueIndex + 1;
-      } else {
-        chatQueueIndex++;
-      }
+      // 深掘りは出なかった（または打ち切り）＝次の設問へ進むので probe 状態を解除する。
+      chatProbeActiveQ = null;
+      // 次の質問へ。回答済みなので可視リストを再評価してから index を決める（Phase 3）。
+      chatQueueIndex = resolveNextIndex(q, getVisibleQs());
       askCurrentQuestion();
     }
 
@@ -2469,22 +2647,52 @@
       chatSend.disabled = true;
       chatInput.disabled = true;
 
-      const q = visibleQs[chatQueueIndex];
+      // Phase 5: 深掘り表示中の送信は probe 返信。設問は probe を出した設問（chatProbeActiveQ）で、
+      // chatQueueIndex は進んでいないので getVisibleQs()[chatQueueIndex] と一致するが、
+      // 「今が probe か」は index からは判別できないため状態変数で明示する。
+      const isProbeReply = Boolean(chatProbeActiveQ);
+      const q = isProbeReply ? chatProbeActiveQ : getVisibleQs()[chatQueueIndex];
       if (!q) return;
 
-      answerCtx.answers[q.question_code.toLowerCase()] = text;
-      await submitAnswer(q.question_code, text);
+      const code = q.question_code.toLowerCase();
+      const probeList = isProbeReply
+        ? (chatProbeTextsByCode[code] || (chatProbeTextsByCode[code] = []))
+        : null;
+      // primary のときだけ ctx を更新する。probe 文字列で本回答を上書きしない（分岐は primary で評価）。
+      if (!isProbeReply) {
+        answerCtx.answers[code] = text;
+      }
+      const result = await submitAnswer(
+        q.question_code,
+        text,
+        isProbeReply ? { answerRole: 'probe', probeIndex: probeList.length + 1 } : undefined
+      );
+      if (!result.ok) {
+        // 送信できていないので chatQueueIndex を進めない。入力欄に本文を戻して再送させる。
+        chatInput.value = text;
+        handleChatSubmitFailure(result);
+        chatInput.disabled = false;
+        chatSend.disabled = chatInput.value.trim() === '';
+        return;
+      }
+      if (isProbeReply) probeList.push(text);
       await advanceAfterAnswer(q, text);
     }
 
     // ---- 次へボタン（選択肢・スケール系） ----
     chatNext.addEventListener('click', async () => {
-      const q = visibleQs[chatQueueIndex];
+      const q = getVisibleQs()[chatQueueIndex];
       if (!q || !isChatAnswered(q)) return;
       chatNext.disabled = true;
 
       const val = answerCtx.answers[q.question_code.toLowerCase()];
-      await submitAnswer(q.question_code, val);
+      const result = await submitAnswer(q.question_code, val);
+      if (!result.ok) {
+        // 保存できていないので chatQueueIndex を進めず、「次へ」を戻して再送させる。
+        handleChatSubmitFailure(result, { unfreezeBlock: true });
+        chatNext.disabled = false;
+        return;
+      }
       freezeLatestQuestionBlock();
 
       const displayText = formatAnswerForDisplay(val, q);
@@ -2585,7 +2793,7 @@
     }
 
     try {
-      console.log('[survey] askCurrentQuestion start, visibleQs=', visibleQs.length);
+      console.log('[survey] askCurrentQuestion start, visibleQs=', getVisibleQs().length);
       askCurrentQuestion();
       console.log('[survey] askCurrentQuestion returned');
     } catch(e) {

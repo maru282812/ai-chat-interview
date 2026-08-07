@@ -1,0 +1,32 @@
+<%
+/**
+ * 店舗に割り当て済みの案件を運営が編集するときの警告帯。
+ *
+ * ## なぜ要るか
+ * `projects.partner_store_id` が入っている案件は、会員ポータル（hibi-site）の
+ * 編集画面から店舗も同じ設問を編集している。ACI の管理画面とポータルは
+ * **同じ projects / questions の行**を見ているため、ここでの変更は店舗の画面に
+ * 即座に反映されるし、逆に店舗の保存がここでの変更を上書きし得る。
+ *
+ * ポータル側の PUT には楽観ロック（base_version）が入っているので、
+ * 「店舗が古い版のまま保存して運営の変更を消す」事故は 409 で止まる。
+ * ただしそれは**検知**であって**予防**ではない。運営が割り当て済みと知らずに
+ * 編集を始めるのを防ぐため、画面上で必ず気付く形にしておく。
+ *
+ * ## 使い方
+ * include("../partials/partner-store-warning", { project }) を呼ぶ。
+ * `project` が無い/未割り当てなら何も描画しない（新規作成画面でも安全に置ける）。
+ */
+const partnerStoreId = (typeof project !== "undefined" && project) ? project.partner_store_id : null;
+%>
+<% if (partnerStoreId) { %>
+  <div style="background:#fff6e5;border:1px solid #c8851b;color:#8a5a12;padding:10px 14px;border-radius:6px;margin-bottom:1rem;font-size:13px;line-height:1.7">
+    <strong>⚠ この案件は店舗に割り当て済みです</strong><br>
+    店舗の会員サイトからも同じ設問が編集されています。ここでの変更は
+    <strong>店舗の画面にもそのまま反映されます</strong>。
+    店舗が編集中の場合、保存のタイミングによっては互いの変更が競合することがあります
+    （その場合、店舗側には競合の確認画面が出ます）。
+    <br>
+    <span style="color:#a06a15">割り当て先の店舗ID: <code><%= partnerStoreId %></code></span>
+  </div>
+<% } %>

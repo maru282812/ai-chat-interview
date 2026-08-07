@@ -39,6 +39,19 @@ function statusBadge(status) {
   <br>※ 回答を受け付けるにはステータスが<strong>公開中</strong>である必要があります。
 </p>
 
+<%
+// hibi 会員店舗への割り当ては、ここではなくアンケでYOTTO 運営画面で行う。
+// env PORTAL_OPS_URL が未設定なら null が返り、リンクごと出さない（リンク切れを見せない）。
+const opsAssignmentsHref = typeof locals.portalOpsHref === "function" ? locals.portalOpsHref("/ops/assignments") : null;
+%>
+<% if (opsAssignmentsHref) { %>
+  <p class="muted" style="margin-bottom:1.5rem">
+    hibi 会員店舗への割り当ては
+    <a href="<%= opsAssignmentsHref %>">アンケでYOTTO 運営画面（/ops/assignments）</a>
+    で行います。
+  </p>
+<% } %>
+
 <!-- ============================================================ -->
 <!-- 店舗専用アンケート一覧 -->
 <!-- ============================================================ -->
@@ -69,6 +82,13 @@ function statusBadge(status) {
             <strong><%= p.user_display_title || p.name %></strong>
             <% if (p.status !== 'published') { %>
               <br><span style="color:#b14;font-size:11px">⚠ 公開中でないため回答できません</span>
+            <% } %>
+            <%
+              /* 会員ポータル（hibi-site）の店舗にも割り当て済み＝店舗側でも編集される案件。
+                 ここで設問を直すと店舗の画面にも即反映されるので、一覧の段階で分かるようにする。 */
+            %>
+            <% if (p.partner_store_id) { %>
+              <br><span style="display:inline-block;margin-top:3px;background:#c8851b;color:#fff;font-size:10px;padding:1px 6px;border-radius:3px">店舗が編集中</span>
             <% } %>
           </td>
           <td><%= row.clientName || '—' %></td>

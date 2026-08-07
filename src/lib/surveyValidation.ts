@@ -1,4 +1,5 @@
-import type { LegacyBranchRule, Question, QuestionBranchRule } from "../types/domain";
+import type { LegacyBranchRule, Project, Question, QuestionBranchRule } from "../types/domain";
+import { NEW_ANSWER_TYPES, isNewAnswerType } from "./answerTypes";
 import { deriveVariableDefinition } from "./codebook";
 
 /**
@@ -233,9 +234,92 @@ function findCycle(edges: DependencyEdge[]): string[] | null {
 }
 
 /**
- * 送付前バリデーション本体。error が 1件もなければ ok=true。
+ * 表示モード（display_mode）と設問構成の整合チェック（P6）。
+ *
+ * project が未指定なら何も検査しない（後方互換）。
+ * - survey_page（レガシー・管理UIからは封印済み）は、ページグループ／分岐／AI深掘りの
+ *   いずれもレンダラ側が扱えないため error。
+ * - 回答UIプリセット（casual/formal）は 1問1答（survey_question）でのみ適用されるため、
+ *   それ以外のモードで standard 以外が設定されていたら warning。
+ *   ※文言は researchForm.ejs の helper-text と表現を揃えること。
+ * - interview_chat なのに ai_probe_enabled の設問が0件なら warning。
+ * - 新回答形式（pairwise 等）はレンダラ未実装のため warning。
  */
-export function validateSurvey(questions: Question[]): ValidationReport {
+function checkDisplayModeConsistency(
+  project: Project,
+  activeQuestions: Question[],
+  findings: ValidationFinding[]
+): void {
+  const mode = project.display_mode;
+
+  if (mode === "survey_page") {
+    if (activeQuestions.length > 0 && activeQuestions.every((question) => !question.page_group_id)) {
+      findings.push({
+        level: "error",
+        code: "page_mode_without_page_group",
+        message:
+          "表示モードが「ページ型」ですが、ページグループ(page_group_id)が設定された設問が1件もありません。1ページに全設問が並ぶか、画面が構成できません。"
+      });
+    }
+    for (const question of activeQuestions) {
+      if (question.branch_rule) {
+        findings.push({
+          level: "error",
+          code: "page_mode_with_branch_rule",
+          message: `表示モードが「ページ型」の案件では分岐(branch_rule)は動作しません: ${question.question_code}`,
+          question_code: question.question_code
+        });
+      }
+      if (question.ai_probe_enabled) {
+        findings.push({
+          level: "error",
+          code: "page_mode_with_ai_probe",
+          message: `表示モードが「ページ型」の案件ではAI深掘り(ai_probe_enabled)は動作しません: ${question.question_code}`,
+          question_code: question.question_code
+        });
+      }
+    }
+  }
+
+  const preset = project.answer_ui_preset ?? "standard";
+  if (preset !== "standard" && (mode === "survey_page" || mode === "interview_chat")) {
+    findings.push({
+      level: "warning",
+      code: "answer_ui_preset_not_applied",
+      message: `スワイプ等の回答UIプリセットは「1問1答」でのみ適用されます。現在の表示モードでは回答UIプリセット(${preset})は適用されません。`
+    });
+  }
+
+  if (mode === "interview_chat") {
+    const probeCount = activeQuestions.filter((question) => question.ai_probe_enabled).length;
+    if (probeCount === 0) {
+      findings.push({
+        level: "warning",
+        code: "chat_mode_without_ai_probe",
+        message:
+          "表示モードが「AIチャット」ですが、AI深掘り(ai_probe_enabled)が有効な設問が1件もありません。会話形式にする意味が薄くなります。"
+      });
+    }
+  }
+
+  for (const question of activeQuestions) {
+    if (isNewAnswerType(question.question_type)) {
+      findings.push({
+        level: "warning",
+        code: "new_answer_type_no_renderer",
+        message: `新回答形式(${NEW_ANSWER_TYPES.join(" / ")})は回答画面のレンダラが未実装です: ${question.question_code}（${question.question_type}）`,
+        question_code: question.question_code
+      });
+    }
+  }
+}
+
+/**
+ * 送付前バリデーション本体。error が 1件もなければ ok=true。
+ *
+ * project は任意。渡された場合のみ表示モード整合チェック（P6）を追加で行う。
+ */
+export function validateSurvey(questions: Question[], project?: Project | null): ValidationReport {
   const findings: ValidationFinding[] = [];
   const activeQuestions = questions.filter((question) => !question.is_system);
 
@@ -369,6 +453,11 @@ export function validateSurvey(questions: Question[]): ValidationReport {
         question_code: question.question_code
       });
     }
+  }
+
+  // P6 表示モード整合（project が渡されたときのみ）
+  if (project) {
+    checkDisplayModeConsistency(project, activeQuestions, findings);
   }
 
   const errorCount = findings.filter((finding) => finding.level === "error").length;

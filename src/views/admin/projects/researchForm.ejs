@@ -8,6 +8,15 @@
     { value: "survey_interview", label: "サーベイ＋インタビュー" },
     { value: "interview", label: "インタビュー" }
   ];
+  const displayModeOptions = [
+    { value: "survey_question", label: "1問1答（通常アンケート）" },
+    { value: "interview_chat", label: "AIチャット（対話インタビュー）" }
+  ];
+  // survey_page は未完成のため新規選択不可。既存案件の現在値が survey_page のときだけ、
+  // 編集保存で値が書き換わらないよう選択肢として残す。
+  if (form.display_mode === "survey_page") {
+    displayModeOptions.push({ value: "survey_page", label: "ページ型（レガシー・非推奨）" });
+  }
   const statusOptions = [
     { value: "draft", label: "下書き" },
     { value: "ready", label: "配信待ち" },
@@ -115,6 +124,8 @@
   }
 </style>
 
+<%- include("../../partials/partner-store-warning", { project }) %>
+
 <form class="card stack" method="post" action="<%= action %>" onsubmit="return confirmPromptPackageSelection();">
   <% if (successMessage) { %>
     <section class="card subtle-card success-card">
@@ -161,6 +172,15 @@
         <select name="research_mode">
           <% for (const mode of modeOptions) { %>
             <option value="<%= mode.value %>" <%= form.research_mode === mode.value ? "selected" : "" %>><%= mode.label %></option>
+          <% } %>
+        </select>
+      </label>
+      <label>
+        回答画面の表示モード
+        <small class="helper-text">回答者に見せる画面の形式です。「AIチャット」を選ぶと会話形式のインタビュー画面になります。スワイプ等の回答UIプリセットは「1問1答」でのみ適用されます。</small>
+        <select name="display_mode">
+          <% for (const dm of displayModeOptions) { %>
+            <option value="<%= dm.value %>" <%= form.display_mode === dm.value ? "selected" : "" %>><%= dm.label %></option>
           <% } %>
         </select>
       </label>

@@ -2,12 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { env } from "../config/env";
 import { HttpError, asyncHandler } from "../lib/http";
-import {
-  AGE_OPTIONS,
-  GENDER_OPTIONS,
-  RESERVED_QUESTION_CODES
-} from "../lib/partnerDemographics";
-import { PARTNER_PACKAGES } from "../lib/partnerPackages";
+import { RESERVED_QUESTION_CODES } from "../lib/partnerDemographics";
 import {
   PARTNER_QUESTION_TYPES,
   collectDisallowedImageUrls,
@@ -115,6 +110,8 @@ const questionListSchema = z.array(questionSchema).min(1).max(50);
 /** テストから参照する（HTTP を立てずに 400 判定を検証するため）。 */
 export const partnerQuestionSchemaForTest = questionSchema;
 export const partnerToQuestionInputForTest = toQuestionInput;
+/** `base_version`（楽観ロック）の受け入れ規則をテストから検証するために公開する。 */
+export const partnerUpdateSurveySchemaForTest = () => updateSurveySchema;
 
 const createSurveySchema = z.object({
   title: z.string().min(1).max(200),
@@ -129,7 +126,15 @@ const createSurveySchema = z.object({
 const updateSurveySchema = z
   .object({
     title: z.string().min(1).max(200).optional(),
-    questions: questionListSchema.optional()
+    questions: questionListSchema.optional(),
+    /**
+     * 楽観ロック用の版（任意）。直前に受け取った `SurveyView.version` を送る。
+     * サーバーの現在版と不一致なら 409。省略すれば従来どおり無条件更新（後方互換）。
+     *
+     * refine の条件には**含めない**。base_version だけを送って
+     * title も questions も無い PUT は、これまでどおり 400 のままにする。
+     */
+    base_version: z.string().min(1).max(200).optional()
   })
   .refine((value) => value.title !== undefined || value.questions !== undefined, {
     message: "title or questions is required"
@@ -200,20 +205,12 @@ function assertNoReservedQuestionText(questions: { question_text: string }[]): v
 // ルート
 // ------------------------------------------------------------------
 
-/** 業種別パッケージ一覧（設問テンプレ・消費チケット枚数マスタ）。 */
-partnerRoutes.get(
-  "/packages",
-  asyncHandler(async (_req, res) => {
-    res.json({
-      packages: PARTNER_PACKAGES,
-      // 性年代設問はサーバーが自動付与する固定設問。ポータルは編集不可の行として描画する。
-      fixed_demographic_questions: {
-        gender: { options: GENDER_OPTIONS },
-        age: { options: AGE_OPTIONS }
-      }
-    });
-  })
-);
+// `GET /packages`（業種別パッケージ一覧）は削除した。
+// パッケージマスタ（設問テンプレ・消費チケット枚数・画像）は会員ポータル hibi 側の
+// packages テーブルへ移管され、ポータルは自 DB を読むのでこの API を呼ばなくなった
+// （ハードコード `partnerPackages.ts` と hibi `aci-mock.ts` の写しという二重管理の解消）。
+// `package_id` はここでは検証せず不透明な文字列として projects.objective に保持するだけなので、
+// マスタが hibi 側に移っても draft 作成・取得の挙動は変わらない。
 
 /** draft 作成。 */
 partnerRoutes.post(
@@ -263,7 +260,8 @@ partnerRoutes.put(
       partnerStoreId: partner.storeId,
       surveyId,
       title: body.title,
-      questions: body.questions?.map(toQuestionInput)
+      questions: body.questions?.map(toQuestionInput),
+      baseVersion: body.base_version
     });
 
     res.json(survey);

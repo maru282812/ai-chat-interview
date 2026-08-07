@@ -8,6 +8,8 @@
  * そのまま露出していた。ここに集約して `res.locals` 経由で全ビューへ配る。
  */
 
+import { portalOpsHref, portalOpsNavLinks } from "./portalOpsLinks";
+
 const JST_OFFSET_MINUTES = 9 * 60;
 
 function toDate(value: unknown): Date | null {
@@ -220,5 +222,9 @@ export const adminViewHelpers = {
   fmtRelative: formatRelativeJst,
   dtLocal: toDateTimeLocalJst,
   statusLabel,
-  shortId
+  shortId,
+  // アンケでYOTTO（hibi）運営画面へのリンク。env PORTAL_OPS_URL 未設定なら
+  // portalOpsNavLinks() は空配列 / portalOpsHref() は null を返し、リンクは出ない
+  portalOpsNavLinks,
+  portalOpsHref
 };

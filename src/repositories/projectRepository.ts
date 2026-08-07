@@ -4,6 +4,7 @@ import type {
   AIPromptPolicy,
   AIPromptTemplateMap,
   DeliveryType,
+  DisplayMode,
   Project,
   ProjectAIState,
   ProjectProbePolicy,
@@ -27,6 +28,7 @@ interface ProjectMutationInput {
   status: ProjectStatus;
   reward_points: number;
   research_mode?: ResearchMode;
+  display_mode?: DisplayMode;
   primary_objectives?: string[];
   secondary_objectives?: string[];
   comparison_constraints?: string[];
