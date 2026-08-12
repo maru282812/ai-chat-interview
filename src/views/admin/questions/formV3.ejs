@@ -1908,6 +1908,12 @@
       }
     }
 
+    // requestSubmit() は submit イベントの dispatch 中に呼んでも無視される。
+    // タグ入力があった場合は await 済みなのでフレームが抜けており発火するが、
+    // 入力が無いと同期のままここへ来るため 2 周目が発火せず、
+    // 何のエラーも出ないまま保存されない。常に 1 フレーム待ってから送る。
+    await new Promise(resolve => setTimeout(resolve, 0));
+
     submitPrepared = true;
     nativeSubmitStarted = false;
     form.requestSubmit();
