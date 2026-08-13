@@ -1,7 +1,7 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import { env } from "../config/env";
 import { logger } from "../lib/logger";
+import { secureEquals } from "../lib/secureCompare";
 
 /**
  * 運営専用API（/api/partner-admin/*・docs/partner-api.md §8）の認証ミドルウェア。
@@ -24,13 +24,6 @@ function headerValue(raw: string | string[] | undefined): string {
     return raw[0] ?? "";
   }
   return raw ?? "";
-}
-
-/** 長さを漏らさず定数時間で比較する。 */
-function secureEquals(left: string, right: string): boolean {
-  const leftDigest = createHash("sha256").update(left, "utf8").digest();
-  const rightDigest = createHash("sha256").update(right, "utf8").digest();
-  return timingSafeEqual(leftDigest, rightDigest);
 }
 
 export function partnerAdminAuthMiddleware(

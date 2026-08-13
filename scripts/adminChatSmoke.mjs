@@ -18,9 +18,14 @@
 import "dotenv/config";
 
 const baseUrl = process.argv[2] || "http://localhost:3000";
-const auth = Buffer.from(
-  `${process.env.ADMIN_BASIC_USER}:${process.env.ADMIN_BASIC_PASSWORD}`
-).toString("base64");
+
+// 管理画面は Basic 認証からログインセッションへ移行した（middleware/adminAuth.ts）。
+// スクリプトはログイン画面を通れないので、非対話クライアント用の鍵で認証する。
+const adminApiKey = process.env.ADMIN_API_KEY;
+if (!adminApiKey) {
+  console.error("ADMIN_API_KEY が未設定です。.env に設定してください（例: openssl rand -hex 32）。");
+  process.exit(1);
+}
 
 const CASES = [
   { label: "Tier A 読み: 人数", screenKey: "sessions-index", text: "回答者は何人いますか？1文で答えて。" },
@@ -51,7 +56,7 @@ for (const testCase of CASES) {
   const res = await fetch(`${baseUrl}/admin/api/ai-chat`, {
     method: "POST",
     headers: {
-      Authorization: `Basic ${auth}`,
+      "X-Admin-Api-Key": adminApiKey,
       "Content-Type": "application/json; charset=utf-8",
       "Sec-Fetch-Site": "same-origin",
     },

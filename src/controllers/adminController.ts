@@ -147,24 +147,6 @@ import { lineMessagingService } from "../services/lineMessagingService";
 import { buildApplicationAcceptedFlex, buildApplicationRejectedFlex } from "../templates/flex";
 import { buildProjectStartUrl } from "../services/liffService";
 
-// USERプロファイル管理の簡易認証設定
-const UP_ADMIN_ID = "admin";
-const UP_ADMIN_PASS = "password123";
-const UP_ADMIN_COOKIE = "upadmin_auth";
-const UP_ADMIN_TOKEN = "upadmin_ok_v1";
-
-function upAdminIsAuthenticated(req: Request): boolean {
-  const cookieHeader = req.headers.cookie ?? "";
-  for (const part of cookieHeader.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq < 0) continue;
-    if (part.slice(0, eq).trim() === UP_ADMIN_COOKIE && part.slice(eq + 1).trim() === UP_ADMIN_TOKEN) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function routeParam(req: Request, key: string): string {
   const value = req.params[key];
   if (!value) {
@@ -6097,46 +6079,12 @@ export const adminController = {
   },
 
   // ============================================================
-  // USERプロファイル管理 (簡易パスワード認証付き)
+  // USERプロファイル管理
+  // 認証は /admin 全体のログイン（middleware/adminAuth.ts）に一本化済み。
+  // 以前あった独自ログインは固定トークンの Cookie で守りになっていなかったため削除した。
   // ============================================================
 
-  async userProfilesLoginPage(req: Request, res: Response): Promise<void> {
-    if (upAdminIsAuthenticated(req)) {
-      res.redirect("/admin/user-profiles");
-      return;
-    }
-    const errorMessage = req.query.error === "1" ? "IDまたはパスワードが違います" : null;
-    res.render("admin/user-profiles/login", { title: "ユーザー情報管理 ログイン", errorMessage });
-  },
-
-  async userProfilesLogin(req: Request, res: Response): Promise<void> {
-    const id = bodyString(req.body.admin_id).trim();
-    const pass = bodyString(req.body.admin_pass).trim();
-    if (id === UP_ADMIN_ID && pass === UP_ADMIN_PASS) {
-      res.setHeader(
-        "Set-Cookie",
-        `${UP_ADMIN_COOKIE}=${UP_ADMIN_TOKEN}; HttpOnly; Path=/admin/user-profiles; SameSite=Strict; Max-Age=86400`
-      );
-      res.redirect("/admin/user-profiles");
-    } else {
-      res.redirect("/admin/user-profiles/login?error=1");
-    }
-  },
-
-  async userProfilesLogout(_req: Request, res: Response): Promise<void> {
-    res.setHeader(
-      "Set-Cookie",
-      `${UP_ADMIN_COOKIE}=; HttpOnly; Path=/admin/user-profiles; SameSite=Strict; Max-Age=0`
-    );
-    res.redirect("/admin/user-profiles/login");
-  },
-
   async userProfilesAdmin(req: Request, res: Response): Promise<void> {
-    if (!upAdminIsAuthenticated(req)) {
-      res.redirect("/admin/user-profiles/login");
-      return;
-    }
-
     const { supabase: db } = await import("../config/supabase");
     const q = req.query as Record<string, string>;
 
@@ -6176,11 +6124,6 @@ export const adminController = {
    * ページングせず全件を1000件ずつ取得して打ち切りを避ける。
    */
   async userProfilesExportCsv(req: Request, res: Response): Promise<void> {
-    if (!upAdminIsAuthenticated(req)) {
-      res.redirect("/admin/user-profiles/login");
-      return;
-    }
-
     const { supabase: db } = await import("../config/supabase");
     const q = req.query as Record<string, string>;
 

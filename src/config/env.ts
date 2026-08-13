@@ -7,6 +7,14 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   APP_BASE_URL: z.string().url().default("http://localhost:3000"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  // Vercel が自動で入れる（production / preview / development）。こちらが設定不要なので、
+  // 「HTTPS 上で動いているか」の判定には NODE_ENV ではなくこれを使う。
+  //
+  // NODE_ENV は本番でも "development" のままにしてある（2026-08-13 時点）。
+  // testmaster の検証シーム（liffAuthService の tmtest: トークン）と、
+  // assignment.user_id 未設定時の本人確認が NODE_ENV=production で塞がるため、
+  // 検証中は切り替えられない。Cookie の Secure 属性だけがそれに引きずられないよう分離する。
+  VERCEL_ENV: z.enum(["production", "preview", "development"]).optional(),
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   LINE_CHANNEL_ACCESS_TOKEN: z.string().min(1),
@@ -47,8 +55,18 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .optional()
     .transform((value) => value === "true"),
-  ADMIN_BASIC_USER: z.string().min(1),
-  ADMIN_BASIC_PASSWORD: z.string().min(1),
+  // 管理画面ログイン（/admin/login）のパスワード。平文ではなく scrypt ハッシュを置く。
+  // 生成: npm run admin:hash -- '<パスワード>'
+  // 形式: scrypt$<N>$<r>$<p>$<saltHex>$<hashHex>（lib/adminPassword.ts）
+  ADMIN_PASSWORD_HASH: z.string().min(1),
+  // セッション Cookie の HMAC 署名鍵（lib/adminSession.ts）。
+  // **この値を変えると発行済みセッションが全て即座に無効になる**（緊急ログアウト手段）。
+  // 値は十分にランダムにすること（例: openssl rand -hex 32）。
+  ADMIN_SESSION_SECRET: z.string().min(32),
+  // 管理画面を叩く非対話クライアント（scripts/adminChatSmoke.mjs 等）用の鍵。
+  // 人間はログイン画面を通るが、スクリプトはセッションを張れないため別経路を用意する。
+  // 未設定ならヘッダ経由の認証は一切通らない（fail-closed）。
+  ADMIN_API_KEY: z.string().min(16).optional(),
   // Vercel Cron ディスパッチャ（/api/cron/dispatch）の認証用シークレット。
   // Vercel に CRON_SECRET を設定すると Vercel Cron が Authorization: Bearer <secret> を付与する。
   // 未設定の場合 /api/cron/dispatch は 503 を返し、定期配信は行われない。

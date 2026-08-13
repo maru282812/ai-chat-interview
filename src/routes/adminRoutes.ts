@@ -1,8 +1,14 @@
 import { Router } from "express";
+import { adminAuthController } from "../controllers/adminAuthController";
 import { adminController } from "../controllers/adminController";
 import { asyncHandler } from "../lib/http";
 
 export const adminRoutes = Router();
+
+// ログイン（adminAuthMiddleware が /login のみ認証不要で通す）とログアウト。
+adminRoutes.get("/login", asyncHandler(adminAuthController.loginPage));
+adminRoutes.post("/login", asyncHandler(adminAuthController.login));
+adminRoutes.post("/logout", asyncHandler(adminAuthController.logout));
 
 adminRoutes.get("/", asyncHandler(adminController.dashboard));
 
@@ -225,10 +231,10 @@ adminRoutes.get("/projects/:projectId/screening", asyncHandler(adminController.s
 adminRoutes.post("/projects/:projectId/screening/conditions", asyncHandler(adminController.addScreeningCondition));
 adminRoutes.post("/projects/:projectId/screening/conditions/:condId/delete", asyncHandler(adminController.deleteScreeningCondition));
 
-// USERプロファイル管理（簡易パスワード認証付き）
-adminRoutes.get("/user-profiles/login", asyncHandler(adminController.userProfilesLoginPage));
-adminRoutes.post("/user-profiles/login", asyncHandler(adminController.userProfilesLogin));
-adminRoutes.post("/user-profiles/logout", asyncHandler(adminController.userProfilesLogout));
+// USERプロファイル管理
+// 以前はここに独自のパスワード認証（/user-profiles/login）があったが、
+// 固定トークンの Cookie で守りとして機能していなかったため削除し、
+// /admin 全体のログイン（adminAuthMiddleware）へ一本化した。
 adminRoutes.get("/user-profiles", asyncHandler(adminController.userProfilesAdmin));
 adminRoutes.get("/user-profiles/export.csv", asyncHandler(adminController.userProfilesExportCsv));
 

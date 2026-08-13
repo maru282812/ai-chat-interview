@@ -89,9 +89,16 @@
     <header>
       <div class="header-bar">
         <a class="header-title" href="/admin">Hibi 管理画面</a>
-        <span class="header-user" title="ログイン中の管理者">
-          <%= locals.adminUser || "admin" %>
-        </span>
+        <%# header-bar は space-between。右側は1要素にまとめて配置を崩さない。 %>
+        <div class="header-account">
+          <span class="header-user" title="ログイン中の管理者">
+            <%= locals.adminUser || "admin" %>
+          </span>
+          <%# ログアウトは POST。GET だと画像タグ等でクロスサイトから強制ログアウトさせられる。 %>
+          <form method="POST" action="/admin/logout" style="margin:0;">
+            <button type="submit" class="header-logout" title="ログアウト">ログアウト</button>
+          </form>
+        </div>
       </div>
       <nav aria-label="管理メニュー">
         <a class="nav-home<%= activePath === "/admin" || activePath === "/admin/" ? " is-active" : "" %>" href="/admin">ダッシュボード</a>

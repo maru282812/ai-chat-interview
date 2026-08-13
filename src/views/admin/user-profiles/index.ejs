@@ -86,9 +86,8 @@
        title="現在の絞り込み条件のまま、ページングせず全件をCSV出力します">
       CSVダウンロード（絞り込み結果 <%= total %> 件）
     </a>
-    <form method="POST" action="/admin/user-profiles/logout" style="margin:0;">
-      <button type="submit" class="logout-btn">ログアウト</button>
-    </form>
+    <%# 認証は /admin 全体に一本化したため、この画面固有のログアウトは無い。
+        ログアウトは共通ヘッダから行う。 %>
   </div>
 </div>
 
