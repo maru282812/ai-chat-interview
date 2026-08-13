@@ -14,14 +14,18 @@ function firstHeaderValue(value: string | string[] | undefined): string | null {
 /**
  * 管理画面の状態変更リクエストに対する CSRF ガード。
  *
- * 管理画面は Basic 認証＋素のフォーム POST で、ブラウザは Basic 資格情報を
- * クロスサイトのフォーム送信にも自動付与する。全フォームへのトークン埋め込みは
- * 改修範囲が広すぎるため、ブラウザが付与するフェッチメタデータで遮断する:
+ * 管理画面は素のフォーム POST で、ブラウザは資格情報をクロスサイトのフォーム送信にも
+ * 自動付与しうる。全フォームへのトークン埋め込みは改修範囲が広すぎるため、
+ * ブラウザが付与するフェッチメタデータで遮断する:
  *
  * 1. Sec-Fetch-Site があれば same-origin / none（アドレスバー直叩き等）のみ許可。
  * 2. 無ければ Origin（無ければ Referer）のホストが自ホストと一致することを要求。
  * 3. どちらも無いリクエスト（curl 等の非ブラウザクライアント）は許可する。
  *    非ブラウザは資格情報を自分で付けており CSRF の脅威モデル外。
+ *
+ * セッション Cookie 側にも SameSite=Strict を付けており（lib/adminSession.ts）、
+ * クロスサイトからの POST では Cookie 自体が送られない。この二重化は意図的で、
+ * どちらか一方の前提が崩れても素通りしないようにしている。
  */
 export const adminCsrfMiddleware: RequestHandler = (req, res, next) => {
   if (SAFE_METHODS.has(req.method)) {

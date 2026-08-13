@@ -24,8 +24,8 @@ process.env.LINE_CHANNEL_ACCESS_TOKEN ??= "test-token";
 process.env.LINE_CHANNEL_SECRET ??= "test-secret";
 process.env.OPENAI_API_KEY ??= "test-openai-key";
 process.env.DEFAULT_PROJECT_ID ??= "00000000-0000-4000-8000-000000000000";
-process.env.ADMIN_BASIC_USER ??= "admin";
-process.env.ADMIN_BASIC_PASSWORD ??= "admin";
+process.env.ADMIN_PASSWORD_HASH ??= "scrypt$16384$8$1$00$00";
+process.env.ADMIN_SESSION_SECRET ??= "test-admin-session-secret-000000000000";
 
 const express = require("express") as typeof import("express");
 const httpLib = require("../lib/http") as typeof import("../lib/http");
