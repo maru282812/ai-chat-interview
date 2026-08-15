@@ -14,6 +14,13 @@
 | 5 | 深掘り回答を answer_role='probe' で別行保存 | done | green (tsc + ejs.compile + script構文 + 11スイート) | 2026-08-06 |
 | 6 | 送付前バリデーションにモード整合チェック | done | green (tsc + 新規21件 + 既存7スイート) | 2026-08-06 |
 
+## 完了（2026-08-07）
+
+全6Phase実装 → Playwright実機3モード通し（不具合ゼロ）→ PR #27 マージ → **本番デプロイ済**。
+- コミット: 43154e6 / マージ: dc6c16f / デプロイ: ai-chat-interview-hymy9fjha（Production Ready）
+- 本番の安定エイリアス: `ai-chat-interview-t87089803-1660-maru6.vercel.app`
+- 本番疎通確認: 不正 session への `POST /liff/chat` が **404**（＝Phase 4 の所有者検証が効いている）
+
 ## 確定した決定 / 前提（後フェーズが依存）
 
 - 回答保存形式（single=スカラー / multi=カンマ結合 / matrix=JSON）変更禁止。統計エクスポート(wide/long/codebook)の列変更禁止（行フィルタは可）。

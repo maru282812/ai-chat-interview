@@ -68,6 +68,43 @@
       font-size: 15px; font-weight: 600; transition: all 0.15s;
     }
     .scale-btn.selected { background: #2ca87a; color: #fff; border-color: #2ca87a; }
+    /* ---- numeric ドラム(ホイール)ピッカー ---- */
+    /* 高さ = wheel-item 5行分。中央1行が選択行で、上下2行ずつが前後の値のプレビュー。 */
+    /* wrap 自体を wheel 幅に絞り、選択ガイド線が画面幅いっぱいに伸びないようにする。 */
+    .wheel-wrap        {
+      position: relative; display: flex; justify-content: center; align-items: center;
+      gap: 8px; width: max-content; margin: 0 auto;
+    }
+    .wheel-viewport    {
+      position: relative; height: 200px; width: 120px; overflow-y: scroll;
+      scroll-snap-type: y mandatory; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none; outline: none;
+      /* 端の値ほど薄くして、回転するドラムの見え方に近づける。 */
+      -webkit-mask-image: linear-gradient(180deg, transparent, #000 28%, #000 72%, transparent);
+              mask-image: linear-gradient(180deg, transparent, #000 28%, #000 72%, transparent);
+    }
+    .wheel-viewport::-webkit-scrollbar { display: none; }
+    .wheel-viewport:focus-visible { box-shadow: 0 0 0 2px #2ca87a; border-radius: 12px; }
+    .wheel-item        {
+      height: 40px; line-height: 40px; text-align: center;
+      scroll-snap-align: center; font-size: 20px; color: #90a09d;
+      transition: color .12s, font-size .12s, font-weight .12s;
+      user-select: none; -webkit-user-select: none;
+    }
+    .wheel-item.selected { color: #17423a; font-size: 26px; font-weight: 700; }
+    .wheel-spacer      { scroll-snap-align: none; }
+    /* 中央の選択行を示すガイド。スクロールしないよう viewport の外に重ねる。
+       viewport と同じ幅に収め、単位ラベルの分だけ横に伸びないようにする。 */
+    .wheel-selection   {
+      position: absolute; left: 0; top: 50%; width: 120px; height: 40px;
+      transform: translateY(-50%); pointer-events: none;
+      border-top: 2px solid #d8e3e0; border-bottom: 2px solid #d8e3e0;
+    }
+    .wheel-unit        { font-size: 15px; color: #60726f; font-weight: 600; }
+    @media (prefers-reduced-motion: reduce) {
+      .wheel-viewport { scroll-behavior: auto; }
+      .wheel-item     { transition: none; }
+    }
     .nav-btns          { display: flex; gap: 10px; margin-top: 16px; }
     /* 回答送信失敗の可視化（Phase 2）。従来は fetch 失敗を握りつぶして先へ進めていたため
        回答が静かに欠損していた。失敗時はここに理由を出し、カーソルを進めずに再送させる。 */
@@ -851,13 +888,52 @@
     return result;
   }
 
-  // ---- <disable> による選択肢フィルタ ----
+  // ---- <carry> 選択肢の持ち越し（carry-forward） ----
+  // サーバー側 src/lib/questionEngine.ts の selectedValuesOf と同じ意味論を保つこと
+  // （両者がズレると、同じ回答でもチャット経路と survey 画面で選択肢が変わる）。
+  //
+  // カンマ連結文字列をここで分解しないのは意図的。multi_choice の回答は
+  // collectChoiceVal が配列で answerCtx に入れるためカンマ連結にはならず、
+  // サーバー側も「カンマは値の一部かもしれない」という理由で分解しないため
+  // （永続化からの復元は buildAnswerContext が question_type を見て配列に戻す）。
+  function selectedValuesOf(code) {
+    const raw = answerCtx.answers[String(code).toLowerCase()];
+    if (raw == null) return [];
+    if (Array.isArray(raw)) return raw.map(String);
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      if (trimmed.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) return parsed.map(String);
+        } catch (e) { /* JSON でなければ単一値として扱う */ }
+      }
+      return [String(raw)];
+    }
+    return [String(raw)];
+  }
+
+  function applyCarryForward(choices, source) {
+    if (!source || !source.fromQuestion) return choices;
+    const selected = selectedValuesOf(source.fromQuestion);
+    if (source.mode === 'unselected') {
+      return choices.filter(c => !selected.includes(String(c.value)));
+    }
+    return choices.filter(c => selected.includes(String(c.value)));
+  }
+
+  // ---- <carry> 持ち越し → <disable> による選択肢フィルタ ----
+  // 適用順はサーバー(resolveQuestionView)と同じ: carry-forward → disable。
   function filterChoices(choices, parsed) {
-    if (!parsed || !parsed.disableRules || !parsed.disableRules.length) return choices;
-    return choices.filter(c => {
-      const rule = parsed.disableRules.find(r => r.targetChoice === c.value);
-      return !rule || !evalPipe(rule.condition);
-    });
+    if (!parsed) return choices;
+    let result = applyCarryForward(choices, parsed.optionSource);
+    if (parsed.disableRules && parsed.disableRules.length) {
+      result = result.filter(c => {
+        const rule = parsed.disableRules.find(r => r.targetChoice === c.value);
+        return !rule || !evalPipe(rule.condition);
+      });
+    }
+    return result;
   }
 
   // ---- 次の質問コード決定 ----
@@ -1001,6 +1077,135 @@
     </div>`;
   }
 
+  // ---- numeric ドラム(ホイール)ピッカー ----
+  // 年齢のような広いレンジで丸ボタンが数十個並ぶのを避ける。値は .scale-btn と同じく
+  // answerCtx へスカラーで入れるため、収集・バリデーション・保存形式は従来どおり。
+  function numberWheelItems(q) {
+    const cfg = q.question_config || {};
+    if (cfg.options && cfg.options.length > 0) {
+      return cfg.options.map(o => ({ value: String(o.value), label: String(o.label || o.value) }));
+    }
+    const mn = typeof cfg.min === 'number' ? cfg.min : 1;
+    const mx = typeof cfg.max === 'number' ? cfg.max : 5;
+    const items = [];
+    for (let i = mn; i <= mx; i++) items.push({ value: String(i), label: String(i) });
+    return items;
+  }
+
+  function buildNumberWheelHtml(q) {
+    const cfg = q.question_config || {};
+    const items = numberWheelItems(q);
+    const unit = cfg.unit ? `<span class="wheel-unit">${esc(cfg.unit)}</span>` : '';
+    // 前後の空セルでリストの端でも中央に合わせられるようにする（padding では iOS の
+    // scroll-snap が端で吸着しないため、実体のあるスペーサーを置く）。
+    const spacer = `<div class="wheel-item wheel-spacer" aria-hidden="true"></div>`;
+    return `<div class="wheel-wrap">
+      <div class="wheel-viewport" data-code="${esc(q.question_code)}" role="listbox" tabindex="0" aria-label="${esc(q.question_text || '')}">
+        ${spacer}${spacer}
+        ${items.map(it => `<div class="wheel-item" role="option" aria-selected="false" data-val="${esc(it.value)}">${esc(it.label)}</div>`).join('')}
+        ${spacer}${spacer}
+      </div>
+      <div class="wheel-selection" aria-hidden="true"></div>
+      ${unit}
+    </div>`;
+  }
+
+  /**
+   * ドラムピッカーの配線。
+   *
+   * 重要: 描画しただけでは回答を確定しない。中央に来ている値を勝手に answerCtx へ入れると
+   * 「年齢を選んでいないのに先頭の10歳で回答済み」になってしまうため、ユーザーが実際に
+   * スクロール/タップ/キー操作をした時点で初めて確定する。
+   */
+  function wireNumberWheel(root, q, onChange) {
+    const viewport = root.querySelector(`.wheel-viewport[data-code="${q.question_code}"]`);
+    if (!viewport) return;
+    const items = [...viewport.querySelectorAll('.wheel-item:not(.wheel-spacer)')];
+    if (!items.length) return;
+    const code = q.question_code.toLowerCase();
+
+    function centerOf(el) { return el.offsetTop + el.offsetHeight / 2; }
+
+    function nearestItem() {
+      const mid = viewport.scrollTop + viewport.clientHeight / 2;
+      let best = items[0];
+      let bestDist = Infinity;
+      for (const el of items) {
+        const d = Math.abs(centerOf(el) - mid);
+        if (d < bestDist) { bestDist = d; best = el; }
+      }
+      return best;
+    }
+
+    function paint(el) {
+      items.forEach(i => {
+        const on = i === el;
+        i.classList.toggle('selected', on);
+        i.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+    }
+
+    // 確定（ユーザー操作起点でのみ呼ぶ）
+    function commit(el) {
+      if (!el) return;
+      paint(el);
+      answerCtx.answers[code] = el.dataset.val;
+      if (onChange) onChange();
+    }
+
+    function scrollToItem(el, smooth) {
+      viewport.scrollTo({
+        top: centerOf(el) - viewport.clientHeight / 2,
+        behavior: smooth ? 'smooth' : 'auto',
+      });
+    }
+
+    // 初期位置合わせの scrollTo は scroll イベントを発火させる。これを確定として扱うと
+    // 「触っていないのに真ん中の値で回答済み」になるため、ユーザー操作があるまで確定を止める。
+    let userEngaged = false;
+    ['pointerdown', 'touchstart', 'wheel', 'keydown'].forEach(ev => {
+      viewport.addEventListener(ev, () => { userEngaged = true; }, { passive: true });
+    });
+
+    // 復帰時（既に回答済み）は、その値へ合わせて見た目も選択状態にする。
+    const existing = answerCtx.answers[code];
+    const initial = existing != null
+      ? items.find(i => String(i.dataset.val) === String(existing))
+      : null;
+    if (initial) {
+      scrollToItem(initial, false);
+      paint(initial);
+    } else {
+      // 未回答: 中央付近の値を見せるだけで確定はしない。年齢なら真ん中あたりから始める。
+      const start = items[Math.floor(items.length / 2)];
+      scrollToItem(start, false);
+    }
+
+    let scrollTimer = null;
+    viewport.addEventListener('scroll', () => {
+      // スクロール中は見た目だけ追従させ、止まってから確定する（snap の落ち着き待ち）。
+      paint(nearestItem());
+      if (!userEngaged) return;
+      if (scrollTimer) clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(() => { commit(nearestItem()); }, 120);
+    }, { passive: true });
+
+    // タップで直接その値を選ぶ（スクロールが苦手な端末・ユーザー向け）。
+    items.forEach(el => {
+      el.addEventListener('click', () => { scrollToItem(el, true); commit(el); });
+    });
+
+    // キーボード操作（アクセシビリティ）
+    viewport.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      const cur = items.indexOf(nearestItem());
+      const next = items[e.key === 'ArrowDown' ? Math.min(cur + 1, items.length - 1) : Math.max(cur - 1, 0)];
+      scrollToItem(next, true);
+      commit(next);
+    });
+  }
+
   function buildAnswerInputHtml(q, showSubmitButton = false) {
     const parsed = q.display_tags_parsed || {};
     const qType = q.question_type;
@@ -1057,10 +1262,17 @@
     if (['single_choice','text_with_image'].includes(qType)) {
       console.log('[survey] render_type: single_choice | choices:', choices.length);
       if (choices.length === 0) {
-        console.warn('[survey] single_choice/text_with_image: no choices found, falling back to textarea');
+        // 選択肢ゼロには2種類ある。設定漏れと、carry-forward で全部絞られた結果。
+        // 後者を「設定してください」と案内すると回答者に無関係な指示を出すことになるので分ける。
+        const carriedOut = rawChoices.length > 0;
+        console.warn('[survey] single_choice/text_with_image: no choices found, falling back to textarea',
+          carriedOut ? '(carry-forward で全件除外)' : '(選択肢未設定)');
         const ph = cfg.placeholder || '回答を入力してください';
+        const note = carriedOut
+          ? '※前の設問の回答から表示できる選択肢がありませんでした。自由記述でお答えください。'
+          : '※選択肢が設定されていません（管理画面で設定してください）';
         inputHtml = `<textarea class="free-text-input" data-code="${esc(q.question_code)}" rows="2" placeholder="${esc(ph)}"></textarea>
-          <p style="font-size:11px;color:#e55;margin-top:4px;">※選択肢が設定されていません（管理画面で設定してください）</p>`;
+          <p style="font-size:11px;color:#e55;margin-top:4px;">${esc(note)}</p>`;
       } else if (displayFormat === 'card' && hasImages) {
         const cols = Math.min(gridCols, 4);
         inputHtml = `<div class="card-grid" style="grid-template-columns:repeat(${cols},1fr);" data-type="single">` +
@@ -1134,7 +1346,9 @@
         }
       }
     } else if (['numeric', 'sd'].includes(qType)) {
-      if (cfg.options && cfg.options.length > 0) {
+      if (q.presentation && q.presentation.pattern === 'number_wheel') {
+        inputHtml = buildNumberWheelHtml(q);
+      } else if (cfg.options && cfg.options.length > 0) {
         // ラベルが値と異なる（説明的ラベルを持つ）場合は縦積みのフル幅ボタンで描画し、
         // 円形ボタンからのラベルあふれ・重なりを防ぐ。
         const hasTextLabel = cfg.options.some(o => o.label && String(o.label) !== String(o.value));
@@ -1837,6 +2051,8 @@
           checkNextEnabled();
         });
       });
+      // numeric ドラムピッカー
+      wireNumberWheel(questionArea, q, () => checkNextEnabled());
       // matrix inputs（mq_<code>_<rowIndex> という name を使う）
       if (['matrix_single','matrix_multi','matrix_mixed'].includes(q.question_type)) {
         const matrixRows = q.question_config?.matrix_rows || q.question_config?.options || [];

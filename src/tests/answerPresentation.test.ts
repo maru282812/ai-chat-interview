@@ -79,6 +79,61 @@ test("numeric / image_upload / sd などは legacy（従来描画）", () => {
 });
 
 // ------------------------------------------------------------------
+// numeric ドラムピッカー（number_wheel）
+// ------------------------------------------------------------------
+
+test("numeric: 年齢のような広いレンジ(min/max)は number_wheel", () => {
+  const config: QuestionConfig = { min: 10, max: 100, unit: "歳" };
+  for (const preset of ["casual", "standard", "formal"] as const) {
+    // プリセットに依らず年齢は同じUI（丸ボタン91個は破綻するため）
+    assert.equal(resolveAnswerPresentation(q("numeric", { config }), preset).pattern, "number_wheel");
+  }
+});
+
+test("numeric: 狭いレンジ(5段階/0-10)は従来の丸ボタン(legacy)のまま", () => {
+  assert.equal(
+    resolveAnswerPresentation(q("numeric", { config: { min: 1, max: 5 } }), "standard").pattern,
+    "legacy",
+  );
+  // 0〜10 の11段階は境界。丸ボタンで収まるので legacy を維持する。
+  assert.equal(
+    resolveAnswerPresentation(q("numeric", { config: { min: 0, max: 10 } }), "standard").pattern,
+    "legacy",
+  );
+});
+
+test("numeric: options を明示列挙していても件数が多ければ number_wheel", () => {
+  assert.equal(
+    resolveAnswerPresentation(q("numeric", { config: optionsN(30) }), "standard").pattern,
+    "number_wheel",
+  );
+  assert.equal(
+    resolveAnswerPresentation(q("numeric", { config: optionsN(5) }), "standard").pattern,
+    "legacy",
+  );
+});
+
+test("numeric: scale/slider を明示した設問は尺度として描くので number_wheel にしない", () => {
+  const scale: QuestionConfig = { min: 0, max: 100, presentation: { scale: true } };
+  assert.equal(resolveAnswerPresentation(q("numeric", { config: scale }), "standard").pattern, "legacy");
+  const slider: QuestionConfig = { min: 0, max: 100, presentation: { slider: true } };
+  assert.equal(resolveAnswerPresentation(q("numeric", { config: slider }), "standard").pattern, "legacy");
+});
+
+test("numeric: 設問単位の presentation.pattern 指定が最優先される", () => {
+  const config: QuestionConfig = { min: 10, max: 100, presentation: { pattern: "legacy" } };
+  assert.equal(resolveAnswerPresentation(q("numeric", { config }), "standard").pattern, "legacy");
+});
+
+test("numeric: carry-forward 後の実選択肢数で判定する（optionCount 優先）", () => {
+  // 基底は30件でも、絞り込み後に3件なら丸ボタンで足りる
+  assert.equal(
+    resolveAnswerPresentation(q("numeric", { config: optionsN(30) }), "standard", 3).pattern,
+    "legacy",
+  );
+});
+
+// ------------------------------------------------------------------
 // scale / slider 指定
 // ------------------------------------------------------------------
 

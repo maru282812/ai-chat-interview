@@ -296,7 +296,13 @@ export interface QuestionV2Fields {
 
 /** 現在の回答収集状態 */
 export interface AnswerContext {
-  /** question_code → 回答値 */
+  /**
+   * question_code → 回答値。
+   * 別案件の回答を持ち越す場合は `<entry_code>:<question_code>` 形式の
+   * 名前空間付きキーで同じ map に載せる（例: "yotto-salon-a:q5"）。
+   * pipe 条件式の参照は `q\d+` のみを解釈するため、名前空間付きキーは
+   * carry-forward（optionSource.fromQuestion）からのみ参照できる。
+   */
   answers: Record<string, string | string[] | number | null>;
 }
 

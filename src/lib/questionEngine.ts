@@ -20,6 +20,7 @@
 import type { AnswerUiPreset, Question, QuestionOption } from "../types/domain";
 import { type AnswerPresentation, resolveAnswerPresentation } from "./answerPresentation";
 import { generatePairwisePairs } from "./answerTypes";
+import { applyAutoFreeText } from "./otherOption";
 import type {
   DisplayTagsParsed,
   VisibilityCondition,
@@ -45,6 +46,7 @@ import type {
  *   q1=1 and q2=2      AND
  *   q1=1 or q2=2       OR
  *   ( q1=1 and q2=2 ) or q3=3   括弧
+ *   a:q5 includes color         別案件の回答参照 (Migration 092)
  *
  * Phase 2 で AST パーサに置き換える想定。
  * 現時点では再帰的な文字列マッチングで対応。
@@ -90,7 +92,8 @@ function evalExpr(expr: string, ctx: AnswerContext): boolean {
   }
 
   // 基本比較: q1=1 / q1!=1 / q1>=1 / q1<=1 / q1>1 / q1<1
-  const cmpMatch = expr.match(/^(q\d+)\s*(!=|>=|<=|>|<|=)\s*(.+)$/i);
+  // 別案件参照（Migration 092）は `<namespace>:q1` 形式も許容する。
+  const cmpMatch = expr.match(/^((?:[a-z0-9_-]+:)?q\d+)\s*(!=|>=|<=|>|<|=)\s*(.+)$/i);
   if (cmpMatch) {
     const code   = cmpMatch[1] ?? "";
     const op     = cmpMatch[2] ?? "=";
@@ -100,7 +103,8 @@ function evalExpr(expr: string, ctx: AnswerContext): boolean {
   }
 
   // MA (multi_answer) 含有チェック: q1 includes 1 (Phase 2 向け)
-  const inclMatch = expr.match(/^(q\d+)\s+includes\s+(.+)$/i);
+  // 別案件参照（Migration 092）は `<namespace>:q1` 形式も許容する。
+  const inclMatch = expr.match(/^((?:[a-z0-9_-]+:)?q\d+)\s+includes\s+(.+)$/i);
   if (inclMatch) {
     const code   = inclMatch[1] ?? "";
     const rawVal = inclMatch[2] ?? "";
@@ -474,8 +478,8 @@ export function resolveQuestionView(
   const commentBottom =
     question.comment_bottom == null ? null : applyAnswerInsertions(question.comment_bottom, insertions, ctx);
 
-  // --- 選択肢: carry-forward → disable → <ans>(choice_label) ---
-  const baseOptions = question.question_config?.options ?? [];
+  // --- 選択肢: 「その他」自由記述の自動付与 → carry-forward → disable → <ans>(choice_label) ---
+  const baseOptions = applyAutoFreeText(question.question_config?.options ?? []);
   const carried = applyCarryForward(baseOptions, parsed?.optionSource, ctx);
 
   const enabled = filterEnabledChoices(

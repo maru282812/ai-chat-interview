@@ -36,6 +36,11 @@ const SWIPE_TEXT_MAX = 60;
 const CAROUSEL_OPTION_MAX = 8;
 /** 選択肢数がこれ以上の face_scale / big_slider は tap_cards へ降格。 */
 const SCALE_OPTION_MAX = 6;
+/**
+ * numeric の選択肢数がこれを超えたらドラムピッカー(number_wheel)で描く。
+ * 0〜10 の11段階スケールまでは従来の丸ボタンで収まるため、それより多い場合のみ切り替える。
+ */
+const WHEEL_NUMERIC_MIN_COUNT = 12;
 
 type ResolveInput = Pick<
   {
@@ -122,10 +127,38 @@ function basePattern(
       return "alloc_bars";
     case "image_heatmap":
       return "heat_tap";
-    // numeric / image_upload / hidden_* / text_with_image / sd / scale(legacy) は従来描画
+    case "numeric":
+      // 年齢のような広い数値レンジは丸ボタンを敷き詰めると数十個並んで実用にならないため、
+      // ドラム(ホイール)ピッカーで描く。狭いレンジ(5段階評価など)は従来の丸ボタンのまま。
+      return isWheelNumeric(cfg, n) ? "number_wheel" : "legacy";
+    // image_upload / hidden_* / text_with_image / sd / scale(legacy) は従来描画
     default:
       return "legacy";
   }
+}
+
+/**
+ * numeric 設問をドラム(ホイール)ピッカーで描くべきか判定する。
+ *
+ * 判定は「選ばせる値が多すぎて丸ボタンが破綻するか」の一点で行う。
+ * 年齢(10〜100 = 91個)は該当し、5段階評価や 0〜10 のスケールは該当しない。
+ * presentation.pattern による設問単位の明示指定は resolveAnswerPresentation 側で
+ * 先に処理されるため、ここに来る時点で自動判定してよい。
+ */
+function isWheelNumeric(cfg: QuestionConfig | null, n: number): boolean {
+  // scale / slider を明示している設問は尺度として描きたい意図なので対象外。
+  if (cfg?.presentation?.scale === true || cfg?.presentation?.slider === true) return false;
+  // options を明示列挙している場合はその件数、していない場合は min..max の幅で数える。
+  const count = n > 0 ? n : numericRangeCount(cfg);
+  return count > WHEEL_NUMERIC_MIN_COUNT;
+}
+
+/** options 未指定の numeric 設問について min..max が生む選択肢数を数える。 */
+function numericRangeCount(cfg: QuestionConfig | null): number {
+  const min = typeof cfg?.min === "number" ? cfg.min : null;
+  const max = typeof cfg?.max === "number" ? cfg.max : null;
+  if (min === null || max === null || max < min) return 0;
+  return max - min + 1;
 }
 
 /** 適用不能条件に該当したパターンを降格する。降格が起きなければ入力をそのまま返す。 */

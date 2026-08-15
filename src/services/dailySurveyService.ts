@@ -7,6 +7,7 @@ import {
 import {
   type DailySlot,
   decideSlotDelivery,
+  intersectDeliveryTargets,
   jstDateString,
   jstEndOfDayIso,
   queuePositions
@@ -546,22 +547,44 @@ export const dailySurveyService = {
   },
 
   async resolveTargetUsers(survey: DailySurvey): Promise<string[]> {
-    if (survey.target_segment_id) {
-      const { data, error } = await supabase
-        .from("user_profiles")
-        .select("line_user_id")
-        .eq("is_blocked", false)
-        .eq("notification_ok", true);
-      throwIfError(error);
-      return ((data ?? []) as Array<{ line_user_id: string }>).map((r) => r.line_user_id);
-    }
-
+    // 通知を受け取れる人の母集団。セグメントの有無にかかわらず必ずこの条件を通す
+    // （セグメント評価器は notification_ok / is_notification_stopped を見ないので、
+    //   ここを外すと配信停止中の人に push してしまう）。
     const { data, error } = await supabase
       .from("user_profiles")
       .select("line_user_id")
       .eq("is_blocked", false)
-      .eq("notification_ok", true);
+      .eq("notification_ok", true)
+      .eq("is_notification_stopped", false);
     throwIfError(error);
-    return ((data ?? []) as Array<{ line_user_id: string }>).map((r) => r.line_user_id);
+    const notifiable = ((data ?? []) as Array<{ line_user_id: string }>).map(
+      (r) => r.line_user_id
+    );
+
+    if (!survey.target_segment_id) return notifiable;
+
+    // セグメント指定がある場合は必ず条件を評価して絞る。
+    // 旧実装は target_segment_id を読みながら分岐の中身が母集団クエリと同一で、
+    // 「特定セグメント向け」のつもりが通知可ユーザー全員への一斉配信になっていた
+    // （キャンペーン配信側で既に同じ事故を修正済み。評価器を共有して再発を防ぐ）。
+    const { evaluateConditionsIds, findUnsupportedSegmentFields } = await import(
+      "../controllers/adminController"
+    );
+    const { segmentRepository } = await import("../repositories/segmentRepository");
+
+    const segment = await segmentRepository.getById(survey.target_segment_id);
+
+    // 解釈できない条件が混じったまま配信すると、その条件だけ黙って無視されて
+    // 対象が広がる。絞れないと分かった時点で止める（fail-closed）。
+    const unsupported = findUnsupportedSegmentFields(segment.conditions);
+    if (unsupported.length > 0) {
+      throw new HttpError(
+        400,
+        `セグメント条件に未対応の項目が含まれています（${unsupported.join(", ")}）。条件を修正するまで配信できません。`
+      );
+    }
+
+    const matched = await evaluateConditionsIds(supabase, segment.conditions);
+    return intersectDeliveryTargets(notifiable, matched);
   }
 };
