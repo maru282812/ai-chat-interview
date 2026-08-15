@@ -2645,9 +2645,12 @@ export function findUnsupportedSegmentFields(rawConditions: unknown): string[] {
 /**
  * 条件に一致する line_user_id の集合を返す。
  * プレビュー（件数）と実配信（対象者）が同じロジックを通るようにするための共通実装。
+ *
+ * デイリーアンケートの配信（dailySurveyService.resolveTargetUsers）からも呼ぶため
+ * export している。別実装を作ると「プレビューは10件なのに実配信は全員」が再発する。
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function evaluateConditionsIds(db: any, rawConditions: unknown): Promise<Set<string>> {
+export async function evaluateConditionsIds(db: any, rawConditions: unknown): Promise<Set<string>> {
   const norm = normalizeSegConds(rawConditions);
   const sets = await Promise.all(norm.groups.map(g => evalGroupIds(db, g)));
   if (sets.length === 0) return new Set();

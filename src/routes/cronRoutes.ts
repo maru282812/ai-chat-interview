@@ -10,14 +10,19 @@ export const cronRoutes = Router();
 // Vercel は CRON_SECRET 環境変数が設定されていると Authorization: Bearer <secret> を付与する。
 // それを検証し、第三者による配信暴発を防ぐ。GET/POST どちらでも受ける。
 //
-// 【自動実行を有効化する手順】（現在は無効。Hobby プランは毎分 cron でデプロイ失敗するため）
-//   Pro プランに上げて定期配信が必要になったら、vercel.json に以下を追加する:
-//     "crons": [
-//       { "path": "/api/cron/dispatch", "schedule": "* * * * *" }
-//     ]
-//   さらに Vercel の環境変数に CRON_SECRET を設定し、066 マイグレーションを適用しておくこと。
-//   ※ Hobby のままなら毎分は不可。日次までなら "0 22 * * *" のような 1 日 1 回の式にする。
-//   無効化中も、このエンドポイントは手動 curl で叩いて動作確認できる。
+// 【現在の状態】Pro プラン化にともない自動実行は有効（2026-08-14）。
+//   - vercel.json の "crons" で毎分このパスを叩く（* * * * *）。
+//   - Vercel 環境変数に CRON_SECRET を設定済み（Production / Preview）。
+//   - 066 マイグレーション（cron_dispatch_runs）適用済み。
+//
+//   毎分叩くのは cronDispatchService の CATCH_UP_WINDOW_MIN（5分）が前提にしているため。
+//   実行間隔を広げるとこの窓を跨いだジョブが「その日まるごと未実行」になりうる。
+//
+//   実際に何が発火するかは DB 側の設定が決める（このエンドポイント自体は素通し）:
+//     - デイリー: notification_scheduler_settings の *_enabled / *_time
+//     - 配信テンプレ: delivery_templates.is_enabled
+//   止めたいときは上記を false にする（cron を消すより安全で、履歴も残る）。
+//   手動 curl での動作確認も従来どおり可能。
 cronRoutes.all(
   "/dispatch",
   asyncHandler(async (req, res) => {

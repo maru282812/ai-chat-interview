@@ -43,13 +43,44 @@ export function answerValueForContext(
 }
 
 /**
+ * buildAnswerContext に渡す「別案件の回答」1件分。
+ * namespace は参照キーの接頭辞（entry_code 等、案件を一意に指す短い文字列）。
+ */
+export interface CrossProjectAnswers {
+  namespace: string;
+  questions: Question[];
+  answers: Answer[];
+}
+
+/**
  * 永続化された answers から AnswerContext を組み立てる。
  * - primary 回答のみを対象（probe 等は除外）。
  * - 同一設問に複数 primary があれば後勝ち（listBySession は created_at 昇順前提）。
  */
-export function buildAnswerContext(questions: Question[], answers: Answer[]): AnswerContext {
+export function buildAnswerContext(
+  questions: Question[],
+  answers: Answer[],
+  /**
+   * 別案件の回答（同一 respondent）。`<namespace>:<question_code>` キーで同じ map に載せ、
+   * carry-forward の optionSource.fromQuestion から参照させる（例: 施術前Aの回答をCで絞り込む）。
+   * 同名キーが衝突しても、あとから入れる本案件の回答が常に勝つ。
+   */
+  crossProject?: CrossProjectAnswers[]
+): AnswerContext {
   const byId = new Map(questions.map((q) => [q.id, q]));
   const map: AnswerContext["answers"] = {};
+
+  // 先に別案件分を敷く（本案件の回答で必ず上書きされるようにするため）。
+  for (const src of crossProject ?? []) {
+    const srcById = new Map(src.questions.map((q) => [q.id, q]));
+    for (const a of src.answers) {
+      if (a.answer_role && a.answer_role !== "primary") continue;
+      const q = srcById.get(a.question_id);
+      if (!q) continue;
+      const key = `${src.namespace.toLowerCase()}:${q.question_code.toLowerCase()}`;
+      map[key] = answerValueForContext(q.question_type, a.answer_text);
+    }
+  }
 
   for (const a of answers) {
     if (a.answer_role && a.answer_role !== "primary") continue;

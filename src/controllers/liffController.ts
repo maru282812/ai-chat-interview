@@ -15,7 +15,9 @@ import {
   resumeView,
   selectPhaseQuestions,
 } from "../services/surveyFlowService";
+import { loadCrossProjectAnswers } from "../services/crossProjectAnswerService";
 import { resolveAnswerPresentation } from "../lib/answerPresentation";
+import { applyAutoFreeText } from "../lib/otherOption";
 import { jstDateString } from "../lib/dailyQueue";
 import { resolveDailyQuestionViews } from "../lib/dailyAnswerUi";
 import { generatePairwisePairs, isNewAnswerType, validateNewTypeAnswer } from "../lib/answerTypes";
@@ -1032,17 +1034,25 @@ export const liffController = {
     // 初回レンダリング時点の選択肢数で解決するため、carry-forward で選択肢が絞られる設問の
     // 件数依存フォールバック（carousel>8 等）は基底件数での近似となる（描画に致命的な差はない）。
     const answerUiPreset = project.answer_ui_preset ?? "standard";
-    const questionsForClient = renderQuestions.map((q) => ({
-      ...q,
-      presentation: resolveAnswerPresentation(
-        {
-          question_type: q.question_type,
-          question_text: q.question_text,
-          question_config: q.question_config,
-        },
-        answerUiPreset,
-      ),
-    }));
+    const questionsForClient = renderQuestions.map((q) => {
+      // 「その他」系選択肢の自由記述欄はサーバー側で確定させる（シード/Partner API 経由で
+      // allow_free_text が付いていない設問でも入力欄が出るようにするため）。
+      const question_config = q.question_config
+        ? { ...q.question_config, options: applyAutoFreeText(q.question_config.options) }
+        : q.question_config;
+      return {
+        ...q,
+        question_config,
+        presentation: resolveAnswerPresentation(
+          {
+            question_type: q.question_type,
+            question_text: q.question_text,
+            question_config,
+          },
+          answerUiPreset,
+        ),
+      };
+    });
 
     const DEFAULT_FAIL_MSG = "今回はご参加いただけませんでした。またの機会にご協力をお願いします。";
     const renderData = {
@@ -1295,7 +1305,10 @@ export const liffController = {
 
     // 可視性ゲート: 既存回答から組んだ ctx でこの設問が visibility_conditions を満たさないなら拒否（§3-2）。
     // 条件が無い設問（大多数）は isQuestionVisible=true で常に通過する。
-    const priorCtx = buildAnswerContext(questions, priorAnswers);
+    // 別案件の回答（Migration 092）。宣言が無ければ空配列で従来どおり。
+    // nextCtx はこの priorCtx から派生するので、ここで載せれば次設問解決にも効く。
+    const crossProject = await loadCrossProjectAnswers(project, session.respondent_id);
+    const priorCtx = buildAnswerContext(questions, priorAnswers, crossProject);
     if (!isQuestionVisible(question, priorCtx)) {
       logger.warn("submitSurveyAnswer.hiddenQuestionBlocked", { sessionId, questionCode });
       res.status(409).json({
@@ -1419,7 +1432,8 @@ export const liffController = {
       questionPageGroupRepository.listByProject(session.project_id),
     ]);
 
-    const ctx = buildAnswerContext(questions, answers);
+    const crossProject = await loadCrossProjectAnswers(project, session.respondent_id);
+    const ctx = buildAnswerContext(questions, answers, crossProject);
     const renderSet = await resolveOrderedRenderSet({
       session,
       project,

@@ -17,6 +17,23 @@
 
 export type DailySlot = "morning" | "evening";
 
+/**
+ * 配信対象の最終確定。通知可の母集団とセグメント一致者の積を取る。
+ *
+ * 「セグメント一致者」をそのまま宛先にしてはいけない。セグメント評価器は
+ * notification_ok / is_notification_stopped を見ないため、単体で使うと
+ * 配信停止中の人にも push してしまう。必ず母集団側で挟み込む。
+ *
+ * matched が null（セグメント未指定）のときは母集団がそのまま対象。
+ */
+export function intersectDeliveryTargets(
+  notifiable: readonly string[],
+  matched: ReadonlySet<string> | null
+): string[] {
+  if (!matched) return [...notifiable];
+  return notifiable.filter((id) => matched.has(id));
+}
+
 export const DAILY_SLOTS: readonly DailySlot[] = ["morning", "evening"] as const;
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;

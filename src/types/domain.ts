@@ -307,6 +307,15 @@ export interface ResearchHypothesis {
  */
 export type FlowGenerationMode = 'standard' | 'behavior_evidence';
 
+/**
+ * 別案件の回答を持ち込む宣言 (Migration 092)。
+ * namespace は参照キーの接頭辞、entry_code は参照先案件の識別子。
+ */
+export interface CarryForwardSource {
+  namespace: string;
+  entry_code: string;
+}
+
 export interface Project {
   id: UUID;
   name: string;
@@ -358,6 +367,13 @@ export interface Project {
   entry_code: string | null;
   /** 企業/店舗マスタへの参照（任意） (Migration 064) */
   client_id: UUID | null;
+  /**
+   * 別案件の回答を carry-forward で参照するための宣言 (Migration 092)。
+   * 例: [{ namespace: "a", entry_code: "yotto-salon-a" }] と宣言すると、
+   * 本案件の設問は optionSource.fromQuestion = "a:q5" で A の回答を参照できる。
+   * null は参照なし（従来どおり同一案件内の回答のみ）。
+   */
+  carry_forward_sources?: CarryForwardSource[] | null;
   /**
    * パートナーAPI（hibi-portal・X-Partner-Key）経由で作成された案件の所有店舗ID (Migration 089)。
    * ポータル側 stores.id をそのまま入れる。null は非パートナー案件（管理画面で作った案件）。
@@ -593,6 +609,8 @@ export interface QuestionConfig {
   max?: number;
   min_label?: string;
   max_label?: string;
+  /** 数値の単位（例: 歳・回・円）。number_wheel が数値の横に添えて表示する。 */
+  unit?: string;
   scaleMin?: number;
   scaleMax?: number;
   scaleLabels?: Record<string, string>;
