@@ -52,16 +52,24 @@ export function diffInDays(from: Date, to: Date): number {
  *
  * 未知コードを既定値に丸めないのは、設問の選択肢が変わったことに
  * 気づかないまま誤った離脱率が出るのを避けるため。
+ *
+ * daysTable に cycle_groups.frequency_days_json を渡すと対応表を上書きできる
+ * （Migration 095・管理画面から編集する）。NULL/未指定なら既定表を使う。
  */
 export function resolveFrequencyDays(
   frequencyCode: string | null | undefined,
-  undecidedDays: number = DEFAULT_UNDECIDED_DAYS
+  undecidedDays: number = DEFAULT_UNDECIDED_DAYS,
+  daysTable?: Record<string, number> | null
 ): number | null {
   if (!frequencyCode) return null;
   const code = frequencyCode.trim();
   if (!code) return null;
   if (code === "undecided") return undecidedDays;
-  return VISIT_FREQUENCY_DAYS[code] ?? null;
+
+  const table = daysTable && Object.keys(daysTable).length > 0 ? daysTable : VISIT_FREQUENCY_DAYS;
+  const days = table[code];
+  // 数値でない値（画面からの手入力ミス等）は未設定と同じ扱いにする。
+  return typeof days === "number" && Number.isFinite(days) && days > 0 ? days : null;
 }
 
 /**
@@ -73,8 +81,14 @@ export function computeExpectedReturnAt(params: {
   frequencyCode: string | null | undefined;
   graceDays?: number;
   undecidedDays?: number;
+  /** cycle_groups.frequency_days_json（Migration 095）。未指定なら既定表。 */
+  daysTable?: Record<string, number> | null;
 }): Date | null {
-  const days = resolveFrequencyDays(params.frequencyCode, params.undecidedDays ?? DEFAULT_UNDECIDED_DAYS);
+  const days = resolveFrequencyDays(
+    params.frequencyCode,
+    params.undecidedDays ?? DEFAULT_UNDECIDED_DAYS,
+    params.daysTable
+  );
   if (days === null) return null;
   const grace = params.graceDays ?? DEFAULT_GRACE_DAYS;
   return addDays(params.answeredAt, days + grace);
@@ -98,6 +112,41 @@ export function canStartNewCycle(params: {
   if (!params.lastCycleStartedAt) return true;
   const cooldown = params.cooldownDays ?? DEFAULT_RESTART_COOLDOWN_DAYS;
   return diffInDays(params.lastCycleStartedAt, params.now) >= cooldown;
+}
+
+/**
+ * 頻度設問の選択肢と、日数対応表の突き合わせ（Migration 095）。
+ *
+ * この2つがズレると、その選択肢を選んだ人は**エラーも出ないまま**
+ * 離脱判定の対象外になる（C が送られない）。設問側は管理画面から自由に
+ * 編集できてしまうので、ズレを検出して警告できるようにする。
+ *
+ * @param optionCodes 頻度設問の選択肢コード（question_config.options の value）
+ * @param daysTable   cycle_groups.frequency_days_json（NULL なら既定表）
+ */
+export function diffFrequencyMapping(
+  optionCodes: string[],
+  daysTable?: Record<string, number> | null
+): {
+  /** 選択肢にあるが日数表に無い＝選ばれても判定できない（重大） */
+  missingInTable: string[];
+  /** 日数表にあるが選択肢に無い＝使われない設定（軽微） */
+  unusedInTable: string[];
+  ok: boolean;
+} {
+  const table = daysTable && Object.keys(daysTable).length > 0 ? daysTable : VISIT_FREQUENCY_DAYS;
+  const tableKeys = Object.keys(table);
+
+  // undecided は日数表ではなく undecided_days で扱うため、突き合わせ対象から外す。
+  const options = optionCodes.filter((c) => c && c !== "undecided");
+
+  const missingInTable = options.filter((c) => {
+    const days = table[c];
+    return !(typeof days === "number" && Number.isFinite(days) && days > 0);
+  });
+  const unusedInTable = tableKeys.filter((k) => !options.includes(k));
+
+  return { missingInTable, unusedInTable, ok: missingInTable.length === 0 };
 }
 
 /**

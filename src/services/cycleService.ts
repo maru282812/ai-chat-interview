@@ -149,6 +149,8 @@ export const cycleService = {
       frequencyCode,
       graceDays: group.grace_days,
       undecidedDays: group.undecided_days,
+      // 管理画面で編集した対応表（Migration 095）。未設定なら既定表。
+      daysTable: group.frequency_days_json,
     });
 
     if (!expected) {
@@ -180,14 +182,26 @@ export const cycleService = {
     cycleId: string;
     answers: { question_id: string; answer_text: string; answer_role?: string | null }[];
     questions: { id: string; question_code: string }[];
+    /** 明示指定が無ければ cycle_groups.frequency_question_code（既定 Q11）を使う。 */
     frequencyQuestionCode?: string;
     answeredAt?: Date;
   }): Promise<void> {
-    const code = (params.frequencyQuestionCode ?? "Q11").toLowerCase();
     try {
-      const question = params.questions.find((q) => q.question_code?.toLowerCase() === code);
+      let code = params.frequencyQuestionCode;
+      if (!code) {
+        // どの設問を頻度として読むかはグループ設定が持つ（Migration 095）。
+        const cycle = await surveyCycleRepository.getById(params.cycleId);
+        const group = cycle ? await cycleGroupRepository.getById(cycle.cycle_group_id) : null;
+        code = group?.frequency_question_code || "Q11";
+      }
+      const normalized = code.toLowerCase();
+
+      const question = params.questions.find((q) => q.question_code?.toLowerCase() === normalized);
       if (!question) {
-        logger.warn("cycle.frequencyQuestionMissing", { cycleId: params.cycleId, code });
+        logger.warn("cycle.frequencyQuestionMissing", {
+          cycleId: params.cycleId,
+          code: normalized,
+        });
         return;
       }
 

@@ -348,6 +348,7 @@ adminRoutes.post("/applications/:id/reject",            asyncHandler(adminContro
 
 // 店舗専用アンケート管理
 adminRoutes.get("/cycles",                              asyncHandler(adminController.cycleFunnel));
+adminRoutes.post("/cycles/:groupId",                     asyncHandler(adminController.updateCycleGroup));
 adminRoutes.get("/store-surveys",                       asyncHandler(adminController.storeSurveys));
 adminRoutes.get("/store-surveys/:projectId/flyer",      asyncHandler(adminController.storeSurveyFlyer));
 adminRoutes.get("/store-surveys/:projectId/qr.png",     asyncHandler(adminController.storeSurveyQr));

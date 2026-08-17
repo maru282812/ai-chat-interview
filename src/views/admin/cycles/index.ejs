@@ -119,6 +119,97 @@
       </div>
     <% } %>
 
+    <details style="border-top:1px solid #e2e5ea">
+      <summary style="padding:10px 16px;cursor:pointer;font-size:13px;font-weight:600;background:#fafbfc">
+        ⚙ 配信タイミングの設定（Cをいつ送るか）
+        <% if (!row.mapping.ok || !row.frequencyQuestionFound) { %>
+          <span style="display:inline-block;background:#b14;color:#fff;font-size:11px;padding:1px 7px;border-radius:3px;margin-left:6px">要確認</span>
+        <% } %>
+      </summary>
+
+      <div style="padding:14px 16px;border-top:1px solid #eef0f3">
+
+        <div style="background:#f7f8fa;border:1px solid #e2e5ea;padding:10px 12px;font-size:12px;color:#555;line-height:1.7;margin-bottom:14px">
+          <strong>Cの送付日 ＝ Aの回答日 ＋ 来店頻度の日数 ＋ 猶予日数</strong><br>
+          例：「約2か月」＝<%= (row.daysTable['about_2m'] || 60) %>日 ＋ 猶予<%= row.group.grace_days %>日 →
+          <strong>Aの回答から<%= (row.daysTable['about_2m'] || 60) + row.group.grace_days %>日後</strong>にCが届きます。<br>
+          <span style="color:#777">※ その前にAが再回答された（＝再来店した）場合、Cは送られません。</span>
+        </div>
+
+        <% if (!row.frequencyQuestionFound) { %>
+          <div style="background:#fdecea;border:1px solid #b14;color:#8a1020;padding:10px 12px;font-size:12px;margin-bottom:14px">
+            <strong>⚠ 頻度設問「<%= row.group.frequency_question_code %>」が起点案件に見つかりません。</strong><br>
+            この状態では<strong>誰にもCが送られません</strong>。設問コードを確認してください。
+          </div>
+        <% } else if (!row.mapping.ok) { %>
+          <div style="background:#fdecea;border:1px solid #b14;color:#8a1020;padding:10px 12px;font-size:12px;margin-bottom:14px">
+            <strong>⚠ 日数が設定されていない選択肢があります：<%= row.mapping.missingInTable.join(", ") %></strong><br>
+            これらを選んだ人には<strong>Cが送られません</strong>（エラーにはなりません）。下の対応表に追加してください。
+          </div>
+        <% } %>
+
+        <form method="post" action="/admin/cycles/<%= row.group.id %>">
+          <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:14px">
+            <label style="font-size:12px;color:#555">
+              猶予日数<br>
+              <input type="number" name="grace_days" min="0" value="<%= row.group.grace_days %>" style="width:90px;padding:5px">
+              <div style="color:#888;font-size:11px">頻度期間に上乗せ</div>
+            </label>
+            <label style="font-size:12px;color:#555">
+              頻度未定の人<br>
+              <input type="number" name="undecided_days" min="1" value="<%= row.group.undecided_days %>" style="width:90px;padding:5px">
+              <div style="color:#888;font-size:11px">「決まっていない」の日数</div>
+            </label>
+            <label style="font-size:12px;color:#555">
+              クールダウン<br>
+              <input type="number" name="restart_cooldown_days" min="0" value="<%= row.group.restart_cooldown_days %>" style="width:90px;padding:5px">
+              <div style="color:#888;font-size:11px">A再訪で新周にする最短間隔</div>
+            </label>
+            <label style="font-size:12px;color:#555">
+              B送信（分後）<br>
+              <input type="number" name="followup_b_delay_minutes" min="0" value="<%= row.group.followup_b_delay_minutes %>" style="width:90px;padding:5px">
+              <div style="color:#888;font-size:11px">0で送らない（QRのみ）</div>
+            </label>
+            <label style="font-size:12px;color:#555">
+              頻度設問コード<br>
+              <input type="text" name="frequency_question_code" value="<%= row.group.frequency_question_code %>" style="width:90px;padding:5px">
+              <div style="color:#888;font-size:11px">起点案件の設問</div>
+            </label>
+          </div>
+
+          <div style="margin-bottom:14px">
+            <div style="font-size:12px;color:#555;margin-bottom:4px">
+              来店頻度 → 日数の対応表（1行1件・<code>コード: 日数</code>）
+            </div>
+            <textarea name="frequency_days_table" rows="7" style="width:100%;max-width:420px;padding:6px;font-family:monospace;font-size:12px"><% Object.keys(row.daysTable).forEach(function (code) { %><%= code %>: <%= row.daysTable[code] %>
+<% }) %></textarea>
+            <% if (row.frequencyOptions.length > 0) { %>
+              <div style="font-size:11px;color:#777;margin-top:5px">
+                設問の選択肢：
+                <% row.frequencyOptions.forEach(function (opt) { %>
+                  <span style="display:inline-block;margin-right:8px;<%= row.mapping.missingInTable.includes(opt.value) ? 'color:#b14;font-weight:600' : '' %>">
+                    <code><%= opt.value %></code>（<%= opt.label %>）
+                  </span>
+                <% }) %>
+              </div>
+            <% } %>
+          </div>
+
+          <label style="font-size:12px;color:#555;display:block;margin-bottom:12px">
+            <input type="checkbox" name="is_enabled" <%= row.group.is_enabled ? 'checked' : '' %>>
+            このサイクルを有効にする（外すとB/Cの自動送信が止まります）
+          </label>
+
+          <button type="submit" style="padding:7px 18px;background:#2a6fb0;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px">
+            保存
+          </button>
+          <span style="font-size:11px;color:#888;margin-left:10px">
+            ※ 既に確定している送付予定日は変わりません（次回A回答分から適用）
+          </span>
+        </form>
+      </div>
+    </details>
+
   </div>
 <% }) %>
 

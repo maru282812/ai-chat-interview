@@ -81,6 +81,33 @@ export const cycleGroupRepository = {
     return requireData(data as CycleGroup | null, "CycleGroup insert returned no row");
   },
 
+  /** 管理画面からの設定更新（Migration 095）。 */
+  async update(
+    id: string,
+    input: Partial<
+      Pick<
+        CycleGroup,
+        | "name"
+        | "grace_days"
+        | "undecided_days"
+        | "restart_cooldown_days"
+        | "followup_b_delay_minutes"
+        | "frequency_question_code"
+        | "frequency_days_json"
+        | "is_enabled"
+      >
+    >
+  ): Promise<CycleGroup> {
+    const { data, error } = await supabase
+      .from("cycle_groups")
+      .update({ ...input, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .select("*")
+      .single();
+    throwIfError(error);
+    return requireData(data as CycleGroup | null, "CycleGroup update returned no row");
+  },
+
   async addStep(input: {
     cycle_group_id: string;
     project_id: string;

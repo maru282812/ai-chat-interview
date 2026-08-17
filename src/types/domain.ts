@@ -882,6 +882,10 @@ export interface CycleGroup {
   restart_cooldown_days: number;
   /** A 完了から B を送るまでの分数 (Migration 094)。既定120分。0以下で送信しない。 */
   followup_b_delay_minutes: number;
+  /** A のどの設問を「来店頻度」として読むか (Migration 095)。既定 Q11。 */
+  frequency_question_code: string;
+  /** 来店頻度コード → 日数の対応表 (Migration 095)。NULL は既定表。 */
+  frequency_days_json: Record<string, number> | null;
   is_enabled: boolean;
   created_at: string;
   updated_at: string;
