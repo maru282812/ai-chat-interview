@@ -55,6 +55,7 @@ import { assignmentService, type AssignmentRuleFilter } from "../services/assign
 import { projectRepository } from "../repositories/projectRepository";
 import { cycleGroupRepository, surveyCycleRepository } from "../repositories/cycleRepository";
 import { formatChurnRate, summarizeByCycleNo, summarizeCycles } from "../lib/cycleFunnel";
+import { diffFrequencyMapping, VISIT_FREQUENCY_DAYS } from "../lib/cycleRules";
 import { clientRepository } from "../repositories/clientRepository";
 import { experienceService } from "../services/experienceService";
 import { qualityScoringService } from "../services/qualityScoringService";
@@ -9006,6 +9007,26 @@ export const adminController = {
           })
         );
 
+        // 頻度設問の選択肢と日数対応表の突き合わせ（Migration 095）。
+        // ズレると「エラーも出ないまま C が送られない」ので画面で気づけるようにする。
+        let frequencyOptions: { value: string; label: string }[] = [];
+        let frequencyQuestionFound = false;
+        try {
+          const questions = await questionRepository.listByProject(group.entry_project_id);
+          const target = questions.find(
+            (q) =>
+              q.question_code?.toLowerCase() ===
+              (group.frequency_question_code || "Q11").toLowerCase()
+          );
+          if (target) {
+            frequencyQuestionFound = true;
+            const config = target.question_config as { options?: { value: string; label: string }[] } | null;
+            frequencyOptions = config?.options ?? [];
+          }
+        } catch (error) {
+          logger.warn("cycleFunnel: 頻度設問の読み込みに失敗", { groupId: group.id, error: String(error) });
+        }
+
         return {
           group,
           steps: stepRows,
@@ -9016,6 +9037,13 @@ export const adminController = {
           followupPending: cycles.filter(
             (c) => !c.followup_sent_at && !c.returned_at && !c.closed_at && c.expected_return_at
           ).length,
+          frequencyQuestionFound,
+          frequencyOptions,
+          mapping: diffFrequencyMapping(
+            frequencyOptions.map((o) => o.value),
+            group.frequency_days_json
+          ),
+          daysTable: group.frequency_days_json ?? VISIT_FREQUENCY_DAYS,
         };
       })
     );
@@ -9027,6 +9055,69 @@ export const adminController = {
       msg: typeof req.query.msg === "string" ? req.query.msg : null,
       err: typeof req.query.err === "string" ? req.query.err : null,
     });
+  },
+
+  /**
+   * サイクル設定の更新（Migration 095）。
+   *
+   * 「C をいつ送るか」に効く設定が3か所（設問・コード・DB）に散っていたのを
+   * この1画面に集約する。日数対応表もここで編集する＝デプロイ不要。
+   */
+  async updateCycleGroup(req: Request, res: Response): Promise<void> {
+    const groupId = routeParam(req, "groupId");
+    const back = (params: string) => res.redirect(`/admin/cycles?${params}`);
+
+    const group = await cycleGroupRepository.getById(groupId);
+    if (!group) {
+      back("err=" + encodeURIComponent("サイクル定義が見つかりません"));
+      return;
+    }
+
+    // 日数は「未入力なら現状維持」。0や負数は判定を壊すので弾く。
+    const intOrNull = (raw: string, min: number): number | null => {
+      const trimmed = raw.trim();
+      if (!trimmed) return null;
+      const n = Number.parseInt(trimmed, 10);
+      return Number.isFinite(n) && n >= min ? n : null;
+    };
+
+    const graceDays = intOrNull(bodyString(req.body.grace_days), 0);
+    const undecidedDays = intOrNull(bodyString(req.body.undecided_days), 1);
+    const cooldownDays = intOrNull(bodyString(req.body.restart_cooldown_days), 0);
+    const bDelay = intOrNull(bodyString(req.body.followup_b_delay_minutes), 0);
+    const questionCode = bodyString(req.body.frequency_question_code).trim();
+
+    // 日数対応表は「code:days」を1行1件で受ける（JSONを手書きさせない）。
+    const tableRaw = bodyString(req.body.frequency_days_table);
+    let daysTable: Record<string, number> | null = null;
+    if (tableRaw.trim()) {
+      daysTable = {};
+      for (const line of tableRaw.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const [code, value] = trimmed.split(/[:=]/).map((s) => s?.trim());
+        const days = Number.parseInt(value ?? "", 10);
+        if (!code || !Number.isFinite(days) || days <= 0) {
+          back("err=" + encodeURIComponent(`対応表の書式が不正です: 「${trimmed}」（例: about_2m: 60）`));
+          return;
+        }
+        daysTable[code] = days;
+      }
+      if (Object.keys(daysTable).length === 0) daysTable = null;
+    }
+
+    await cycleGroupRepository.update(groupId, {
+      ...(graceDays !== null ? { grace_days: graceDays } : {}),
+      ...(undecidedDays !== null ? { undecided_days: undecidedDays } : {}),
+      ...(cooldownDays !== null ? { restart_cooldown_days: cooldownDays } : {}),
+      ...(bDelay !== null ? { followup_b_delay_minutes: bDelay } : {}),
+      ...(questionCode ? { frequency_question_code: questionCode } : {}),
+      frequency_days_json: daysTable,
+      is_enabled: bodyString(req.body.is_enabled) === "on",
+    });
+
+    logger.info("cycleGroup.updated", { groupId });
+    back("msg=" + encodeURIComponent("サイクル設定を更新しました（既に確定した判定日は変わりません）"));
   },
 
   // ---- 企業ごとまとめ画面（複数アンケートを client 単位で合算・納品物リンク） ----
