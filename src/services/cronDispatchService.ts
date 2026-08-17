@@ -1,5 +1,6 @@
 import { supabase } from "../config/supabase";
 import { logger } from "../lib/logger";
+import { cycleFollowupService } from "./cycleFollowupService";
 import { notificationSchedulerService } from "./notificationSchedulerService";
 import { projectDeliveryService } from "./projectDeliveryService";
 import { deliveryTemplateRepository } from "../repositories/deliveryTemplateRepository";
@@ -205,6 +206,36 @@ class CronDispatchService {
       }
     } catch (e) {
       logger.warn("cronDispatch: delivery templates unavailable", { error: String(e) });
+    }
+
+    // --- 繰り返しアンケート（サイクル）の遅延送信 — Migration 093 / 094 ---
+    //
+    // 他のジョブと違い recordRun による時刻ベースの重複防止を使わない。
+    // 送信対象かどうかは各サイクル行の followup_sent_at / followup_b_sent_at が持ち、
+    // 送信前にその列を立てて権利を確保する（クレーム方式）ので毎分走らせて安全。
+    // むしろ「2時間後ちょうどに送る」ためには毎分の判定が要る。
+    //
+    // サイクル定義が1件も無ければ対象0件で即返るため、
+    // 未使用の環境ではほぼコストゼロ。
+    for (const job of [
+      { key: "cycle_followup_c", run: () => cycleFollowupService.runFollowupDispatch() },
+      { key: "cycle_followup_b", run: () => cycleFollowupService.runFollowupBDispatch() },
+    ]) {
+      try {
+        const detail = await job.run();
+        outcomes.push({
+          job_key: job.key,
+          ran: (detail.sent ?? 0) > 0,
+          reason: (detail.sent ?? 0) > 0 ? "fired" : "no-target",
+          detail,
+        });
+      } catch (e) {
+        logger.error("cronDispatch: cycle followup failed", {
+          jobKey: job.key,
+          error: String(e),
+        });
+        outcomes.push({ job_key: job.key, ran: false, reason: "error", detail: String(e) });
+      }
     }
 
     return outcomes;

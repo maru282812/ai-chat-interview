@@ -53,6 +53,8 @@ import { adminService } from "../services/adminService";
 import { pointService } from "../services/pointService";
 import { assignmentService, type AssignmentRuleFilter } from "../services/assignmentService";
 import { projectRepository } from "../repositories/projectRepository";
+import { cycleGroupRepository, surveyCycleRepository } from "../repositories/cycleRepository";
+import { formatChurnRate, summarizeByCycleNo, summarizeCycles } from "../lib/cycleFunnel";
 import { clientRepository } from "../repositories/clientRepository";
 import { experienceService } from "../services/experienceService";
 import { qualityScoringService } from "../services/qualityScoringService";
@@ -8968,6 +8970,62 @@ export const adminController = {
       convertibleProjects,
       msg: typeof req.query.msg === "string" ? req.query.msg : null,
       err: typeof req.query.err === "string" ? req.query.err : null
+    });
+  },
+
+  // ---- 繰り返しアンケート（サイクル）の離脱ファネル — Migration 093 ----
+
+  /**
+   * サイクル定義ごとの離脱率を表示する。
+   *
+   * 離脱＝「A で答えた来店頻度の期間を過ぎても再来店しなかった」。
+   * C に答えたかどうかは判定に使わない（C は理由を聞くための調査）。
+   */
+  async cycleFunnel(req: Request, res: Response): Promise<void> {
+    const now = new Date();
+    const groups = await cycleGroupRepository.list();
+
+    const rows = await Promise.all(
+      groups.map(async (group) => {
+        const [cycles, steps] = await Promise.all([
+          surveyCycleRepository.listByGroup(group.id),
+          cycleGroupRepository.listSteps(group.id),
+        ]);
+
+        // ステップ名を出すために案件名を引く（数件なので個別取得で十分）。
+        const stepRows = await Promise.all(
+          steps.map(async (step) => {
+            let name = step.project_id;
+            try {
+              const project = await projectRepository.getById(step.project_id);
+              name = project.user_display_title || project.name;
+            } catch {
+              // 案件が消えていてもファネル表示は続ける
+            }
+            return { ...step, projectName: name };
+          })
+        );
+
+        return {
+          group,
+          steps: stepRows,
+          total: cycles.length,
+          summary: summarizeCycles(cycles, now),
+          byCycleNo: summarizeByCycleNo(cycles, now),
+          // 送付待ち＝期限は過ぎたがまだ C を送っていない人（cron が拾う）
+          followupPending: cycles.filter(
+            (c) => !c.followup_sent_at && !c.returned_at && !c.closed_at && c.expected_return_at
+          ).length,
+        };
+      })
+    );
+
+    res.render("admin/cycles/index", {
+      title: "繰り返しアンケート（離脱計測）",
+      rows,
+      formatChurnRate,
+      msg: typeof req.query.msg === "string" ? req.query.msg : null,
+      err: typeof req.query.err === "string" ? req.query.err : null,
     });
   },
 

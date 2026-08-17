@@ -1,10 +1,13 @@
 import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
+import { cycleService } from "./cycleService";
 
 export interface StoreEntryResolution {
   assignmentId: string;
   projectId: string;
+  /** 所属サイクル (Migration 093)。サイクル案件でなければ null。 */
+  cycleId: string | null;
 }
 
 /**
@@ -47,18 +50,29 @@ export const storeEntryService = {
         status: "invited"
       }));
 
-    // assignment を冪等に確保。既存があれば再利用（再訪問でも重複生成しない）
+    // 繰り返しアンケート（Migration 093）なら所属サイクルを解決する。
+    // サイクル定義に属さない案件では null が返り、以降は従来どおりの挙動になる。
+    const resolution = await cycleService.resolveCycleSafely(project.id, lineUserId);
+    const cycleId = resolution?.cycle.id ?? null;
+
+    // assignment を冪等に確保。
+    // サイクル案件では「同じ周の中でだけ」再利用する（周が変われば新しい行になる）。
     const assignment =
-      (await projectAssignmentRepository.getByProjectAndRespondent(project.id, respondent.id)) ??
+      (await projectAssignmentRepository.getByProjectRespondentAndCycle(
+        project.id,
+        respondent.id,
+        cycleId
+      )) ??
       (await projectAssignmentRepository.create({
         user_id: lineUserId,
         project_id: project.id,
         respondent_id: respondent.id,
         assignment_type: "manual",
         status: "opened",
-        delivery_channel: "liff"
+        delivery_channel: "liff",
+        cycle_id: cycleId
       }));
 
-    return { assignmentId: assignment.id, projectId: project.id };
+    return { assignmentId: assignment.id, projectId: project.id, cycleId };
   }
 };

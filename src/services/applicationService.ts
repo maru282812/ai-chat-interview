@@ -3,6 +3,7 @@ import { projectAssignmentRepository } from "../repositories/projectAssignmentRe
 import { projectRepository } from "../repositories/projectRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
 import type { Project, ProjectApplication } from "../types/domain";
+import { cycleService } from "./cycleService";
 
 /** 応募失敗の理由（画面はこれをそのまま文言に変換する） */
 export type ApplyFailureReason = "not_found" | "closed" | "full" | "duplicate";
@@ -59,8 +60,16 @@ export const applicationService = {
           status: "invited",
         }));
 
+      // 繰り返しアンケート（Migration 093）の所属サイクル。非サイクル案件は null。
+      const cycleId =
+        (await cycleService.resolveCycleSafely(projectId, lineUserId))?.cycle.id ?? null;
+
       const assignment =
-        (await projectAssignmentRepository.getByProjectAndRespondent(projectId, respondent.id)) ??
+        (await projectAssignmentRepository.getByProjectRespondentAndCycle(
+          projectId,
+          respondent.id,
+          cycleId
+        )) ??
         (await projectAssignmentRepository.create({
           user_id: lineUserId,
           project_id: projectId,
@@ -68,6 +77,7 @@ export const applicationService = {
           assignment_type: "manual",
           status: "opened",
           delivery_channel: "liff",
+          cycle_id: cycleId,
         }));
 
       const application = await projectApplicationRepository.create({
@@ -135,8 +145,17 @@ export const applicationService = {
         status: "invited",
       }));
 
+    // 繰り返しアンケート（Migration 093）の所属サイクル。非サイクル案件は null。
+    const cycleId =
+      (await cycleService.resolveCycleSafely(application.project_id, application.line_user_id))
+        ?.cycle.id ?? null;
+
     const assignment =
-      (await projectAssignmentRepository.getByProjectAndRespondent(application.project_id, respondent.id)) ??
+      (await projectAssignmentRepository.getByProjectRespondentAndCycle(
+        application.project_id,
+        respondent.id,
+        cycleId
+      )) ??
       (await projectAssignmentRepository.create({
         user_id: application.line_user_id,
         project_id: application.project_id,
@@ -144,6 +163,7 @@ export const applicationService = {
         assignment_type: "manual",
         status: "assigned",
         delivery_channel: "liff",
+        cycle_id: cycleId,
       }));
 
     const updated = await projectApplicationRepository.update(applicationId, {

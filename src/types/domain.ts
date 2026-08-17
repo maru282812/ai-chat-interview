@@ -854,6 +854,65 @@ export interface ProjectAssignment {
   delivery_log: Record<string, unknown>[] | null;
   screening_result: ScreeningResult | null;
   screening_result_at: string | null;
+  /** 所属サイクル (Migration 093)。NULL は従来どおりの単発案件。 */
+  cycle_id: UUID | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ------------------------------------------------------------------
+// 繰り返しアンケート（サイクル） — Migration 093
+// ------------------------------------------------------------------
+
+/** サイクル内での案件の役割。entry=A（起点）/ followup=B / verify=C（離脱検証）。 */
+export type CycleStepRole = "entry" | "followup" | "verify";
+
+/** サイクルの閉じ方。 */
+export type CycleCloseReason = "returned" | "churn_confirmed" | "restarted" | "completed";
+
+/** A→B→C を1周とする繰り返しアンケートの定義。 */
+export interface CycleGroup {
+  id: UUID;
+  name: string;
+  client_id: UUID | null;
+  entry_project_id: UUID;
+  followup_project_id: UUID | null;
+  grace_days: number;
+  undecided_days: number;
+  restart_cooldown_days: number;
+  /** A 完了から B を送るまでの分数 (Migration 094)。既定120分。0以下で送信しない。 */
+  followup_b_delay_minutes: number;
+  is_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CycleGroupStep {
+  id: UUID;
+  cycle_group_id: UUID;
+  project_id: UUID;
+  step_order: number;
+  step_role: CycleStepRole;
+  created_at: string;
+}
+
+/** 1人の1周分のサイクル。離脱率はこのテーブルの集計で出す。 */
+export interface SurveyCycle {
+  id: UUID;
+  cycle_group_id: UUID;
+  line_user_id: string;
+  cycle_no: number;
+  started_at: string;
+  frequency_code: string | null;
+  expected_return_at: string | null;
+  followup_sent_at: string | null;
+  returned_at: string | null;
+  /** B の送信予定時刻 (Migration 094)。A 完了時に確定。NULL は送信しない。 */
+  followup_b_scheduled_at: string | null;
+  /** B を送信した時刻 (Migration 094)。非NULL＝再送しない。 */
+  followup_b_sent_at: string | null;
+  closed_at: string | null;
+  close_reason: CycleCloseReason | null;
   created_at: string;
   updated_at: string;
 }
