@@ -23,6 +23,8 @@ interface ProjectAssignmentCreateInput {
   assigned_at?: string;
   deadline?: string | null;
   due_at?: string | null;
+  /** 所属サイクル (Migration 093)。省略＝従来どおりの単発案件。 */
+  cycle_id?: string | null;
 }
 
 type ProjectAssignmentUpdateInput = Partial<
@@ -134,6 +136,14 @@ export const projectAssignmentRepository = {
     return requireData(data as ProjectAssignment | null, "Assignment not found");
   },
 
+  /**
+   * 案件×respondent の assignment を引く。
+   *
+   * ⚠ Migration 093 以降、繰り返しアンケート（サイクル）では同じ組み合わせで
+   *   複数行が存在しうる（cycle ごとに1行）。かつて `.maybeSingle()` だったが、
+   *   複数行だと例外になり回答導線が落ちるため「最新1件」を返す形に変更した。
+   *   サイクル内の特定の1件が欲しい場合は getByProjectRespondentAndCycle を使う。
+   */
   async getByProjectAndRespondent(
     projectId: string,
     respondentId: string
@@ -143,7 +153,32 @@ export const projectAssignmentRepository = {
       .select("*")
       .eq("project_id", projectId)
       .eq("respondent_id", respondentId)
+      .order("assigned_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
+    throwIfError(error);
+    return (data as ProjectAssignment | null) ?? null;
+  },
+
+  /**
+   * サイクル内の assignment を引く（Migration 093）。
+   * cycleId が null なら「サイクルに属さない行」を対象にする。
+   * UNIQUE(project_id, respondent_id, cycle_id) により最大1件。
+   */
+  async getByProjectRespondentAndCycle(
+    projectId: string,
+    respondentId: string,
+    cycleId: string | null
+  ): Promise<ProjectAssignment | null> {
+    let query = supabase
+      .from("project_assignments")
+      .select("*")
+      .eq("project_id", projectId)
+      .eq("respondent_id", respondentId);
+
+    query = cycleId === null ? query.is("cycle_id", null) : query.eq("cycle_id", cycleId);
+
+    const { data, error } = await query.maybeSingle();
     throwIfError(error);
     return (data as ProjectAssignment | null) ?? null;
   },

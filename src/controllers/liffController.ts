@@ -32,6 +32,8 @@ import { sessionRepository } from "../repositories/sessionRepository";
 import { answerRepository } from "../repositories/answerRepository";
 import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
 import { questionPageGroupRepository } from "../repositories/questionPageGroupRepository";
+import { cycleGroupRepository } from "../repositories/cycleRepository";
+import { cycleService } from "../services/cycleService";
 import { aiService } from "../services/aiService";
 import { analysisService } from "../services/analysisService";
 import { liffAuthService } from "../services/liffAuthService";
@@ -1639,6 +1641,27 @@ export const liffController = {
       status: "completed",
       completed_at: now,
     });
+
+    // 繰り返しアンケート（Migration 093）: A（起点）の完了で離脱判定日を確定する。
+    // 来店頻度（A-Q11）から「次に来るはずの日」を出し、それを過ぎても A が
+    // 来なければ C（離脱検証）の送付対象になる。
+    // サーバーレスではレスポンス後の非同期が打ち切られうるため await する
+    // （captureEntryFrequency は内部で例外を握るので完了処理は止まらない）。
+    if (assignment.cycle_id && session) {
+      const cycleStep = await cycleGroupRepository.findByProjectId(assignment.project_id);
+      if (cycleStep?.step.step_role === "entry") {
+        const [cycleAnswers, cycleQuestions] = await Promise.all([
+          answerRepository.listBySession(session.id),
+          questionRepository.listByProject(assignment.project_id),
+        ]);
+        await cycleService.captureEntryFrequency({
+          cycleId: assignment.cycle_id,
+          answers: cycleAnswers,
+          questions: cycleQuestions,
+          answeredAt: new Date(now),
+        });
+      }
+    }
 
     if (!session) {
       logger.warn("completeSurveyByAssignment.noSession", {

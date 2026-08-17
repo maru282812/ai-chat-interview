@@ -21,6 +21,7 @@ const LINE_USER_ID = "Uaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 let applicationService: typeof import("../services/applicationService").applicationService;
 let isRecruitClosed: typeof import("../services/applicationService").isRecruitClosed;
 let projectRepository: typeof import("../repositories/projectRepository").projectRepository;
+let cycleGroupRepository: typeof import("../repositories/cycleRepository").cycleGroupRepository;
 let respondentRepository: typeof import("../repositories/respondentRepository").respondentRepository;
 let projectAssignmentRepository: typeof import("../repositories/projectAssignmentRepository").projectAssignmentRepository;
 let projectApplicationRepository: typeof import("../repositories/projectApplicationRepository").projectApplicationRepository;
@@ -37,6 +38,7 @@ function stub<T extends object, K extends keyof T>(obj: T, key: K, fn: T[K]): vo
 before(async () => {
   ({ applicationService, isRecruitClosed } = await import("../services/applicationService"));
   ({ projectRepository } = await import("../repositories/projectRepository"));
+  ({ cycleGroupRepository } = await import("../repositories/cycleRepository"));
   ({ respondentRepository } = await import("../repositories/respondentRepository"));
   ({ projectAssignmentRepository } = await import("../repositories/projectAssignmentRepository"));
   ({ projectApplicationRepository } = await import("../repositories/projectApplicationRepository"));
@@ -158,7 +160,8 @@ test("apply: auto案件は respondent/assignment を確保して accepted＋assi
   stub(respondentRepository, "getByLineUserAndProject", async () => null);
   stub(respondentRepository, "create", async () =>
     ({ id: RESPONDENT_ID, line_user_id: LINE_USER_ID, project_id: PROJECT_ID } as unknown as Respondent));
-  stub(projectAssignmentRepository, "getByProjectAndRespondent", async () => null);
+  stub(cycleGroupRepository, "findByProjectId", async () => null);
+  stub(projectAssignmentRepository, "getByProjectRespondentAndCycle", async () => null);
   let createInput: unknown = null;
   stub(projectAssignmentRepository, "create", (async (input: unknown) => {
     createInput = input;
@@ -185,7 +188,8 @@ test("apply: auto案件で既存assignmentがあれば再利用（冪等・二�
   stub(projectApplicationRepository, "findByProjectAndUser", async () => null);
   stub(respondentRepository, "getByLineUserAndProject", async () =>
     ({ id: RESPONDENT_ID, line_user_id: LINE_USER_ID, project_id: PROJECT_ID } as unknown as Respondent));
-  stub(projectAssignmentRepository, "getByProjectAndRespondent", async () =>
+  stub(cycleGroupRepository, "findByProjectId", async () => null);
+  stub(projectAssignmentRepository, "getByProjectRespondentAndCycle", async () =>
     ({ id: ASSIGNMENT_ID, status: "opened" } as unknown as ProjectAssignment));
   let created = 0;
   stub(projectAssignmentRepository, "create", (async () => {

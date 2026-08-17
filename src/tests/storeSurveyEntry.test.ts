@@ -27,6 +27,7 @@ let projectRepository: typeof import("../repositories/projectRepository").projec
 let respondentRepository: typeof import("../repositories/respondentRepository").respondentRepository;
 let projectAssignmentRepository: typeof import("../repositories/projectAssignmentRepository").projectAssignmentRepository;
 let storeEntryService: typeof import("../services/storeEntryService").storeEntryService;
+let cycleGroupRepository: typeof import("../repositories/cycleRepository").cycleGroupRepository;
 
 before(async () => {
   ({ supabase } = await import("../config/supabase"));
@@ -34,6 +35,7 @@ before(async () => {
   ({ respondentRepository } = await import("../repositories/respondentRepository"));
   ({ projectAssignmentRepository } = await import("../repositories/projectAssignmentRepository"));
   ({ storeEntryService } = await import("../services/storeEntryService"));
+  ({ cycleGroupRepository } = await import("../repositories/cycleRepository"));
   originalFrom = supabase.from.bind(supabase) as unknown as SupabaseClient["from"];
 });
 
@@ -257,8 +259,9 @@ test("respondent / assignment が無ければ新規生成して assignmentId を
     getProject: projectRepository.getStoreProjectByEntryCode,
     getResp: respondentRepository.getByLineUserAndProject,
     createResp: respondentRepository.create,
-    getAssign: projectAssignmentRepository.getByProjectAndRespondent,
-    createAssign: projectAssignmentRepository.create
+    getAssign: projectAssignmentRepository.getByProjectRespondentAndCycle,
+    createAssign: projectAssignmentRepository.create,
+    findCycle: cycleGroupRepository.findByProjectId
   };
   let respondentCreated = false;
   let assignmentCreated = false;
@@ -269,7 +272,9 @@ test("respondent / assignment が無ければ新規生成して assignmentId を
     respondentCreated = true;
     return respondentFixture();
   };
-  projectAssignmentRepository.getByProjectAndRespondent = async () => null;
+  // サイクル定義に属さない通常の店舗案件（Migration 093 で追加された分岐）。
+  cycleGroupRepository.findByProjectId = async () => null;
+  projectAssignmentRepository.getByProjectRespondentAndCycle = async () => null;
   projectAssignmentRepository.create = async () => {
     assignmentCreated = true;
     return assignmentFixture();
@@ -277,7 +282,11 @@ test("respondent / assignment が無ければ新規生成して assignmentId を
 
   try {
     const result = await storeEntryService.resolveEntry("abc", LINE_USER_ID, "テスト太郎");
-    assert.deepEqual(result, { assignmentId: ASSIGNMENT_ID, projectId: STORE_PROJECT_ID });
+    assert.deepEqual(result, {
+      assignmentId: ASSIGNMENT_ID,
+      projectId: STORE_PROJECT_ID,
+      cycleId: null
+    });
     assert.ok(respondentCreated, "respondent を新規生成する");
     assert.ok(assignmentCreated, "assignment を新規生成する");
   } finally {
@@ -287,9 +296,10 @@ test("respondent / assignment が無ければ新規生成して assignmentId を
       create: originals.createResp
     });
     Object.assign(projectAssignmentRepository, {
-      getByProjectAndRespondent: originals.getAssign,
+      getByProjectRespondentAndCycle: originals.getAssign,
       create: originals.createAssign
     });
+    Object.assign(cycleGroupRepository, { findByProjectId: originals.findCycle });
   }
 });
 
@@ -298,8 +308,9 @@ test("冪等性: 既存 respondent / assignment があれば再利用し新規�
     getProject: projectRepository.getStoreProjectByEntryCode,
     getResp: respondentRepository.getByLineUserAndProject,
     createResp: respondentRepository.create,
-    getAssign: projectAssignmentRepository.getByProjectAndRespondent,
-    createAssign: projectAssignmentRepository.create
+    getAssign: projectAssignmentRepository.getByProjectRespondentAndCycle,
+    createAssign: projectAssignmentRepository.create,
+    findCycle: cycleGroupRepository.findByProjectId
   };
   let respondentCreated = false;
   let assignmentCreated = false;
@@ -310,7 +321,8 @@ test("冪等性: 既存 respondent / assignment があれば再利用し新規�
     respondentCreated = true;
     return respondentFixture();
   };
-  projectAssignmentRepository.getByProjectAndRespondent = async () => assignmentFixture();
+  cycleGroupRepository.findByProjectId = async () => null;
+  projectAssignmentRepository.getByProjectRespondentAndCycle = async () => assignmentFixture();
   projectAssignmentRepository.create = async () => {
     assignmentCreated = true;
     return assignmentFixture();
@@ -318,7 +330,11 @@ test("冪等性: 既存 respondent / assignment があれば再利用し新規�
 
   try {
     const result = await storeEntryService.resolveEntry("abc", LINE_USER_ID);
-    assert.deepEqual(result, { assignmentId: ASSIGNMENT_ID, projectId: STORE_PROJECT_ID });
+    assert.deepEqual(result, {
+      assignmentId: ASSIGNMENT_ID,
+      projectId: STORE_PROJECT_ID,
+      cycleId: null
+    });
     assert.equal(respondentCreated, false, "既存 respondent を再利用する");
     assert.equal(assignmentCreated, false, "既存 assignment を再利用する（重複生成しない）");
   } finally {
@@ -328,8 +344,9 @@ test("冪等性: 既存 respondent / assignment があれば再利用し新規�
       create: originals.createResp
     });
     Object.assign(projectAssignmentRepository, {
-      getByProjectAndRespondent: originals.getAssign,
+      getByProjectRespondentAndCycle: originals.getAssign,
       create: originals.createAssign
     });
+    Object.assign(cycleGroupRepository, { findByProjectId: originals.findCycle });
   }
 });

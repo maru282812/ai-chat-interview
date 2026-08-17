@@ -23,6 +23,7 @@
 import { answerRepository } from "../repositories/answerRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { questionRepository } from "../repositories/questionRepository";
+import { respondentRepository } from "../repositories/respondentRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
 import { logger } from "../lib/logger";
 import type { CarryForwardSource, Project } from "../types/domain";
@@ -39,8 +40,13 @@ export async function loadCrossProjectAnswers(
   const sources = project.carry_forward_sources ?? [];
   if (sources.length === 0 || !respondentId) return [];
 
+  // respondents は「案件 × LINEユーザー」で1行なので、参照先案件の respondent は別IDになる。
+  // ここで line_user_id に正規化し、参照先ごとに引き直す（下記 loadOneSource 参照）。
+  const viewer = await respondentRepository.getById(respondentId).catch(() => null);
+  if (!viewer?.line_user_id) return [];
+
   const settled = await Promise.allSettled(
-    sources.map((src) => loadOneSource(src, respondentId))
+    sources.map((src) => loadOneSource(src, viewer.line_user_id))
   );
 
   const loaded: CrossProjectAnswers[] = [];
@@ -62,12 +68,21 @@ export async function loadCrossProjectAnswers(
 /** 参照先1件分。未回答・案件不在なら null。 */
 async function loadOneSource(
   source: CarryForwardSource,
-  respondentId: string
+  lineUserId: string
 ): Promise<CrossProjectAnswers | null> {
   const sourceProject = await projectRepository.findAnyByEntryCode(source.entry_code);
   if (!sourceProject) return null;
 
-  const sessions = await sessionRepository.listByRespondent(respondentId);
+  // 参照先案件における同一 LINE ユーザーの respondent を引き直す。
+  // 呼び出し元の respondent は「今回答している案件」のものなので、そのままでは
+  // 参照先の session に一致せず carry-forward が常に空になる。
+  const sourceRespondent = await respondentRepository.getByLineUserAndProject(
+    lineUserId,
+    sourceProject.id
+  );
+  if (!sourceRespondent) return null;
+
+  const sessions = await sessionRepository.listByRespondent(sourceRespondent.id);
   const sessionIds = sessions
     .filter((s) => s.project_id === sourceProject.id)
     .map((s) => s.id);
