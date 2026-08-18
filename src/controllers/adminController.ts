@@ -57,6 +57,13 @@ import { cycleGroupRepository, surveyCycleRepository } from "../repositories/cyc
 import { formatChurnRate, summarizeByCycleNo, summarizeCycles } from "../lib/cycleFunnel";
 import { diffFrequencyMapping, VISIT_FREQUENCY_DAYS } from "../lib/cycleRules";
 import { industryTemplateRepository, storeRepository } from "../repositories/storeRepository";
+import {
+  EMPTY_FILTER,
+  filterProjectRows,
+  hasActiveFilter,
+  parseProjectListFilter,
+  type ProjectListFilter
+} from "../lib/projectListFilter";
 import { storeProvisioningService } from "../services/storeProvisioningService";
 import { clientRepository } from "../repositories/clientRepository";
 import { experienceService } from "../services/experienceService";
@@ -503,12 +510,23 @@ function renderProjectsIndex(
   input: {
     projects: Awaited<ReturnType<typeof adminService.listProjects>>;
     notice?: unknown;
+    filter?: ProjectListFilter;
+    templates?: import("../types/domain").IndustryTemplate[];
+    stores?: import("../types/domain").Store[];
+    totalCount?: number;
   }
 ): void {
+  const filter = input.filter ?? EMPTY_FILTER;
   res.render("admin/projects/indexDesigner", {
     title: "プロジェクト一覧",
     projects: input.projects,
-    noticeMessage: resolveNoticeMessage(input.notice)
+    noticeMessage: resolveNoticeMessage(input.notice),
+    // 店舗展開すると案件は 店舗数×A/B/C で増えるため、業種・店舗で絞れるようにする。
+    filter,
+    hasFilter: hasActiveFilter(filter),
+    industryTemplates: input.templates ?? [],
+    stores: input.stores ?? [],
+    totalCount: input.totalCount ?? input.projects.length
   });
 }
 
@@ -2930,10 +2948,21 @@ export const adminController = {
   },
 
   async projects(req: Request, res: Response): Promise<void> {
-    const projects = await adminService.listProjects();
+    const filter = parseProjectListFilter(req.query as Record<string, unknown>);
+    const [projects, templates, stores] = await Promise.all([
+      adminService.listProjects(),
+      // 業種・店舗はまだ使っていない環境もあるので、失敗しても一覧は出す。
+      industryTemplateRepository.list().catch(() => []),
+      storeRepository.list().catch(() => [])
+    ]);
+
     renderProjectsIndex(res, {
-      projects,
-      notice: req.query.notice
+      projects: filterProjectRows(projects, filter, (row) => row.project),
+      notice: req.query.notice,
+      filter,
+      templates,
+      stores,
+      totalCount: projects.length
     });
   },
 
