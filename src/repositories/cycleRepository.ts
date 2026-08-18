@@ -52,6 +52,18 @@ export const cycleGroupRepository = {
     return { group, step: step as CycleGroupStep };
   },
 
+  /** 店舗のサイクル定義（Migration 096）。店舗ごとに最大1件。 */
+  async findByStore(storeId: string): Promise<CycleGroup | null> {
+    const { data, error } = await supabase
+      .from("cycle_groups")
+      .select("*")
+      .eq("store_id", storeId)
+      .limit(1)
+      .maybeSingle();
+    throwIfError(error);
+    return (data as CycleGroup | null) ?? null;
+  },
+
   async listSteps(cycleGroupId: string): Promise<CycleGroupStep[]> {
     const { data, error } = await supabase
       .from("cycle_group_steps")
@@ -71,6 +83,10 @@ export const cycleGroupRepository = {
     undecided_days?: number;
     restart_cooldown_days?: number;
     followup_b_delay_minutes?: number;
+    frequency_question_code?: string;
+    frequency_days_json?: Record<string, number> | null;
+    store_id?: string | null;
+    industry_template_id?: string | null;
   }): Promise<CycleGroup> {
     const { data, error } = await supabase
       .from("cycle_groups")

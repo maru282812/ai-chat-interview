@@ -374,6 +374,12 @@ export interface Project {
    * null は参照なし（従来どおり同一案件内の回答のみ）。
    */
   carry_forward_sources?: CarryForwardSource[] | null;
+  /** 所属店舗 (Migration 096)。NULL は店舗に属さない通常案件。 */
+  store_id?: UUID | null;
+  /** 生成元の業種テンプレ (Migration 096)。 */
+  industry_template_id?: UUID | null;
+  /** 業種テンプレ内での役割 (Migration 096)。template=原本 / entry=A / followup=B / verify=C。 */
+  template_step_role?: TemplateStepRole | null;
   /**
    * パートナーAPI（hibi-portal・X-Partner-Key）経由で作成された案件の所有店舗ID (Migration 089)。
    * ポータル側 stores.id をそのまま入れる。null は非パートナー案件（管理画面で作った案件）。
@@ -861,6 +867,50 @@ export interface ProjectAssignment {
 }
 
 // ------------------------------------------------------------------
+// 業種テンプレ / 店舗 — Migration 096
+// ------------------------------------------------------------------
+
+/** 業種ごとの調査票テンプレと既定設定。店舗はここから一括生成する。 */
+export interface IndustryTemplate {
+  id: UUID;
+  name: string;
+  industry_code: string;
+  description: string | null;
+  entry_template_project_id: UUID | null;
+  followup_template_project_id: UUID | null;
+  verify_template_project_id: UUID | null;
+  grace_days: number;
+  undecided_days: number;
+  restart_cooldown_days: number;
+  followup_b_delay_minutes: number;
+  frequency_question_code: string;
+  frequency_days_json: Record<string, number> | null;
+  is_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * 店舗マスタ。clients（法人）の配下＝チェーン展開を表現できる。
+ * ⚠ projects.partner_store_id は hibi-portal（別DB）の外部IDで別軸。
+ */
+export interface Store {
+  id: UUID;
+  client_id: UUID;
+  industry_template_id: UUID | null;
+  name: string;
+  code_slug: string;
+  /** 店舗ごとの謝礼。NULL はテンプレ案件の値を使う（謝礼なしの店舗もある）。 */
+  reward_points_override: number | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 業種テンプレ内での案件の役割。template=原本。 */
+export type TemplateStepRole = "template" | "entry" | "followup" | "verify";
+
+// ------------------------------------------------------------------
 // 繰り返しアンケート（サイクル） — Migration 093
 // ------------------------------------------------------------------
 
@@ -886,6 +936,10 @@ export interface CycleGroup {
   frequency_question_code: string;
   /** 来店頻度コード → 日数の対応表 (Migration 095)。NULL は既定表。 */
   frequency_days_json: Record<string, number> | null;
+  /** 所属店舗 (Migration 096)。NULL は手動作成の定義。 */
+  store_id: UUID | null;
+  /** 生成元の業種テンプレ (Migration 096)。 */
+  industry_template_id: UUID | null;
   is_enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -915,6 +969,8 @@ export interface SurveyCycle {
   followup_b_scheduled_at: string | null;
   /** B を送信した時刻 (Migration 094)。非NULL＝再送しない。 */
   followup_b_sent_at: string | null;
+  /** 所属店舗 (Migration 096)。同じ人が複数店舗を使い分けても周回が混ざらない。 */
+  store_id: UUID | null;
   closed_at: string | null;
   close_reason: CycleCloseReason | null;
   created_at: string;

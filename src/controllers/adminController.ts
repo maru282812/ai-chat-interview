@@ -56,6 +56,8 @@ import { projectRepository } from "../repositories/projectRepository";
 import { cycleGroupRepository, surveyCycleRepository } from "../repositories/cycleRepository";
 import { formatChurnRate, summarizeByCycleNo, summarizeCycles } from "../lib/cycleFunnel";
 import { diffFrequencyMapping, VISIT_FREQUENCY_DAYS } from "../lib/cycleRules";
+import { industryTemplateRepository, storeRepository } from "../repositories/storeRepository";
+import { storeProvisioningService } from "../services/storeProvisioningService";
 import { clientRepository } from "../repositories/clientRepository";
 import { experienceService } from "../services/experienceService";
 import { qualityScoringService } from "../services/qualityScoringService";
@@ -9118,6 +9120,150 @@ export const adminController = {
 
     logger.info("cycleGroup.updated", { groupId });
     back("msg=" + encodeURIComponent("サイクル設定を更新しました（既に確定した判定日は変わりません）"));
+  },
+
+  // ---- 業種テンプレ / 店舗（Migration 096） ----
+
+  /**
+   * 店舗一覧＋業種テンプレ一覧。ここから店舗を1件追加すると
+   * 案件A/B/C・設問・entry_code・サイクル定義が一括生成される。
+   */
+  async storesPage(req: Request, res: Response): Promise<void> {
+    const [templates, stores, clients] = await Promise.all([
+      industryTemplateRepository.list(),
+      storeRepository.list(),
+      clientRepository.list().catch(() => []),
+    ]);
+
+    const clientNameById = new Map(clients.map((c) => [c.id, c.name]));
+    const templateById = new Map(templates.map((t) => [t.id, t]));
+
+    // 店舗ごとの案件数と離脱率（サイクルがあれば）。
+    const now = new Date();
+    const rows = await Promise.all(
+      stores.map(async (store) => {
+        const [projects, group] = await Promise.all([
+          projectRepository.listByStore(store.id),
+          cycleGroupRepository.findByStore(store.id),
+        ]);
+        const cycles = group ? await surveyCycleRepository.listByGroup(group.id) : [];
+        return {
+          store,
+          clientName: clientNameById.get(store.client_id) ?? "(法人未設定)",
+          templateName: store.industry_template_id
+            ? templateById.get(store.industry_template_id)?.name ?? "(削除済み)"
+            : "(未設定)",
+          projects: projects.sort((a, b) =>
+            (a.template_step_role ?? "").localeCompare(b.template_step_role ?? "")
+          ),
+          cycleGroupId: group?.id ?? null,
+          summary: summarizeCycles(cycles, now),
+        };
+      })
+    );
+
+    // 法人ごとにまとめる（チェーン展開が見えるように）。
+    const byClient = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const list = byClient.get(row.store.client_id) ?? [];
+      list.push(row);
+      byClient.set(row.store.client_id, list);
+    }
+
+    res.render("admin/stores/index", {
+      title: "店舗管理（業種テンプレから一括生成）",
+      templates,
+      clients,
+      clientGroups: [...byClient.entries()].map(([clientId, list]) => ({
+        clientId,
+        clientName: list[0]?.clientName ?? "",
+        stores: list,
+      })),
+      totalStores: stores.length,
+      formatChurnRate,
+      msg: typeof req.query.msg === "string" ? req.query.msg : null,
+      err: typeof req.query.err === "string" ? req.query.err : null,
+    });
+  },
+
+  /** 店舗を追加し、業種テンプレから案件一式を生成する。 */
+  async createStore(req: Request, res: Response): Promise<void> {
+    const back = (p: string) => res.redirect(`/admin/stores?${p}`);
+    const clientId = bodyString(req.body.client_id).trim();
+    const templateId = bodyString(req.body.industry_template_id).trim();
+    const name = bodyString(req.body.name).trim();
+    const codeSlug = bodyString(req.body.code_slug).trim();
+    const rewardRaw = bodyString(req.body.reward_points_override).trim();
+
+    if (!clientId || !templateId || !name || !codeSlug) {
+      back("err=" + encodeURIComponent("法人・業種・店舗名・店舗コードは必須です"));
+      return;
+    }
+
+    // 空欄＝テンプレの謝礼を使う。0 は「謝礼なし」として明示的に扱う。
+    let rewardOverride: number | null = null;
+    if (rewardRaw) {
+      const parsed = Number.parseInt(rewardRaw, 10);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        back("err=" + encodeURIComponent("謝礼ポイントは0以上の数値で指定してください"));
+        return;
+      }
+      rewardOverride = parsed;
+    }
+
+    try {
+      const result = await storeProvisioningService.provisionStore({
+        clientId,
+        industryTemplateId: templateId,
+        name,
+        codeSlug,
+        rewardPointsOverride: rewardOverride,
+      });
+      const codes = result.projects.map((p) => p.entryCode).join(" / ");
+      back(
+        "msg=" +
+          encodeURIComponent(
+            `店舗「${name}」を作成しました（案件${result.projects.length}件・コード: ${codes}）`
+          )
+      );
+    } catch (error) {
+      logger.error("createStore failed", { error: String(error) });
+      back("err=" + encodeURIComponent(error instanceof Error ? error.message : "店舗の作成に失敗しました"));
+    }
+  },
+
+  /** 店舗設定の更新（名前・謝礼・有効/無効）。案件は再生成しない。 */
+  async updateStore(req: Request, res: Response): Promise<void> {
+    const storeId = routeParam(req, "storeId");
+    const back = (p: string) => res.redirect(`/admin/stores?${p}`);
+    const name = bodyString(req.body.name).trim();
+    const rewardRaw = bodyString(req.body.reward_points_override).trim();
+
+    let rewardOverride: number | null = null;
+    if (rewardRaw) {
+      const parsed = Number.parseInt(rewardRaw, 10);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        back("err=" + encodeURIComponent("謝礼ポイントは0以上の数値で指定してください"));
+        return;
+      }
+      rewardOverride = parsed;
+    }
+
+    await storeRepository.update(storeId, {
+      ...(name ? { name } : {}),
+      reward_points_override: rewardOverride,
+      is_active: bodyString(req.body.is_active) === "on",
+    });
+
+    // 謝礼の変更は店舗の案件へ反映する（設問は触らない＝店舗ごとの編集を壊さない）。
+    if (rewardOverride !== null) {
+      const projects = await projectRepository.listByStore(storeId);
+      for (const project of projects) {
+        await projectRepository.update(project.id, { reward_points: rewardOverride });
+      }
+    }
+
+    back("msg=" + encodeURIComponent("店舗設定を更新しました"));
   },
 
   // ---- 企業ごとまとめ画面（複数アンケートを client 単位で合算・納品物リンク） ----
