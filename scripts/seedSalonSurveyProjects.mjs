@@ -155,7 +155,7 @@ const ASPECTS = [
 /** A-Q8/A-Q9 は「待ち時間」を含まない（施術前のため）。調査票どおり。 */
 const A_ASPECTS = ASPECTS.filter(([v]) => v !== "wait");
 
-const OTHER = ["other", "その他（）"];
+const OTHER = ["other", "その他"];
 const NONE = ["none", "特になし"];
 
 /** 「特になし」は他と同時に選べない排他選択肢にする。 */
