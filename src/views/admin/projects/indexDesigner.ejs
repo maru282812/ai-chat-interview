@@ -5,7 +5,83 @@
 
 <div class="actions-row">
   <a class="button-link" href="/admin/projects/new">新規プロジェクト</a>
+  <a class="button-link" href="/admin/stores" style="margin-left:8px">店舗管理</a>
 </div>
+
+<%
+  // 店舗展開すると案件は「店舗数 × A/B/C」で増えるため、業種・店舗・役割で絞り込む。
+  const storeNameById = {};
+  stores.forEach(function (s) { storeNameById[s.id] = s.name; });
+  const templateNameById = {};
+  industryTemplates.forEach(function (t) { templateNameById[t.id] = t.name; });
+  const ROLE_LABELS = { template: "原本", entry: "A", followup: "B", verify: "C" };
+  const ROLE_COLORS = { template: "#6b4fa8", entry: "#2a6fb0", followup: "#666", verify: "#c8851b" };
+%>
+
+<form method="get" action="/admin/projects" class="card"
+      style="margin-top:16px;padding:10px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
+  <label style="font-size:12px;color:#555">
+    業種<br>
+    <select name="industry" style="padding:5px;min-width:150px">
+      <option value="">すべて</option>
+      <% industryTemplates.forEach(function (t) { %>
+        <option value="<%= t.id %>" <%= filter.industry === t.id ? 'selected' : '' %>><%= t.name %></option>
+      <% }) %>
+      <option value="none" <%= filter.industry === 'none' ? 'selected' : '' %>>（業種なし）</option>
+    </select>
+  </label>
+
+  <label style="font-size:12px;color:#555">
+    店舗<br>
+    <select name="store" style="padding:5px;min-width:170px">
+      <option value="">すべて</option>
+      <% stores.forEach(function (st) { %>
+        <option value="<%= st.id %>" <%= filter.store === st.id ? 'selected' : '' %>><%= st.name %></option>
+      <% }) %>
+      <option value="none" <%= filter.store === 'none' ? 'selected' : '' %>>（店舗なし・通常案件）</option>
+    </select>
+  </label>
+
+  <label style="font-size:12px;color:#555">
+    種別<br>
+    <select name="role" style="padding:5px;min-width:130px">
+      <option value="">すべて</option>
+      <option value="template" <%= filter.role === 'template' ? 'selected' : '' %>>原本（テンプレ）</option>
+      <option value="entry" <%= filter.role === 'entry' ? 'selected' : '' %>>A：起点</option>
+      <option value="followup" <%= filter.role === 'followup' ? 'selected' : '' %>>B：来店後</option>
+      <option value="verify" <%= filter.role === 'verify' ? 'selected' : '' %>>C：離脱検証</option>
+      <option value="none" <%= filter.role === 'none' ? 'selected' : '' %>>（サイクル外）</option>
+    </select>
+  </label>
+
+  <label style="font-size:12px;color:#555">
+    状態<br>
+    <select name="status" style="padding:5px;min-width:110px">
+      <option value="">すべて</option>
+      <% ['draft','ready','published','paused','closed','archived'].forEach(function (st) { %>
+        <option value="<%= st %>" <%= filter.status === st ? 'selected' : '' %>><%= st %></option>
+      <% }) %>
+    </select>
+  </label>
+
+  <label style="font-size:12px;color:#555">
+    案件名<br>
+    <input type="text" name="q" value="<%= filter.keyword || '' %>" placeholder="部分一致" style="padding:5px;min-width:150px">
+  </label>
+
+  <button type="submit" style="padding:6px 16px;background:#2a6fb0;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px">絞り込む</button>
+  <% if (hasFilter) { %>
+    <a href="/admin/projects" style="font-size:12px;color:#666">解除</a>
+  <% } %>
+
+  <span style="margin-left:auto;font-size:12px;color:#777">
+    <% if (hasFilter) { %>
+      <strong><%= projects.length %></strong> / <%= totalCount %> 件
+    <% } else { %>
+      <%= totalCount %> 件
+    <% } %>
+  </span>
+</form>
 
 <% if (notice) { %>
   <section class="card subtle-card success-card" style="margin-top: 16px;">
@@ -29,7 +105,17 @@
     <% for (const row of projects) { %>
       <tr>
         <td>
+          <% if (row.project.template_step_role) { %>
+            <span style="display:inline-block;background:<%= ROLE_COLORS[row.project.template_step_role] || '#999' %>;color:#fff;font-size:10px;padding:1px 6px;border-radius:3px;margin-right:5px"><%= ROLE_LABELS[row.project.template_step_role] || row.project.template_step_role %></span>
+          <% } %>
           <strong><%= row.project.name %></strong><br />
+          <% if (row.project.store_id && storeNameById[row.project.store_id]) { %>
+            <span style="font-size:11px;color:#2a6fb0"><%= storeNameById[row.project.store_id] %></span>
+            <% if (row.project.entry_code) { %>
+              <code style="font-size:10px;color:#888;margin-left:4px"><%= row.project.entry_code %></code>
+            <% } %>
+            <br />
+          <% } %>
           <span class="muted"><%= row.project.objective || "-" %></span>
         </td>
         <td><%= row.project.client_name || "-" %></td>
