@@ -103,7 +103,15 @@ const envSchema = z.object({
   // チャットに使うモデル。未設定なら OPENAI_TOOL_MODEL（既定 gpt-4o-mini）を使う。
   // 既定モデルでも読み取り・集計・実行不可の案内は実測で正しく動く。要約の質を上げたい
   // ときだけ、他の管理ツール系AIを巻き込まずにここだけ上位モデルへ切り替えられるようにしておく。
-  ADMIN_CHAT_MODEL: z.string().optional()
+  ADMIN_CHAT_MODEL: z.string().optional(),
+  // 繰り返しアンケート（サイクル）の検証用アカウント（カンマ区切りの LINE userId）。
+  // ここに載せた人だけ「A再訪のクールダウン」を免除し、何度でも新しい周を開始できる。
+  // 本番の実機テストで25日待たずに通し確認するための seam（tmtest: は本番で無効なため別に用意する）。
+  //
+  // ⚠ 免除するのはクールダウンだけで、認証・所有者検証は一切変えない。
+  //   免除された分だけ周が増える＝離脱率の分母に入るので、テスト用アカウントは
+  //   集計から除外する運用（respondents.is_test）と併用すること。
+  CYCLE_TEST_LINE_USER_IDS: z.string().optional()
 });
 
 export const env = envSchema.parse(process.env);

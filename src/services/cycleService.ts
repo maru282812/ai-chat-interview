@@ -20,6 +20,7 @@
  *     cycle_id=null にフォールバックして回答自体は通す。
  */
 
+import { env } from "../config/env";
 import {
   canStartNewCycle,
   computeExpectedReturnAt,
@@ -83,11 +84,22 @@ export const cycleService = {
     const latest = await surveyCycleRepository.findLatest(group.id, lineUserId);
     const cooldown = group.restart_cooldown_days ?? DEFAULT_RESTART_COOLDOWN_DAYS;
 
-    const allowNew = canStartNewCycle({
-      lastCycleStartedAt: latest ? new Date(latest.started_at) : null,
-      now,
-      cooldownDays: cooldown,
-    });
+    // 検証用アカウントはクールダウンを免除する（CYCLE_TEST_LINE_USER_IDS）。
+    // 本番の実機で25日待たずに通し確認できるようにするための seam。
+    // 免除するのはクールダウンだけで、認証・所有者検証は一切変えない。
+    const isTester = isCycleTestUser(lineUserId);
+
+    const allowNew =
+      isTester ||
+      canStartNewCycle({
+        lastCycleStartedAt: latest ? new Date(latest.started_at) : null,
+        now,
+        cooldownDays: cooldown,
+      });
+
+    if (isTester && latest) {
+      logger.info("cycle.cooldownBypassedForTester", { lineUserId, cycleNo: latest.cycle_no });
+    }
 
     // クールダウン内で、まだ開いている周があるならそこへ合流（新設しない）。
     if (!allowNew && latest && !latest.closed_at) {
@@ -242,3 +254,17 @@ export const cycleService = {
     }
   },
 };
+
+/**
+ * 検証用アカウントか（CYCLE_TEST_LINE_USER_IDS のカンマ区切り）。
+ * 未設定なら常に false ＝ 通常運用では何も変わらない。
+ */
+export function isCycleTestUser(lineUserId: string): boolean {
+  const raw = env.CYCLE_TEST_LINE_USER_IDS;
+  if (!raw || !lineUserId) return false;
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .includes(lineUserId);
+}
