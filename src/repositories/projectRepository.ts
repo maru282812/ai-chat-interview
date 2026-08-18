@@ -267,6 +267,30 @@ export const projectRepository = {
    * 企業（client_id）配下の案件を全ステータスで一覧。企業まとめ画面用。
    * 並び順は created_at 昇順（将来の wave/シリーズ列を差し込める自然順・★予約③）。
    */
+  /** 店舗に属する案件（Migration 096）。役割順ではなく作成順。 */
+  async listByStore(storeId: string): Promise<Project[]> {
+    const id = storeId.trim();
+    if (!id) return [];
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("store_id", id)
+      .order("created_at", { ascending: true });
+    throwIfError(error);
+    return (data ?? []) as Project[];
+  },
+
+  /** 業種テンプレの原本案件（template_step_role='template'）。 */
+  async listTemplateProjects(): Promise<Project[]> {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("template_step_role", "template")
+      .order("created_at", { ascending: true });
+    throwIfError(error);
+    return (data ?? []) as Project[];
+  },
+
   async listByClient(clientId: string): Promise<Project[]> {
     const id = clientId.trim();
     if (!id) return [];

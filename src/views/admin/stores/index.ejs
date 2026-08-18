@@ -1,0 +1,186 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>店舗管理 <span style="font-size:13px;color:#777;font-weight:normal">（<%= totalStores %>店舗）</span></h2>
+  <a href="/admin/cycles" style="font-size:13px;color:#2a6fb0;text-decoration:none">離脱計測・配信タイミング設定 →</a>
+</div>
+
+<% if (msg) { %>
+  <div class="card" style="background:#e9f7f0;border:1px solid #2ca87a;color:#1c6e4f;padding:10px 14px;margin-bottom:1rem"><%= msg %></div>
+<% } %>
+<% if (err) { %>
+  <div class="card" style="background:#fdecea;border:1px solid #b14;color:#8a1020;padding:10px 14px;margin-bottom:1rem"><%= err %></div>
+<% } %>
+
+<div class="card" style="padding:12px 14px;margin-bottom:1.2rem;background:#f7f8fa;border:1px solid #e2e5ea;font-size:13px;color:#555;line-height:1.7">
+  店舗を追加すると、業種テンプレートから
+  <strong>A/B/Cの案件・設問・QR用コード・サイクル定義が一括生成</strong>されます。<br>
+  <span style="color:#777">
+    設問と謝礼は生成後に店舗ごとへ個別に変更できます（テンプレートを直しても既存店舗には影響しません）。
+  </span>
+</div>
+
+<!-- 店舗の追加 -->
+<div class="card" style="padding:0;margin-bottom:1.5rem;overflow:hidden">
+  <div style="padding:10px 16px;border-bottom:1px solid #e2e5ea;font-weight:600;font-size:14px;background:#fafbfc">
+    店舗を追加
+  </div>
+  <div style="padding:14px 16px">
+    <% if (templates.length === 0) { %>
+      <div style="color:#b14;font-size:13px">
+        業種テンプレートがありません。先に <code>node scripts/seedIndustryTemplates.mjs</code> を実行してください。
+      </div>
+    <% } else if (clients.length === 0) { %>
+      <div style="color:#b14;font-size:13px">
+        法人（クライアント）が登録されていません。先に「店舗専用アンケート」画面で法人を追加してください。
+      </div>
+    <% } else { %>
+      <form method="post" action="/admin/stores">
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
+          <label style="font-size:12px;color:#555">
+            法人（チェーン）<br>
+            <select name="client_id" style="padding:6px;min-width:160px">
+              <% clients.forEach(function (c) { %><option value="<%= c.id %>"><%= c.name %></option><% }) %>
+            </select>
+          </label>
+          <label style="font-size:12px;color:#555">
+            業種<br>
+            <select name="industry_template_id" style="padding:6px;min-width:160px">
+              <% templates.forEach(function (t) { %>
+                <option value="<%= t.id %>"><%= t.name %></option>
+              <% }) %>
+            </select>
+          </label>
+          <label style="font-size:12px;color:#555">
+            店舗名<br>
+            <input type="text" name="name" placeholder="●●美容室 渋谷店" style="padding:6px;min-width:180px" required>
+          </label>
+          <label style="font-size:12px;color:#555">
+            店舗コード<br>
+            <input type="text" name="code_slug" placeholder="salon-shibuya" pattern="[a-z0-9][a-z0-9-]*" style="padding:6px;min-width:150px" required>
+            <div style="color:#888;font-size:11px">QRコードに使う（<code>-a</code>/<code>-b</code>/<code>-c</code> が付きます）</div>
+          </label>
+          <label style="font-size:12px;color:#555">
+            謝礼pt（任意）<br>
+            <input type="number" name="reward_points_override" min="0" placeholder="既定" style="padding:6px;width:90px">
+            <div style="color:#888;font-size:11px">空欄=テンプレ / 0=謝礼なし</div>
+          </label>
+          <button type="submit" style="padding:8px 20px;background:#2a6fb0;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px">
+            店舗を作成
+          </button>
+        </div>
+      </form>
+    <% } %>
+  </div>
+</div>
+
+<!-- 業種テンプレート一覧 -->
+<div class="card" style="padding:0;margin-bottom:1.5rem;overflow:hidden">
+  <div style="padding:10px 16px;border-bottom:1px solid #e2e5ea;font-weight:600;font-size:14px;background:#fafbfc">
+    業種テンプレート（<%= templates.length %>件）
+  </div>
+  <% if (templates.length === 0) { %>
+    <div style="padding:16px;color:#999;font-size:13px">まだありません。</div>
+  <% } else { %>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:#fafbfc;color:#666;font-size:12px">
+          <th style="text-align:left;padding:8px 16px">業種</th>
+          <th style="text-align:left;padding:8px 12px">コード</th>
+          <th style="text-align:left;padding:8px 12px">頻度設問</th>
+          <th style="text-align:left;padding:8px 12px">既定設定</th>
+          <th style="text-align:right;padding:8px 16px">店舗数</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% templates.forEach(function (t) { %>
+          <tr style="border-top:1px solid #eef0f3">
+            <td style="padding:8px 16px"><%= t.name %></td>
+            <td style="padding:8px 12px"><code><%= t.industry_code %></code></td>
+            <td style="padding:8px 12px"><code><%= t.frequency_question_code %></code></td>
+            <td style="padding:8px 12px;color:#777;font-size:12px">
+              猶予<%= t.grace_days %>日 / 未定<%= t.undecided_days %>日 / CD<%= t.restart_cooldown_days %>日 / B<%= t.followup_b_delay_minutes %>分
+            </td>
+            <td style="padding:8px 16px;text-align:right">
+              <%= clientGroups.reduce(function (acc, g) {
+                    return acc + g.stores.filter(function (s) { return s.store.industry_template_id === t.id; }).length;
+                  }, 0) %>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<!-- 法人ごとの店舗 -->
+<% if (clientGroups.length === 0) { %>
+  <div class="card" style="padding:24px;text-align:center;color:#777">
+    まだ店舗がありません。上のフォームから追加してください。
+  </div>
+<% } %>
+
+<% clientGroups.forEach(function (group) { %>
+  <div class="card" style="margin-bottom:1.2rem;padding:0;overflow:hidden">
+    <div style="padding:10px 16px;border-bottom:1px solid #e2e5ea;background:#fafbfc">
+      <strong style="font-size:14px"><%= group.clientName %></strong>
+      <span style="font-size:12px;color:#777">（<%= group.stores.length %>店舗）</span>
+    </div>
+
+    <% group.stores.forEach(function (row) { %>
+      <div style="padding:12px 16px;border-bottom:1px solid #eef0f3">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
+          <div style="flex:1;min-width:260px">
+            <div>
+              <strong style="font-size:14px"><%= row.store.name %></strong>
+              <% if (!row.store.is_active) { %>
+                <span style="display:inline-block;background:#999;color:#fff;font-size:11px;padding:1px 7px;border-radius:3px;margin-left:6px">停止中</span>
+              <% } %>
+              <span style="font-size:12px;color:#777;margin-left:6px"><%= row.templateName %></span>
+            </div>
+            <div style="font-size:12px;color:#666;margin-top:5px">
+              <% if (row.projects.length === 0) { %>
+                <span style="color:#b14">案件が生成されていません</span>
+              <% } %>
+              <% row.projects.forEach(function (p) { %>
+                <span style="display:inline-block;margin-right:10px">
+                  <a href="/admin/projects/<%= p.id %>/questions" style="color:#2a6fb0;text-decoration:none"><%= p.name %></a>
+                  <code style="color:#888;font-size:11px"><%= p.entry_code %></code>
+                  <span style="color:#888;font-size:11px"><%= p.reward_points %>pt</span>
+                </span>
+              <% }) %>
+            </div>
+          </div>
+
+          <div style="text-align:right;min-width:110px">
+            <div style="font-size:18px;font-weight:600;color:<%= row.summary.churnRate === null ? '#999' : (row.summary.churnRate >= 0.5 ? '#b14' : '#2ca87a') %>">
+              <%= formatChurnRate(row.summary.churnRate) %>
+            </div>
+            <div style="font-size:11px;color:#777">離脱率（確定<%= row.summary.decided %>周）</div>
+          </div>
+        </div>
+
+        <details style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:12px;color:#2a6fb0">店舗設定を編集</summary>
+          <form method="post" action="/admin/stores/<%= row.store.id %>" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
+            <label style="font-size:12px;color:#555">
+              店舗名<br>
+              <input type="text" name="name" value="<%= row.store.name %>" style="padding:5px;min-width:180px">
+            </label>
+            <label style="font-size:12px;color:#555">
+              謝礼pt<br>
+              <input type="number" name="reward_points_override" min="0" value="<%= row.store.reward_points_override === null ? '' : row.store.reward_points_override %>" placeholder="既定" style="padding:5px;width:90px">
+              <div style="color:#888;font-size:11px">変更すると案件に反映</div>
+            </label>
+            <label style="font-size:12px;color:#555">
+              <input type="checkbox" name="is_active" <%= row.store.is_active ? 'checked' : '' %>> 有効
+            </label>
+            <button type="submit" style="padding:6px 16px;background:#2a6fb0;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">保存</button>
+          </form>
+        </details>
+      </div>
+    <% }) %>
+  </div>
+<% }) %>
+
+<%- include("../../partials/footer") %>
