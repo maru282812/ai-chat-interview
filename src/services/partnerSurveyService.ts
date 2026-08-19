@@ -1,4 +1,3 @@
-import { env } from "../config/env";
 import { HttpError } from "../lib/http";
 import { logger } from "../lib/logger";
 import {
@@ -28,6 +27,7 @@ import { projectRepository } from "../repositories/projectRepository";
 import { questionRepository } from "../repositories/questionRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
 import type { Project, Question, QuestionOption } from "../types/domain";
+import { buildStoreEntryLiffUrl } from "./liffService";
 
 /**
  * partnerSurveyService.ts
@@ -171,11 +171,7 @@ export function buildPartnerAnswerUrl(entryCode: string | null | undefined): str
   if (!entryCode) {
     return null;
   }
-  const liffId = env.LINE_LIFF_ID_SURVEY ?? env.LINE_LIFF_ID;
-  if (liffId) {
-    return `https://liff.line.me/${liffId}?entry_code=${encodeURIComponent(entryCode)}`;
-  }
-  return `${env.APP_BASE_URL}/liff/store?entry_code=${encodeURIComponent(entryCode)}`;
+  return buildStoreEntryLiffUrl(entryCode);
 }
 
 /** 性年代設問（サーバー固定）を、この案件に対して常に正しい形へそろえる。 */

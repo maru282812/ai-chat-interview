@@ -157,7 +157,7 @@ import { projectApplicationRepository } from "../repositories/projectApplication
 import { sessionRepository } from "../repositories/sessionRepository";
 import { lineMessagingService } from "../services/lineMessagingService";
 import { buildApplicationAcceptedFlex, buildApplicationRejectedFlex } from "../templates/flex";
-import { buildProjectStartUrl } from "../services/liffService";
+import { buildProjectStartUrl, buildProjectsListLiffUrl, buildStoreEntryLiffUrl } from "../services/liffService";
 
 function routeParam(req: Request, key: string): string {
   const value = req.params[key];
@@ -3558,6 +3558,9 @@ export const adminController = {
     res.render("admin/projects/deliveryV2", {
       title: "Project Delivery",
       appBaseUrl: appEnv.APP_BASE_URL,
+      // 回答URLは LIFF 恒久URLで表示する（LINEに貼られる前提のURLなので、
+      // サイト直URLだと in-app ブラウザのログインループを踏む）。
+      buildAssignmentUrl: (assignmentId: string) => buildProjectStartUrl(assignmentId).url,
       ...detail
     });
   },
@@ -9580,7 +9583,7 @@ export const adminController = {
         await lineMessagingService.push(result.application.line_user_id, [
           buildApplicationRejectedFlex({
             projectTitle: project.user_display_title || project.name,
-            projectsUrl: `${appEnv.APP_BASE_URL}/liff/projects`,
+            projectsUrl: buildProjectsListLiffUrl(),
           }),
         ]);
         suffix = "（LINE通知済み）";
@@ -9656,7 +9659,7 @@ export const adminController = {
             await lineMessagingService.push(result.application.line_user_id, [
               buildApplicationRejectedFlex({
                 projectTitle: project.user_display_title || project.name,
-                projectsUrl: `${appEnv.APP_BASE_URL}/liff/projects`,
+                projectsUrl: buildProjectsListLiffUrl(),
               }),
             ]);
           } catch (error) {
@@ -10092,11 +10095,7 @@ async function generateUniqueEntryCode(): Promise<string> {
  */
 function buildStoreEntryUrl(entryCode: string | null | undefined): string | null {
   if (!entryCode) return null;
-  const liffId = appEnv.LINE_LIFF_ID_SURVEY ?? appEnv.LINE_LIFF_ID;
-  if (liffId) {
-    return `https://liff.line.me/${liffId}?entry_code=${encodeURIComponent(entryCode)}`;
-  }
-  return `${appEnv.APP_BASE_URL}/liff/store?entry_code=${encodeURIComponent(entryCode)}`;
+  return buildStoreEntryLiffUrl(entryCode);
 }
 
 type EntryCodeValidation =

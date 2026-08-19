@@ -1,11 +1,10 @@
 import { logger } from "../lib/logger";
-import { env } from "../config/env";
 import { userPointService } from "./userPointService";
 import { pointExchangeRepository } from "../repositories/pointExchangeRepository";
 import { pointExchangeAuditLogRepository } from "../repositories/pointExchangeAuditLogRepository";
 import { notificationTemplateRepository } from "../repositories/notificationTemplateRepository";
 import { lineMessagingService } from "./lineMessagingService";
-import { getMypageLiffId } from "./liffService";
+import { buildMypageLiffUrl } from "./liffService";
 import type { PointExchangeRequest } from "../types/domain";
 
 /** 1交換単位 */
@@ -225,10 +224,7 @@ export const pointExchangeService = {
       return;
     }
 
-    const liffId   = getMypageLiffId();
-    const mypageUrl = liffId
-      ? `https://liff.line.me/${liffId}`
-      : `${env.APP_BASE_URL}/liff/mypage`;
+    const mypageUrl = buildMypageLiffUrl();
 
     const body = notificationTemplateRepository.renderBody(template, {
       points:      String(request.requested_points),

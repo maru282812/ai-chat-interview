@@ -169,6 +169,80 @@ export function buildProjectStartUrl(assignmentId: string): {
 }
 
 /**
+ * ユーザーへ渡す LIFF リンクの唯一の生成口（恒久ルール）。
+ *
+ * LINE トーク・QR・Flex などに埋めるリンクは、必ずここで生成した
+ * liff.line.me 恒久URLを使うこと。サイト直URL（APP_BASE_URL/liff/...）を
+ * LINE メッセージに埋めると、LIFF ブラウザではなく in-app ブラウザで開かれて
+ * Web 版 LINE Login のリダイレクト往復が必須になり、iOS の in-app ブラウザでは
+ * ストレージ制約で OAuth が完了せず、liff-auth.ejs のログインループガード発動
+ * （「LINEログインを完了できませんでした」）の温床になる。
+ * liff.line.me 経由なら LIFF ブラウザがログイン済みで開き、リダイレクト自体が
+ * 発生しない。LIFF ID 未設定の環境でのみ絶対URLにフォールバックする。
+ *
+ * パス付きディープリンク（liff.line.me/{id}/projects 等）は、LIFF endpoint が
+ * /liff のため liffRoutes.ts の玄関（liff.state 配管）でそのまま各ページに解決される。
+ */
+function buildLiffDeepLink(
+  path: string,
+  liffId: string | null,
+  params?: Record<string, string | null | undefined>
+): string {
+  if (!liffId) {
+    return buildAbsoluteUrl(`/liff${path}`, params);
+  }
+  const url = new URL(`https://liff.line.me/${liffId}${path}`);
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value) {
+      url.searchParams.set(key, value);
+    }
+  }
+  return url.toString();
+}
+
+/** 店舗流入（entry_code）の回答URL。/liff/store 導線に着地する。 */
+export function buildStoreEntryLiffUrl(entryCode: string): string {
+  const liffId = getSurveyLiffId();
+  if (liffId) {
+    // entry_code はルートで受けて liffRoutes の玄関が /liff/store へ 302 する
+    return buildLiffDeepLink("", liffId, { entry_code: entryCode });
+  }
+  return buildAbsoluteUrl("/liff/store", { entry_code: entryCode });
+}
+
+/** 案件詳細ページのURL。 */
+export function buildProjectDetailLiffUrl(projectId: string): string {
+  return buildLiffDeepLink(`/projects/${projectId}`, getSurveyLiffId());
+}
+
+/** 案件一覧（探す）のURL。 */
+export function buildProjectsListLiffUrl(): string {
+  return buildLiffDeepLink("/projects", getSurveyLiffId());
+}
+
+/** デイリーアンケート（survey_id）の起動URL。 */
+export function buildDailySurveyLiffUrl(surveyId: string): string {
+  const liffId = getSurveyLiffId();
+  if (liffId) {
+    return buildLiffDeepLink("", liffId, { survey_id: surveyId });
+  }
+  return buildAbsoluteUrl("/liff", { survey_id: surveyId });
+}
+
+/**
+ * マイページのURL。
+ * mypage LIFF は endpoint が /liff/mypage を直接指すため、パスは付けない
+ * （survey LIFF と違い liff.line.me/{id} 素で開けばマイページに着地する）。
+ */
+export function buildMypageLiffUrl(): string {
+  const liffId = getMypageLiffId();
+  if (liffId) {
+    return `https://liff.line.me/${liffId}`;
+  }
+  return buildAbsoluteUrl("/liff/mypage");
+}
+
+/**
  * survey の LIFF 設定状態を返す。
  * LINE Developers 側で以下が必要:
  *   - LINE_LIFF_CHANNEL_ID: LIFF チャネル ID
