@@ -15,9 +15,26 @@ import {
   resolveCampaignTargets,
 } from "../../../controllers/adminController";
 import { deliveryCampaignRepository } from "../../../repositories/deliveryCampaignRepository";
-import { type AdminChatTool, registerTool } from "../toolRegistry";
+import { ALL_SCREENS, type AdminChatTool, registerTool } from "../toolRegistry";
 
-const SCREENS = ["sessions-index", "research-form"];
+/** Phase 4: Tier A（読み取り）は全画面開放。ctx.entityId は参照しない */
+const SCREENS = [ALL_SCREENS];
+
+/**
+ * Tier C（send_campaign）は全画面開放しない（`"*"` は registerTool が throw する）。
+ * LINE 実配信＝取り消せない対外操作なので、配信を判断する画面からだけ提示する。
+ * 現行の2画面に配信オペレーション／配信カレンダー／セグメント配信系を足すに留める。
+ * ⚠ ここに書く key は必ず `src/lib/adminScreenCatalog.ts` に実在するもの
+ * （registerTool は key の実在を検証しないので、タイプミスは「どの画面にも出ない」で黙って死ぬ）。
+ */
+const SEND_SCREENS = [
+  "sessions-index",
+  "research-form",
+  "delivery-operations",
+  "delivery-calendar",
+  "segments-campaigns-index",
+  "segments-campaign-edit",
+];
 
 const DELIVERY_TOOLS: AdminChatTool[] = [];
 
@@ -56,7 +73,7 @@ DELIVERY_TOOLS.push({
 DELIVERY_TOOLS.push({
   name: "send_campaign",
   tier: "C",
-  screenKeys: SCREENS,
+  screenKeys: SEND_SCREENS,
   description:
     "配信キャンペーンを実行し、対象の会員へLINEで案件を配信する。draft でも scheduled でも実行できる（送信済み・キャンセル済みを除く）。事前にステータス変更は不要。実際に送信され取り消せないため、実行には管理者の承認が必要。まず list_campaigns で対象のキャンペーンIDを確認すること。",
   parameters: {

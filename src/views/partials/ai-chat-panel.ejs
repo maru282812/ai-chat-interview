@@ -57,6 +57,18 @@
   .aic-card-done.ok { color: #1f6f5c; }
   .aic-card-done.ng { color: #a33; }
 
+  /* 道しるべの候補カード。URL はサーバー計算値（navigations 封筒）のみを描画する。
+     新規タブ既定＝作業中のフォームを持っていかれないため。 */
+  .aic-nav { align-self: stretch; display: flex; flex-direction: column; gap: 6px; }
+  .aic-nav-head { font-size: 11.5px; font-weight: 700; color: #4a5c54; }
+  .aic-nav-card { display: block; text-decoration: none; border: 1px solid #cfe0d8;
+    border-radius: 10px; background: #f7fbf9; padding: 9px 11px; color: inherit; }
+  .aic-nav-card:hover { background: #eef6f2; border-color: #a9cbbd; }
+  .aic-nav-label { font-size: 13px; font-weight: 700; color: #1f5a4a; }
+  .aic-nav-group { font-size: 11px; color: #6d7b74; margin-left: 6px; font-weight: 400; }
+  .aic-nav-desc { margin-top: 3px; font-size: 12px; color: #4a5c54; line-height: 1.55; }
+  .aic-nav-url { margin-top: 4px; font-size: 11px; color: #7c8b84; word-break: break-all; }
+
   .aic-trace { align-self: flex-start; font-size: 11.5px; color: #6d7b74; }
   .aic-trace .blocked { color: #a35b1c; }
   .aic-trace .error { color: #a33; }
@@ -94,11 +106,11 @@
 
   <div class="aic-log" id="aic-log" aria-live="polite">
     <div class="aic-empty" id="aic-empty">
-      この画面のデータを読んで答えます（読み取り専用）。例:
+      この画面のデータを読んで答えます。管理画面の場所探しにも使えます。例:
       <ul>
         <li>この案件の回答傾向をまとめて</li>
         <li>Q3 の選択肢ごとの件数を出して</li>
-        <li>この回答者の特徴は？</li>
+        <li>離脱率の設定はどこ？</li>
       </ul>
     </div>
   </div>
@@ -246,6 +258,60 @@
       if (empty) empty.style.display = "none";
     }
 
+    // 道しるべの候補カード。
+    // ここで描く URL は必ずサーバーが計算した navigations 封筒の値であり、
+    // AI の本文テキストからリンクを拾ってはいけない（捏造URLでの誤誘導防止）。
+    // 遷移は新規タブ既定＝作業中のフォームを保護する。
+    function appendNavigations(navs) {
+      if (!navs || !navs.length) return;
+      var wrap = document.createElement("div");
+      wrap.className = "aic-nav";
+
+      var head = document.createElement("div");
+      head.className = "aic-nav-head";
+      head.textContent = "候補の画面（新しいタブで開きます）";
+      wrap.appendChild(head);
+
+      for (var i = 0; i < navs.length; i++) {
+        var nav = navs[i];
+        if (!nav || !nav.url) continue;
+        var card = document.createElement("a");
+        card.className = "aic-nav-card";
+        card.href = nav.url;
+        card.target = "_blank";
+        card.rel = "noopener";
+
+        var label = document.createElement("div");
+        label.className = "aic-nav-label";
+        label.textContent = nav.label || nav.url;
+        if (nav.group) {
+          var group = document.createElement("span");
+          group.className = "aic-nav-group";
+          group.textContent = nav.group;
+          label.appendChild(group);
+        }
+        card.appendChild(label);
+
+        if (nav.description) {
+          var desc = document.createElement("div");
+          desc.className = "aic-nav-desc";
+          desc.textContent = nav.description;
+          card.appendChild(desc);
+        }
+
+        var url = document.createElement("div");
+        url.className = "aic-nav-url";
+        url.textContent = nav.url;
+        card.appendChild(url);
+
+        wrap.appendChild(card);
+      }
+
+      log.appendChild(wrap);
+      log.scrollTop = log.scrollHeight;
+      if (empty) empty.style.display = "none";
+    }
+
     function appendTrace(trace) {
       if (!trace || !trace.length) return;
       var el = document.createElement("div");
@@ -315,6 +381,8 @@
           appendBubble("assistant", json.reply);
           messages.push({ role: "assistant", content: json.reply });
           persist();
+          // 候補カードも履歴に保存しない（URL はサーバー計算値＝毎回の応答に載る）
+          appendNavigations(json.navigations);
           // 承認カードは履歴に保存しない（トークンは1回限り・リロード後の再表示は無効）
           var pending = json.pendingActions || [];
           for (var p = 0; p < pending.length; p++) {

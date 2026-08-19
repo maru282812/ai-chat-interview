@@ -352,7 +352,7 @@
             <%
               // LINE に貼られる前提のURLなので LIFF 恒久URL（liff.line.me）を優先する
               const surveyUrl = locals.buildAssignmentUrl
-                ? buildAssignmentUrl(item.assignment.id)
+                ? locals.buildAssignmentUrl(item.assignment.id)
                 : '/liff/survey/' + item.assignment.id;
             %>
             <tr>

@@ -29,6 +29,7 @@ import {
 import {
   __resetRegistryForTest,
   registerTool,
+  toolMatchesScreen,
   toolsForScreen,
 } from "../services/adminChat/toolRegistry";
 
@@ -46,11 +47,13 @@ test("BET-1: レジストリ検証を通って登録できる（tier / screenKey
   __resetRegistryForTest();
 });
 
-test("BET-2: 回答分析と同じ画面群から呼べる", () => {
+test("BET-2: 回答分析と同じ画面群から呼べる（Phase 4 で全画面開放済み）", () => {
   const [tool] = behaviorEvidenceToolDefinitions();
   assert.ok(tool);
-  for (const screen of ["sessions-index", "session-show", "respondent-show", "research-form"]) {
-    assert.ok(tool.screenKeys.includes(screen), `${screen} で使えない`);
+  // Phase 4 で screenKeys は `["*"]`。`screenKeys.includes(screen)` で直接見ると
+  // ワイルドカードを取りこぼすので、判定は必ず toolMatchesScreen を通す。
+  for (const screen of ["sessions-index", "session-show", "respondent-show", "research-form", "dashboard"]) {
+    assert.ok(toolMatchesScreen(tool, screen), `${screen} で使えない`);
   }
 });
 
