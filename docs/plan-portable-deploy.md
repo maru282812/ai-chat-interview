@@ -1,6 +1,10 @@
 # 実装計画: デプロイ先ポータブル化（Vercel ⇄ Cloudflare Workers）
 
-作成: 2026-08-21 / 状態: **Phase 0 完了（実測済み）**・Phase 1 以降未着手
+作成: 2026-08-21 / 更新: 2026-08-22
+状態: **Phase 0-4 完了（実装・動作確認済み）**・Phase 5 は不要になった・Phase 6（実データ検証）未実施
+
+> 運用手順は [docs/deploy-portable.md](deploy-portable.md) を参照（こちらが運用時の入口）。
+> Phase 5（scrypt/zlib の代替実装）は Phase 0 の実測で**両方動いたため不要**になった。
 
 > Phase 0 の実測結果は [docs/spike-workers/RESULTS.md](spike-workers/RESULTS.md)。
 > 動作実証済みアダプタ = `docs/spike-workers/adapter.reference.js`
