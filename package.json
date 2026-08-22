@@ -5,7 +5,7 @@
   "description": "LINE chat style AI interview MVP with Supabase, OpenAI, and minimal admin UI.",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "node scripts/compileViews.mjs && tsc -p tsconfig.json",
+    "build": "node scripts/compileViews.mjs && node scripts/compileAssets.mjs && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "test": "tsx src/tests/adminAuth.test.ts && tsx src/tests/adminAuthMiddleware.test.ts && tsx src/tests/questionSchemaRedesign.test.ts && tsx src/tests/partnerApi.test.ts && tsx src/tests/partnerApiSchema.test.ts && tsx src/tests/partnerAdminApi.test.ts && tsx src/tests/partnerSurveyVersion.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -14,7 +14,11 @@
     "db:migrate": "node scripts/applyMigrations.mjs",
     "admin:hash": "node scripts/hashAdminPassword.mjs",
     "build:views": "node scripts/compileViews.mjs",
-    "verify:views": "node scripts/verifyCompiledViews.mjs"
+    "verify:views": "node scripts/verifyCompiledViews.mjs",
+    "build:assets": "node scripts/compileAssets.mjs",
+    "build:workers": "node scripts/compileViews.mjs && node scripts/compileAssets.mjs && node scripts/buildWorkers.mjs",
+    "dev:workers": "wrangler dev",
+    "deploy:workers": "npm run build:workers && wrangler deploy"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
@@ -28,13 +32,22 @@
     "zod": "^4.1.11"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260822.1",
     "@types/ejs": "^3.1.5",
     "@types/express": "^5.0.6",
     "@types/node": "^24.6.1",
     "@types/node-cron": "^3.0.11",
     "@types/qrcode": "^1.5.6",
+    "esbuild": "^0.28.2",
     "playwright": "^1.62.1",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "wrangler": "^4.125.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "esbuild@0.27.7": true,
+    "esbuild@0.28.1": true,
+    "workerd@1.20260820.1": true
   }
 }

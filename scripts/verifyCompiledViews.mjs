@@ -5,10 +5,10 @@
  * テンプレートは locals に何を要求するか個別に違うため、未定義変数による
  * ReferenceError は「データ不足」として区別して数える（描画経路自体の失敗ではない）。
  */
-import { COMPILED_VIEW_SOURCES } from "file:///c:/work/ai-chat-interview/dist/views/_compiled.js";
+import { COMPILED_VIEWS } from "file:///c:/work/ai-chat-interview/dist/views/_compiled.js";
 import { renderCompiled } from "file:///c:/work/ai-chat-interview/dist/lib/compiledViews.js";
 
-const keys = Object.keys(COMPILED_VIEW_SOURCES).sort();
+const keys = Object.keys(COMPILED_VIEWS).sort();
 const results = { ok: [], missingData: [], includeError: [], other: [] };
 
 for (const key of keys) {

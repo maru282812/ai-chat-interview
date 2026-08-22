@@ -1,4 +1,3 @@
-import path from "path";
 import express from "express";
 import { env } from "./config/env";
 import { adminAuthMiddleware } from "./middleware/adminAuth";
@@ -15,6 +14,7 @@ import { partnerAdminRoutes } from "./routes/partnerAdminRoutes";
 import { partnerRoutes } from "./routes/partnerRoutes";
 import { registerAdminChatTools } from "./services/adminChat/registerTools";
 import { renderCompiled } from "./lib/compiledViews";
+import { serveCompiledAsset } from "./lib/compiledAssets";
 
 /**
  * express が view の絶対パスを組み立てるための基準ディレクトリ。
@@ -105,7 +105,11 @@ export function createApp() {
     next();
   });
 
-  app.use("/public", express.static(path.join(process.cwd(), "src", "public")));
+  // 静的ファイルは埋め込み済みのものを返す（src/public/_compiled.ts）。
+  // Workers には FS が無く express.static が使えないため。
+  // Node でも同じ経路を通す（環境で配信方式を変えると片方だけ壊れるため）。
+  // 再生成: npm run build:assets
+  app.use("/public", serveCompiledAsset);
   app.use("/webhooks/line", express.raw({ type: "application/json" }));
   app.use(express.json({ limit: "10mb" }));
   // 計測ビーコンだけは「壊れた JSON でも 204」を守る。express.json() はパース失敗を

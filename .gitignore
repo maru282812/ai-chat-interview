@@ -17,3 +17,8 @@ exports/
 
 # プリコンパイル済みビュー（scripts/compileViews.mjs が生成）
 src/views/_compiled.ts
+# 埋め込み済み静的ファイル（scripts/compileAssets.mjs が生成）
+src/public/_compiled.ts
+# Workers バンドル
+dist-workers/
+.wrangler/

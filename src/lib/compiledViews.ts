@@ -3,22 +3,14 @@
  *
  * 目的: Cloudflare Workers には FS が無く、EJS の既定動作（views ディレクトリから
  * ファイルを読む）が使えない。scripts/compileViews.mjs がビルド時に生成した
- * COMPILED_VIEW_SOURCES を使い、FS に触れずにレンダリングする。
+ * COMPILED_VIEWS を使い、FS に触れずにレンダリングする。
  *
  * Vercel / ローカルでも同じ経路を通す（環境ごとに描画方式が変わると、
  * 片方でしか出ない不具合が生まれるため）。
  */
-import { COMPILED_VIEW_SOURCES } from "../views/_compiled";
+import { COMPILED_VIEWS, type CompiledTemplate } from "../views/_compiled";
 
-type TemplateFn = (
-  locals: Record<string, unknown>,
-  escapeFn?: (markup: unknown) => string,
-  include?: (path: string, data?: Record<string, unknown>) => string,
-  rethrow?: unknown
-) => string;
-
-/** 評価済み関数のキャッシュ（毎リクエスト new Function すると遅い） */
-const cache = new Map<string, TemplateFn>();
+type TemplateFn = CompiledTemplate;
 
 /**
  * ビュー名を正規化する。
@@ -35,11 +27,11 @@ function resolveFrom(base: string, target: string): string {
   const t = normalizeKey(target);
   if (!t.startsWith(".")) {
     // "partials/header" のようなルート相対指定
-    if (COMPILED_VIEW_SOURCES[t] !== undefined) return t;
+    if (COMPILED_VIEWS[t] !== undefined) return t;
     // 呼び出し元のディレクトリ基準でも探す
     const baseDir = base.includes("/") ? base.slice(0, base.lastIndexOf("/")) : "";
     const joined = baseDir ? `${baseDir}/${t}` : t;
-    return COMPILED_VIEW_SOURCES[joined] !== undefined ? joined : t;
+    return COMPILED_VIEWS[joined] !== undefined ? joined : t;
   }
   // "./x" / "../x" の解決
   const baseDir = base.includes("/") ? base.slice(0, base.lastIndexOf("/")) : "";
@@ -53,19 +45,13 @@ function resolveFrom(base: string, target: string): string {
 }
 
 function getTemplate(key: string): TemplateFn {
-  const cached = cache.get(key);
-  if (cached) return cached;
-
-  const source = COMPILED_VIEW_SOURCES[key];
-  if (source === undefined) {
+  // Workers は eval / new Function を禁止している
+  // （EvalError: Code generation from strings disallowed）。
+  // そのため _compiled.ts には**本物の関数**が入っている。ここは引くだけ。
+  const fn = COMPILED_VIEWS[key];
+  if (fn === undefined) {
     throw new Error(`compiled view not found: ${key}`);
   }
-  // コンパイル済み関数のソースを評価して関数へ戻す。
-  // ソースは `with (locals || {})` を含むため ESM 直書きはできない（Phase 0 の実測）。
-  // new Function の中は非 strict なので with が使える。
-  // eslint-disable-next-line no-new-func
-  const fn = new Function(`return (${source})`)() as TemplateFn;
-  cache.set(key, fn);
   return fn;
 }
 
@@ -111,5 +97,5 @@ export function renderCompiled(name: string, data: Record<string, unknown> = {})
 
 /** 登録済みビュー数（自己診断用） */
 export function compiledViewCount(): number {
-  return Object.keys(COMPILED_VIEW_SOURCES).length;
+  return Object.keys(COMPILED_VIEWS).length;
 }
