@@ -2111,7 +2111,7 @@ function buildQuestionConfigFromRequest(
       }
       return opt;
     });
-    if (process.env.DEBUG_QUESTION_SAVE) {
+    if (appEnv.DEBUG_QUESTION_SAVE) {
       console.log("[question save debug] question_type:", questionType);
       console.log("[question save debug] raw options payload:", req.body.option_labels);
       console.log("[question save debug] normalized options:", JSON.stringify(questionConfig.options));
