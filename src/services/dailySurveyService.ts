@@ -26,6 +26,7 @@ import {
 } from "../repositories/dailySurveyRepository";
 import { notificationTemplateRepository } from "../repositories/notificationTemplateRepository";
 import { lineMessagingService } from "./lineMessagingService";
+import { buildDailySurveyLiffUrl } from "./liffService";
 import { userPointService } from "./userPointService";
 import { userRankService } from "./userRankService";
 import { userStreakService } from "./userStreakService";
@@ -174,7 +175,7 @@ export const dailySurveyService = {
     const result: DeliveryResult = { total: lineUserIds.length, sent: 0, failed: 0, skipped };
     const liffUrl = options.liffBaseUrl
       ? `${options.liffBaseUrl}?survey_id=${surveyId}`
-      : `https://liff.line.me/${process.env.LINE_LIFF_ID_SURVEY ?? ""}?survey_id=${surveyId}`;
+      : buildDailySurveyLiffUrl(surveyId);
 
     const pointLabel =
       survey.reward_type === "fixed"

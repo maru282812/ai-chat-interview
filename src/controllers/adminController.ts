@@ -4,6 +4,8 @@ import { redirectWithFlash, redirectWithError } from "../lib/adminFlash";
 import { formatDateTimeJst, fromDateTimeLocalJst, statusLabel } from "../lib/adminView";
 import { toCsvRfc4180 } from "../lib/statExport";
 import { logger } from "../lib/logger";
+// AIチャットの screenKey 検証で使う（画面カタログが許容 key の権威）
+import { getScreenByKey } from "../lib/adminScreenCatalog";
 import { env as appEnv } from "../config/env";
 import { STORAGE_BUCKET } from "../config/storage";
 import {
@@ -157,7 +159,7 @@ import { projectApplicationRepository } from "../repositories/projectApplication
 import { sessionRepository } from "../repositories/sessionRepository";
 import { lineMessagingService } from "../services/lineMessagingService";
 import { buildApplicationAcceptedFlex, buildApplicationRejectedFlex } from "../templates/flex";
-import { buildProjectStartUrl } from "../services/liffService";
+import { buildProjectStartUrl, buildProjectsListLiffUrl, buildStoreEntryLiffUrl } from "../services/liffService";
 
 function routeParam(req: Request, key: string): string {
   const value = req.params[key];
@@ -2109,7 +2111,7 @@ function buildQuestionConfigFromRequest(
       }
       return opt;
     });
-    if (process.env.DEBUG_QUESTION_SAVE) {
+    if (appEnv.DEBUG_QUESTION_SAVE) {
       console.log("[question save debug] question_type:", questionType);
       console.log("[question save debug] raw options payload:", req.body.option_labels);
       console.log("[question save debug] normalized options:", JSON.stringify(questionConfig.options));
@@ -3558,6 +3560,9 @@ export const adminController = {
     res.render("admin/projects/deliveryV2", {
       title: "Project Delivery",
       appBaseUrl: appEnv.APP_BASE_URL,
+      // 回答URLは LIFF 恒久URLで表示する（LINEに貼られる前提のURLなので、
+      // サイト直URLだと in-app ブラウザのログインループを踏む）。
+      buildAssignmentUrl: (assignmentId: string) => buildProjectStartUrl(assignmentId).url,
       ...detail
     });
   },
@@ -4339,6 +4344,13 @@ export const adminController = {
     const screenKey = bodyString(body.screenKey).trim();
     if (!screenKey) {
       res.status(400).json({ ok: false, error: "screenKey は必須です" });
+      return;
+    }
+    // 画面カタログが許容 key の権威（Phase 3 で全画面常駐になったため、
+    // 4画面ハードコードではなく台帳を引く）。台帳外の key は監査ログの
+    // screen_key を汚すだけで意味がないので、service へ渡さず弾く。
+    if (!getScreenByKey(screenKey)) {
+      res.status(400).json({ ok: false, error: `未登録の画面です: ${screenKey}` });
       return;
     }
 
@@ -9580,7 +9592,7 @@ export const adminController = {
         await lineMessagingService.push(result.application.line_user_id, [
           buildApplicationRejectedFlex({
             projectTitle: project.user_display_title || project.name,
-            projectsUrl: `${appEnv.APP_BASE_URL}/liff/projects`,
+            projectsUrl: buildProjectsListLiffUrl(),
           }),
         ]);
         suffix = "（LINE通知済み）";
@@ -9656,7 +9668,7 @@ export const adminController = {
             await lineMessagingService.push(result.application.line_user_id, [
               buildApplicationRejectedFlex({
                 projectTitle: project.user_display_title || project.name,
-                projectsUrl: `${appEnv.APP_BASE_URL}/liff/projects`,
+                projectsUrl: buildProjectsListLiffUrl(),
               }),
             ]);
           } catch (error) {
@@ -9798,6 +9810,59 @@ export const adminController = {
       title: "品質係数：最近の付与",
       rows,
       summary: qualityScoringService.summarizeAwards(rows),
+    });
+  },
+
+  /**
+   * ヘッダーのグローバル検索。画面カタログを引くだけで LLM も DB も使わないので即時応答。
+   * `/admin/api/*` 配下なのでページ扱いされない（画面カタログの突合対象外）。
+   */
+  async screenSearchApi(req: Request, res: Response): Promise<void> {
+    const { searchScreens } = await import("../services/adminChat/screenSearchService");
+    const q = queryString(req.query.q);
+    // URL はカタログ由来のサーバー計算値だけを返す（AI 経路でも同じ関数を使うため、
+    // ここでクライアントから受け取った値を混ぜない）。
+    const results = searchScreens(q).map((r) => ({
+      key: r.key,
+      label: r.label,
+      url: r.url,
+      group: r.group,
+      matchedOn: r.matchedOn,
+      matchedTerms: r.matchedTerms,
+      description: r.description,
+    }));
+    res.json({ query: q, results });
+  },
+
+  /**
+   * 設定の索引（逆引き）ページ。「この設定はどの画面でするのか」を
+   * グループ→画面→設定項目の順に並べる。カタログ以外のデータ源を持たない。
+   */
+  async screenIndex(_req: Request, res: Response): Promise<void> {
+    const { ADMIN_SCREENS, ADMIN_NAV_GROUP_ORDER } = await import("../lib/adminScreenCatalog");
+
+    // ADMIN_NAV_GROUP_ORDER の順に並べる。ORDER に無いグループは末尾へ回して取りこぼさない。
+    const byGroup = new Map<string, typeof ADMIN_SCREENS>();
+    for (const screen of ADMIN_SCREENS) {
+      const list = byGroup.get(screen.group) ?? [];
+      list.push(screen);
+      byGroup.set(screen.group, list);
+    }
+    const groups: Array<{ label: string; screens: typeof ADMIN_SCREENS }> = [];
+    for (const label of ADMIN_NAV_GROUP_ORDER) {
+      const screens = byGroup.get(label);
+      if (screens && screens.length > 0) groups.push({ label, screens });
+      byGroup.delete(label);
+    }
+    for (const [label, screens] of byGroup) {
+      if (screens.length > 0) groups.push({ label, screens });
+    }
+
+    res.render("admin/screen-index/index", {
+      title: "設定の索引",
+      groups,
+      settingCount: ADMIN_SCREENS.reduce((sum, s) => sum + s.settings.length, 0),
+      screenCount: ADMIN_SCREENS.length,
     });
   },
 
@@ -10092,11 +10157,7 @@ async function generateUniqueEntryCode(): Promise<string> {
  */
 function buildStoreEntryUrl(entryCode: string | null | undefined): string | null {
   if (!entryCode) return null;
-  const liffId = appEnv.LINE_LIFF_ID_SURVEY ?? appEnv.LINE_LIFF_ID;
-  if (liffId) {
-    return `https://liff.line.me/${liffId}?entry_code=${encodeURIComponent(entryCode)}`;
-  }
-  return `${appEnv.APP_BASE_URL}/liff/store?entry_code=${encodeURIComponent(entryCode)}`;
+  return buildStoreEntryLiffUrl(entryCode);
 }
 
 type EntryCodeValidation =

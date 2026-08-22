@@ -301,6 +301,12 @@ adminRoutes.get("/quality-scoring", asyncHandler(adminController.qualityScoringS
 adminRoutes.get("/quality-scoring/recent", asyncHandler(adminController.qualityScoringRecent));
 adminRoutes.post("/quality-scoring", asyncHandler(adminController.updateQualityScoringSettings));
 
+// 画面カタログ（src/lib/adminScreenCatalog.ts）を素材にした迷子対策。どちらも LLM 非依存。
+// - screen-search: ヘッダー検索ボックスの候補（JSON。`/api/` 配下なので画面扱いしない）
+// - screen-index:  「設定 → 画面」の逆引き索引ページ（カタログにエントリ有り）
+adminRoutes.get("/api/screen-search", asyncHandler(adminController.screenSearchApi));
+adminRoutes.get("/screen-index", asyncHandler(adminController.screenIndex));
+
 adminRoutes.get("/pool-questions", asyncHandler(adminController.poolQuestions));
 adminRoutes.get("/pool-questions/new", asyncHandler(adminController.newPoolQuestion));
 adminRoutes.get("/pool-questions/bulk", asyncHandler(adminController.newPoolQuestionsBulk));

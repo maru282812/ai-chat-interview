@@ -119,14 +119,14 @@ test("screenKeys が空のツールは登録できない", () => {
 });
 
 test("toolsForScreen は画面に紐づくツールだけ返し、isRegisteredScreen が一致する", () => {
-  registry.registerTool({ ...baseTool, name: "tool_a", tier: "A", screenKeys: ["screen-1"] });
-  registry.registerTool({ ...baseTool, name: "tool_b", tier: "A", screenKeys: ["screen-2"] });
+  registry.registerTool({ ...baseTool, name: "tool_a", tier: "A", screenKeys: ["test-screen-1"] });
+  registry.registerTool({ ...baseTool, name: "tool_b", tier: "A", screenKeys: ["test-screen-2"] });
 
   assert.deepEqual(
-    registry.toolsForScreen("screen-1").map((t) => t.name),
+    registry.toolsForScreen("test-screen-1").map((t) => t.name),
     ["tool_a"]
   );
-  assert.equal(registry.isRegisteredScreen("screen-1"), true);
+  assert.equal(registry.isRegisteredScreen("test-screen-1"), true);
   assert.equal(registry.isRegisteredScreen("screen-x"), false);
 });
 
@@ -164,7 +164,7 @@ test("他画面のツールを名指しされても実行されない", async ()
     ...baseTool,
     name: "other_screen_tool",
     tier: "A",
-    screenKeys: ["another-screen"],
+    screenKeys: ["test-another-screen"],
     execute: async () => {
       executed = true;
       return {};

@@ -11,9 +11,29 @@
  */
 
 import { poolQuestionRepository } from "../../../repositories/poolQuestionRepository";
-import { type AdminChatTool, registerTool } from "../toolRegistry";
+import { ALL_SCREENS, type AdminChatTool, registerTool } from "../toolRegistry";
 
-const SCREENS = ["sessions-index", "research-form"];
+/**
+ * Phase 4: Tier A / Tier B（下書き系）は全画面開放。どちらも ctx.entityId を参照せず、
+ * 対象は引数だけで決まるので entityId が null の画面から呼ばれても誤対象にならない。
+ */
+const SCREENS = [ALL_SCREENS];
+
+/**
+ * Tier C（publish_pool_question）は全画面開放しない（`"*"` は registerTool が throw する）。
+ * 出題開始＝取り消せない対外操作なので、実際にその判断をする画面からだけ提示する。
+ * 現行の2画面に、ついでスワイプ設問を扱う画面と配信オペレーション系を足すに留める。
+ * ⚠ ここに書く key は必ず `src/lib/adminScreenCatalog.ts` に実在するもの
+ * （registerTool は key の実在を検証しないので、タイプミスは「どの画面にも出ない」で黙って死ぬ）。
+ */
+const PUBLISH_SCREENS = [
+  "sessions-index",
+  "research-form",
+  "pool-questions-index",
+  "pool-question-edit",
+  "pool-questions-bulk",
+  "delivery-operations",
+];
 
 const POOL_TOOLS: AdminChatTool[] = [];
 
@@ -113,7 +133,7 @@ POOL_TOOLS.push({
 POOL_TOOLS.push({
   name: "publish_pool_question",
   tier: "C",
-  screenKeys: SCREENS,
+  screenKeys: PUBLISH_SCREENS,
   description:
     "ついでスワイプ設問の出題を開始する（下書き→公開）。公開すると実際に回答者へ配信され取り消せないため、実行には管理者の承認が必要。",
   parameters: {

@@ -1,0 +1,34 @@
+name = "ai-chat-interview"
+main = "dist-workers/index.js"
+compatibility_date = "2026-08-01"
+
+# Express / body-parser / node:crypto / node:zlib が Node 組み込みを使うため必須。
+# Phase 0 の実測で scrypt・deflateRawSync ともに動作を確認済み
+# （docs/spike-workers/RESULTS.md）。
+compatibility_flags = ["nodejs_compat"]
+
+# 東京。Supabase(NRT) との往復を短くする。
+# Vercel で iad1 のままレイテンシが5倍だった経緯があるため、ここは明示する。
+[placement]
+mode = "smart"
+
+# ---------------------------------------------------------------------------
+# Cron Trigger
+# ---------------------------------------------------------------------------
+# ⚠ Vercel 側（vercel.json の crons）と**同時に有効にしてはいけない**。
+#   両方動くと配信が二重に走る。切り替え時にどちらか一方だけを有効にすること。
+#
+# 既定ではコメントアウトしてある。Workers を本番にする段階で有効化する。
+# cronDispatchService の CATCH_UP_WINDOW_MIN(5分) が毎分実行を前提にしている。
+#
+# [triggers]
+# crons = ["* * * * *"]
+
+# ---------------------------------------------------------------------------
+# 環境変数
+# ---------------------------------------------------------------------------
+# 秘密情報は vars に書かない。`wrangler secret put <NAME>` で登録する。
+# 必要なキーは src/config/env.ts の envSchema が唯一の真実。
+# 未設定のまま動かすと起動時に zod が落ちる（/health が 500 で理由を返す）。
+[vars]
+NODE_ENV = "production"

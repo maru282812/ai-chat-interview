@@ -12,9 +12,14 @@
  */
 
 import { behaviorEvidenceReportService } from "../../behaviorEvidenceReportService";
-import { type AdminChatTool, registerTool } from "../toolRegistry";
+import { ALL_SCREENS, type AdminChatTool, registerTool } from "../toolRegistry";
 
-const SCREENS = ["sessions-index", "session-show", "respondent-show", "research-form"];
+/**
+ * Phase 4: 全画面開放（Tier A = 読み取り専用）。
+ * 対象レコードを持たない画面では ctx.entityId が null になるため、案件IDは requireProjectId() で
+ * 「引数優先 → 画面の対象 → どちらも無ければ回復手順つきエラー」に倒す。
+ */
+const SCREENS = [ALL_SCREENS];
 
 const BEHAVIOR_EVIDENCE_TOOLS: AdminChatTool[] = [];
 

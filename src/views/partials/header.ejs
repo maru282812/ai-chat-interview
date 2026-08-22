@@ -8,72 +8,11 @@
   </head>
   <body>
     <%
-      // ナビは22本のフラットな羅列だったため現在地が分からず、さらに user-profiles /
-      // ai-logs / delivery-templates / scheduler-settings / reward-campaigns /
-      // daily-question-priorities はルートが存在するのにリンクが無く到達できなかった。
-      // 業務のまとまりでグループ化し、全ページを載せる。
-      const navGroups = [
-        {
-          label: "調査",
-          items: [
-            { href: "/admin/projects", label: "プロジェクト" },
-            { href: "/admin/daily-surveys", label: "デイリーアンケート" },
-            { href: "/admin/daily-question-priorities", label: "デイリー優先設問" },
-            { href: "/admin/pool-questions", label: "ついでスワイプ" },
-            { href: "/admin/store-surveys", label: "店舗専用アンケート" }
-          ]
-        },
-        {
-          label: "回答者",
-          items: [
-            { href: "/admin/respondents", label: "回答者" },
-            { href: "/admin/sessions", label: "セッション" },
-            { href: "/admin/user-profiles", label: "プロフィール検索" },
-            { href: "/admin/applications", label: "応募管理" },
-            { href: "/admin/attributes", label: "属性管理" }
-          ]
-        },
-        {
-          label: "報酬",
-          items: [
-            { href: "/admin/points", label: "ポイント" },
-            { href: "/admin/ranks", label: "ランク" },
-            { href: "/admin/badges", label: "バッジ" },
-            { href: "/admin/reward-campaigns", label: "報酬キャンペーン" },
-            { href: "/admin/exchange-requests", label: "交換申請", badgeId: "nav-exchange-badge" }
-          ]
-        },
-        {
-          label: "配信",
-          items: [
-            { href: "/admin/delivery-operations", label: "配信オペレーション", primary: true },
-            { href: "/admin/delivery-calendar", label: "配信カレンダー" },
-            { href: "/admin/segments", label: "セグメント配信" },
-            { href: "/admin/delivery-templates", label: "配信テンプレート" },
-            { href: "/admin/notification-templates", label: "通知テンプレート" },
-            { href: "/admin/scheduler-settings", label: "スケジューラ" }
-          ]
-        },
-        {
-          label: "投稿・分析",
-          items: [
-            { href: "/admin/posts", label: "投稿" },
-            { href: "/admin/post-analysis", label: "投稿分析" },
-            { href: "/admin/ai-analysis", label: "AI分析" },
-            { href: "/admin/ai-logs", label: "AI実行ログ" },
-            { href: "/admin/data-management", label: "モデレーション設定" }
-          ]
-        },
-        {
-          label: "設定",
-          items: [
-            { href: "/admin/documents", label: "書類管理" },
-            { href: "/admin/prompt-packages", label: "プロンプトパッケージ" },
-            { href: "/admin/experience-settings", label: "体験設定" },
-            { href: "/admin/quality-scoring", label: "品質係数" }
-          ]
-        }
-      ];
+      // ナビは画面カタログ（src/lib/adminScreenCatalog.ts）から生成する。ここに直書きしない。
+      // adminLocals ミドルウェアが res.locals.navGroups に注入済み。
+      // カタログを使わないテスト等から include された場合に落ちないよう空配列で受ける。
+      // （台帳を作った経緯のコメントは adminScreenCatalog.ts の先頭に移設した）
+      const navGroups = Array.isArray(locals.navGroups) ? locals.navGroups.slice() : [];
       // アンケでYOTTO（hibi）運営画面への外部リンク群。env PORTAL_OPS_URL が未設定・
       // 非 http(s) なら空配列が返り、グループごと出ない（fail-closed。リンク切れを見せない）。
       // 同一タブ遷移。hibi 側の運営認可（allowlist・404）はそのまま効き、何もバイパスしない。
@@ -89,8 +28,23 @@
     <header>
       <div class="header-bar">
         <a class="header-title" href="/admin">Hibi 管理画面</a>
-        <%# header-bar は space-between。右側は1要素にまとめて配置を崩さない。 %>
+        <%# header-bar は space-between。右側は1要素にまとめて配置を崩さない。
+            グローバル検索もこの header-account の中に入れる（別要素として並べると
+            space-between が3分割になりタイトルとアカウントの配置が崩れる）。 %>
         <div class="header-account">
+          <%# 画面カタログのグローバル検索。LLM を使わず /admin/api/screen-search を引くだけ。
+              候補クリックは同タブ遷移（ナビ操作なので新規タブにしない）。 %>
+          <div class="header-search">
+            <input
+              type="search"
+              id="screen-search-input"
+              class="header-search-input"
+              placeholder="画面・設定を検索"
+              aria-label="画面・設定を検索"
+              autocomplete="off"
+            />
+            <div id="screen-search-results" class="header-search-results" role="listbox" hidden></div>
+          </div>
           <span class="header-user" title="ログイン中の管理者">
             <%= locals.adminUser || "admin" %>
           </span>
@@ -131,6 +85,91 @@
             badge.style.display = "";
           })
           .catch(function () { /* バッジは補助表示なので失敗しても無視 */ });
+      })();
+
+      // グローバル検索。入力するたびに /admin/api/screen-search を引いて候補を出す。
+      // 画面カタログを引くだけ（LLM も DB も使わない）なので素朴に投げてよい。
+      // URL はサーバーが返した値だけを使い、クライアントで組み立てない。
+      (function () {
+        var input = document.getElementById("screen-search-input");
+        var box   = document.getElementById("screen-search-results");
+        if (!input || !box) return;
+
+        var timer = null;
+        var seq = 0; // 後から投げた検索が先に返った古い結果に上書きされないようにする
+
+        function close() {
+          box.hidden = true;
+          box.textContent = "";
+        }
+
+        function render(results) {
+          box.textContent = "";
+          if (!results || results.length === 0) {
+            var empty = document.createElement("div");
+            empty.className = "header-search-empty";
+            empty.textContent = "該当する画面はありません";
+            box.appendChild(empty);
+            box.hidden = false;
+            return;
+          }
+          for (var i = 0; i < results.length; i++) {
+            var r = results[i];
+            // 動的URL（:param 入り）は直接踏めないので候補から落とす。
+            if (String(r.url).indexOf("/:") !== -1) continue;
+            var a = document.createElement("a");
+            a.className = "header-search-item";
+            a.href = r.url; // サーバー計算値
+            a.setAttribute("role", "option");
+
+            var label = document.createElement("span");
+            label.className = "header-search-item-label";
+            label.textContent = r.label;
+            a.appendChild(label);
+
+            var meta = document.createElement("span");
+            meta.className = "header-search-item-meta";
+            var terms = (r.matchedTerms || []).slice(0, 2).join(" / ");
+            meta.textContent = terms ? r.group + " · " + terms : r.group;
+            a.appendChild(meta);
+
+            box.appendChild(a);
+          }
+          box.hidden = box.childElementCount === 0;
+        }
+
+        function search() {
+          var q = input.value.trim();
+          if (q.length === 0) { close(); return; }
+          var mine = ++seq;
+          fetch("/admin/api/screen-search?q=" + encodeURIComponent(q))
+            .then(function (res) { return res.ok ? res.json() : null; })
+            .then(function (json) {
+              if (mine !== seq) return; // 古いレスポンスは捨てる
+              render(json && json.results);
+            })
+            .catch(function () { /* 検索は補助機能なので失敗しても黙って閉じる */ close(); });
+        }
+
+        input.addEventListener("input", function () {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(search, 150);
+        });
+        input.addEventListener("focus", function () {
+          if (input.value.trim().length > 0) search();
+        });
+        input.addEventListener("keydown", function (e) {
+          if (e.key === "Escape") { close(); input.blur(); return; }
+          // Enter は先頭候補へ同タブ遷移
+          if (e.key === "Enter") {
+            var first = box.querySelector(".header-search-item");
+            if (first) { e.preventDefault(); window.location.href = first.getAttribute("href"); }
+          }
+        });
+        // 外側クリックで閉じる。候補のクリック（同タブ遷移）より先に閉じないよう mousedown は使わない。
+        document.addEventListener("click", function (e) {
+          if (!box.hidden && !box.contains(e.target) && e.target !== input) close();
+        });
       })();
 
       // 横スクロール対策。テーブルを持つビューは59あるが .table-scroll で包んでいたのは

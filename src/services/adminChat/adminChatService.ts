@@ -18,13 +18,16 @@ import { adminAiActionRepository } from "../../repositories/adminAiActionReposit
 import { adminAiPendingActionRepository } from "../../repositories/adminAiPendingActionRepository";
 import { aiLogRepository } from "../../repositories/aiLogRepository";
 import { type AdminChatMessage, runAdminToolChat } from "../aiService";
+import { getScreenByKey } from "../../lib/adminScreenCatalog";
 import {
   type AdminChatTool,
   type ToolTier,
   getTool,
   toOpenAITools,
+  toolMatchesScreen,
   toolsForScreen,
 } from "./toolRegistry";
+import { type AdminChatNavigation, navigationsOf } from "./tools/navigationTools";
 
 /**
  * AI がその場で実行してよい Tier。
@@ -70,6 +73,12 @@ export interface AdminChatResponse {
   truncated: boolean;
   /** 人間の承認待ちになった Tier C 操作 */
   pendingActions: AdminChatPendingAction[];
+  /**
+   * 道しるべの候補カード。**URL はサーバー計算値のみ**（画面カタログの path、
+   * または repository で引いた実 ID を埋めた動的URL）。
+   * pendingActions と同じ思想で、AI の生成テキストから URL を拾わない経路にしてある。
+   */
+  navigations: AdminChatNavigation[];
 }
 
 function trim(value: string, max = MAX_SUMMARY_LENGTH): string {
@@ -81,12 +90,27 @@ function trim(value: string, max = MAX_SUMMARY_LENGTH): string {
  * 共通ルールは版管理対象の BASE テンプレ（adminChatCommon）から取り、
  * 画面ごとに変わる部分（対象レコードID・使えるツール一覧）だけを実行時に足す。
  */
-function buildSystemPrompt(tools: AdminChatTool[], entityId: string | null): string {
+function buildSystemPrompt(
+  tools: AdminChatTool[],
+  entityId: string | null,
+  screenKey: string
+): string {
   const common = BASE_PROMPT_TEMPLATES.adminChatCommon?.template ?? "";
   const toolLines = tools.map((tool) => `- ${tool.name}: ${tool.description}`).join("\n");
+  // 現在いる画面を明示する。全画面常駐になったため「どの画面の話をしているか」を
+  // AI が取り違えると案内も分析も的外れになる。カタログに無い key なら黙って省く。
+  const screen = getScreenByKey(screenKey);
+  const screenLines = screen
+    ? [
+        `あなたは今「${screen.label}」画面（${screen.path}）にいます。`,
+        `この画面でできること: ${screen.description}`,
+        "",
+      ]
+    : [];
   return [
     common,
     "",
+    ...screenLines,
     entityId
       ? `現在の画面が対象にしているレコードID: ${entityId}`
       : "現在の画面は特定のレコードに紐づいていません。",
@@ -129,12 +153,13 @@ export const adminChatService = {
     );
     const openAiTools = toOpenAITools(tools);
     const messages: AdminChatMessage[] = [
-      { role: "system", content: buildSystemPrompt(tools, request.entityId) },
+      { role: "system", content: buildSystemPrompt(tools, request.entityId, request.screenKey) },
       ...request.messages.map((m) => ({ role: m.role, content: m.content })),
     ];
 
     const toolTrace: AdminChatToolTrace[] = [];
     const pendingActions: AdminChatPendingAction[] = [];
+    const navigations: AdminChatNavigation[] = [];
     const auditRecords: Parameters<typeof adminAiActionRepository.create>[0][] = [];
     const deadline = Date.now() + env.ADMIN_CHAT_TIMEOUT_MS;
     let truncated = false;
@@ -170,7 +195,7 @@ export const adminChatService = {
         let summary: string;
         let toolContent: string;
 
-        if (!tool || !tool.screenKeys.includes(request.screenKey)) {
+        if (!tool || !toolMatchesScreen(tool, request.screenKey)) {
           // レジストリ外・別画面のツールを名指しされた場合（モデルの幻覚）
           status = "blocked";
           summary = "この画面では使えないツールです";
@@ -230,6 +255,13 @@ export const adminChatService = {
             status = "ok";
             toolContent = serializeToolResult(output);
             summary = trim(toolContent, 200);
+            // 候補カードの URL はここでツールの戻り値（＝サーバー計算値）から直接封筒へ載せる。
+            // AI の生成テキストを経由させないことで、捏造URLでの誤誘導を構造的に防ぐ。
+            for (const nav of navigationsOf(output)) {
+              if (!navigations.some((existing) => existing.url === nav.url)) {
+                navigations.push(nav);
+              }
+            }
           } catch (error) {
             status = "error";
             summary = error instanceof Error ? error.message : String(error);
@@ -302,7 +334,7 @@ export const adminChatService = {
       });
     }
 
-    return { reply, toolTrace, truncated, pendingActions };
+    return { reply, toolTrace, truncated, pendingActions, navigations };
   },
 
   /**

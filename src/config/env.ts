@@ -1,7 +1,14 @@
 import { config as loadDotEnv } from "dotenv";
 import { z } from "zod";
 
-loadDotEnv();
+// Node（Vercel / ローカル）では .env を読む。Cloudflare Workers には dotenv も
+// process.env も無いため、そこでは読み込みをスキップする。
+// Workers 側の env は fetch handler の引数で渡ってくるので、
+// エントリポイントが initEnv() を呼んで注入する（下記）。
+const IS_NODE = typeof process !== "undefined" && Boolean(process?.versions?.node);
+if (IS_NODE) {
+  loadDotEnv();
+}
 
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
@@ -111,7 +118,52 @@ const envSchema = z.object({
   // ⚠ 免除するのはクールダウンだけで、認証・所有者検証は一切変えない。
   //   免除された分だけ周が増える＝離脱率の分母に入るので、テスト用アカウントは
   //   集計から除外する運用（respondents.is_test）と併用すること。
-  CYCLE_TEST_LINE_USER_IDS: z.string().optional()
+  CYCLE_TEST_LINE_USER_IDS: z.string().optional(),
+  // ポータル運営画面（hibi-portal /ops）のベースURL。管理画面にリンクを出すためだけの
+  // 任意設定で、未設定でも起動を妨げない（lib/portalOpsLinks.ts）。
+  // Workers には process.env が無いため、直接読まずスキーマ経由にしている。
+  PORTAL_OPS_URL: z.string().optional(),
+  // 設問保存のデバッグログ（adminController）。任意設定。
+  DEBUG_QUESTION_SAVE: z.string().optional()
 });
 
-export const env = envSchema.parse(process.env);
+export type Env = z.infer<typeof envSchema>;
+
+/**
+ * env の実体。
+ *
+ * Node（Vercel / ローカル / テスト）では読み込み時に process.env から解決する。
+ * Cloudflare Workers には process.env が無く、env は fetch handler の引数で
+ * 渡ってくるため、エントリポイントが initEnv() を呼んで注入する。
+ *
+ * 実装メモ: ここは Proxy ではなく「実体オブジェクト＋Object.assign」にしている。
+ * Proxy だと、テストが差し替えた非設定可能プロパティに対して
+ * 「target の実値を返さねばならない」という不変条件に反して TypeError になる
+ * （partnerAdminApi.test.ts で実際に踏んだ）。
+ * 参照側は `env.FOO` の形で 200 箇所以上あるので、同一参照を保ったまま
+ * 中身だけ書き換えられる形にしておく。
+ */
+export const env: Env = {} as Env;
+
+/** 解決済みかどうか。Workers で未注入のまま使われたことを検出する。 */
+let initialized = false;
+
+/**
+ * env を注入する。Workers のエントリポイントから fetch handler の env を渡す。
+ * Node では読み込み時に自動で呼ばれるため、明示的に呼ぶ必要はない。
+ */
+export function initEnv(source: Record<string, unknown>): Env {
+  const parsed = envSchema.parse(source);
+  Object.assign(env, parsed);
+  initialized = true;
+  return env;
+}
+
+/** env が解決済みか（Workers のエントリポイントでの自己診断用）。 */
+export function isEnvInitialized(): boolean {
+  return initialized;
+}
+
+if (IS_NODE) {
+  initEnv(process.env as Record<string, unknown>);
+}
