@@ -30,5 +30,47 @@ mode = "smart"
 # 秘密情報は vars に書かない。`wrangler secret put <NAME>` で登録する。
 # 必要なキーは src/config/env.ts の envSchema が唯一の真実。
 # 未設定のまま動かすと起動時に zod が落ちる（/health が 500 で理由を返す）。
+# 非機密の設定値はここで管理する（コードと一緒にレビューできる）。
+# 機密は `node scripts/pushWorkersSecrets.mjs` で Secret として投入する。
+#
+# ⚠ 同じ名前を [vars] と Secret の両方に置くことはできない
+#    （`Binding name '...' already in use` code:10053 でデプロイが失敗する）。
 [vars]
 NODE_ENV = "production"
+
+# 切り替え先のドメイン。DNS を Workers に向けるまでは .workers.dev を指す。
+# ⚠ LINE に貼るリンクは liffService のヘルパー経由で生成すること（直組み禁止）。
+APP_BASE_URL = "https://ai-chat-interview.yotto-llc112.workers.dev"
+
+SUPABASE_URL = "https://qdswfamwqwxppwbgcfbz.supabase.co"
+DEFAULT_PROJECT_ID = "00000000-0000-4000-8000-000000000001"
+
+# LIFF（LINE Developers で発行した ID。エンドポイントの向き先は LINE 側の設定で決まる）
+LINE_LIFF_CHANNEL_ID = "2010174167"
+LINE_LIFF_ID_SURVEY = "2010174167-GoscTkxr"
+LINE_LIFF_ID_MYPAGE = "2010174167-T8sSk1w5"
+LINE_LIFF_ID_CONTACT = "2010174167-0890GhIo"
+LINE_LIFF_ID_RANT = "2010174167-HfLccKsG"
+LINE_LIFF_ID_DIARY = "2010174167-TC9QEFzZ"
+LINE_LIFF_ID_PERSONALITY = "2010174167-M7Lmwm9T"
+
+# LIFF 認証。現状は testmaster の検証シームの都合で false のまま
+# （本番として厳密にするなら LIFF_AUTH_REQUIRED=true / ALLOW_LIFF_AUTH_SKIP=false）
+LIFF_AUTH_REQUIRED = "false"
+ALLOW_LIFF_AUTH_SKIP = "true"
+
+# AI
+OPENAI_MODEL = "gpt-5-mini"
+OPENAI_TOOL_MODEL = "gpt-4o-mini"
+SESSION_SUMMARY_INTERVAL = "5"
+MAX_AI_PROBES_PER_ANSWER = "1"
+MAX_AI_PROBES_PER_SESSION = "2"
+
+# 連携・運用
+# ⚠ PARTNER_IMAGE_URL_ALLOWED_HOSTS は回答画面に差し込む <img> の許可ホスト。
+#    fail-closed（未設定なら画像を一切受け付けない）。値は .env から引き継いだが、
+#    ポータル側の本番ホストが変わっているなら見直すこと。
+PARTNER_IMAGE_URL_ALLOWED_HOSTS = "hibi-site-seven.vercel.app,portal.local.test"
+PORTAL_OPS_URL = "https://hibi.yottollc.com"
+CYCLE_TEST_LINE_USER_IDS = "U0f5d4dac42b9a403b1fb4666481b7b35"
+MENU_ACTION_DEBUG_FORCE_PROJECT_LIST = "false"
