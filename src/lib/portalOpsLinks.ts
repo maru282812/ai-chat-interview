@@ -1,3 +1,5 @@
+import { env } from "../config/env";
+
 /**
  * 会員ポータル（hibi-site / アンケでYOTTO）運営画面への**リンク**の唯一の定義場所。
  *
@@ -12,13 +14,22 @@
  * - **認可は一切バイパスしない**。hibi 側の運営 allowlist・404 は従来どおり効く。
  *   ここが渡すのは URL 文字列だけ
  *
- * env は `config/env.ts` の zod スキーマではなく `process.env` を直接読む。
- * リンクの有無だけを決める任意設定で、未設定でも起動を妨げてはいけないため。
+ * env は `config/env.ts` の zod スキーマ経由で読む（optional なので未設定でも起動する）。
+ * Cloudflare Workers には process.env が無いため、直接読みは使えない。
+ *
+ * ただしこの値だけは **参照のたびに process.env を優先して見る**。
+ * リンクの有無を切り替える任意設定で、テスト（adminViewFoundation.test.ts）が
+ * 実行中に process.env を差し替えて挙動を確かめるため。
+ * Workers には process.env が無いので、その場合は注入済み env にフォールバックする。
  */
 
 /** ポータル運営画面のベースURL（末尾スラッシュなし）。未設定・不正なら null。 */
 export function getPortalOpsUrl(): string | null {
-  const raw = process.env.PORTAL_OPS_URL?.trim();
+  // Node では process.env を唯一の真実とする（**未設定であることも含めて**）。
+  // ?? でフォールバックすると、テストが削除した値を .env 由来の値が
+  // 復活させてしまい「未設定なら出さない」検証が通らなくなる。
+  const hasProcessEnv = typeof process !== "undefined" && Boolean(process?.env);
+  const raw = (hasProcessEnv ? process.env.PORTAL_OPS_URL : env.PORTAL_OPS_URL)?.trim();
   if (!raw) return null;
   if (!/^https?:\/\//i.test(raw)) return null;
   return raw.replace(/\/+$/, "");

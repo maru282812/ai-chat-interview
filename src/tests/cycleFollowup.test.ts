@@ -151,8 +151,10 @@ test("期限を過ぎたサイクルに C を送り、entry_code 付きURLを渡
   assert.equal(result.sent, 1);
   assert.equal(pushes.length, 1);
   assert.equal(pushes[0]?.userId, LINE_USER);
-  // /liff/store 導線に乗せる（respondent / assignment / サイクルはそこで解決される）
-  assert.match(pushes[0]?.text ?? "", /\/liff\/store\?entry_code=yotto-salon-c/);
+  // LIFF 恒久URL（liff.line.me）で /liff/store 導線に乗せる
+  // （サイト直URLだと in-app ブラウザのログインループを踏む。respondent /
+  //   assignment / サイクルは着地先の /liff/store で解決される）
+  assert.match(pushes[0]?.text ?? "", /https:\/\/liff\.line\.me\/[^?\s]+\?entry_code=yotto-salon-c/);
 });
 
 test("送信前に followup_sent_at を立てる（毎分cronでも二重送信しない）", async () => {
@@ -241,7 +243,7 @@ test("予定時刻を過ぎた B を送る", async () => {
 
   const result = await cycleFollowupService.runFollowupBDispatch(NOW);
   assert.equal(result.sent, 1);
-  assert.match(pushes[0]?.text ?? "", /\/liff\/store\?entry_code=yotto-salon-b/);
+  assert.match(pushes[0]?.text ?? "", /https:\/\/liff\.line\.me\/[^?\s]+\?entry_code=yotto-salon-b/);
 });
 
 test("B も送信前にクレームする（二重送信しない）", async () => {

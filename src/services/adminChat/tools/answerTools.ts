@@ -17,9 +17,14 @@ import { projectRepository } from "../../../repositories/projectRepository";
 import { questionRepository } from "../../../repositories/questionRepository";
 import { sessionRepository } from "../../../repositories/sessionRepository";
 import { researchOpsService } from "../../researchOpsService";
-import { type AdminChatTool, registerTool } from "../toolRegistry";
+import { ALL_SCREENS, type AdminChatTool, registerTool } from "../toolRegistry";
 
-const SCREENS = ["sessions-index", "session-show", "respondent-show", "research-form"];
+/**
+ * Phase 4: 全画面開放。Tier A（読み取り専用）は副作用が無いので、どの画面から聞かれても安全。
+ * ⚠ ダッシュボード等の「対象レコードを持たない画面」では ctx.entityId が null になる。
+ * ID 前提のツールは requireId() で「引数優先 → 画面の対象 → どちらも無ければ回復手順つきエラー」に倒す。
+ */
+const SCREENS = [ALL_SCREENS];
 
 /**
  * ツール定義。登録はモジュール読み込みの副作用にせず registerAnswerTools() で明示的に行う

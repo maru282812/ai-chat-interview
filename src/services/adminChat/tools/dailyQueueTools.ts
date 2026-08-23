@@ -9,9 +9,14 @@
  */
 
 import { dailySurveyService } from "../../dailySurveyService";
-import { type AdminChatTool, registerTool } from "../toolRegistry";
+import { ALL_SCREENS, type AdminChatTool, registerTool } from "../toolRegistry";
 
-const SCREENS = ["sessions-index", "research-form"];
+/**
+ * Phase 4: 全画面開放（Tier A / Tier B）。
+ * この2本は ctx.entityId をまったく参照しない（対象は引数だけで決まる）ので、
+ * entityId が null の画面から呼ばれても誤った対象に書き込むことはない。
+ */
+const SCREENS = [ALL_SCREENS];
 
 const DAILY_TOOLS: AdminChatTool[] = [];
 

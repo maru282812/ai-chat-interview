@@ -26,6 +26,7 @@ import {
 } from "../lib/adminView";
 import { redirectWithFlash, readFlashFromQuery } from "../lib/adminFlash";
 import { getPortalOpsUrl, portalOpsHref, portalOpsNavLinks } from "../lib/portalOpsLinks";
+import { buildNavGroups, resolveScreenByPath } from "../lib/adminScreenCatalog";
 
 const VIEWS_ROOT = path.join(process.cwd(), "src", "views");
 
@@ -129,12 +130,19 @@ test("不正な flash_type は info に丸める（任意の文字列を type �
 // ビューのレンダリング
 // ---------------------------------------------------------------------------
 
-/** res.locals 相当（adminLocals ミドルウェアが配る値） */
+/**
+ * res.locals 相当（adminLocals ミドルウェアが配る値）。
+ * navGroups / currentScreen は画面カタログ由来なので、ミドルウェアと同じ作り方で用意する。
+ * ここをハードコードすると header の描画テストが実際のナビと乖離する。
+ */
 function baseLocals(overrides: Record<string, unknown> = {}) {
+  const currentPath = typeof overrides.currentPath === "string" ? overrides.currentPath : "/admin";
   return {
     ...adminViewHelpers,
     adminFlash: null,
-    currentPath: "/admin",
+    currentPath,
+    navGroups: buildNavGroups(),
+    currentScreen: resolveScreenByPath(currentPath),
     adminUser: "admin",
     ...overrides
   };
@@ -159,10 +167,23 @@ test("header: ナビが現在地を点灯させ、全ページへのリンクを
     "/admin/delivery-templates",
     "/admin/scheduler-settings",
     "/admin/reward-campaigns",
-    "/admin/daily-question-priorities"
+    "/admin/daily-question-priorities",
+    // 画面カタログ化で新たにナビへ載せた、従来到達不能だった画面
+    "/admin/stores",
+    "/admin/cycles",
+    "/admin/segments/campaigns",
+    "/admin/prompt-packages/migration",
+    "/admin/quality-scoring/recent",
+    "/admin/ai-analysis/report"
   ]) {
     assert.ok(html.includes(`href="${href}"`), `${href} へのリンクが無い`);
   }
+  // グループ見出し（カタログの group）と強調・バッジが現行どおり出ていること
+  for (const group of ["調査", "店舗", "回答者", "報酬", "配信", "投稿・分析", "設定"]) {
+    assert.ok(html.includes(`>${group}</span>`), `グループ「${group}」の見出しが無い`);
+  }
+  assert.ok(html.includes(" is-primary"), "配信オペレーションの強調が消えている");
+  assert.ok(html.includes('id="nav-exchange-badge"'), "交換申請バッジが消えている");
 });
 
 // ---------------------------------------------------------------------------

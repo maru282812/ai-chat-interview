@@ -12,9 +12,18 @@
 import { answerRepository } from "../../../repositories/answerRepository";
 import { projectRepository } from "../../../repositories/projectRepository";
 import { questionRepository } from "../../../repositories/questionRepository";
-import { type AdminChatTool, registerTool } from "../toolRegistry";
+import { ALL_SCREENS, type AdminChatTool, registerTool } from "../toolRegistry";
 
-const SCREENS = ["research-form"];
+/**
+ * Phase 4: 全画面開放。以前は research-form（＝画面が対象案件を持っている）専用だったため
+ * project_id 省略時に ctx.entityId へ落とすのが安全な既定だった。
+ * 全画面になると **entityId が null の画面（ダッシュボード等）から呼ばれる**ので、
+ * - requireProjectId() は「引数優先 → 画面の対象 → どちらも無ければ throw」を必ず通す
+ *   （null のまま書き込みへ進ませない）
+ * - description には「対象案件が分からない画面では project_id を必ず渡す」ことを明記する
+ * の2点で、誤った案件への書き込みを防ぐ。
+ */
+const SCREENS = [ALL_SCREENS];
 
 const QUESTION_TOOLS: AdminChatTool[] = [];
 
@@ -59,11 +68,16 @@ QUESTION_TOOLS.push({
   tier: "B",
   screenKeys: SCREENS,
   description:
-    "案件に設問を1問追加する。question_type は single_choice / multi_choice / free_text_short / free_text_long / numeric のいずれか。選択式は options（ラベルの配列）が必須。追加位置は末尾。",
+    "案件に設問を1問追加する。question_type は single_choice / multi_choice / free_text_short / free_text_long / numeric のいずれか。選択式は options（ラベルの配列）が必須。追加位置は末尾。" +
+    "案件の編集画面以外（ダッシュボード等、対象案件が決まっていない画面）から使うときは project_id を必ず指定すること。省略すると別の案件に追加してしまう恐れがある。案件IDが分からなければ先に list_sessions か find_screen で確認する。",
   parameters: {
     type: "object",
     properties: {
-      project_id: { type: "string", description: "対象案件ID。省略時は画面の案件" },
+      project_id: {
+        type: "string",
+        description:
+          "対象案件ID。案件の編集画面から使うときだけ省略でき、その場合は画面が対象にしている案件になる。それ以外の画面では必ず指定する",
+      },
       question_text: { type: "string", description: "設問文" },
       question_type: { type: "string", description: "設問タイプ" },
       options: {
@@ -118,11 +132,16 @@ QUESTION_TOOLS.push({
   tier: "B",
   screenKeys: SCREENS,
   description:
-    "既存の設問の文言・選択肢・必須フラグを修正する。回答がすでに入っている設問は変更できない（その場合はエラーを返す）。",
+    "既存の設問の文言・選択肢・必須フラグを修正する。回答がすでに入っている設問は変更できない（その場合はエラーを返す）。" +
+    "question_id は必須で、画面の対象案件から推測することはしない。設問IDが分からないときは先に get_project_questions で一覧を取り、直したい設問のIDを確認してから呼ぶこと。",
   parameters: {
     type: "object",
     properties: {
-      question_id: { type: "string", description: "対象設問ID" },
+      question_id: {
+        type: "string",
+        description:
+          "対象設問ID（必須）。get_project_questions で確認した実在のIDを渡すこと。推測で組み立てない",
+      },
       question_text: { type: "string", description: "新しい設問文" },
       options: { type: "array", items: { type: "string" }, description: "新しい選択肢ラベル配列" },
       is_required: { type: "boolean", description: "必須回答か" },
@@ -160,11 +179,16 @@ QUESTION_TOOLS.push({
   tier: "B",
   screenKeys: SCREENS,
   description:
-    "案件内の設問の並び順を変更する。question_ids に希望する順序で設問IDを並べて渡す（渡さなかった設問は後ろに残る）。",
+    "案件内の設問の並び順を変更する。question_ids に希望する順序で設問IDを並べて渡す（渡さなかった設問は後ろに残る）。" +
+    "案件の編集画面以外（ダッシュボード等、対象案件が決まっていない画面）から使うときは project_id を必ず指定すること。省略すると別の案件を並べ替えてしまう恐れがある。",
   parameters: {
     type: "object",
     properties: {
-      project_id: { type: "string", description: "対象案件ID。省略時は画面の案件" },
+      project_id: {
+        type: "string",
+        description:
+          "対象案件ID。案件の編集画面から使うときだけ省略でき、その場合は画面が対象にしている案件になる。それ以外の画面では必ず指定する",
+      },
       question_ids: {
         type: "array",
         items: { type: "string" },
@@ -208,11 +232,16 @@ QUESTION_TOOLS.push({
   tier: "A",
   screenKeys: SCREENS,
   description:
-    "案件の設問一覧を、ID・並び順・回答件数つきで取得する。設問を修正・並べ替えする前に対象IDを確認するために使う。",
+    "案件の設問一覧を、ID・並び順・回答件数つきで取得する。設問を修正・並べ替えする前に対象IDを確認するために使う。" +
+    "案件の編集画面以外から使うときは project_id を指定すること。",
   parameters: {
     type: "object",
     properties: {
-      project_id: { type: "string", description: "対象案件ID。省略時は画面の案件" },
+      project_id: {
+        type: "string",
+        description:
+          "対象案件ID。案件の編集画面から使うときだけ省略でき、その場合は画面が対象にしている案件になる。それ以外の画面では必ず指定する",
+      },
     },
   },
   execute: async (args, ctx) => {

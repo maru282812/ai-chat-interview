@@ -342,6 +342,78 @@ button,
   gap: 8px;
 }
 
+/* --- グローバル検索（画面カタログ） --------------------------------------- */
+
+.header-search {
+  position: relative;
+}
+
+.header-search-input {
+  font-size: 12px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  padding: 4px 10px;
+  border-radius: 999px;
+  width: 160px;
+  outline: none;
+}
+
+.header-search-input::placeholder {
+  color: #a9d5d1;
+}
+
+.header-search-input:focus {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+/* 候補ドロップダウン。ヘッダーは濃色なので中身は通常の白背景に戻す */
+.header-search-results {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 260px;
+  max-width: 340px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  padding: 4px;
+}
+
+.header-search-item {
+  display: block;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: #234;
+  text-decoration: none;
+}
+
+.header-search-item:hover {
+  background: #eef4f3;
+}
+
+.header-search-item-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.header-search-item-meta {
+  display: block;
+  font-size: 11px;
+  color: #789;
+}
+
+.header-search-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #789;
+}
+
 .header-user {
   font-size: 12px;
   color: #cfeae7;
@@ -546,6 +618,16 @@ button[disabled],
 
   .nav-group {
     width: 100%;
+  }
+
+  /* 検索ボックスが広いとタイトル・アカウントを押し出して header-bar が崩れる */
+  .header-search-input {
+    width: 110px;
+  }
+
+  .header-search-results {
+    min-width: 200px;
+    max-width: 72vw;
   }
 
   th,

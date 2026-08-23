@@ -19,9 +19,15 @@ import {
 } from "../../../controllers/adminController";
 import { deliveryCampaignRepository } from "../../../repositories/deliveryCampaignRepository";
 import { segmentRepository } from "../../../repositories/segmentRepository";
-import { type AdminChatTool, registerTool } from "../toolRegistry";
+import { ALL_SCREENS, type AdminChatTool, registerTool } from "../toolRegistry";
 
-const SCREENS = ["sessions-index", "research-form"];
+/**
+ * Phase 4: 全画面開放（Tier A / Tier B）。
+ * この3本は ctx.entityId をまったく参照せず、対象は引数だけで決まる。
+ * draft_campaign の project_id は required なので、案件を持たない画面から呼ばれても
+ * 画面の対象案件に暗黙で紐づくことはない。
+ */
+const SCREENS = [ALL_SCREENS];
 
 const SEGMENT_TOOLS: AdminChatTool[] = [];
 

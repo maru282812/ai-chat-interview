@@ -102,7 +102,7 @@ test("正常時は service の結果をそのまま返す", async () => {
   let passed: unknown = null;
   stub(adminChatService, "runChat", async (request) => {
     passed = request;
-    return { reply: "3件です", toolTrace: [], truncated: false, pendingActions: [] };
+    return { reply: "3件です", toolTrace: [], truncated: false, pendingActions: [], navigations: [] };
   });
 
   const res = await callApi({
@@ -125,25 +125,44 @@ test("entityId 未指定は null として渡る", async () => {
   let passedEntityId: string | null | undefined;
   stub(adminChatService, "runChat", async (request) => {
     passedEntityId = request.entityId;
-    return { reply: "ok", toolTrace: [], truncated: false, pendingActions: [] };
+    return { reply: "ok", toolTrace: [], truncated: false, pendingActions: [], navigations: [] };
   });
 
   await callApi({ screenKey: "sessions-index", messages: [{ role: "user", content: "x" }] });
   assert.equal(passedEntityId, null);
 });
 
-test("service が投げても 500 の JSON で返す（画面を落とさない）", async () => {
+test("カタログに無い screenKey は 400（service を呼ばずに弾く）", async () => {
+  // Phase 3: 許容 key の権威は画面カタログ（getScreenByKey）。
+  // 台帳外の key は監査ログの screen_key を汚すだけなので service へ渡さない。
+  let called = false;
   stub(adminChatService, "runChat", async () => {
-    throw new Error("未登録の画面です: ghost");
+    called = true;
+    return { reply: "ok", toolTrace: [], truncated: false, pendingActions: [], navigations: [] };
   });
 
   const res = await callApi({
     screenKey: "ghost",
     messages: [{ role: "user", content: "x" }],
   });
-  assert.equal(res.status, 500);
+  assert.equal(res.status, 400);
   assert.equal(res.json?.["ok"], false);
   assert.match(String(res.json?.["error"]), /未登録の画面/);
+  assert.equal(called, false, "台帳外の key で service を呼んではいけない");
+});
+
+test("service が投げたら 500 の JSON で返す（画面を落とさない）", async () => {
+  stub(adminChatService, "runChat", async () => {
+    throw new Error("内部エラー");
+  });
+
+  const res = await callApi({
+    screenKey: "sessions-index",
+    messages: [{ role: "user", content: "x" }],
+  });
+  assert.equal(res.status, 500);
+  assert.equal(res.json?.["ok"], false);
+  assert.match(String(res.json?.["error"]), /内部エラー/);
 });
 
 test("パネルは aiChat を渡した画面にだけ描画される", async () => {

@@ -3,6 +3,7 @@ import { supabase } from "../config/supabase";
 import type { DailySlot } from "../lib/dailyQueue";
 import { dailySurveyService } from "./dailySurveyService";
 import { lineMessagingService } from "./lineMessagingService";
+import { buildDailySurveyLiffUrl } from "./liffService";
 import { notificationTemplateRepository } from "../repositories/notificationTemplateRepository";
 import { deliveryTemplateRepository } from "../repositories/deliveryTemplateRepository";
 import type { DeliveryTemplate, DailyScheduleConfig, WeeklyScheduleConfig, IntervalScheduleConfig } from "../repositories/deliveryTemplateRepository";
@@ -179,7 +180,7 @@ class NotificationSchedulerService {
 
     for (const delivery of deliveries) {
       try {
-        const liffUrl = `https://liff.line.me/${process.env.LINE_LIFF_ID_SURVEY ?? ""}?survey_id=${delivery.survey_id}`;
+        const liffUrl = buildDailySurveyLiffUrl(delivery.survey_id);
         const body = notificationTemplateRepository.renderBody(template, {
           surveyUrl: liffUrl
         });

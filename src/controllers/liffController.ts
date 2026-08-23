@@ -2587,7 +2587,7 @@ export const liffController = {
   // ---- 案件一覧 ----
 
   async projectDetailPage(req: Request, res: Response): Promise<void> {
-    const liffId = process.env.LINE_LIFF_ID_MYPAGE || process.env.LINE_LIFF_ID || null;
+    const liffId = env.LINE_LIFF_ID_MYPAGE || env.LINE_LIFF_ID || null;
     const projectId = stringValue(req.params.id).trim();
     if (!projectId) throw new HttpError(400, "案件IDが指定されていません。");
     if (!isUuid(projectId)) throw new HttpError(404, "案件が見つかりません。");
@@ -2670,7 +2670,7 @@ export const liffController = {
   },
 
   async projectsPage(_req: Request, res: Response): Promise<void> {
-    const liffId = process.env.LINE_LIFF_ID_MYPAGE || process.env.LINE_LIFF_ID || null;
+    const liffId = env.LINE_LIFF_ID_MYPAGE || env.LINE_LIFF_ID || null;
     res.render("liff/projects", {
       title: "案件を探す",
       // 体験設定（Phase 0）。一覧は案件に紐付かないので全体既定を解決した値。
@@ -2867,7 +2867,7 @@ export const liffController = {
    * クライアントで束ねるだけで、新しい取得APIは作らない。
    */
   async answerPage(_req: Request, res: Response): Promise<void> {
-    const liffId = process.env.LINE_LIFF_ID_MYPAGE || process.env.LINE_LIFF_ID || null;
+    const liffId = env.LINE_LIFF_ID_MYPAGE || env.LINE_LIFF_ID || null;
     res.render("liff/answer", {
       title: "回答する",
       initialData: {
@@ -2936,7 +2936,7 @@ export const liffController = {
   // ---- やりとり ----
 
   async interactionsPage(_req: Request, res: Response): Promise<void> {
-    const liffId = process.env.LINE_LIFF_ID_MYPAGE || process.env.LINE_LIFF_ID || null;
+    const liffId = env.LINE_LIFF_ID_MYPAGE || env.LINE_LIFF_ID || null;
     res.render("liff/interactions", {
       title: "やりとり",
       initialData: {

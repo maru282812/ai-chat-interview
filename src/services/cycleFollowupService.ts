@@ -18,12 +18,12 @@
  *   二重送信より未送信を選ぶ）。失敗はログに残して運用で拾う。
  */
 
-import { env } from "../config/env";
 import { logger } from "../lib/logger";
 import { cycleGroupRepository, surveyCycleRepository } from "../repositories/cycleRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import type { CycleGroup, SurveyCycle } from "../types/domain";
 import { lineMessagingService } from "./lineMessagingService";
+import { buildProjectDetailLiffUrl, buildStoreEntryLiffUrl } from "./liffService";
 
 export interface CycleFollowupResult {
   checked: number;
@@ -124,11 +124,13 @@ export const cycleFollowupService = {
   /**
    * 店舗アンケートは entry_code 経由で assignment を確保する導線に合わせる
    * （/liff/store が respondent / assignment / サイクルを解決する）。
+   * サイト直URLは in-app ブラウザのログインループを踏むため、必ず
+   * liffService の liff.line.me 恒久URL生成を使う（詳細は liffService 参照）。
    */
   entryUrl(project: { id: string; entry_code?: string | null }): string {
     return project.entry_code
-      ? `${env.APP_BASE_URL}/liff/store?entry_code=${encodeURIComponent(project.entry_code)}`
-      : `${env.APP_BASE_URL}/liff/projects/${project.id}`;
+      ? buildStoreEntryLiffUrl(project.entry_code)
+      : buildProjectDetailLiffUrl(project.id);
   },
 
   // ------------------------------------------------------------------
