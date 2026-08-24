@@ -1,17 +1,21 @@
 {
   "version": 2,
-  "regions": ["hnd1"],
+  "regions": [
+    "hnd1"
+  ],
   "builds": [
     {
       "src": "api/index.ts",
       "use": "@vercel/node",
-      "config": { "includeFiles": "src/**" }
+      "config": {
+        "includeFiles": "src/**"
+      }
     }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "/api/index.ts" }
-  ],
-  "crons": [
-    { "path": "/api/cron/dispatch", "schedule": "* * * * *" }
+    {
+      "src": "/(.*)",
+      "dest": "/api/index.ts"
+    }
   ]
 }
