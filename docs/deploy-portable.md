@@ -98,11 +98,23 @@ curl -I https://<worker>.workers.dev/public/styles.css # 200 text/css
 
 ## 切り戻し
 
-Vercel 側は一切壊していないので、**ドメインを戻すだけ**で復帰できる。
+Vercel 側のアプリは壊していないので、**ドメインを戻す＋cron を戻す**で復帰できる。
 
 1. ドメインを Vercel に戻す
-2. `wrangler.toml` の `[triggers]` をコメントアウトして再デプロイ（cron 停止）
-3. `vercel.json` の `crons` を戻して再デプロイ
+2. `wrangler.toml` の `[triggers]` をコメントアウトして再デプロイ（Workers の cron 停止）
+3. `vercel.json` に `crons` を戻して再デプロイ
+
+戻す値（2026-08-24 に Workers 移行のため削除したもの）:
+
+```json
+"crons": [
+  { "path": "/api/cron/dispatch", "schedule": "* * * * *" }
+]
+```
+
+⚠ 3 を忘れると**どちらの環境でも定期配信が走らない**。
+デイリー配信・リマインダー・配信テンプレートがすべて止まるので、
+切り戻すときは必ずセットで行うこと。
 
 **Workers に移行しても Vercel 契約は残すこと**。切り戻し先が消える。
 
