@@ -15,10 +15,10 @@ exports/
 .vercel
 .env*
 
-# プリコンパイル済みビュー（scripts/compileViews.mjs が生成）
-src/views/_compiled.ts
-# 埋め込み済み静的ファイル（scripts/compileAssets.mjs が生成）
-src/public/_compiled.ts
+# プリコンパイル済みビュー / 埋め込み静的ファイルは **コミットする**。
+# Vercel の @vercel/node ビルダーは package.json の build スクリプトを走らせないため、
+# 生成物を無視すると本番でファイルが存在せずアプリが起動できない（実際に500で全滅させた）。
+# 生成は `npm run build:views` / `npm run build:assets`（build / build:workers が自動で呼ぶ）。
 # Workers バンドル
 dist-workers/
 .wrangler/
