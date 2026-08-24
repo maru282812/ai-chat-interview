@@ -18,8 +18,16 @@
 | 静的ファイル再生成のみ | `npm run build:assets` |
 | 全ビューの描画確認 | `npm run verify:views` |
 
-`src/views/_compiled.ts` と `src/public/_compiled.ts` は**生成物**で git 管理外。
-ビルドが自動生成するので、手で編集しないこと。
+`src/views/_compiled.ts` と `src/public/_compiled.ts` は**生成物だがコミットする**。
+手で編集しないこと（再生成で上書きされる）。
+
+⚠ **なぜコミットするか**: Vercel の `@vercel/node` ビルダーは
+`vercel.json` の `builds` 指定で動くため、**package.json の build スクリプトを走らせない**。
+生成物を gitignore すると本番にファイルが存在せず、アプリが起動できない。
+実際にこれで `app.yottollc.com` を全ルート 500 にした（2026-08-25）。
+
+ビューや静的ファイルを変更したら **`npm run build:views` / `npm run build:assets` を実行して
+生成物も一緒にコミットする**こと（`npm run build` / `build:workers` が自動で呼ぶ）。
 
 ## 環境ごとの違い（ここだけが分岐点）
 
