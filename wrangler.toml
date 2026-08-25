@@ -18,11 +18,16 @@ mode = "smart"
 # ⚠ Vercel 側（vercel.json の crons）と**同時に有効にしてはいけない**。
 #   両方動くと配信が二重に走る。切り替え時にどちらか一方だけを有効にすること。
 #
-# 既定ではコメントアウトしてある。Workers を本番にする段階で有効化する。
-# cronDispatchService の CATCH_UP_WINDOW_MIN(5分) が毎分実行を前提にしている。
+# 2026-08-25: Vercel 側の cron を削除（vercel.json）したうえで有効化した。
+# cronDispatchService の CATCH_UP_WINDOW_MIN(5分) が毎分実行を前提にしているため
+# 間隔を広げないこと（広げるとその窓を跨いだジョブが「その日まるごと未実行」になる）。
 #
-# [triggers]
-# crons = ["* * * * *"]
+# 何が発火するかは DB 側の設定が決める（このトリガー自体は素通し）:
+#   - デイリー: notification_scheduler_settings の *_enabled / *_time
+#   - 配信テンプレ: delivery_templates.is_enabled
+# 止めたいときは上記を false にする（トリガーを消すより安全で履歴も残る）。
+[triggers]
+crons = ["* * * * *"]
 
 # ---------------------------------------------------------------------------
 # 環境変数
