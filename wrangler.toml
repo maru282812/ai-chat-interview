@@ -7,10 +7,37 @@ compatibility_date = "2026-08-01"
 # （docs/spike-workers/RESULTS.md）。
 compatibility_flags = ["nodejs_compat"]
 
+# routes を宣言すると workers.dev は既定で無効になる。
+# 独自ドメイン側で問題が出たときの退避・検証経路として残す。
+# LINE や外部に貼るURLには使わないこと。
+# ⚠ トップレベル設定なので、最初のテーブル（[placement] 等）より前に置くこと。
+#    テーブルより後ろに書くとそのテーブルのキーとして読まれ、黙って無視される。
+workers_dev = true
+
 # 東京。Supabase(NRT) との往復を短くする。
 # Vercel で iad1 のままレイテンシが5倍だった経緯があるため、ここは明示する。
 [placement]
 mode = "smart"
+
+# ---------------------------------------------------------------------------
+# 本番ドメイン
+# ---------------------------------------------------------------------------
+# 2026-08-30: app.yottollc.com を Vercel から Workers へ切り替えた。
+# custom_domain = true なので Cloudflare が DNS レコードと証明書を管理する
+# （yottollc.com は同じアカウントのゾーン）。
+#
+# ⚠ この宣言を消して deploy すると DNS が外れて本番が落ちる。
+# ⚠ 切り戻すときは、この routes を消すだけでは Vercel に戻らない。
+#    Cloudflare ダッシュボードで app.yottollc.com の DNS を
+#    Vercel 向け（cname.vercel-dns.com）に戻す必要がある。
+#
+# 切り替え前に確認済み:
+#   - POST /webhooks/line が Vercel と同じ 401 を返す（src/app.ts のハング修正後）
+#   - user_id が NULL の project_assignments は 0件
+#     → NODE_ENV=production による本人確認の厳格化で弾かれる回答者はいない
+[[routes]]
+pattern = "app.yottollc.com"
+custom_domain = true
 
 # ---------------------------------------------------------------------------
 # Cron Trigger
@@ -43,9 +70,16 @@ crons = ["* * * * *"]
 [vars]
 NODE_ENV = "production"
 
-# 切り替え先のドメイン。DNS を Workers に向けるまでは .workers.dev を指す。
+# 本番ドメイン。配信するLINEメッセージ内のURL・マイページURLの基点になる
+# （projectDeliveryService / notificationSchedulerService / liffService）。
 # ⚠ LINE に貼るリンクは liffService のヘルパー経由で生成すること（直組み禁止）。
-APP_BASE_URL = "https://ai-chat-interview.yotto-llc112.workers.dev"
+#
+# 2026-08-30: DNS 切り替えに先立って .workers.dev から本番ドメインへ変更。
+# cron が毎分動いているため、この値が配信物にそのまま乗る。
+# ⚠ DNS を app.yottollc.com → Workers に向けるまでの間は、
+#   ここが指す先は Vercel 側（現本番）になる。どちらが応答しても同じアプリなので
+#   配信物のURLとしては正しいが、切り替え完了までは齟齬がないか確認すること。
+APP_BASE_URL = "https://app.yottollc.com"
 
 SUPABASE_URL = "https://qdswfamwqwxppwbgcfbz.supabase.co"
 DEFAULT_PROJECT_ID = "00000000-0000-4000-8000-000000000001"
@@ -59,9 +93,20 @@ LINE_LIFF_ID_RANT = "2010174167-HfLccKsG"
 LINE_LIFF_ID_DIARY = "2010174167-TC9QEFzZ"
 LINE_LIFF_ID_PERSONALITY = "2010174167-M7Lmwm9T"
 
-# LIFF 認証。現状は testmaster の検証シームの都合で false のまま
-# （本番として厳密にするなら LIFF_AUTH_REQUIRED=true / ALLOW_LIFF_AUTH_SKIP=false）
-LIFF_AUTH_REQUIRED = "false"
+# LIFF 認証。
+#
+# 2026-08-30: LIFF_AUTH_REQUIRED を true にした（本番ドメイン切り替えに伴う厳格化）。
+#
+# false だと survey.ejs の初期化分岐で liff.init() すら呼ばれず ID トークンを
+# 取得しないため、サーバー側の所有者検証（verifyOwner）も素通りしていた。
+# 結果 assignment ID を知っていれば他人の案件に回答できる状態だった。
+# true にすると LIFF 認証が走り、assignment.user_id との照合が効く。
+# 切り替え時点で user_id が NULL の assignment は 0件＝弾かれる回答者はいない。
+LIFF_AUTH_REQUIRED = "true"
+
+# ALLOW_LIFF_AUTH_SKIP は true のまま残す。
+# false にすると liff.init() 失敗時にエラー画面で完全に止まるため、
+# LINE 側の一時障害がそのまま回答不能に直結する。まず AUTH_REQUIRED だけ上げる。
 ALLOW_LIFF_AUTH_SKIP = "true"
 
 # AI
@@ -75,7 +120,11 @@ MAX_AI_PROBES_PER_SESSION = "2"
 # ⚠ PARTNER_IMAGE_URL_ALLOWED_HOSTS は回答画面に差し込む <img> の許可ホスト。
 #    fail-closed（未設定なら画像を一切受け付けない）。値は .env から引き継いだが、
 #    ポータル側の本番ホストが変わっているなら見直すこと。
-PARTNER_IMAGE_URL_ALLOWED_HOSTS = "hibi-site-seven.vercel.app,portal.local.test"
+#    2026-08-30: hibi-site が Cloudflare Workers + 独自ドメインへ移行したため
+#    hibi.yottollc.com を追加。旧 hibi-site-seven.vercel.app は 503（停止済み）で
+#    残す実益がないため外した。検証は保存時（パートナーAPI受信時）のみで表示時には
+#    効かないので、既存の設問画像がこの変更で消えることはない。
+PARTNER_IMAGE_URL_ALLOWED_HOSTS = "hibi.yottollc.com,portal.local.test"
 PORTAL_OPS_URL = "https://hibi.yottollc.com"
 CYCLE_TEST_LINE_USER_IDS = "U0f5d4dac42b9a403b1fb4666481b7b35"
 MENU_ACTION_DEBUG_FORCE_PROJECT_LIST = "false"
