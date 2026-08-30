@@ -111,7 +111,28 @@ export function createApp() {
   // 再生成: npm run build:assets
   app.use("/public", serveCompiledAsset);
   app.use("/webhooks/line", express.raw({ type: "application/json" }));
-  app.use(express.json({ limit: "10mb" }));
+  // ⚠ raw で読み終えたパスに後続のボディパーサを通してはいけない。
+  //
+  // Node ではストリームが消費済みなら express.json() は素通りするが、
+  // Cloudflare Workers ではそうならない。アダプタ（workers/expressAdapter.ts）は
+  // body-parser の誤判定を避けるため req.complete=false / socket.readable=true を
+  // 意図的に維持しており、その状態だと json() が「まだ読める」と判断して
+  // 二度目の読み取りに入り、永久に end を待って**ハングする**。
+  // 結果 res.end が呼ばれず、Workers ランタイムがリクエストを強制終了して 500
+  // （error code: 1101）を返す＝LINE Webhook が全滅する。
+  //
+  // 2026-08-29 に workerd（wrangler dev --local）で再現・修正を実測。
+  // 最小構成では raw 単体は正常。raw の直後に「パス限定なしの」json を置いた
+  // ときだけ再現する。Node 側の挙動は変わらない（元から素通りしていた）。
+  const rawBodyPaths = ["/webhooks/line"];
+  const jsonParser = express.json({ limit: "10mb" });
+  app.use((req, res, next) => {
+    if (rawBodyPaths.some((p) => req.path === p || req.path.startsWith(`${p}/`))) {
+      next();
+      return;
+    }
+    jsonParser(req, res, next);
+  });
   // 計測ビーコンだけは「壊れた JSON でも 204」を守る。express.json() はパース失敗を
   // throw し、それはルートの try/catch より前で起きるためルート側では捕まえられない。
   // ここで本ルートのパースエラーだけを body={} に丸め、計測が 500 を出さないようにする
@@ -124,7 +145,15 @@ export function createApp() {
     }
     next(err);
   });
-  app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+  // urlencoded も json と同じ理由で raw 済みパスを避ける（上のコメント参照）。
+  const urlencodedParser = express.urlencoded({ extended: true, limit: "10mb" });
+  app.use((req, res, next) => {
+    if (rawBodyPaths.some((p) => req.path === p || req.path.startsWith(`${p}/`))) {
+      next();
+      return;
+    }
+    urlencodedParser(req, res, next);
+  });
 
   app.get("/health", (_req, res) => {
     res.json({
