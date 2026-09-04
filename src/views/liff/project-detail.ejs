@@ -6,7 +6,7 @@
     <title><%= title %></title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
-    <link rel="stylesheet" href="/public/hibi.css" />
+    <link rel="stylesheet" href="<%= typeof locals.assetUrl === 'function' ? locals.assetUrl('hibi.css') : '/public/hibi.css' %>" />
     <style>
       .hb-shell { padding-bottom: 96px; }
     </style>

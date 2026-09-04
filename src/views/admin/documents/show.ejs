@@ -159,7 +159,7 @@ const TYPE_LABELS = {
   <a href="/admin/documents/exports/consents.csv?document_id=<%= document.id %>" class="button-link" style="background:#555;color:#fff">📄 CSV出力</a>
 </div>
 
-<script src="/public/documentMarkdown.js"></script>
+<script src="<%= typeof locals.assetUrl === 'function' ? locals.assetUrl('documentMarkdown.js') : '/public/documentMarkdown.js' %>"></script>
 <script>
 const currentDocumentMarkdown = document.getElementById('current-document-markdown');
 const currentDocumentRender = document.getElementById('current-document-render');

@@ -28,6 +28,7 @@ import {
 import { redirectWithFlash, readFlashFromQuery } from "../lib/adminFlash";
 import { getPortalOpsUrl, portalOpsHref, portalOpsNavLinks } from "../lib/portalOpsLinks";
 import { buildNavGroups, buildPinnedNavItems, resolveScreenByPath } from "../lib/adminScreenCatalog";
+import { assetUrl } from "../lib/compiledAssets";
 
 const VIEWS_ROOT = path.join(process.cwd(), "src", "views");
 const PUBLIC_ROOT = path.join(process.cwd(), "src", "public");
@@ -215,6 +216,42 @@ test("styles: ナビのドロップダウンは display 指定で hidden 属性�
       `display を指定する規則が hidden を考慮していない: ${selector.trim()}`
     );
   }
+});
+
+/**
+ * ⚠ 本番で踏んだ事故の回帰テスト。
+ * /public/* は `Cache-Control: public, max-age=3600` で配信されるが HTML はされない。
+ * ビューが `/public/styles.css` を直書きしていると、デプロイ直後の1時間は
+ * 「新しい HTML ＋ ブラウザにキャッシュされた古い CSS」の組み合わせになり、
+ * 新しいマークアップが古い CSS で描かれてレイアウトが崩れる
+ * （ヘッダー改修時、畳んだはずのメニューが全部開いた状態で本番に出た）。
+ * URL にビルドごとの指紋を載せて、新ビルドが古いキャッシュに当たらないようにする。
+ */
+test("views: /public/* の参照は必ずビルド指紋つきURL（assetUrl）で書く", () => {
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".ejs")) {
+        const src = fs.readFileSync(full, "utf8");
+        // href="/public/x" / src="/public/x" の直書きを禁止する
+        for (const m of src.matchAll(/(?:href|src)="\/public\/[^"]*"/g)) {
+          offenders.push(`${path.relative(VIEWS_ROOT, full)}: ${m[0]}`);
+        }
+      }
+    }
+  };
+  walk(VIEWS_ROOT);
+  assert.deepEqual(offenders, [], "assetUrl() を使わず /public/ を直書きしている箇所がある");
+});
+
+test("assetUrl: 内容由来の指紋を付け、ファイルごとに異なる", () => {
+  const css = assetUrl("styles.css");
+  assert.ok(css.startsWith("/public/styles.css?v="), css);
+  assert.notEqual(assetUrl("styles.css"), assetUrl("hibi.css"));
+  // 同じ内容なら同じ URL（毎回変わるとキャッシュが一切効かなくなる）
+  assert.equal(assetUrl("styles.css"), css);
 });
 
 test("header: よく使う（ピン留め）が1段目に外出しされ、グループにも残っている", async () => {

@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>フロー設計 - <%= project.name %></title>
-  <link rel="stylesheet" href="/public/styles.css" />
-  <link rel="stylesheet" href="/public/flowDesigner.css" />
+  <link rel="stylesheet" href="<%= typeof locals.assetUrl === 'function' ? locals.assetUrl('styles.css') : '/public/styles.css' %>" />
+  <link rel="stylesheet" href="<%= typeof locals.assetUrl === 'function' ? locals.assetUrl('flowDesigner.css') : '/public/flowDesigner.css' %>" />
 </head>
 <body>
 <div class="flow-page-root">
@@ -410,6 +410,6 @@
 <script>
 window.FLOW_DESIGNER_DATA = <%- JSON.stringify(initialData) %>;
 </script>
-<script src="/public/flowCanvas.js"></script>
+<script src="<%= typeof locals.assetUrl === 'function' ? locals.assetUrl('flowCanvas.js') : '/public/flowCanvas.js' %>"></script>
 </body>
 </html>

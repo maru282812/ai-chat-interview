@@ -14,7 +14,7 @@ import { partnerAdminRoutes } from "./routes/partnerAdminRoutes";
 import { partnerRoutes } from "./routes/partnerRoutes";
 import { registerAdminChatTools } from "./services/adminChat/registerTools";
 import { renderCompiled } from "./lib/compiledViews";
-import { serveCompiledAsset } from "./lib/compiledAssets";
+import { assetUrl, serveCompiledAsset } from "./lib/compiledAssets";
 
 /**
  * express が view の絶対パスを組み立てるための基準ディレクトリ。
@@ -102,6 +102,10 @@ export function createApp() {
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       return originalRender(view, options as never, callback as never);
     }) as typeof res.render;
+    // 静的資産のキャッシュ破棄用 URL を全ビューへ配る（admin も LIFF も使う）。
+    // ⚠ `/public/styles.css` を直書きすると、デプロイ直後に
+    // 「新しい HTML ＋ 1時間キャッシュされた古い CSS」でレイアウトが崩れる。
+    res.locals.assetUrl = assetUrl;
     next();
   });
 

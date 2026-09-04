@@ -20,6 +20,34 @@ function weakEtag(body: string): string {
 const etagCache = new Map<string, string>();
 
 /**
+ * 資産のバージョン文字列（`?v=` に付ける）。
+ *
+ * ⚠ ここが無いと本番で「HTML は新しいのに CSS だけ古い」状態が起きる。
+ * HTML はキャッシュされないが /public/styles.css は max-age=3600 なので、
+ * デプロイ直後の1時間、既に開いたことのあるブラウザは古い CSS を使い続ける。
+ * 新しいマークアップを古い CSS で描くと当然レイアウトが崩れる
+ * （実際にヘッダー改修で、畳んだはずのメニューが全部開いた状態で表示された）。
+ * URL にビルドごとの指紋を入れておけば、新ビルドは別 URL になるので
+ * 古いキャッシュに当たりようがない。
+ */
+export function assetVersion(key: string): string {
+  const asset = COMPILED_ASSETS[key];
+  if (!asset) return "0";
+  let etag = etagCache.get(key);
+  if (!etag) {
+    etag = weakEtag(asset.body);
+    etagCache.set(key, etag);
+  }
+  // ETag は `W/"len-hash"` の形。URL に載せるので英数字だけ取り出す。
+  return etag.replace(/[^a-z0-9]/gi, "");
+}
+
+/** ビューから `<%= assetUrl("styles.css") %>` で使う */
+export function assetUrl(key: string): string {
+  return `/public/${key}?v=${assetVersion(key)}`;
+}
+
+/**
  * /public/* を埋め込み資産から配信する express ミドルウェア。
  * 見つからなければ next() して 404 は既存のハンドラに任せる。
  */
