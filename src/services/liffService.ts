@@ -243,6 +243,15 @@ export function buildMypageLiffUrl(): string {
 }
 
 /**
+ * 招待ランディングの共有URL（ミッション Phase 1）。
+ * 被招待者は**未登録＝LINE友だちですらない**ので、LIFF ディープリンクではなく
+ * どのブラウザでも開ける絶対URLを配る。LP の CTA が LINE ログインへ誘導する。
+ */
+export function buildAbsoluteInviteUrl(token: string): string {
+  return buildAbsoluteUrl(`/liff/invite/${token}`);
+}
+
+/**
  * survey の LIFF 設定状態を返す。
  * LINE Developers 側で以下が必要:
  *   - LINE_LIFF_CHANNEL_ID: LIFF チャネル ID

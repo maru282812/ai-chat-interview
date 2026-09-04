@@ -7,6 +7,7 @@ import { getProjectResearchSettings } from "../lib/projectResearch";
 import { normalizeQuestionMeta } from "../lib/questionMetadata";
 import { findExclusionViolation } from "../lib/optionExclusion";
 import { isQuestionVisible } from "../lib/questionEngine";
+import { toDisplayAnswerForPrompt } from "../lib/answerLabel";
 import {
   answerValueForContext,
   buildAnswerContext,
@@ -1790,12 +1791,15 @@ export const liffController = {
     }
 
     try {
+      // 選択肢設問は保存値(value)ではなく回答者が見たラベルを AI に渡す。
+      // value のままだと深掘り文が「『yes』と回答されていますが」と内部値を露出する。
+      // 保存(answer_text)・分岐・エクスポートは value のまま（凍結契約）。
       const analysis = await aiService.analyzeAnswer({
         sessionId: session.id,
         project,
         question,
         nextQuestion: null,
-        answer: message,
+        answer: toDisplayAnswerForPrompt(message, question),
         existingSlots: {},
         maxProbes: maxProbesPerAnswer,
         aiProbeEnabled: true,

@@ -29,6 +29,7 @@ export interface DeliveryCampaignCreateInput {
   project_id: string | null;
   segment_id?: string | null;
   name: string;
+  status?: CampaignStatus;
   delivery_channel?: "liff" | "line";
   scheduled_at?: string | null;
 }
@@ -41,6 +42,21 @@ export const deliveryCampaignRepository = {
       .order("created_at", { ascending: false });
     if (projectId) query = query.eq("project_id", projectId);
     const { data, error } = await query;
+    throwIfError(error);
+    return (data ?? []) as DeliveryCampaignWithProject[];
+  },
+
+  async listDueReservations(input: {
+    fromIso: string;
+    toIso: string;
+  }): Promise<DeliveryCampaignWithProject[]> {
+    const { data, error } = await supabase
+      .from("delivery_campaigns")
+      .select("*, project:projects(id,name), segment:segments(id,name)")
+      .in("status", ["draft", "scheduled"])
+      .gt("scheduled_at", input.fromIso)
+      .lte("scheduled_at", input.toIso)
+      .order("scheduled_at", { ascending: true });
     throwIfError(error);
     return (data ?? []) as DeliveryCampaignWithProject[];
   },

@@ -57,6 +57,12 @@ export interface AdminScreenEntry {
   dynamicParam?: { name: string; resolver: "project" | "client" | "respondent" | "session" };
   /** ナビで強調表示する（現行 `is-primary`） */
   primary?: boolean;
+  /**
+   * ヘッダー最上段の「ピン留め」列に外出しする（毎日使う画面）。
+   * ピン留めしてもグループ内の掲載は消さない（同じ画面が2箇所に出る）。
+   * ドロップダウンを開かずに1クリックで行けることを優先するための重複。
+   */
+  pinned?: boolean;
   /** ナビ項目に付ける通知バッジの DOM id（現行 `nav-exchange-badge`） */
   badgeId?: string;
 }
@@ -97,6 +103,8 @@ export const ADMIN_SCREENS: AdminScreenEntry[] = [
     label: "プロジェクト",
     group: "調査",
     nav: true,
+    // ピン留め: 案件を開く起点。ほぼ毎日通る。
+    pinned: true,
     description: "調査案件の一覧。ステータスや掲載状態で絞り込み、案件の作成・複製・削除の入口になる。",
     settings: ["案件の絞り込み条件", "案件の複製", "案件の削除"],
     synonyms: ["案件", "調査", "プロジェクト一覧", "アンケート案件", "projects"],
@@ -287,6 +295,8 @@ export const ADMIN_SCREENS: AdminScreenEntry[] = [
     label: "デイリーアンケート",
     group: "調査",
     nav: true,
+    // ピン留め: 毎日の出題管理。
+    pinned: true,
     description: "1日1問のデイリーアンケートを管理する。キューに積むと上から順に自動配信される。",
     settings: ["設問の追加", "配信キューの並び", "配信日の固定", "夜枠の有無"],
     synonyms: ["デイリー", "今日の1問", "毎日のアンケート", "1問", "daily"],
@@ -486,6 +496,8 @@ export const ADMIN_SCREENS: AdminScreenEntry[] = [
     label: "回答者",
     group: "回答者",
     nav: true,
+    // ピン留め: 回答者を調べる起点。
+    pinned: true,
     description: "回答者を一覧・検索する。案件・ステータス・氏名で絞り込み、詳細画面へ入る。",
     settings: ["絞り込み条件（案件・ステータス・氏名）"],
     synonyms: ["ユーザー", "参加者", "モニター", "会員", "回答者一覧", "respondents"],
@@ -635,11 +647,46 @@ export const ADMIN_SCREENS: AdminScreenEntry[] = [
     label: "交換申請",
     group: "報酬",
     nav: true,
+    // ピン留め: 申請が溜まると滞留するので常時見える位置に置く。
+    pinned: true,
     badgeId: "nav-exchange-badge",
     description: "ポイント交換（eGift）の申請を一覧し、承認・却下・送付を行う。申請中の件数はナビにバッジで出る。",
     settings: ["申請の承認・却下", "送付処理", "絞り込み条件"],
     synonyms: ["交換", "ギフト", "eGift", "換金", "交換申請一覧", "exchange"],
     related: ["points-index", "respondents-index"]
+  },
+  {
+    key: "missions-index",
+    path: "/admin/mission",
+    label: "ミッション",
+    group: "報酬",
+    nav: true,
+    description: "ミッション（段階報酬キャンペーン）の一覧。ステージ・テーマ・隠し部屋つき企画の作成入口になる。",
+    settings: ["ミッションの作成", "公開状態の確認"],
+    synonyms: ["ミッション一覧", "段階報酬", "キャンペーン企画", "missions"],
+    related: ["mission-form", "mission-invites"]
+  },
+  {
+    key: "mission-form",
+    path: "/admin/mission/:id",
+    label: "ミッションの作成・編集",
+    group: "報酬",
+    nav: false,
+    description: "ミッション1件の期間・テーマ・ステージ（最大5段）・隠し部屋（山分け/一律/抽選）を設定する。報酬は1人あたり上限2,000pt。",
+    settings: ["ミッション名", "対象範囲", "期間", "テーマ", "ステージ条件と報酬", "隠し部屋の開き方と報酬"],
+    synonyms: ["ミッション編集", "ステージ設定", "隠し部屋"],
+    related: ["missions-index"]
+  },
+  {
+    key: "mission-invites",
+    path: "/admin/mission/invites",
+    label: "招待実績",
+    group: "報酬",
+    nav: true,
+    description: "招待リンクの発行・登録・回答の実績一覧。招待偏重のフラグ確認と招待の取消ができる。",
+    settings: ["招待の取消"],
+    synonyms: ["招待", "紹介", "友だち招待", "invites"],
+    related: ["missions-index"]
   },
 
   // ---------------------------------------------------------------------------
@@ -651,6 +698,8 @@ export const ADMIN_SCREENS: AdminScreenEntry[] = [
     label: "配信オペレーション",
     group: "配信",
     nav: true,
+    // ピン留め: 配信の実行導線。
+    pinned: true,
     primary: true,
     description: "日々のLINE配信をまとめて行う中心画面。対象抽出から配信実行までをここで完結させる。",
     settings: ["配信対象の抽出条件", "配信テンプレートの選択", "配信の実行"],
@@ -663,6 +712,8 @@ export const ADMIN_SCREENS: AdminScreenEntry[] = [
     label: "配信カレンダー",
     group: "配信",
     nav: true,
+    // ピン留め: 配信予定の確認。
+    pinned: true,
     description: "いつ何が配信される／配信されたかをカレンダーで俯瞰する。日付をドラッグして配信日を動かせる。",
     settings: ["配信日の変更", "表示月の切り替え"],
     synonyms: ["カレンダー", "配信予定", "スケジュール", "いつ送る"],
@@ -1204,6 +1255,26 @@ export interface AdminNavGroup {
 }
 
 /**
+ * ヘッダー最上段に外出しする「よく使う」項目。`pinned:true` の宣言順。
+ * グループ側からは消さない（同じ画面が2箇所に出る）。ピン留めは近道であって
+ * 所属の付け替えではなく、「配信オペレーションは配信の画面」という所在は保つ。
+ */
+export function buildPinnedNavItems(): AdminNavItem[] {
+  const items: AdminNavItem[] = [];
+  for (const screen of ADMIN_SCREENS) {
+    if (!screen.nav || !screen.pinned) continue;
+    const item: AdminNavItem = { href: screen.path, label: screen.label };
+    if (screen.primary) item.primary = true;
+    // バッジ DOM id はページ内で一意でなければならない。ピン留め側に本物を出し、
+    // グループ側は id 無し（バッジ非表示）にする。id 重複は getElementById が
+    // 先勝ちになり、どちらか一方が黙って更新されない事故になる。
+    if (screen.badgeId) item.badgeId = screen.badgeId;
+    items.push(item);
+  }
+  return items;
+}
+
+/**
  * ヘッダーナビ用のグループ配列を組み立てる。
  * `nav:true` のエントリだけを ADMIN_NAV_GROUP_ORDER の順で並べる（グループ内は宣言順）。
  * 外部リンク群（portalOpsNavLinks）はカタログ対象外なので、header 側でこの後ろに push する。
@@ -1215,7 +1286,8 @@ export function buildNavGroups(): AdminNavGroup[] {
     const items = groups.get(screen.group) ?? [];
     const item: AdminNavItem = { href: screen.path, label: screen.label };
     if (screen.primary) item.primary = true;
-    if (screen.badgeId) item.badgeId = screen.badgeId;
+    // ピン留め済みの画面はバッジをピン留め側だけに出す（DOM id の重複を作らない）
+    if (screen.badgeId && !screen.pinned) item.badgeId = screen.badgeId;
     items.push(item);
     groups.set(screen.group, items);
   }

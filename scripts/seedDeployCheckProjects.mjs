@@ -27,6 +27,11 @@ const supabase = createClient(url, key, { auth: { persistSession: false } });
 
 const now = new Date().toISOString();
 
+// --discoverable: 「探す」一覧に出す（visibility_type=public + is_discoverable=true）。
+// 新規DB（実ユーザー0）で fresh アカウントから応募→回答の一気通貫を踏むときに使う。
+// entry_code は残すので、entry URL からの流入も引き続き使える。
+const DISCOVERABLE = process.argv.includes("--discoverable");
+
 const P_SURVEY = "dc260801-0000-4000-8000-000000000001";
 const P_CHAT = "dc260802-0000-4000-8000-000000000002";
 const P_SWIPE = "dc260803-0000-4000-8000-000000000003";
@@ -35,8 +40,8 @@ const common = {
   client_name: "動作確認",
   status: "published",
   reward_points: 10,
-  visibility_type: "private_store",
-  is_discoverable: false,
+  visibility_type: DISCOVERABLE ? "public" : "private_store",
+  is_discoverable: DISCOVERABLE,
   apply_mode: "auto",
   delivery_enabled: false,
   estimated_minutes: 3,

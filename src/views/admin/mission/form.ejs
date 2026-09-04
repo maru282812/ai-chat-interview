@@ -1,0 +1,226 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2><%= mode === "create" ? "ミッション作成" : "ミッション編集" %></h2>
+  <a href="/admin/mission" class="btn btn-secondary">← 一覧に戻る</a>
+</div>
+
+<% const v = mission || {};
+   const toLocal = (iso) => iso ? new Date(iso).toISOString().slice(0, 10) : "";
+   const stageAt = (n) => stages.find(s => s.stage_no === n) || null;
+%>
+
+<% if (errors && errors.length > 0) { %>
+  <div class="card" style="border-color:#F0C0C0;background:#FDECEC;margin-bottom:1rem">
+    <% for (const e of errors) { %><p style="color:#7A2C2C;font-size:13px">⚠ <%= e %></p><% } %>
+  </div>
+<% } %>
+
+<form method="POST" action="/admin/mission">
+  <input type="hidden" name="id" value="<%= v.id || '' %>">
+
+  <div class="card" style="margin-bottom:1.5rem">
+    <h3 style="margin-bottom:1rem">基本設定</h3>
+    <div class="form-group">
+      <label>ミッション名 <span style="color:red">*</span></label>
+      <input type="text" name="name" value="<%= v.name || '' %>" required
+        style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+    </div>
+    <div class="form-group">
+      <label>対象範囲</label>
+      <select name="scope" style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+        <option value="platform" <%= v.scope !== "project" ? "selected" : "" %>>横断型 — どの回答もカウント</option>
+        <option value="project" <%= v.scope === "project" ? "selected" : "" %>>案件指定型 — この案件の回収率を上げる</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>対象案件ID <span style="font-weight:400;color:#888">— 案件指定型のときだけ。ゲージは max_respondents が入っている案件のみ表示</span></label>
+      <input type="text" name="project_id" value="<%= v.project_id || '' %>"
+        style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px;font-family:monospace">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label>開始</label>
+        <input type="date" name="starts_at" value="<%= toLocal(v.starts_at) %>" required
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+      <div class="form-group">
+        <label>終了</label>
+        <input type="date" name="ends_at" value="<%= toLocal(v.ends_at) %>" required
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>
+        <input type="checkbox" name="is_active" value="1" <%= v.is_active ? "checked" : "" %>>
+        公開する
+      </label>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:1.5rem">
+    <h3 style="margin-bottom:.5rem">テーマ（見た目）</h3>
+    <p style="font-size:12px;color:#6B7A75;margin-bottom:12px">
+      色だけでなく<b>情景イラストと見出しの言葉</b>も変わる。中身（段・進捗・付与済みpt）はそのままで、
+      公開中でも差し替えられる。<b>ミッション名は据え置くこと</b>（同時に変えると別企画と誤解される）。
+    </p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px">
+      <% for (const t of themes) { %>
+        <label style="cursor:pointer;display:block">
+          <input type="radio" name="theme_key" value="<%= t.key %>"
+            <%= (v.theme_key || "forest") === t.key ? "checked" : "" %>
+            style="position:absolute;opacity:0">
+          <span style="display:block;border-radius:8px;overflow:hidden;border:3px solid <%= (v.theme_key || 'forest') === t.key ? '#0E6B5A' : 'transparent' %>">
+            <span style="display:flex;align-items:center;justify-content:center;height:40px;background:<%= t.bg %>;position:relative">
+              <em style="font-style:normal;font-size:11px;font-weight:800;color:<%= t.ink %>"><%= t.name %></em>
+              <span style="position:absolute;right:6px;bottom:5px;width:12px;height:12px;border-radius:99px;background:<%= t.accent %>"></span>
+            </span>
+          </span>
+          <span style="display:block;font-size:10.5px;color:#6B7A75;text-align:center;padding-top:3px"><%= t.usage %></span>
+        </label>
+      <% } %>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:1.5rem">
+    <h3 style="margin-bottom:.5rem">ステージ（最大5段）</h3>
+    <p style="font-size:12px;color:#6B7A75;margin-bottom:12px">
+      条件は<b>回答数 OR 招待数</b>（どちらか達成で段が上がる＝身内がいない人も詰まらない）。
+      報酬の上限は <b>2,000pt</b>（景表法対応・DBでも強制）。<b>1段目は「??? で隠す」にできない</b>。
+      空欄の段は保存されない。
+    </p>
+    <table>
+      <thead>
+        <tr><th>段</th><th>回答数</th><th>招待数</th><th>報酬pt（≤2000）</th><th>??? で隠す</th></tr>
+      </thead>
+      <tbody>
+        <% for (let i = 1; i <= 5; i++) { const s = stageAt(i); %>
+          <tr>
+            <td style="font-weight:800"><%= i %></td>
+            <td><input type="number" name="stage<%= i %>_answers" value="<%= s ? s.need_answers : '' %>" min="1"
+              style="width:90px;padding:.3rem .5rem;border:1px solid #ccc;border-radius:4px"></td>
+            <td><input type="number" name="stage<%= i %>_invites" value="<%= s ? s.need_invites : '' %>" min="1"
+              style="width:90px;padding:.3rem .5rem;border:1px solid #ccc;border-radius:4px"></td>
+            <td><input type="number" name="stage<%= i %>_points" value="<%= s ? s.reward_points : '' %>" min="1" max="2000"
+              style="width:110px;padding:.3rem .5rem;border:1px solid #ccc;border-radius:4px"></td>
+            <td>
+              <% if (i === 1) { %><span style="color:#999;font-size:12px">不可</span>
+              <% } else { %>
+                <input type="checkbox" name="stage<%= i %>_masked" value="1" <%= s && s.is_masked ? "checked" : "" %>>
+              <% } %>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+
+  <% const h = hiddenRoom || null;
+     const toLocalDt = (iso) => iso ? new Date(iso).toISOString().slice(0, 16) : "";
+  %>
+  <div class="card" style="margin-bottom:1.5rem">
+    <h3 style="margin-bottom:.5rem">隠し部屋（Phase 3）</h3>
+    <p style="font-size:12px;color:#6B7A75;margin-bottom:12px">
+      部屋の中身＝指定カテゴリの公開案件。通常の部屋一覧からは自動で隠れる。
+      <b>一律・当選ptの上限は2,000pt</b>（景表法対応・DBでも強制）。山分けの1人あたりも
+      確定時に min(2,000, 原資÷人数) でキャップされる。<b>「ランダム出現」の開く時刻は
+      初回保存時にサーバーが決めて固定</b>（保存し直しても変わらない・画面には出ない）。
+      山分け・抽選の結果はミッション終了後に自動確定してLINE通知される。
+    </p>
+    <% if (h && h.settled_at) { %>
+      <p style="font-size:12px;color:#7A2C2C;background:#FDECEC;border:1px solid #F0C0C0;border-radius:6px;padding:8px 10px;margin-bottom:10px">
+        この隠し部屋は確定済み（<%= new Date(h.settled_at).toLocaleString("ja-JP") %>）。設定を変えても結果は変わりません。
+      </p>
+    <% } %>
+    <div class="form-group">
+      <label>
+        <input type="checkbox" name="hidden_enabled" value="1" <%= h ? "checked" : "" %>>
+        隠し部屋を使う
+      </label>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label>カテゴリ <span style="font-weight:400;color:#888">— projects.category の値</span></label>
+        <input type="text" name="hidden_category" value="<%= h ? h.category : '' %>"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+      <div class="form-group">
+        <label>開き方</label>
+        <select name="hidden_open_mode" style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+          <option value="rooms_cleared" <%= h && h.open_mode === "rooms_cleared" ? "selected" : "" %>>① 条件達成でひらく（N部屋クリア）</option>
+          <option value="schedule" <%= h && h.open_mode === "schedule" ? "selected" : "" %>>② 日時でひらく</option>
+          <option value="first_n" <%= h && h.open_mode === "first_n" ? "selected" : "" %>>③ 先着N名でひらく</option>
+          <option value="random" <%= h && h.open_mode === "random" ? "selected" : "" %>>④ ランダムに出現（中身は全員同じ）</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+      <div class="form-group">
+        <label>必要クリア部屋数 <span style="font-weight:400;color:#888">①用</span></label>
+        <input type="number" name="hidden_rooms_needed" min="1" value="<%= h && h.rooms_needed ? h.rooms_needed : '' %>"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+      <div class="form-group">
+        <label>開く日時 <span style="font-weight:400;color:#888">②用</span></label>
+        <input type="datetime-local" name="hidden_opens_at" value="<%= h && h.open_mode === 'schedule' ? toLocalDt(h.opens_at) : '' %>"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+      <div class="form-group">
+        <label>閉じる日時 <span style="font-weight:400;color:#888">②用・空欄=終了まで</span></label>
+        <input type="datetime-local" name="hidden_closes_at" value="<%= h ? toLocalDt(h.closes_at) : '' %>"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+      <div class="form-group">
+        <label>先着人数 <span style="font-weight:400;color:#888">③用</span></label>
+        <input type="number" name="hidden_first_n" min="1" value="<%= h && h.first_n ? h.first_n : '' %>"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px">
+      <div class="form-group">
+        <label>報酬の形</label>
+        <select name="hidden_award_mode" style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+          <option value="split" <%= h && h.award_mode === "split" ? "selected" : "" %>>山分け（締切後に確定）</option>
+          <option value="flat" <%= h && h.award_mode === "flat" ? "selected" : "" %>>一律（回答で即付与）</option>
+          <option value="raffle" <%= h && h.award_mode === "raffle" ? "selected" : "" %>>抽選（等確率・締切後）</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>山分け原資pt</label>
+        <input type="number" name="hidden_pot_points" min="1" value="<%= h && h.pot_points ? h.pot_points : '' %>"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+      <div class="form-group">
+        <label>一律pt（≤2000）</label>
+        <input type="number" name="hidden_flat_points" min="1" max="2000" value="<%= h && h.flat_points ? h.flat_points : '' %>"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+      <div class="form-group">
+        <label>当選pt（≤2000）</label>
+        <input type="number" name="hidden_prize_points" min="1" max="2000" value="<%= h && h.prize_points ? h.prize_points : '' %>"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+      <div class="form-group">
+        <label>当選人数</label>
+        <input type="number" name="hidden_winners_count" min="1" value="<%= h && h.winners_count ? h.winners_count : '' %>"
+          style="width:100%;padding:.4rem .6rem;border:1px solid #ccc;border-radius:4px">
+      </div>
+    </div>
+  </div>
+
+  <button type="submit" class="btn">保存する</button>
+</form>
+
+<script>
+  // テーマ選択の枠線をクリックで更新（見た目のみ・保存はradio）
+  document.querySelectorAll('input[name="theme_key"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      document.querySelectorAll('input[name="theme_key"]').forEach((other) => {
+        const frame = other.parentElement.querySelector("span");
+        if (frame) frame.style.borderColor = other.checked ? "#0E6B5A" : "transparent";
+      });
+    });
+  });
+</script>
+
+<%- include("../../partials/footer") %>

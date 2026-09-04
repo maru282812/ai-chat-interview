@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <%- include('../partials/liff-auth') %>
+    <style>
+      /* ミッションページ（Phase 2）。テーマ＝色＋情景＋文言はサーバーで解決済み。
+         設計の規律（mockups/campaign の検証結果）:
+           - CSSは禁欲的に、賑やかさは絵（情景SVG）に置く。keyframes/グラデは最小限
+           - ボタンはピル型＋実線枠＋ブラー無しベタ影（押すと物理的に沈む）
+           - 未解放の報酬はサーバーが null を返す＝??? はクライアント演出ではない
+           - 規模（参加人数）は出さない（D-1）。ゲージは分母がある時だけ（D-14） */
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      <% if (theme) { %>
+      :root {
+        --t-bg: <%= theme.bg %>; --t-bg2: <%= theme.bg2 %>;
+        --t-ink: <%= theme.ink %>; --t-sub: <%= theme.sub %>;
+        --t-accent: <%= theme.accent %>; --t-edge: <%= theme.edge %>;
+        --t-on-accent: <%= theme.onAccent %>;
+      }
+      <% } else { %>
+      :root {
+        --t-bg: #0E6B5A; --t-bg2: #0A5245; --t-ink: #fff; --t-sub: #BFE0D6;
+        --t-accent: #FFD836; --t-edge: #C79A00; --t-on-accent: #2B1A00;
+      }
+      <% } %>
+      body {
+        font-family: "Hiragino Maru Gothic ProN", -apple-system, BlinkMacSystemFont, "Noto Sans JP", sans-serif;
+        background: #FBF5E2; min-height: 100vh; color: #222; font-weight: 700;
+      }
+      .shell { max-width: 480px; margin: 0 auto; padding-bottom: 40px; }
+      /* 緑の世界を一枚に通し、白カードはその中に浮かべる（分断させない） */
+      .stage { background: var(--t-bg); position: relative; padding-bottom: 20px; }
+      .stage::before {
+        content: ""; position: absolute; inset: 0; pointer-events: none;
+        background-image: radial-gradient(var(--t-bg2) 1.5px, transparent 1.6px);
+        background-size: 22px 22px; opacity: .45;
+      }
+      .stage > * { position: relative; z-index: 1; }
+      .hero { display: flex; flex-direction: column; }
+      .hero .copy { order: 1; text-align: center; color: var(--t-ink); padding: 18px 16px 10px; }
+      .hero .copy .k {
+        display: inline-block; font-size: 11px; font-weight: 800; letter-spacing: .12em;
+        background: rgba(255,255,255,.16); padding: 4px 12px; border-radius: 9999px;
+      }
+      .hero .copy h1 { margin-top: 9px; font-size: 25px; font-weight: 900; line-height: 1.35;
+        text-wrap: balance; overflow-wrap: anywhere; }
+      .hero svg { display: block; width: 100%; height: auto; order: 2; margin-bottom: -1px; }
+      .slab {
+        position: relative; z-index: 9; margin: -26px 12px 0;
+        background: #fff; border-radius: 16px;
+        border: 2px solid var(--t-bg2); box-shadow: 0 4px 0 0 var(--t-bg2);
+        padding: 16px 15px 15px;
+      }
+      .now { display: flex; align-items: baseline; gap: 5px; justify-content: center; font-weight: 900; }
+      .now .n { font-size: 38px; color: var(--t-bg); line-height: 1; font-variant-numeric: tabular-nums; }
+      .now .u { font-size: 15px; color: var(--t-bg); }
+      .now .go { margin-left: 6px; font-size: 13px; color: #5F6D68; font-weight: 700; }
+      .now .go b { color: var(--t-bg); }
+      .btn {
+        display: flex; align-items: center; justify-content: center; width: 100%;
+        margin-top: 14px; min-height: 54px; padding: 15px 18px;
+        font-family: inherit; font-size: 17px; font-weight: 900; cursor: pointer;
+        color: var(--t-on-accent); background: var(--t-accent);
+        border: 2px solid var(--t-edge); border-radius: 9999px;
+        box-shadow: 0 3px 0 0 var(--t-edge); text-decoration: none;
+      }
+      .btn:active { transform: translateY(3px); box-shadow: 0 0 0 0 var(--t-edge); }
+      .btn:focus-visible { outline: 3px solid var(--t-bg2); outline-offset: 3px; }
+      .btn.sub { background: #fff; color: var(--t-bg); border-color: var(--t-bg);
+        box-shadow: 0 3px 0 0 var(--t-bg2); font-size: 15px; min-height: 48px; }
+      /* 賞のカード＝すごろくの続き。番号を縦線でつなぐ */
+      .prizes { padding: 18px 12px 6px; display: flex; flex-direction: column; }
+      .pz { display: flex; align-items: center; gap: 11px; background: #fff;
+        border: 2px solid #DCE8E3; border-radius: 12px; padding: 12px; position: relative; }
+      .pz + .pz { margin-top: 10px; }
+      .pz:not(:last-child)::after { content: ""; position: absolute; left: 29px; bottom: -12px;
+        width: 4px; height: 12px; background: #DCE8E3; border-radius: 2px; }
+      .pz.done:not(:last-child)::after { background: var(--t-bg); }
+      .pz .no { width: 34px; height: 34px; flex-shrink: 0; border-radius: 9999px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 13px; font-weight: 900; background: #EFF3F1; color: #5A6862;
+        border: 2px solid #DCE8E3; }
+      .pz .t { flex: 1; min-width: 0; }
+      .pz .c { font-size: 14px; font-weight: 900; line-height: 1.4; }
+      .pz .s { font-size: 11.5px; color: #5F6D68; margin-top: 2px; font-weight: 700; }
+      .pz .v { font-size: 17px; font-weight: 900; color: var(--t-bg); flex-shrink: 0;
+        font-variant-numeric: tabular-nums; }
+      .pz.lock .v { color: #5A6862; letter-spacing: .06em; }
+      .pz.current { border-color: var(--t-edge); background: #FFFBEA; }
+      .pz.current .no { background: var(--t-accent); color: var(--t-on-accent); border-color: var(--t-edge); }
+      .pz.done { border-color: var(--t-bg); background: #F1F7F5; }
+      .pz.done .no { background: var(--t-bg); color: #fff; border-color: var(--t-bg); }
+      /* 案件指定型のゲージ */
+      .gauge { margin: 14px 12px 0; background: #fff; border: 2px solid #DCE8E3;
+        border-radius: 12px; padding: 13px 13px 14px; }
+      .gauge .top { display: flex; align-items: baseline; gap: 5px; }
+      .gauge .top .n { font-size: 30px; font-weight: 900; color: var(--t-bg); line-height: 1;
+        font-variant-numeric: tabular-nums; }
+      .gauge .top .of { font-size: 13px; color: #5F6D68; font-weight: 900; }
+      .gauge .top .dl { margin-left: auto; font-size: 11.5px; font-weight: 900; color: #B4531A; }
+      .gauge .bar { height: 11px; border-radius: 9999px; background: #EFF3F1; overflow: hidden;
+        margin-top: 10px; border: 2px solid #DCE8E3; }
+      .gauge .bar i { display: block; height: 100%; background: var(--t-bg); }
+      /* 部屋えらび（category別・mockups/campaign/game.html §5） */
+      .rooms { padding: 6px 12px 0; display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+      .rooms-head { padding: 18px 14px 0; font-size: 14px; font-weight: 900; }
+      .room { position: relative; display: block; width: 100%; text-align: left; cursor: pointer;
+        font-family: inherit; background: #fff; border: 2px solid #DCE8E3; border-radius: 12px;
+        padding: 12px 12px 11px; text-decoration: none; color: inherit; }
+      .room:active { transform: translateY(2px); }
+      .room .ic { width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center;
+        justify-content: center; background: #F1F7F5; font-size: 19px; }
+      .room .nm { margin-top: 8px; font-size: 14.5px; font-weight: 900; overflow-wrap: anywhere; }
+      .room .mt { margin-top: 2px; font-size: 11.5px; color: #5F6D68; font-weight: 700; }
+      .room .dots { margin-top: 8px; display: flex; gap: 4px; }
+      .room .dots i { width: 8px; height: 8px; border-radius: 99px; background: #E4ECE8; }
+      .room .dots i.on { background: var(--t-bg); }
+      .room.cleared { border-color: var(--t-bg); background: #F1F7F5; }
+      .room.cleared .mt { color: var(--t-bg); }
+      /* 隠し部屋（ボス）: 夜の色。通常の部屋と面の質を変える（§7・§8） */
+      .boss { margin: 16px 12px 0; border-radius: 14px; overflow: hidden;
+        background: #1B1030; border: 2px solid #4A3570; padding: 16px 15px 15px; color: #EDE6FF; }
+      .boss .k { display: inline-block; font-size: 10.5px; font-weight: 800; letter-spacing: .14em;
+        color: #FFD836; }
+      .boss h3 { margin-top: 7px; font-size: 16.5px; font-weight: 900; line-height: 1.5; color: #fff; }
+      .boss p { margin-top: 6px; font-size: 12.5px; line-height: 1.75; color: #C9BCE8; font-weight: 500; }
+      .boss .amt { margin-top: 12px; padding: 12px; border-radius: 11px; background: rgba(255,216,54,.09);
+        border: 1px dashed rgba(255,216,54,.5); text-align: center; }
+      .boss .amt .n { font-size: 30px; font-weight: 900; color: #FFD836; font-variant-numeric: tabular-nums; }
+      .boss .amt .u { font-size: 13px; font-weight: 900; color: #FFD836; margin-left: 2px; }
+      .boss .amt .cap { display: block; margin-top: 4px; font-size: 10.5px; color: #C9BCE8; font-weight: 700; }
+      .boss .btn { margin-top: 13px; background: #FFD836; color: #2B1A00; border-color: #C79A00;
+        box-shadow: 0 3px 0 0 #C79A00; }
+      .boss .btn[disabled] { background: #3A2B5C; color: #A493C0; border-color: #4A3570;
+        box-shadow: 0 3px 0 0 #4A3570; cursor: default; }
+      .invite-box { margin: 16px 12px 0; padding: 15px 14px; background: #FFFDF6;
+        border: 1px solid #F0E6C8; border-radius: 15px; }
+      .invite-box .h { font-size: 14px; font-weight: 900; }
+      .invite-box .d { margin-top: 5px; font-size: 12.5px; color: #5F6D68; line-height: 1.7; font-weight: 500; }
+      .invite-url { margin-top: 10px; padding: 10px 12px; background: #FAF0D2; border-radius: 10px;
+        font-size: 11.5px; word-break: break-all; display: none; font-weight: 500; }
+      .state { padding: 40px 20px; text-align: center; color: #5F6D68; line-height: 1.8; font-weight: 500; }
+      #loading { padding: 50px 20px; text-align: center; color: var(--t-sub); font-weight: 500; }
+      .celebrate { animation: pop .32s cubic-bezier(.16,1,.3,1) both; }
+      @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.97); } to { opacity: 1; transform: none; } }
+      @media (prefers-reduced-motion: reduce) { .celebrate { animation: none; } .btn { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <% if (!theme) { %>
+        <div class="state">
+          <p><b>いま開催中の企画はありません。</b><br>次の企画がはじまったら、LINEでお知らせします。</p>
+        </div>
+      <% } else { %>
+      <div class="stage">
+        <div class="hero">
+          <div class="copy">
+            <span class="k"><%= theme.kicker %></span>
+            <h1><%= theme.heading %></h1>
+          </div>
+          <svg viewBox="0 0 360 190" role="img" aria-label="<%= theme.sceneAlt %>"><%- theme.sceneSvg %></svg>
+        </div>
+        <div class="slab">
+          <div class="now">
+            <span class="n" id="answer-count">…</span><span class="u">問</span>
+            <span class="go" id="togo"></span>
+          </div>
+          <a class="btn" href="/liff/answer">こたえる</a>
+        </div>
+      </div>
+      <div id="loading">読み込んでいます…</div>
+      <div id="gauge-slot"></div>
+      <div class="prizes" id="prizes" hidden></div>
+      <div id="rooms-slot"></div>
+      <div id="boss-slot"></div>
+      <div class="invite-box">
+        <div class="h">誘うと はやく上がります</div>
+        <div class="d">1人の登録は 3回の回答ぶん。ふたりで答えると答え合わせも見られます。</div>
+        <button class="btn sub" id="issue-invite" style="margin-top:12px">LINEで招待リンクをつくる</button>
+        <div class="invite-url" id="invite-url"></div>
+      </div>
+      <% } %>
+    </div>
+
+    <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+    <script>
+    (function () {
+      const initialData = JSON.parse(document.getElementById("initial-data").dataset.json || "{}");
+      if (!initialData.missionId) return;
+      let idToken = null;
+
+      const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      const $ = (id) => document.getElementById(id);
+
+      function renderStages(data) {
+        const box = $("prizes");
+        box.hidden = false;
+        // 上の段を先頭に（下から上へ上る見た目は行の並びで表現）
+        const rows = [...data.stages].sort((a, b) => b.stageNo - a.stageNo).map((s) => {
+          const cls = s.state === "done" ? "done" : s.state === "current" ? "current" : "lock";
+          const mark = s.state === "done" ? "✓" : s.stageNo;
+          const cond = `${s.needAnswers}問 こたえる`;
+          const or = `または ${s.needInvites}人 さそう`;
+          const value = s.rewardPoints === null ? "???" : `${s.rewardPoints}pt`;
+          const sub = s.state === "done" ? "受け取りずみ" : or;
+          const glow = data.newlyAwarded.includes(s.stageNo) ? " celebrate" : "";
+          return `<div class="pz ${cls}${glow}">
+            <div class="no">${mark}</div>
+            <div class="t"><div class="c">${esc(cond)}</div><div class="s">${esc(sub)}</div></div>
+            <div class="v">${esc(value)}</div>
+          </div>`;
+        });
+        box.innerHTML = rows.join("");
+      }
+
+      function renderGauge(g) {
+        if (!g) return; // 分母が無ければ帯ごと出さない（D-14）
+        const pct = Math.min(100, Math.round((g.current / g.target) * 100));
+        const dl = g.deadline
+          ? `のこり ${Math.max(0, Math.ceil((Date.parse(g.deadline) - Date.now()) / 86400000))}日` : "";
+        $("gauge-slot").innerHTML = `<div class="gauge">
+          <div class="top"><span class="n">${g.current}</span><span class="of">/ ${g.target}人</span>
+          <span class="dl">${esc(dl)}</span></div>
+          <div class="bar"><i style="width:${pct}%"></i></div></div>`;
+      }
+
+      const ROOM_EMOJI = ["🍙", "🏠", "💼", "🎈", "🧺", "☕"];
+      const projectsUrl = (cat) => `/liff/projects?category=${encodeURIComponent(cat)}`;
+
+      function renderRooms(rooms) {
+        if (!rooms || rooms.length === 0) return; // 部屋が無ければセクションごと出さない
+        const cards = rooms.map((r, i) => {
+          const dotsTotal = Math.min(5, r.total);
+          const dotsOn = r.total <= 5 ? r.answered
+            : Math.min(dotsTotal, Math.round((r.answered / r.total) * dotsTotal));
+          const dots = Array.from({ length: dotsTotal }, (_, d) =>
+            `<i class="${d < dotsOn ? "on" : ""}"></i>`).join("");
+          const mt = r.cleared ? "ぜんぶ こたえた" : `${r.remaining}件 のこってる`;
+          return `<a class="room ${r.cleared ? "cleared" : ""}" href="${projectsUrl(r.category)}">
+            <div class="ic">${ROOM_EMOJI[i % ROOM_EMOJI.length]}</div>
+            <div class="nm">${esc(r.category)}</div>
+            <div class="mt">${esc(mt)}</div>
+            <div class="dots">${dots}</div>
+          </a>`;
+        });
+        document.getElementById("rooms-slot").innerHTML =
+          `<div class="rooms-head">どの部屋に いく？</div><div class="rooms">${cards.join("")}</div>`;
+      }
+
+      // 隠し部屋。額・カテゴリはサーバーが状態に応じて null を返す（??? はクライアント演出ではない）
+      function renderBoss(h) {
+        if (!h) return;
+        const slot = document.getElementById("boss-slot");
+        const cap = "1人あたり上限 2,000pt";
+        const amount = (n, capText) => `<div class="amt"><span class="n">${n === null ? "???" : Number(n).toLocaleString()}</span><span class="u">pt</span><span class="cap">${esc(capText)}</span></div>`;
+
+        if (h.state === "locked") {
+          let hintText = "とつぜん あらわれます";
+          if (h.hint.mode === "rooms_cleared") {
+            const left = Math.max(1, (h.hint.roomsNeeded || 1) - h.hint.roomsCleared);
+            hintText = `あと ${left}部屋 クリアで ひらく`;
+          } else if (h.hint.mode === "schedule" && h.hint.opensAt) {
+            const d = new Date(h.hint.opensAt);
+            hintText = `${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours()}時 にひらく`;
+          } else if (h.hint.mode === "first_n") {
+            hintText = `先着 ${h.hint.firstN}名 まで はいれます`;
+          }
+          slot.innerHTML = `<div class="boss"><span class="k">HIDDEN ROOM</span>
+            <h3>まだ ひらいていない 部屋があります。</h3>
+            <p>ここだけ、ふだんより大きく返ってきます。</p>
+            ${amount(null, `ひらくと わかります・${cap}`)}
+            <button class="btn" disabled>${esc(hintText)}</button></div>`;
+          return;
+        }
+        if (h.state === "full") {
+          slot.innerHTML = `<div class="boss"><span class="k">HIDDEN ROOM</span>
+            <h3>この部屋は 満員になりました。</h3>
+            <p>つぎの企画を おたのしみに。</p></div>`;
+          return;
+        }
+        if (h.state === "open") {
+          const rule = h.awardMode === "split"
+            ? ["参加した人で分けます", `<p>この部屋のアンケートに こたえた人で 分け合います。<br>結果は しめきり後に LINEで お知らせします。</p>`]
+            : h.awardMode === "raffle"
+              ? [`こたえた人から 抽選で ${h.winnersCount}名`, `<p>この部屋のアンケートに こたえると 参加できます。<br>結果は しめきり後に LINEで お知らせします。</p>`]
+              : ["こたえた人 全員", `<p>この部屋のアンケートに こたえると もらえます。</p>`];
+          const points = h.awardMode === "split" ? h.potPoints
+            : h.awardMode === "raffle" ? h.prizePoints : h.flatPoints;
+          const done = h.myAwardPoints !== null;
+          const note = done
+            ? `<p><b>${h.myAwardPoints}pt 受け取りました！</b></p>`
+            : h.qualified
+              ? `<p><b>参加できています。</b>結果を おまちください。</p>`
+              : "";
+          const btnLabel = h.hasEntered ? "部屋の アンケートへ" : "この部屋に はいる";
+          slot.innerHTML = `<div class="boss"><span class="k">HIDDEN ROOM — OPEN</span>
+            <h3>ひらきました。</h3>${rule[1]}
+            ${amount(points, `${rule[0]}・${cap}`)}${note}
+            <button class="btn" id="boss-enter">${esc(btnLabel)}</button></div>`;
+          document.getElementById("boss-enter").addEventListener("click", async (e) => {
+            const btn = e.currentTarget;
+            btn.disabled = true;
+            try {
+              if (!h.hasEntered) {
+                const res = await fetch(`/liff/mission/${encodeURIComponent(initialData.missionId)}/hidden-room/enter`, {
+                  method: "POST", headers: { Authorization: `Bearer ${idToken}` },
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.message || "はいれませんでした。");
+              }
+              location.href = projectsUrl(h.category);
+            } catch (err) {
+              alert(err.message || "はいれませんでした。");
+              btn.disabled = false;
+            }
+          });
+          return;
+        }
+        if (h.state === "awaiting") {
+          slot.innerHTML = `<div class="boss"><span class="k">HIDDEN ROOM</span>
+            <h3>しめきりました。</h3>
+            <p>結果は まもなく LINEで お知らせします。</p></div>`;
+          return;
+        }
+        // settled
+        const settledBody = h.myAwardPoints !== null
+          ? `<h3>${h.myAwardPoints}pt 受け取りました！</h3><p>参加ありがとうございました。</p>`
+          : h.qualified && h.awardMode === "raffle"
+            ? `<h3>今回は 当たりませんでした。</h3><p>参加ありがとうございました。つぎの企画を おたのしみに。</p>`
+            : `<h3>この部屋は おわりました。</h3><p>つぎの企画を おたのしみに。</p>`;
+        slot.innerHTML = `<div class="boss"><span class="k">HIDDEN ROOM</span>${settledBody}</div>`;
+      }
+
+      async function load() {
+        try {
+          idToken = await LiffAuth.initLiffOrWebAuth(initialData.liffId);
+          if (!idToken) return;
+          const res = await fetch(`/liff/mission/${encodeURIComponent(initialData.missionId)}/data`, {
+            headers: { Authorization: `Bearer ${idToken}` },
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.message || "読み込みに失敗しました。");
+          $("loading").hidden = true;
+          $("answer-count").textContent = String(data.answers);
+          if (data.remaining) {
+            const r = data.remaining;
+            $("togo").innerHTML = r.answersLeft > 0
+              ? `あと <b>${r.answersLeft}問</b> でつぎの段`
+              : "";
+          } else {
+            $("togo").textContent = "ぜんぶ 上りきりました";
+          }
+          renderStages(data);
+          renderGauge(data.gauge);
+          renderRooms(data.rooms);
+          renderBoss(data.hiddenRoom);
+        } catch (err) {
+          $("loading").textContent = err.message || "読み込みに失敗しました。";
+        }
+      }
+
+      $("issue-invite")?.addEventListener("click", async () => {
+        const btn = $("issue-invite");
+        btn.disabled = true;
+        try {
+          const res = await fetch("/liff/invites", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${idToken}` },
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.message || "発行できませんでした。");
+          const box = $("invite-url");
+          box.textContent = data.url;
+          box.style.display = "block";
+          if (navigator.share) {
+            await navigator.share({ text: `Hibi に招待します！ ${data.url}` }).catch(() => {});
+          } else if (navigator.clipboard) {
+            await navigator.clipboard.writeText(data.url).catch(() => {});
+            btn.textContent = "リンクをコピーしました";
+          }
+        } catch (err) {
+          alert(err.message || "発行できませんでした。");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      void load();
+    })();
+    </script>
+  </body>
+</html>

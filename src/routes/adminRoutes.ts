@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { adminAuthController } from "../controllers/adminAuthController";
 import { adminController } from "../controllers/adminController";
+import { missionController } from "../controllers/missionController";
 import { asyncHandler } from "../lib/http";
 
 export const adminRoutes = Router();
@@ -255,6 +256,15 @@ adminRoutes.post("/scheduler-settings/run/:job", asyncHandler(adminController.ru
 
 // 報酬キャンペーン管理
 adminRoutes.get("/reward-campaigns", asyncHandler(adminController.rewardCampaigns));
+
+// ミッション Phase 1: 招待実績（不正の目視・取消）
+adminRoutes.get("/mission/invites",            asyncHandler(missionController.adminInvitesPage));
+adminRoutes.post("/mission/invites/:id/revoke", asyncHandler(missionController.adminRevokeInvite));
+
+// ミッション Phase 2: ミッション定義（ステージ・テーマ・期間）
+adminRoutes.get("/mission",            asyncHandler(missionController.adminMissionsPage));
+adminRoutes.get("/mission/:id",        asyncHandler(missionController.adminMissionFormPage));
+adminRoutes.post("/mission",           asyncHandler(missionController.adminMissionSave));
 adminRoutes.get("/reward-campaigns/new", asyncHandler(adminController.newRewardCampaign));
 adminRoutes.post("/reward-campaigns", asyncHandler(adminController.createRewardCampaign));
 adminRoutes.get("/reward-campaigns/:id/edit", asyncHandler(adminController.editRewardCampaign));

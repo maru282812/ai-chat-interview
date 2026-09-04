@@ -31,8 +31,8 @@
 
 <div class="card" style="margin-bottom:1rem;background:#fdf6ec;border-left:4px solid #d99b2b">
   <p style="font-size:13px;line-height:1.7;margin:0">
-    ここに出るのは<strong>設定から計算した予定</strong>です。実際に自動配信されるかはスケジューラの稼働状況に依存します。
-    特に<strong>キャンペーン予約は自動実行が未実装</strong>のため、予約日時になっても自動では飛びません（手動実行が必要）。
+    ここに出るのは<strong>設定から計算した予定</strong>です。Cloudflare Cron が毎分起動し、デイリー配信・配信テンプレート・キャンペーン予約を自動実行します。
+    キャンペーン予約は予約時刻から5分以内の到来分だけ自動実行し、それより古い予約は誤配信防止のため手動確認が必要です。
   </p>
 </div>
 

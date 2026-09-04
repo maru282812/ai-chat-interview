@@ -439,30 +439,146 @@ button,
   color: #fff;
 }
 
+/* ナビは2段構成。1段目=よく使う（ピン留め）、2段目=グループのドロップダウン。
+   従来は39項目を全部並べて5行＝画面の1/3を食っていた。 */
 nav {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+/* --- 1段目: よく使う ------------------------------------------------------ */
+
+.nav-pinned {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.nav-pin {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* --- 2段目: グループのドロップダウン -------------------------------------- */
+
+.nav-groups {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 8px 18px;
+  gap: 4px 6px;
+  /* 上段との間に細い区切りを入れて「近道」と「全体」を視覚的に分ける */
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
 }
 
 .nav-group {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  position: relative;
 }
 
-.nav-group-label {
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: #9fd3ce;
-  text-transform: none;
+.nav-group-toggle {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #dff6f3;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  padding: 3px 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.nav-group-items {
+.nav-group-toggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* 畳んだままでも「今どのグループにいるか」が分かるようにする */
+.nav-group-toggle.is-active {
+  background: rgba(255, 255, 255, 0.9);
+  color: #0b7a75;
+  border-color: transparent;
+  font-weight: 700;
+}
+
+.nav-group-caret {
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+.nav-group-toggle[aria-expanded="true"] .nav-group-caret {
+  transform: rotate(180deg);
+}
+
+/* ⚠ 著者スタイルの `display` は UA の `[hidden] { display: none }` に勝つ。
+   `display: flex` を無条件に書くと hidden 属性が効かず、メニューが閉じない。
+   必ず `:not([hidden])` を付けること。 */
+.nav-group-items:not([hidden]) {
   display: flex;
   flex-wrap: wrap;
   gap: 2px 10px;
+}
+
+/* JS が動いているときだけドロップダウンとして浮かせる。
+   JS 無効・スクリプトエラー時は .js-nav が付かず、下の規則が効かないので
+   全メニューがその場に展開されたまま＝従来の平坦ナビに落ちる（到達性を失わない）。 */
+.js-nav .nav-group-items:not([hidden]) {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 2px;
+  min-width: 190px;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 10px;
+  /* ヘッダーと同系色のままだと沈んで読みにくい。白地パネルにして
+     「開いている面」であることと本文の可読性を両立させる。 */
+  background: #fff;
+  border: 1px solid rgba(11, 122, 117, 0.18);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+}
+
+.js-nav .nav-group-items a {
+  color: #14524f;
+}
+
+.js-nav .nav-group-items a:hover {
+  background: rgba(11, 122, 117, 0.1);
+}
+
+.js-nav .nav-group-items a.is-active {
+  background: #0b7a75;
+  color: #fff;
+}
+
+.js-nav .nav-group-items a.is-primary {
+  color: #0b7a75;
+}
+
+.js-nav .nav-group-items a.is-primary.is-active {
+  background: #0b7a75;
+  color: #fff;
+}
+
+/* JS 無効時に hidden が残っても表示する（サーバーが hidden を付けているため）。
+   ⚠ `:not(.js-nav) .nav-group-items[hidden]` と書くと body 等の祖先が .js-nav でないため
+   常にマッチしてしまい、JS が動いていてもメニューが閉じなくなる。
+   nav 自身に対する否定（`nav:not(.js-nav)`）にすること。 */
+nav.nav-shell:not(.js-nav) .nav-group-items[hidden] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+
+.js-nav .nav-group-items a {
+  white-space: nowrap;
 }
 
 nav a {
@@ -488,6 +604,11 @@ nav a.is-active {
 nav a.is-primary {
   font-weight: 700;
   color: #fff;
+}
+
+nav a.is-primary.is-active {
+  background: #fff;
+  color: #0b7a75;
 }
 
 .nav-home {
@@ -616,8 +737,25 @@ button[disabled],
     font-size: 15px;
   }
 
-  .nav-group {
-    width: 100%;
+  /* ドロップダウン化したので幅いっぱいに広げない（横に並べたままにする）。
+     狭い画面ではボタンが右寄りにも来るので、left 固定だと右端が切れる。
+     ヘッダー幅いっぱいに広げて左端揃えにし、はみ出しを構造的に潰す。 */
+  /* left 固定のままだと右寄りのボタンでメニューが画面外へ出る。
+     .nav-groups 行を基準にして左右いっぱいに広げ、はみ出しを構造的に潰す
+     （position:fixed は縦位置がボタンから外れるので使わない）。 */
+  .nav-groups {
+    position: relative;
+  }
+
+  .js-nav .nav-group {
+    position: static;
+  }
+
+  .js-nav .nav-group-items:not([hidden]) {
+    left: 0;
+    right: 0;
+    min-width: 0;
+    max-width: none;
   }
 
   /* 検索ボックスが広いとタイトル・アカウントを押し出して header-bar が崩れる */

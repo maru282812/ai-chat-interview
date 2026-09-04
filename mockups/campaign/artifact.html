@@ -1,0 +1,954 @@
+<title>Hibi 招待・ペア・段階報酬 UI</title>
+<style>
+/* Hallmark · genre: playful · macrostructure: Stat-Led (U-1) + Narrative Workflow (U-2)
+ * theme: Hibi (preserved — cream paper / gold / teal, from src/public/hibi.css)
+ * tone: 祝祭 playful, restrained · anchor hue: teal 168°
+ * principles: present-bias, goal-gradient, zeigarnik, peak-end, von-restorff, fitts, recognition
+ * enrichment: none (typography + CSS only) · nav/footer: n/a (in-app LIFF, existing bottom nav)
+ * contrast: pass · states: 8/8 on interactive elements
+ *
+ * 招待・ペアアンケート・段階報酬キャンペーンの3画面用トークン。
+ * 既存 hibi.css の :root を壊さないよう --cp-* 名前空間で足す。
+ * 色は hibi.css の値をそのまま引き継ぐ（新しい色を発明しない）。
+ */
+
+:root {
+  color-scheme: light;   /* 単一テーマ確定: Hibi の製品面をそのまま見せる。地は body が明示的に塗る */
+  /* ---- 地・インク（hibi.css から継承） ---- */
+  --cp-paper:        #FBF5E2;  /* ページ地 */
+  --cp-paper-2:      #FFFDF6;  /* カード地・アプリバー */
+  --cp-cream:        #FAF0D2;
+  --cp-ink:          #222;
+  --cp-sub:          #777;
+  --cp-line:         #F0E6C8;
+
+  /* ---- アクセント（hibi.css から継承） ---- */
+  --cp-teal:         #0E6B5A;  /* CTA・強調数字。1画面1強調の担当 */
+  --cp-teal-deep:    #0A5245;
+  --cp-teal-weak:    #E9F3F0;
+  --cp-teal-lift:    #17977f;  /* 完了面のグラデ上端（hibi.css .hb-pick 由来） */
+  --cp-teal-line:    #CFE4DD;  /* 達成段の罫 */
+  --cp-gold:         #C9911F;
+  --cp-gold-strong:  #DFA02F;
+  --cp-gold-text:    #A97814;
+  --cp-gold-weak:    #FDF6E3;
+  --cp-gold-line:    #F2E4C0;
+
+  /* ---- 抽選段（最上段だけの特別色。多用しない） ---- */
+  --cp-lot:          #7A3E9D;  /* 抽選の紫。段3のみ */
+  --cp-lot-weak:     #F4EDF9;
+  --cp-lot-line:     #E3D2EF;
+
+  /* ---- 案件指定型の目標ゲージ（scope=project） ---- */
+  --cp-goal-track:   #E4EFEB;  /* 未達部分 */
+  --cp-goal-fill:    #17977f;  /* 到達部分 */
+
+  /* ---- 特別ステージ（ボス層）。深緑地＋金。通常段と質を変える ---- */
+  --cp-boss-bg:      #0B3A31;  /* 深い緑。通常の面より一段沈める */
+  --cp-boss-bg-2:    #124A3E;
+  --cp-boss-line:    #1E6354;
+  --cp-boss-gold:    #E8C56A;  /* ボス層の金 */
+  --cp-boss-gold-dim:#A98E45;
+  --cp-on-boss:      #F3EFE2;  /* 深緑面の文字 */
+  --cp-on-boss-sub:  #9DB5AC;
+  --cp-boss-well:    rgba(0,0,0,.18);        /* ボス面のくぼみ */
+  --cp-boss-track:   rgba(255,255,255,.12);  /* ボス面のバー地 */
+
+  /* ---- 「なりたい自分」レイヤー ---- */
+  --cp-ideal:        #B06A8F;  /* くすんだ薔薇。金と喧嘩しない */
+  --cp-ideal-weak:   #F7EFF3;
+  --cp-ideal-line:   #E9D6E0;
+
+  /* ---- 状態色 ---- */
+  --cp-danger:       #E5484D;
+  --cp-danger-weak:  #FDEEEE;
+  --cp-muted:        #B9AE92;  /* 未達の段・グレーアウト */
+  --cp-muted-weak:   #F3EEDF;
+  --cp-mock-ink:     #5b5344;  /* モック台紙の見出し（本番ページでは使わない） */
+  --cp-mock-sub:     #6f6757;
+  --cp-mock-shadow:  rgba(60,50,20,.5);
+
+  /* ---- フォーカスリング（a11y・3:1以上・アニメーションさせない） ---- */
+  --cp-focus:        #0A5245;
+
+  /* ---- 反転面・アイコン（gate 48: 生の色を書かないため名前を与える） ---- */
+  --cp-on-teal:      #fff;   /* ティール面の文字 */
+  --cp-on-teal-dim:  rgba(255,255,255,.4);
+  --cp-on-teal-soft: rgba(255,255,255,.92);
+  --cp-gold-on-teal: #FFE9A8; /* ティール面での数字 */
+  --cp-icon:         #444;
+
+  /* ---- タイポ（既存のシステムフォント。webfont を足さない） ---- */
+  --cp-font: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  --cp-text-figure:  clamp(44px, 15vw, 64px); /* Stat-Led の主役数字 */
+  --cp-text-2xl:     22px;
+  --cp-text-xl:      18px;
+  --cp-text-lg:      16px;
+  --cp-text-md:      14px;
+  --cp-text-sm:      12.5px;
+  --cp-text-xs:      11px;
+
+  /* ---- 余白（4pt スケール） ---- */
+  --cp-space-2xs: 4px;
+  --cp-space-xs:  8px;
+  --cp-space-sm:  12px;
+  --cp-space-md:  16px;
+  --cp-space-lg:  24px;
+  --cp-space-xl:  32px;
+  --cp-space-2xl: 48px;
+
+  /* ---- 角丸（playful の上限 12px を守る。ピルのみ 999px） ---- */
+  --cp-radius-sm:  8px;
+  --cp-radius-md:  12px;
+  --cp-radius-pill: 999px;
+
+  /* ---- 罫 ---- */
+  --cp-rule: 1px solid var(--cp-line);
+
+  /* ---- モーション（transform / opacity のみ・3種） ---- */
+  --cp-ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --cp-ease-in:     cubic-bezier(0.7, 0, 0.84, 0);
+  --cp-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --cp-dur-micro: 130ms;
+  --cp-dur-minor: 240ms;
+  --cp-dur-major: 420ms;
+}
+
+</style>
+<style>
+/* Hallmark · genre: playful · macrostructure: Stat-Led (U-1) + Narrative Workflow (U-2)
+ * theme: Hibi (preserved) · tone: 祝祭 playful · anchor hue: teal 168°
+ * principles: present-bias, goal-gradient, zeigarnik, peak-end, von-restorff, fitts, recognition
+ */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{overflow-x:clip}
+body{
+  font-family:var(--cp-font); background:var(--cp-muted-weak); color:var(--cp-ink);
+  -webkit-font-smoothing:antialiased;
+}
+/* モック台紙。実装では .hb-shell が担当する */
+.stage{max-width:1180px;margin:0 auto;padding:var(--cp-space-lg) var(--cp-space-sm) var(--cp-space-2xl)}
+.stage-h{font-size:var(--cp-text-md);font-weight:800;color:var(--cp-mock-ink);margin:var(--cp-space-lg) 0 var(--cp-space-xs)}
+.stage-note{font-size:var(--cp-text-sm);color:var(--cp-mock-sub);line-height:1.7;margin-bottom:var(--cp-space-md);max-width:62ch}
+.screens{display:flex;gap:var(--cp-space-lg);flex-wrap:wrap;align-items:flex-start}
+.phone{
+  width:340px;flex:0 0 340px;background:var(--cp-paper);
+  border-radius:var(--cp-radius-md);border:var(--cp-rule);
+  overflow:hidden;box-shadow:0 8px 24px -14px var(--cp-mock-shadow);
+}
+.phone-cap{
+  font-size:var(--cp-text-xs);font-weight:800;letter-spacing:.04em;
+  color:var(--cp-mock-sub);padding:var(--cp-space-xs) var(--cp-space-sm);
+  background:var(--cp-muted-weak);border-bottom:var(--cp-rule);
+}
+@media (max-width:760px){ .phone{width:100%;flex:1 1 100%} }
+
+/* ============ 共通 ============ */
+.appbar{
+  display:flex;align-items:center;gap:10px;padding:12px var(--cp-space-md);
+  background:var(--cp-paper-2);border-bottom:var(--cp-rule);
+}
+.appbar .t{font-size:15px;font-weight:700;flex:1;text-align:center}
+.appbar .b{width:24px;height:24px;color:var(--cp-icon);font-size:19px;line-height:1}
+
+/* 触れるものは 44px 以上（Fitts）。8状態すべてに見た目を与える */
+.btn{
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  width:100%;min-height:52px;padding:14px var(--cp-space-md);
+  border:none;border-radius:var(--cp-radius-pill);
+  font-family:inherit;font-size:var(--cp-text-lg);font-weight:800;
+  background:var(--cp-teal);color:var(--cp-on-teal);cursor:pointer;
+  transition:transform var(--cp-dur-micro) var(--cp-ease-out),
+             background-color var(--cp-dur-micro) var(--cp-ease-out),
+             opacity var(--cp-dur-micro) var(--cp-ease-out);
+}
+.btn:hover,.btn.is-hover{background:var(--cp-teal-deep)}
+.btn:focus-visible,.btn.is-focus{outline:3px solid var(--cp-focus);outline-offset:3px} /* 出現をアニメーションさせない */
+.btn:active,.btn.is-active{transform:translateY(1px)}
+.btn:disabled,.btn.is-disabled{background:var(--cp-muted);color:var(--cp-on-teal);cursor:not-allowed;opacity:.85}
+.btn.is-loading{background:var(--cp-teal);opacity:.9;cursor:progress}
+.btn.is-loading::before{
+  content:"";width:15px;height:15px;border-radius:50%;
+  border:2px solid var(--cp-on-teal-dim);border-top-color:var(--cp-on-teal);
+  animation:spin 640ms linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.btn.is-error{background:var(--cp-danger)}
+.btn.is-success{background:var(--cp-teal-deep)}
+.btn-ghost{
+  background:transparent;color:var(--cp-teal);border:1.5px solid var(--cp-teal);
+  min-height:46px;font-size:var(--cp-text-md);
+}
+.btn-ghost:hover,.btn-ghost.is-hover{background:var(--cp-teal-weak)}
+
+.sec{padding:var(--cp-space-md)}
+.sec-h{font-size:var(--cp-text-md);font-weight:800;color:var(--cp-ink);margin-bottom:var(--cp-space-xs)}
+.muted{color:var(--cp-sub);font-size:var(--cp-text-sm);line-height:1.65}
+.tnum{font-variant-numeric:tabular-nums}
+
+/* ============ U-1 招待ランディング（Stat-Led） ============ */
+/* 主役は報酬の数字。ただし数字だけを置かない（裸の数字は gate 46）。 */
+.inv-from{
+  display:flex;align-items:center;gap:10px;
+  padding:var(--cp-space-md);background:var(--cp-paper-2);border-bottom:var(--cp-rule);
+}
+.inv-from .ava{
+  width:38px;height:38px;flex-shrink:0;border-radius:50%;
+  background:var(--cp-cream);border:1.5px solid var(--cp-line);
+  display:flex;align-items:center;justify-content:center;
+  font-size:15px;font-weight:800;color:var(--cp-gold-text);
+}
+.inv-from .who{font-size:var(--cp-text-md);line-height:1.5}
+.inv-from .who b{font-weight:800}
+.inv-from .who span{color:var(--cp-sub);font-size:var(--cp-text-sm);display:block;margin-top:1px}
+
+.stat{padding:var(--cp-space-xl) var(--cp-space-md) var(--cp-space-lg);text-align:left}
+.stat .fig{
+  display:flex;align-items:baseline;gap:6px;
+  font-size:var(--cp-text-figure);font-weight:900;line-height:.95;
+  color:var(--cp-teal);letter-spacing:-.02em;
+}
+.stat .fig .u{font-size:.42em;font-weight:800}
+/* 数字に必ず言葉を添える（Stat-Led の鉄則） */
+.stat .qual{
+  margin-top:var(--cp-space-sm);font-size:var(--cp-text-xl);
+  font-weight:800;line-height:1.5;overflow-wrap:anywhere;
+}
+.stat .qual .hl{color:var(--cp-teal);text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:3px}
+.stat .sub{margin-top:var(--cp-space-xs);font-size:var(--cp-text-md);color:var(--cp-sub);line-height:1.7}
+
+/* 事実の3行。誇張ゼロ・少人数でも劣化しない数字だけを置く */
+.facts{margin:0 var(--cp-space-md);border-top:var(--cp-rule)}
+.facts div{
+  display:flex;justify-content:space-between;gap:var(--cp-space-md);
+  padding:11px 0;border-bottom:var(--cp-rule);font-size:var(--cp-text-md);
+}
+.facts dt{color:var(--cp-sub)}
+.facts dd{font-weight:700;text-align:right}
+
+.cta-zone{padding:var(--cp-space-lg) var(--cp-space-md) var(--cp-space-md)}
+.cta-fine{margin-top:10px;text-align:center;font-size:var(--cp-text-xs);color:var(--cp-sub);line-height:1.6}
+
+/* ============ U-2 キャンペーン（Narrative Workflow ＝ 階段） ============ */
+.camp-head{padding:var(--cp-space-md) var(--cp-space-md) var(--cp-space-sm)}
+.camp-head h2{font-size:var(--cp-text-2xl);font-weight:900;line-height:1.35;overflow-wrap:anywhere}
+.camp-head .meta{margin-top:6px;font-size:var(--cp-text-sm);color:var(--cp-sub)}
+
+/* 現在地の一行。Zeigarnik + goal gradient（0から始めない） */
+.now{
+  margin:0 var(--cp-space-md);padding:var(--cp-space-sm) 0 var(--cp-space-md);
+  border-bottom:var(--cp-rule);
+}
+.now .lead{display:flex;align-items:baseline;gap:6px}
+.now .lead .n{font-size:30px;font-weight:900;color:var(--cp-teal);line-height:1}
+.now .lead .n small{font-size:13px;font-weight:800}
+.now .togo{margin-left:auto;font-size:var(--cp-text-sm);color:var(--cp-sub)}
+.now .togo b{color:var(--cp-teal);font-weight:800}
+
+/* 階段。未達も最初から見せる（recognition）。段は下から上へ */
+.stairs{display:flex;flex-direction:column-reverse;gap:10px;padding:var(--cp-space-md)}
+.step{
+  position:relative;display:flex;align-items:center;gap:var(--cp-space-sm);
+  padding:13px var(--cp-space-sm);border-radius:var(--cp-radius-md);
+  background:var(--cp-paper-2);border:1px solid var(--cp-line);
+}
+/* 段差を字下げで作る＝「上る」感じを構造で出す */
+.step[data-tier="1"]{margin-right:0}
+.step[data-tier="2"]{margin-right:14px;margin-left:14px}
+.step[data-tier="3"]{margin-right:0;margin-left:28px}
+.step .mark{
+  width:30px;height:30px;flex-shrink:0;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:var(--cp-text-sm);font-weight:900;
+  background:var(--cp-muted-weak);color:var(--cp-muted);border:1.5px solid var(--cp-line);
+}
+.step .body{flex:1;min-width:0}
+.step .cond{font-size:var(--cp-text-md);font-weight:800;line-height:1.4}
+.step .prize{font-size:var(--cp-text-sm);color:var(--cp-sub);margin-top:2px}
+.step .prize b{color:var(--cp-gold-text);font-weight:800}
+
+.step.done{background:var(--cp-teal-weak);border-color:var(--cp-teal-line)}
+.step.done .mark{background:var(--cp-teal);color:var(--cp-on-teal);border-color:var(--cp-teal)}
+.step.done .cond{color:var(--cp-teal-deep)}
+/* 現在地はこの画面で唯一強調してよい要素（Von Restorff） */
+.step.now-step{border-color:var(--cp-teal);border-width:2px;background:var(--cp-paper-2)}
+.step.now-step .mark{background:var(--cp-gold-strong);color:var(--cp-on-teal);border-color:var(--cp-gold-strong)}
+.step.locked{opacity:.72}
+.step .tag{
+  position:absolute;top:-8px;right:12px;
+  font-size:10px;font-weight:900;letter-spacing:.04em;
+  background:var(--cp-teal);color:var(--cp-on-teal);padding:3px 9px;border-radius:var(--cp-radius-pill);
+}
+
+
+/* --- 二本立ての進み方。回答でも招待でも段が上がる --- */
+.tracks{display:flex;gap:10px;margin:0 var(--cp-space-md) var(--cp-space-sm)}
+.track{
+  flex:1;min-width:0;padding:10px var(--cp-space-sm);
+  background:var(--cp-paper-2);border:1px solid var(--cp-line);border-radius:var(--cp-radius-md);
+}
+.track .k{font-size:var(--cp-text-xs);color:var(--cp-sub);font-weight:700}
+.track .v{display:flex;align-items:baseline;gap:3px;margin-top:2px}
+.track .v b{font-size:21px;font-weight:900;color:var(--cp-teal);line-height:1}
+.track .v small{font-size:var(--cp-text-xs);font-weight:800;color:var(--cp-teal)}
+.track .bar{height:5px;border-radius:var(--cp-radius-pill);background:var(--cp-muted-weak);overflow:hidden;margin-top:7px}
+.track .bar i{display:block;height:100%;border-radius:var(--cp-radius-pill);background:var(--cp-teal)}
+.track.lead{border-color:var(--cp-teal);background:var(--cp-teal-weak)}
+
+/* 現在の段そのものを押せるようにする（つぎの一手を階段の中に置く） */
+.step.now-step{border-color:var(--cp-teal);border-width:2px;background:var(--cp-paper-2)}
+button.step{
+  width:100%;text-align:left;font-family:inherit;cursor:pointer;
+  transition:transform var(--cp-dur-micro) var(--cp-ease-out);
+}
+button.step:hover,button.step.is-hover{transform:translateY(-1px)}
+button.step:focus-visible,button.step.is-focus{outline:3px solid var(--cp-focus);outline-offset:3px}
+button.step:active,button.step.is-active{transform:translateY(1px)}
+.step .go{
+  margin-left:auto;flex-shrink:0;font-size:var(--cp-text-sm);font-weight:900;
+  color:var(--cp-teal);display:flex;align-items:center;gap:3px;
+}
+.step .or{
+  font-size:var(--cp-text-xs);color:var(--cp-sub);font-weight:600;
+  margin-top:3px;
+}
+.step .or b{color:var(--cp-ink);font-weight:800}
+
+/* 抽選段。最上段だけ色を変える＝ご褒美の質が変わることを構造で示す */
+.step.lot{border-color:var(--cp-lot-line);background:var(--cp-lot-weak)}
+.step.lot .mark{background:var(--cp-lot-weak);color:var(--cp-lot);border-color:var(--cp-lot-line)}
+.step.lot .prize b{color:var(--cp-lot)}
+.step.lot.done{background:var(--cp-lot-weak);border-color:var(--cp-lot)}
+.step.lot.done .mark{background:var(--cp-lot);color:var(--cp-on-teal);border-color:var(--cp-lot)}
+
+/* 段が伸びる動き。回答直後にここが育つのが見える */
+@keyframes grow{from{opacity:0;transform:translateY(6px) scaleY(.86)}to{opacity:1;transform:none}}
+.anim-grow{transform-origin:bottom center;animation:grow var(--cp-dur-major) var(--cp-ease-out) both}
+
+
+/* --- 案件指定型（scope=project）。目標と締切は実データがある時だけ出す --- */
+.goal{margin:0 var(--cp-space-md) var(--cp-space-md);padding:var(--cp-space-md);
+  background:var(--cp-paper-2);border:1px solid var(--cp-line);border-radius:var(--cp-radius-md)}
+.goal .top{display:flex;align-items:baseline;gap:6px}
+.goal .top .n{font-size:34px;font-weight:900;color:var(--cp-teal);line-height:1}
+.goal .top .of{font-size:var(--cp-text-md);color:var(--cp-sub);font-weight:700}
+.goal .top .dl{margin-left:auto;font-size:var(--cp-text-sm);color:var(--cp-sub);font-weight:700}
+.goal .top .dl b{color:var(--cp-gold-text);font-weight:800}
+.goal .bar{height:10px;border-radius:var(--cp-radius-pill);background:var(--cp-goal-track);
+  overflow:hidden;margin-top:11px}
+.goal .bar i{display:block;height:100%;border-radius:var(--cp-radius-pill);
+  background:var(--cp-goal-fill)}
+.goal .say{margin-top:10px;font-size:var(--cp-text-md);font-weight:800;line-height:1.5}
+.goal .who{margin-top:4px;font-size:var(--cp-text-sm);color:var(--cp-sub);line-height:1.6}
+/* 目標が未設定の案件では帯ごと出さない（分母を捏造しない） */
+.goal.no-target .bar{display:none}
+
+
+/* ===== 特別ステージ（ボス層）。通常段と「面の質」を変える =====
+   高級感は装飾を足して作るのではなく、地を沈めて金を1点だけ置いて作る。 */
+.boss{
+  margin:var(--cp-space-md);border-radius:var(--cp-radius-md);overflow:hidden;
+  background:var(--cp-boss-bg);border:1px solid var(--cp-boss-line);
+}
+.boss .cap{
+  padding:11px var(--cp-space-md);border-bottom:1px solid var(--cp-boss-line);
+  display:flex;align-items:center;gap:8px;
+  background:var(--cp-boss-bg-2);
+}
+.boss .cap .k{
+  font-size:var(--cp-text-xs);font-weight:900;letter-spacing:.14em;
+  color:var(--cp-boss-gold);
+}
+.boss .cap .lock{margin-left:auto;font-size:var(--cp-text-xs);color:var(--cp-on-boss-sub);font-weight:700}
+.boss .in{padding:var(--cp-space-lg) var(--cp-space-md)}
+.boss h3{
+  font-size:23px;font-weight:900;line-height:1.4;color:var(--cp-on-boss);
+  overflow-wrap:anywhere;
+}
+.boss .lede{margin-top:9px;font-size:var(--cp-text-md);color:var(--cp-on-boss-sub);line-height:1.75}
+.boss .prizerow{
+  margin-top:var(--cp-space-md);padding-top:var(--cp-space-md);
+  border-top:1px solid var(--cp-boss-line);
+  display:flex;align-items:baseline;gap:6px;
+}
+.boss .prizerow .n{font-size:32px;font-weight:900;color:var(--cp-boss-gold);line-height:1}
+.boss .prizerow .u{font-size:var(--cp-text-md);font-weight:800;color:var(--cp-boss-gold)}
+.boss .prizerow .note{margin-left:auto;font-size:var(--cp-text-xs);color:var(--cp-on-boss-sub);text-align:right;line-height:1.5}
+
+/* 到達までの残り。ボス層でも数字は必ず言葉とセット */
+.boss .gate{
+  margin-top:var(--cp-space-md);padding:12px var(--cp-space-sm);
+  border-radius:var(--cp-radius-sm);background:var(--cp-boss-well);
+}
+.boss .gate .t{font-size:var(--cp-text-sm);color:var(--cp-on-boss-sub);font-weight:700}
+.boss .gate .bar{height:6px;border-radius:var(--cp-radius-pill);
+  background:var(--cp-boss-track);overflow:hidden;margin-top:8px}
+.boss .gate .bar i{display:block;height:100%;border-radius:var(--cp-radius-pill);
+  background:var(--cp-boss-gold)}
+.boss .btn-boss{
+  margin-top:var(--cp-space-md);width:100%;min-height:52px;
+  border:none;border-radius:var(--cp-radius-pill);font-family:inherit;
+  font-size:var(--cp-text-lg);font-weight:900;cursor:pointer;
+  background:var(--cp-boss-gold);color:var(--cp-boss-bg);
+  transition:transform var(--cp-dur-micro) var(--cp-ease-out),opacity var(--cp-dur-micro) var(--cp-ease-out);
+}
+.boss .btn-boss:hover,.boss .btn-boss.is-hover{opacity:.92}
+.boss .btn-boss:focus-visible,.boss .btn-boss.is-focus{outline:3px solid var(--cp-boss-gold);outline-offset:3px}
+.boss .btn-boss:active,.boss .btn-boss.is-active{transform:translateY(1px)}
+.boss .btn-boss:disabled,.boss .btn-boss.is-disabled{
+  background:var(--cp-boss-gold-dim);color:var(--cp-boss-bg);cursor:not-allowed;opacity:.7}
+
+/* 未到達のときは中身を伏せる。ただし「何がもらえるか」は見せる（recognition） */
+.boss.locked h3{color:var(--cp-on-boss-sub)}
+
+/* ===== 「なりたい自分」レイヤー（積み上げとは別の動機） =====
+   理想を先に置き、そこからの距離を示す。上から下へ読ませる。 */
+.ideal{margin:var(--cp-space-md);padding:var(--cp-space-lg) var(--cp-space-md);
+  background:var(--cp-ideal-weak);border:1px solid var(--cp-ideal-line);
+  border-radius:var(--cp-radius-md)}
+.ideal .k{font-size:var(--cp-text-xs);font-weight:900;letter-spacing:.1em;color:var(--cp-ideal)}
+.ideal .to{margin-top:10px;font-size:var(--cp-text-2xl);font-weight:900;line-height:1.45;overflow-wrap:anywhere}
+.ideal .gapline{display:flex;align-items:center;gap:10px;margin-top:var(--cp-space-md)}
+.ideal .gapline .now,.ideal .gapline .aim{flex:1;min-width:0;text-align:center;
+  padding:12px 8px;border-radius:var(--cp-radius-md);background:var(--cp-paper-2)}
+.ideal .gapline .aim{background:#fff;border:1.5px solid var(--cp-ideal)}
+.ideal .gapline .lb{font-size:var(--cp-text-xs);color:var(--cp-sub);font-weight:700}
+.ideal .gapline .vl{font-size:var(--cp-text-lg);font-weight:900;margin-top:3px}
+.ideal .gapline .aim .vl{color:var(--cp-ideal)}
+.ideal .gapline .arrow{flex-shrink:0;color:var(--cp-ideal);font-weight:900}
+.ideal .say{margin-top:var(--cp-space-md);font-size:var(--cp-text-md);line-height:1.75}
+
+/* 次の一手。CTAは1つだけ（Hick） */
+.next{margin:0 var(--cp-space-md) var(--cp-space-md);padding:var(--cp-space-md);
+  background:var(--cp-gold-weak);border:1px solid var(--cp-gold-line);border-radius:var(--cp-radius-md)}
+.next .k{font-size:var(--cp-text-xs);font-weight:900;color:var(--cp-gold-text);letter-spacing:.06em}
+.next .v{margin:6px 0 var(--cp-space-sm);font-size:var(--cp-text-lg);font-weight:800;line-height:1.5}
+
+/* 招待した人の一覧＝催促の起点 */
+.people{padding:0 var(--cp-space-md) var(--cp-space-md)}
+.person{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:var(--cp-rule)}
+.person .ava{width:32px;height:32px;border-radius:50%;background:var(--cp-cream);
+  border:1px solid var(--cp-line);display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:800;color:var(--cp-gold-text);flex-shrink:0}
+.person .nm{flex:1;min-width:0;font-size:var(--cp-text-md);font-weight:700;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.person .st{font-size:var(--cp-text-xs);font-weight:800;padding:4px 10px;border-radius:var(--cp-radius-pill);flex-shrink:0}
+.st.ok{background:var(--cp-teal-weak);color:var(--cp-teal-deep)}
+.st.wait{background:var(--cp-gold-weak);color:var(--cp-gold-text)}
+.st.none{background:var(--cp-muted-weak);color:var(--cp-sub)}
+
+/* 空状態。空にしない（peak-end / recognition） */
+.empty{padding:var(--cp-space-lg) var(--cp-space-md);text-align:center}
+.empty p{font-size:var(--cp-text-md);color:var(--cp-sub);line-height:1.75}
+
+/* ============ U-4 答え合わせ（1問ずつめくる） ============ */
+.pair-top{padding:var(--cp-space-md);text-align:center;border-bottom:var(--cp-rule)}
+.pair-top .who{font-size:var(--cp-text-md);font-weight:700}
+.pair-top .who b{color:var(--cp-teal)}
+.dots{display:flex;justify-content:center;gap:6px;margin-top:10px}
+.dots i{width:7px;height:7px;border-radius:50%;background:var(--cp-line)}
+.dots i.on{background:var(--cp-teal);transform:scale(1.25)}
+.dots i.miss{background:var(--cp-gold-strong)}
+
+.card{margin:var(--cp-space-md);padding:var(--cp-space-lg) var(--cp-space-md);
+  background:var(--cp-paper-2);border:1px solid var(--cp-line);
+  border-radius:var(--cp-radius-md);text-align:center}
+.card .verdict{font-size:var(--cp-text-xl);font-weight:900;line-height:1.4}
+.card.same .verdict{color:var(--cp-teal)}
+.card.diff .verdict{color:var(--cp-gold-text)}
+.card .q{margin-top:var(--cp-space-sm);font-size:var(--cp-text-md);color:var(--cp-sub);line-height:1.6}
+.card .pick{
+  margin-top:var(--cp-space-sm);padding:13px var(--cp-space-md);
+  border-radius:var(--cp-radius-md);font-size:var(--cp-text-lg);font-weight:800;
+}
+.card.same .pick{background:var(--cp-teal-weak);color:var(--cp-teal-deep)}
+.card .two{display:flex;gap:10px;margin-top:var(--cp-space-sm)}
+.card .two div{flex:1;min-width:0;padding:12px 10px;border-radius:var(--cp-radius-md);
+  background:var(--cp-muted-weak)}
+.card .two .lb{font-size:var(--cp-text-xs);color:var(--cp-sub);font-weight:700}
+.card .two .vl{font-size:var(--cp-text-lg);font-weight:800;margin-top:3px;overflow-wrap:anywhere}
+.card .two .me{background:var(--cp-teal-weak)}
+.card .two .me .vl{color:var(--cp-teal-deep)}
+.card .two .you{background:var(--cp-gold-weak)}
+.card .two .you .vl{color:var(--cp-gold-text)}
+.card .avatars{display:flex;justify-content:center;gap:6px;margin-top:var(--cp-space-sm);
+  font-size:var(--cp-text-sm);color:var(--cp-sub)}
+
+/* 終わり方＝peak-end。最後に必ず次の行き先を出す */
+.finale{margin:var(--cp-space-md);padding:var(--cp-space-lg) var(--cp-space-md);
+  background:linear-gradient(160deg,var(--cp-teal),var(--cp-teal-lift));color:var(--cp-on-teal);
+  border-radius:var(--cp-radius-md);text-align:center}
+.finale .big{font-size:26px;font-weight:900;line-height:1.3}
+.finale .sm{margin-top:8px;font-size:var(--cp-text-md);color:var(--cp-on-teal-soft);line-height:1.6}
+.finale .pt{margin-top:var(--cp-space-md);font-size:34px;font-weight:900;color:var(--cp-gold-on-teal)}
+.finale .pt small{font-size:15px}
+
+/* ---- モーション3種。transform / opacity のみ ---- */
+@keyframes tick{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.anim-tick{animation:tick var(--cp-dur-major) var(--cp-ease-out) both}
+@keyframes fill{from{opacity:0;transform:scaleX(.6)}to{opacity:1;transform:none}}
+.anim-fill{transform-origin:left center;animation:fill var(--cp-dur-minor) var(--cp-ease-out) both}
+@keyframes flip{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
+.anim-flip{animation:flip var(--cp-dur-minor) var(--cp-ease-out) both}
+
+@media (prefers-reduced-motion:reduce){
+  .anim-tick,.anim-fill,.anim-flip,.anim-grow{animation:none;opacity:1;transform:none}
+  button.step{transition:none}
+  .btn{transition:none}
+  .btn.is-loading::before{animation:none}
+}
+
+/* 8状態デモ */
+.states{display:flex;flex-direction:column;gap:9px;padding:var(--cp-space-md)}
+.states .row{display:flex;align-items:center;gap:10px}
+.states .lb{width:70px;flex-shrink:0;font-size:var(--cp-text-xs);color:var(--cp-sub);font-weight:700}
+</style>
+
+<div class="stage">
+
+<div class="stage-h">U-1 · 招待ランディング（未ログイン可）— Stat-Led</div>
+<p class="stage-note">
+  未登録の人が見る唯一の画面。<b>もらえるものを最初に出す</b>（present bias）。
+  主役は数字だが、Stat-Led の鉄則どおり<b>数字だけを置かない</b>——必ず言葉を添える。
+  「〇〇さんから招待されました」は1対1の事実なので<b>人数が少なくても劣化しない</b>。
+  参加人数・全体ゲージ・ランキングは出さない（D-1）。
+</p>
+<div class="screens">
+
+  <div class="phone">
+    <div class="phone-cap">通常 / 有効なリンク</div>
+    <div class="inv-from">
+      <div class="ava">さ</div>
+      <div class="who"><b>さきさん</b> から招待されました<span>Hibi・アンケートで謝礼がもらえます</span></div>
+    </div>
+    <div class="stat">
+      <div class="fig tnum anim-tick">100<span class="u">pt</span></div>
+      <p class="qual">はじめると <b class="hl">すぐ受け取れます</b>。</p>
+      <p class="sub">登録して最初のアンケートに答えると、さらに 200pt。</p>
+    </div>
+    <dl class="facts">
+      <div><dt>所要時間</dt><dd>約3分</dd></div>
+      <div><dt>設問の形式</dt><dd>選ぶだけ</dd></div>
+      <div><dt>回答の公開</dt><dd>ありません</dd></div>
+    </dl>
+    <div class="cta-zone">
+      <button class="btn">はじめる</button>
+      <p class="cta-fine">LINEでそのまま登録できます</p>
+    </div>
+  </div>
+
+  <div class="phone">
+    <div class="phone-cap">期限切れ / 上限到達</div>
+    <div class="inv-from">
+      <div class="ava">さ</div>
+      <div class="who"><b>さきさん</b> から招待されました<span>この招待は受付を終了しています</span></div>
+    </div>
+    <div class="stat">
+      <div class="fig tnum" style="color:var(--cp-muted)">—</div>
+      <p class="qual">この招待リンクは <b class="hl">期限切れ</b> です。</p>
+      <p class="sub">招待した方にもう一度リンクを送ってもらってください。<br>Hibi は招待なしでも登録できます。</p>
+    </div>
+    <div class="cta-zone">
+      <button class="btn btn-ghost">Hibi について見る</button>
+      <p class="cta-fine">受け取れる謝礼は招待経由と異なります</p>
+    </div>
+  </div>
+
+  <div class="phone">
+    <div class="phone-cap">ボタン8状態（実装チェック用）</div>
+    <div class="states">
+      <div class="row"><span class="lb">default</span><button class="btn">はじめる</button></div>
+      <div class="row"><span class="lb">hover</span><button class="btn is-hover">はじめる</button></div>
+      <div class="row"><span class="lb">focus</span><button class="btn is-focus">はじめる</button></div>
+      <div class="row"><span class="lb">active</span><button class="btn is-active">はじめる</button></div>
+      <div class="row"><span class="lb">disabled</span><button class="btn" disabled>はじめる</button></div>
+      <div class="row"><span class="lb">loading</span><button class="btn is-loading">確認しています</button></div>
+      <div class="row"><span class="lb">error</span><button class="btn is-error">もう一度ためす</button></div>
+      <div class="row"><span class="lb">success</span><button class="btn is-success">登録できました</button></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="stage-h">U-2 · キャンペーン専用ページ — Narrative Workflow（階段・改）</div>
+<p class="stage-note">
+  <b>進み方を2本にした。</b>回答でも招待でも段が上がる＝<b>身内がいなくても必ず進む</b>。
+  招待は「唯一の道」ではなく<b>近道</b>（1人 ≒ 3回答）。
+  <b>現在の段そのものが押せる</b>＝つぎの一手を階段の外に置かない。
+  最上段だけ<b>抽選</b>にして、ご褒美の質が変わることを色と形で示す。
+</p>
+<div class="screens">
+
+  <div class="phone">
+    <div class="phone-cap">参加中（回答で進んでいる・招待ゼロでも詰まらない）</div>
+    <div class="appbar"><span class="b">←</span><span class="t">積み上げる</span><span class="b"></span></div>
+    <div class="camp-head">
+      <h2>答えるほど、上がる。</h2>
+      <p class="meta">9月30日まで</p>
+    </div>
+    <div class="tracks">
+      <div class="track lead">
+        <div class="k">あなたの回答</div>
+        <div class="v"><b class="tnum">7</b><small>回</small></div>
+        <div class="bar"><i style="width:70%"></i></div>
+      </div>
+      <div class="track">
+        <div class="k">誘った人</div>
+        <div class="v"><b class="tnum">0</b><small>人</small></div>
+        <div class="bar"><i style="width:0%"></i></div>
+      </div>
+    </div>
+    <div class="stairs">
+      <button class="step lot locked" data-tier="3">
+        <div class="mark">3</div>
+        <div class="body">
+          <div class="cond">20回 答える</div>
+          <div class="or">または <b>5人</b> 誘う</div>
+          <div class="prize">抽選で <b>10,000pt</b>／100名</div>
+        </div>
+      </button>
+      <button class="step locked" data-tier="2">
+        <div class="mark">2</div>
+        <div class="body">
+          <div class="cond">10回 答える</div>
+          <div class="or">または <b>3人</b> 誘う</div>
+          <div class="prize">ボーナス <b>+200pt</b></div>
+        </div>
+      </button>
+      <button class="step now-step anim-grow" data-tier="1">
+        <span class="tag">あと3回</span>
+        <div class="mark">1</div>
+        <div class="body">
+          <div class="cond">10回 答える</div>
+          <div class="or">または <b>1人</b> 誘う</div>
+          <div class="prize">ボーナス <b>+150pt</b></div>
+        </div>
+        <span class="go">answer ›</span>
+      </button>
+    </div>
+    <div class="next">
+      <div class="k">近道</div>
+      <div class="v">1人 誘うと 3回ぶん</div>
+      <button class="btn btn-ghost">LINEで招待を送る</button>
+    </div>
+  </div>
+
+  <div class="phone">
+    <div class="phone-cap">未参加（0でも「あと3回」が見える）</div>
+    <div class="appbar"><span class="b">←</span><span class="t">積み上げる</span><span class="b"></span></div>
+    <div class="camp-head">
+      <h2>答えるほど、上がる。</h2>
+      <p class="meta">9月30日まで</p>
+    </div>
+    <div class="tracks">
+      <div class="track">
+        <div class="k">あなたの回答</div>
+        <div class="v"><b class="tnum" style="color:var(--cp-muted)">0</b><small>回</small></div>
+        <div class="bar"><i style="width:0%"></i></div>
+      </div>
+      <div class="track">
+        <div class="k">誘った人</div>
+        <div class="v"><b class="tnum" style="color:var(--cp-muted)">0</b><small>人</small></div>
+        <div class="bar"><i style="width:0%"></i></div>
+      </div>
+    </div>
+    <div class="stairs">
+      <button class="step lot locked" data-tier="3"><div class="mark">3</div>
+        <div class="body"><div class="cond">20回 答える</div><div class="or">または <b>5人</b> 誘う</div>
+        <div class="prize">抽選で <b>10,000pt</b>／100名</div></div></button>
+      <button class="step locked" data-tier="2"><div class="mark">2</div>
+        <div class="body"><div class="cond">10回 答える</div><div class="or">または <b>3人</b> 誘う</div>
+        <div class="prize">ボーナス <b>+200pt</b></div></div></button>
+      <button class="step now-step" data-tier="1">
+        <span class="tag">まずは ここ</span>
+        <div class="mark">1</div>
+        <div class="body"><div class="cond">3回 答える</div><div class="or">または <b>1人</b> 誘う</div>
+        <div class="prize">ボーナス <b>+150pt</b></div></div>
+        <span class="go">answer ›</span>
+      </button>
+    </div>
+    <div class="empty"><p>1問 答えると、いちばん下の段が点きます。<br>まずは1問だけ。</p></div>
+  </div>
+
+  <div class="phone">
+    <div class="phone-cap">段が点いた直後（抽選段に到達）</div>
+    <div class="appbar"><span class="b">←</span><span class="t">積み上げる</span><span class="b"></span></div>
+    <div class="camp-head">
+      <h2>抽選に のりました。</h2>
+      <p class="meta">結果は10月5日にお知らせします</p>
+    </div>
+    <div class="tracks">
+      <div class="track lead">
+        <div class="k">あなたの回答</div>
+        <div class="v"><b class="tnum">20</b><small>回</small></div>
+        <div class="bar"><i style="width:100%"></i></div>
+      </div>
+      <div class="track">
+        <div class="k">誘った人</div>
+        <div class="v"><b class="tnum">2</b><small>人</small></div>
+        <div class="bar"><i style="width:40%"></i></div>
+      </div>
+    </div>
+    <div class="stairs">
+      <button class="step lot done anim-grow" data-tier="3"><div class="mark">✓</div>
+        <div class="body"><div class="cond">20回 答える</div>
+        <div class="prize">抽選に参加中 <b>10,000pt</b>／100名</div></div></button>
+      <div class="step done" data-tier="2"><div class="mark">✓</div>
+        <div class="body"><div class="cond">10回 答える</div><div class="prize">受け取り済み <b>+200pt</b></div></div></div>
+      <div class="step done" data-tier="1"><div class="mark">✓</div>
+        <div class="body"><div class="cond">3回 答える</div><div class="prize">受け取り済み <b>+150pt</b></div></div></div>
+    </div>
+    <div class="sec">
+      <div class="sec-h">これまで</div>
+      <p class="muted">確定して受け取ったぶん <b>350pt</b>。<br>抽選の結果は当落どちらもお知らせします。</p>
+    </div>
+  </div>
+
+</div>
+
+<div class="stage-h">U-2b · 案件指定型キャンペーン（scope=project）— 目標に向かう</div>
+<p class="stage-note">
+  <b>横断型と同じ土台・同じ画面。</b>ちがうのは <code>scope</code> の1列だけ。
+  <b>「12人が参加中」は出さないが「50人中12人・あと38人」は出す</b>——分母があると過疎ではなく<b>進捗</b>に見え、
+  残りが少ないほど「自分が入れば終わる」が効く（D-1と矛盾しない）。
+  ⚠ 目標は <code>projects.max_respondents</code>、締切は <code>recruit_deadline</code> の<b>実データのみ</b>。
+  未設定なら帯ごと出さない（分母を捏造しない）。
+</p>
+<div class="screens">
+
+  <div class="phone">
+    <div class="phone-cap">目標あり・締切あり（いちばん効く形）</div>
+    <div class="appbar"><span class="b">←</span><span class="t">みんなで回答中</span><span class="b"></span></div>
+    <div class="camp-head">
+      <h2>あと38人で、この調査は終わります。</h2>
+      <p class="meta">カフェの朝の使い方について</p>
+    </div>
+    <div class="goal">
+      <div class="top">
+        <span class="n tnum">12</span><span class="of">/ 50人</span>
+        <span class="dl">締切 <b>あと5日</b></span>
+      </div>
+      <div class="bar"><i style="width:24%"></i></div>
+      <p class="say">1問 3分。あなたの1件が、いちばん重い時期です。</p>
+      <p class="who">回答が集まると、結果はこのページで見られます。</p>
+    </div>
+    <div class="next">
+      <div class="k">つぎの一手</div>
+      <div class="v">いま答える（3分）</div>
+      <button class="btn">この調査に答える</button>
+    </div>
+    <div class="sec">
+      <div class="sec-h">誘うと はやく終わります</div>
+      <p class="muted">1人 誘うごとに <b>+150pt</b>。<br>この調査が終わるまでのあいだ有効です。</p>
+      <button class="btn btn-ghost" style="margin-top:10px">LINEで招待を送る</button>
+    </div>
+  </div>
+
+  <div class="phone">
+    <div class="phone-cap">目標が未設定（帯を出さない＝捏造しない）</div>
+    <div class="appbar"><span class="b">←</span><span class="t">みんなで回答中</span><span class="b"></span></div>
+    <div class="camp-head">
+      <h2>カフェの朝の使い方について</h2>
+      <p class="meta">回答を受付中</p>
+    </div>
+    <div class="goal no-target">
+      <p class="say">1問 3分。選ぶだけで終わります。</p>
+      <p class="who">この調査は目標人数を設けていません。<br>締切までいつでも答えられます。</p>
+    </div>
+    <div class="next">
+      <div class="k">つぎの一手</div>
+      <div class="v">いま答える（3分）</div>
+      <button class="btn">この調査に答える</button>
+    </div>
+    <div class="sec">
+      <p class="muted">目標も締切も持たない案件では、ゲージと残り日数を<b>出しません</b>。
+      出すと分母を捏造することになるため（honest copy）。</p>
+    </div>
+  </div>
+
+  <div class="phone">
+    <div class="phone-cap">達成後（急かしを止める）</div>
+    <div class="appbar"><span class="b">←</span><span class="t">みんなで回答中</span><span class="b"></span></div>
+    <div class="camp-head">
+      <h2>目標に とどきました。</h2>
+      <p class="meta">カフェの朝の使い方について</p>
+    </div>
+    <div class="goal">
+      <div class="top">
+        <span class="n tnum">50</span><span class="of">/ 50人</span>
+        <span class="dl">受付終了</span>
+      </div>
+      <div class="bar"><i style="width:100%"></i></div>
+      <p class="say">あなたを含む50人で、この調査は成立しました。</p>
+      <p class="who">結果がまとまりしだい、このページでお知らせします。</p>
+    </div>
+    <div class="sec">
+      <div class="sec-h">受け取ったポイント</div>
+      <p class="muted">回答 <b>+120pt</b> ／ 招待 <b>+150pt</b>。<br>マイページの残高に反映されています。</p>
+    </div>
+  </div>
+
+</div>
+
+<div class="stage-h">U-3 · 特別ステージ（ボス層）— 一段上の階層に見せる</div>
+<p class="stage-note">
+  <b>高級感は装飾を足して作らない。</b>地を深緑に沈めて金を1点だけ置く＝通常段と「面の質」が変わる。
+  通常段はクリーム地・ティール、ここだけ深緑地・金。<b>色数は増やさず、明度で階層を作る。</b>
+  ⚠ <b>景表法の調査完了（2026-09-02）</b>。「少人数ほど有利な山分け」は<b>上限額を制御できず危険</b>と判明
+  （懸賞制限告示は<b>価額の決め方</b>も懸賞に含む。仮に懸賞と評価されると上限は<b>2,000円</b>）。
+  → <b>山分け＋1人あたり上限キャップ</b>に変更。品質係数と同じ「乗算だけだと制御不能→絶対キャップ」の解き方。
+  詳細は <code>requirements/legal-premium-act.md</code>。
+</p>
+<div class="screens">
+
+  <div class="phone">
+    <div class="phone-cap">未到達（何がもらえるかは見せる）</div>
+    <div class="appbar"><span class="b">←</span><span class="t">積み上げる</span><span class="b"></span></div>
+    <div class="boss locked">
+      <div class="cap"><span class="k">SPECIAL STAGE</span><span class="lock">まだ 開いていません</span></div>
+      <div class="in">
+        <h3>10問 こたえた人だけの、特別な1問。</h3>
+        <p class="lede">通常のアンケートとは別枠です。<br>参加した人だけで分け合います。</p>
+        <div class="prizerow">
+          <span class="n tnum">50,000</span><span class="u">pt</span>
+          <span class="note">参加者で分けます<br>1人あたり上限 2,000pt</span>
+        </div>
+        <div class="gate">
+          <div class="t">あと <b style="color:var(--cp-boss-gold)">3問</b> で開きます（7 / 10）</div>
+          <div class="bar"><i style="width:70%"></i></div>
+        </div>
+        <button class="btn-boss" disabled>まだ 開けられません</button>
+      </div>
+    </div>
+    <div class="sec">
+      <p class="muted">通常の段（クリーム地）と、特別ステージ（深緑地）。<br>
+      <b>地の色が変わることで「別の階層」だと一目で分かる</b>。バッジや王冠を足していない。</p>
+    </div>
+  </div>
+
+  <div class="phone">
+    <div class="phone-cap">到達（開いた）</div>
+    <div class="appbar"><span class="b">←</span><span class="t">積み上げる</span><span class="b"></span></div>
+    <div class="boss anim-grow">
+      <div class="cap"><span class="k">SPECIAL STAGE</span><span class="lock" style="color:var(--cp-boss-gold)">ひらきました</span></div>
+      <div class="in">
+        <h3>10問 こたえた人だけの、特別な1問。</h3>
+        <p class="lede">参加した人で分け合います。<br>人数が少ないほど、ひとりの取り分は大きくなります。</p>
+        <div class="prizerow">
+          <span class="n tnum">50,000</span><span class="u">pt</span>
+          <span class="note">参加者で分けます<br>1人あたり上限 2,000pt</span>
+        </div>
+        <button class="btn-boss">特別ステージへ すすむ</button>
+      </div>
+    </div>
+    <div class="sec">
+      <p class="muted">⚠ <b>上限キャップは必須</b>（景表法）。「少人数ほど有利」だけだと参加者が10人のとき
+      5,000pt/人になり、仮に懸賞と評価された場合の上限2,000円を超える。<br>
+      <b>キャップは体験を壊さない</b>——ほとんどの回で上限に当たらないので「少人数ほど有利」は生きたまま。<br>
+      ⚠ <b>「回答数が多いほど当選確率が上がる」設計は採らない</b>（消費者庁Q19で取引付随＝規制対象化）。
+      「10問で<b>参加できる</b>」は「答えるほど<b>当たりやすい</b>」より安全。</p>
+    </div>
+  </div>
+
+  <div class="phone">
+    <div class="phone-cap">「なりたい自分」レイヤー（別の動機）</div>
+    <div class="appbar"><span class="b">←</span><span class="t">マイページ</span><span class="b"></span></div>
+    <div class="ideal">
+      <div class="k">THIS MONTH</div>
+      <p class="to">あと2問で、<br>ゴールドに戻れます。</p>
+      <div class="gapline">
+        <div class="now"><div class="lb">いま</div><div class="vl">シルバー</div></div>
+        <span class="arrow">›</span>
+        <div class="aim"><div class="lb">先月のあなた</div><div class="vl">ゴールド</div></div>
+      </div>
+      <p class="say">先月はゴールドでした。<br>今月はあと2問で届きます。</p>
+      <button class="btn" style="margin-top:var(--cp-space-md)">2問 こたえる</button>
+    </div>
+    <div class="sec">
+      <p class="muted"><b>積み上げ（下から上）ではなく、理想を先に置いて距離を示す（上から下）。</b><br>
+      「レベルアップ」ではなく「<b>戻る・近づく</b>」。同じデータ（ランクと必要回答数）を
+      別の語り方で見せているだけで、新しいDBは要らない。<br>
+      ⚠ <b>性別で出し分けない</b>。両方を同じ画面に置き、行動計測（migration 086）で
+      どちらが効いたかを測る。</p>
+    </div>
+  </div>
+
+</div>
+
+<div class="stage-h">U-4 · 答え合わせ — 1問ずつめくる</div>
+<p class="stage-note">
+  <b>規約により相手の回答原文は出せない</b>（第10条4項(1)）。返すのは<b>一致/不一致の判定のみ</b>で、
+  設問は<b>選択式のみ</b>（D-10 / D-11）。順序は<b>一致 → 不一致</b>。
+  「2人とも同じを選んだ」を先に積んでから違いを出すと、原文なしでも驚きが立つ。
+  最後は必ず次の行き先を出す（peak-end）。
+</p>
+<div class="screens">
+
+  <div class="phone">
+    <div class="phone-cap">① 一致（先に出す）</div>
+    <div class="pair-top">
+      <p class="who">あなた と <b>けんたさん</b></p>
+      <div class="dots"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+    </div>
+    <div class="card same anim-flip">
+      <p class="verdict">2人とも おなじ！</p>
+      <p class="q">朝は得意なほうですか？</p>
+      <div class="pick">どちらかといえば 朝型</div>
+      <p class="avatars">あなた ● ● けんたさん</p>
+    </div>
+    <div class="sec"><button class="btn">つぎへ</button></div>
+  </div>
+
+  <div class="phone">
+    <div class="phone-cap">② 不一致（あとに出す）</div>
+    <div class="pair-top">
+      <p class="who">あなた と <b>けんたさん</b></p>
+      <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="miss"></i><i></i></div>
+    </div>
+    <div class="card diff anim-flip">
+      <p class="verdict">ここは 分かれました</p>
+      <p class="q">旅行の計画は どちら？</p>
+      <div class="two">
+        <div class="me"><div class="lb">あなた</div><div class="vl">きっちり派</div></div>
+        <div class="you"><div class="lb">けんたさん</div><div class="vl">その場で決める</div></div>
+      </div>
+    </div>
+    <div class="sec"><button class="btn">つぎへ</button></div>
+  </div>
+
+  <div class="phone">
+    <div class="phone-cap">③ 終わり方（peak-end）</div>
+    <div class="pair-top">
+      <p class="who">あなた と <b>けんたさん</b></p>
+      <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="miss"></i><i class="miss"></i></div>
+    </div>
+    <div class="finale anim-flip">
+      <p class="big">5問中 3問 おなじ</p>
+      <p class="sm">似ているところと、ちがうところが<br>ひとつずつ見つかりました。</p>
+      <p class="pt tnum">+150<small>pt</small></p>
+    </div>
+    <div class="sec">
+      <button class="btn">もう1人 誘う</button>
+      <p class="cta-fine" style="margin-top:10px">3人で +200pt の段まで あと2人</p>
+    </div>
+  </div>
+
+  <div class="phone">
+    <div class="phone-cap">相手が未回答（催促は招待者から）</div>
+    <div class="pair-top">
+      <p class="who">あなた と <b>みなこさん</b></p>
+      <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    </div>
+    <div class="empty">
+      <p><b>あなたの回答はおわりました。</b><br>
+      みなこさんが答えると、答え合わせが開きます。</p>
+    </div>
+    <div class="sec">
+      <button class="btn btn-ghost">LINEで そっと知らせる</button>
+      <p class="cta-fine">残り 12日</p>
+    </div>
+  </div>
+
+</div>
+
+</div>

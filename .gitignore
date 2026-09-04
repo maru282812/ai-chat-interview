@@ -22,3 +22,6 @@ exports/
 # Workers バンドル
 dist-workers/
 .wrangler/
+
+# hallmark スキルの作業状態（ログ・プリフライト結果）。成果物ではないのでコミットしない。
+.hallmark/

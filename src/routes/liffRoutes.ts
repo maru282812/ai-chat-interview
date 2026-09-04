@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { liffController } from "../controllers/liffController";
+import { missionController } from "../controllers/missionController";
 import { asyncHandler } from "../lib/http";
 import { logger } from "../lib/logger";
 import { liffAuthService } from "../services/liffAuthService";
@@ -202,3 +203,20 @@ liffRoutes.get("/consent-check",          asyncHandler(liffController.getConsent
 liffRoutes.post("/consent-submit",        asyncHandler(liffController.submitConsents));
 liffRoutes.get("/consent-statuses",       asyncHandler(liffController.getConsentStatuses));
 liffRoutes.get("/documents/:documentId",  asyncHandler(liffController.getDocumentContent));
+
+// ミッション Phase 1: 招待とペア（docs/spec-mission-phase1-invite-pair.md）
+liffRoutes.get("/invite/:token",              asyncHandler(missionController.invitePage));      // 未ログイン可
+liffRoutes.post("/invite/:token/accept",      asyncHandler(missionController.acceptInvite));
+liffRoutes.post("/invites",                   asyncHandler(missionController.issueInvite));
+liffRoutes.get("/pair/:pairId/answer",        asyncHandler(missionController.pairAnswerPage));
+liffRoutes.get("/pair/:pairId/data",          asyncHandler(missionController.getPairData));
+liffRoutes.post("/pair/:pairId/answer",       asyncHandler(missionController.submitPairAnswer));
+liffRoutes.get("/pair/:pairId/result",        asyncHandler(missionController.pairResultPage));
+liffRoutes.get("/pair/:pairId/result-data",   asyncHandler(missionController.getPairResult));
+
+// ミッション Phase 2: ステージ（docs/plan-mission-phases.md）
+liffRoutes.get("/mission",                    asyncHandler(missionController.missionPage));
+liffRoutes.get("/mission/:missionId/data",    asyncHandler(missionController.getMissionData));
+
+// ミッション Phase 3: 隠し部屋（docs/spec-mission-phase23-rooms-hidden.md）
+liffRoutes.post("/mission/:missionId/hidden-room/enter", asyncHandler(missionController.enterHiddenRoom));

@@ -1,0 +1,59 @@
+/* Hallmark · genre: playful · macrostructure: Narrative Workflow
+ * theme: Hibi Festival — 既存Hibiの緑を土台に、Looop実測DNAを適用
+ * DNA出典: looop-denki.com/home/app/happysummer2026 の実CSS/SVG実測（2026-09-02）
+ *   - CSS定義色は8色に絞る／賑やかさは画像側に置く
+ *   - box-shadow は「ブラー無しのベタ影」1種のみ（ふんわり影を使わない）
+ *   - グラデーション・keyframes は使わない（本家は0件）
+ *   - 書体は丸ゴシック1本、ほぼ全部 700/800
+ * principles: goal-gradient, zeigarnik, curiosity-gap(???), peak-end, fitts
+ */
+:root{
+  color-scheme: light;
+
+  /* --- 構造色は絞る（Looop流：CSSは禁欲的に） --- */
+  --g-green:      #0E6B5A;  /* Hibi のティール＝メイン */
+  --g-green-deep: #0A5245;
+  --g-green-mid:  #17977f;
+  --g-green-pale: #E9F3F0;
+  --g-yellow:     #FFD836;  /* CTA＝主役アクセント（Looopの#ffe70dをHibi寄りに） */
+  --g-yellow-edge:#C79A00;  /* ボタンの枠＋ベタ影。ブラー無し */
+  --g-ink:        #2B1A00;  /* 黄色面の文字＝焦げ茶（黒にしない） */
+  --g-white:      #fff;
+
+  /* --- 補助（最小限） --- */
+  --g-paper:      #FBF5E2;  /* 既存クリーム */
+  --g-sub:        #5F6D68;  /* 4.41→5.2:1 */
+  --g-line:       #DCE8E3;
+  --g-locked:     #5A6862;  /* ??? とロック文言。#9FB0AA は 2.02:1 で読めなかった → 5.2:1 */
+  --g-locked-line:#C4D0CB;  /* ロック枠。線は文字より薄くてよい */
+  --g-locked-bg:  #EFF3F1;
+
+  /* --- 書体：丸ゴシック1本・ほぼ全部極太 --- */
+  --g-font: "LINE Seed JP", "Zen Maru Gothic", "Hiragino Maru Gothic ProN",
+            -apple-system, BlinkMacSystemFont, "Noto Sans JP", sans-serif;
+  --g-fw-bold: 800;
+  --g-fw-med:  700;
+
+  /* --- 影はブラー無しのベタ1種だけ --- */
+  --g-shadow:      0 3px 0 0 var(--g-yellow-edge);
+  --g-shadow-dark: 0 3px 0 0 var(--g-green-deep);
+  --g-radius:      15px;
+  --g-radius-pill: 9999px;
+
+  /* --- 部屋ごとの色（テーマ別。彩度は抑えて4色だけ） --- */
+  --g-room-food:  #E8734A;
+  --g-room-life:  #4A9BD1;
+  --g-room-work:  #8B7BC4;
+  --g-room-fun:   #D96BA0;
+
+  /* 締切など強調テキスト。#D9722B は 3.29:1 だったので暗くした */
+  --g-alert:      #B4531A;
+
+  /* --- 隠し部屋（ボス部屋）：夜の色 --- */
+  --g-boss:       #1B1030;
+  --g-boss-2:     #2A1A47;
+  --g-boss-edge:  #4A3570;
+  --g-boss-gold:  #FFD836;
+  --g-on-boss:    #EFE8FA;
+  --g-on-boss-sub:#9C8FBC;
+}

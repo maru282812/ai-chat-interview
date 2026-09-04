@@ -168,6 +168,16 @@
       let idToken = null;
       let allProjects = [];
       let filter = 'all';
+      // ミッションの「部屋」からの流入（/liff/projects?category=…）。
+      // カテゴリはミッション側と同じ値（projects.category）なので cat: フィルタに直結できる。
+      // 該当チップがあれば点灯し、無いカテゴリでもフィルタ自体は効かせる。
+      const initialCategory = new URLSearchParams(location.search).get('category');
+      if (initialCategory) {
+        filter = `cat:${initialCategory}`;
+        document.querySelectorAll('.hb-chip').forEach(c => c.classList.remove('on'));
+        const chip = document.querySelector(`.hb-chip[data-filter="cat:${CSS.escape(initialCategory)}"]`);
+        if (chip) chip.classList.add('on');
+      }
       let searchText = '';
       // 直近描画したランク状態。回答確定後に旧→新を比べて昇格演出を出すために保持する。
       let lastPointStatus = null;

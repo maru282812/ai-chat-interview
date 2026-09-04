@@ -66,6 +66,10 @@ create index if not exists idx_user_posts_quality_score
 create index if not exists idx_post_analysis_insight_type
   on post_analysis(insight_type, sentiment, analyzed_at desc);
 
+-- 007 版は quality_score / quality_label を持たないため、列を途中に足す
+-- create or replace はできない（42P16）。作り直す。
+drop view if exists project_high_value_posts;
+
 create or replace view project_high_value_posts as
 select
   p.id,

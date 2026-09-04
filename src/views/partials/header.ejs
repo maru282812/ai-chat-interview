@@ -20,10 +20,15 @@
       if (portalOpsLinks.length > 0) {
         navGroups.push({ label: "アンケでYOTTO", items: portalOpsLinks, external: true });
       }
+      // 「よく使う」外出し列。adminLocals が注入する（台帳の pinned:true）。
+      const pinnedNavItems = Array.isArray(locals.pinnedNavItems) ? locals.pinnedNavItems : [];
       const activePath = typeof locals.currentPath === "string" ? locals.currentPath : "";
       // 「/admin/projects/xxx/edit」でも「プロジェクト」を現在地として点灯させる。
       // 外部リンク（絶対URL）は activePath と一致し得ないので点灯しない。
       const isActive = (href) => activePath === href || activePath.startsWith(href + "/");
+      // グループのどれかが現在地なら、そのドロップダウンのボタン自体も点灯させる。
+      // 畳んだ状態でも「今どこにいるか」が閉じたまま分かるようにするため。
+      const groupHasActive = (group) => !group.external && group.items.some((i) => isActive(i.href));
     %>
     <header>
       <div class="header-bar">
@@ -54,22 +59,47 @@
           </form>
         </div>
       </div>
-      <nav aria-label="管理メニュー">
-        <a class="nav-home<%= activePath === "/admin" || activePath === "/admin/" ? " is-active" : "" %>" href="/admin">ダッシュボード</a>
-        <% for (const group of navGroups) { %>
-          <div class="nav-group">
-            <span class="nav-group-label"><%= group.label %></span>
-            <div class="nav-group-items">
-              <% for (const item of group.items) { %>
-                <a
-                  href="<%= item.href %>"
-                  class="<%= isActive(item.href) ? "is-active" : "" %><%= item.primary ? " is-primary" : "" %>"
-                  <%- isActive(item.href) ? 'aria-current="page"' : "" %>
-                ><%= item.label %><% if (item.badgeId) { %><span id="<%= item.badgeId %>" class="nav-badge" style="display:none"></span><% } %></a>
-              <% } %>
+      <%# ナビは2段。
+          1段目 = ダッシュボード＋「よく使う」ピン留め（毎日通る画面。1クリックで行ける）。
+          2段目 = 業務グループごとのドロップダウン（39項目が5行に展開されて画面の1/3を
+                  占めていたのを畳む）。**全リンクは畳んだ状態でも DOM に存在する**ので、
+                  検索・スクリーンリーダー・既存のナビ到達性テストはそのまま通る。 %>
+      <nav aria-label="管理メニュー" class="nav-shell">
+        <div class="nav-pinned">
+          <a class="nav-home<%= activePath === "/admin" || activePath === "/admin/" ? " is-active" : "" %>" href="/admin">ダッシュボード</a>
+          <% for (const item of pinnedNavItems) { %>
+            <a
+              href="<%= item.href %>"
+              class="nav-pin<%= isActive(item.href) ? " is-active" : "" %><%= item.primary ? " is-primary" : "" %>"
+              <%- isActive(item.href) ? 'aria-current="page"' : "" %>
+            ><%= item.label %><% if (item.badgeId) { %><span id="<%= item.badgeId %>" class="nav-badge" style="display:none"></span><% } %></a>
+          <% } %>
+        </div>
+        <div class="nav-groups">
+          <% for (const group of navGroups) { %>
+            <div class="nav-group" data-nav-group>
+              <%# details/summary ではなくボタン＋JSにするのは、外側クリックで閉じる・
+                  他のメニューを閉じる・Escape で閉じるを素直に書けるため。
+                  JS が動かなくても hidden 属性が付かないだけなので、最悪「全部開いた
+                  状態」＝従来と同じ見た目に落ちる（到達性は失われない）。 %>
+              <button
+                type="button"
+                class="nav-group-toggle<%= groupHasActive(group) ? " is-active" : "" %>"
+                aria-expanded="false"
+                data-nav-toggle
+              ><%= group.label %><span class="nav-group-caret" aria-hidden="true">▾</span></button>
+              <div class="nav-group-items" data-nav-menu hidden>
+                <% for (const item of group.items) { %>
+                  <a
+                    href="<%= item.href %>"
+                    class="<%= isActive(item.href) ? "is-active" : "" %><%= item.primary ? " is-primary" : "" %>"
+                    <%- isActive(item.href) ? 'aria-current="page"' : "" %>
+                  ><%= item.label %><% if (item.badgeId) { %><span id="<%= item.badgeId %>" class="nav-badge" style="display:none"></span><% } %></a>
+                <% } %>
+              </div>
             </div>
-          </div>
-        <% } %>
+          <% } %>
+        </div>
       </nav>
     </header>
     <script>
@@ -85,6 +115,53 @@
             badge.style.display = "";
           })
           .catch(function () { /* バッジは補助表示なので失敗しても無視 */ });
+      })();
+
+      // ナビのグループドロップダウン。開いているのは常に1つだけ。
+      // 進行性強化: この JS が動かなくても hidden 付きで畳まれたまま……にはならず、
+      // hidden はサーバーが付けているので JS 無効時は閉じっぱなしになる。
+      // それでは到達できないので、ここで最初に「JS が動いている」印を付け、
+      // CSS 側は .js-nav が付いていないときだけメニューを強制表示する。
+      (function () {
+        var shell = document.querySelector(".nav-shell");
+        if (!shell) return;
+        shell.classList.add("js-nav");
+
+        var groups = [].slice.call(shell.querySelectorAll("[data-nav-group]"));
+
+        function closeAll(except) {
+          for (var i = 0; i < groups.length; i++) {
+            var g = groups[i];
+            if (g === except) continue;
+            var t = g.querySelector("[data-nav-toggle]");
+            var m = g.querySelector("[data-nav-menu]");
+            if (!t || !m) continue;
+            m.hidden = true;
+            t.setAttribute("aria-expanded", "false");
+          }
+        }
+
+        for (var i = 0; i < groups.length; i++) {
+          (function (group) {
+            var toggle = group.querySelector("[data-nav-toggle]");
+            var menu = group.querySelector("[data-nav-menu]");
+            if (!toggle || !menu) return;
+            toggle.addEventListener("click", function () {
+              var willOpen = menu.hidden;
+              closeAll(group);
+              menu.hidden = !willOpen;
+              toggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
+            });
+          })(groups[i]);
+        }
+
+        // 外側クリックで閉じる。リンククリックはそのまま遷移するので邪魔しない。
+        document.addEventListener("click", function (e) {
+          if (!shell.contains(e.target)) closeAll(null);
+        });
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "Escape") closeAll(null);
+        });
       })();
 
       // グローバル検索。入力するたびに /admin/api/screen-search を引いて候補を出す。

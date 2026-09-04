@@ -36,6 +36,7 @@ import {
 import { getProjectResearchSettings, parseLineSeparatedList } from "../lib/projectResearch";
 import { jstDateString, previewQueueAssignments, slotKey } from "../lib/dailyQueue";
 import {
+  isCampaignReservationStale,
   isoToJstParts,
   nextDailyRunJstFromTime,
   nextRunJst,
@@ -2804,6 +2805,11 @@ export async function deliverCampaign(
   resolved: ResolvedCampaignTargets
 ): Promise<{ sentCount: number; failedCount: number }> {
   if (resolved.targetLineUserIds.length === 0) {
+    await deliveryCampaignRepository.update(resolved.campaign.id, {
+      status: "sent",
+      sent_at: new Date().toISOString(),
+      sent_count: 0,
+    });
     return { sentCount: 0, failedCount: 0 };
   }
 
@@ -5889,6 +5895,7 @@ export const adminController = {
       name,
       project_id: projectId,
       segment_id: segmentId,
+      status: scheduledAt ? "scheduled" : "draft",
       delivery_channel: deliveryChannel,
       scheduled_at: scheduledAt,
     });
@@ -6231,9 +6238,10 @@ export const adminController = {
    * 配信カレンダー。配信テンプレート・デイリーアンケート（確定＋キュー見込み）・
    * キャンペーン予約の「次にいつ何が飛ぶか」を1画面へ集約する。
    * ここに出るのは設定から計算した「予定」であり、実際に自動発火するかは
-   * スケジューラ / cron の構成に依存する（キャンペーン予約は自動実行が未実装）。
+   * スケジューラ / cron の構成に依存する。
    */
   async deliveryCalendar(req: Request, res: Response): Promise<void> {
+    const now = new Date();
     const today = jstDateString();
     const month = queryString(req.query.month).trim() || today.slice(0, 7); // YYYY-MM
     const [y, m] = month.split("-").map(Number);
@@ -6394,14 +6402,16 @@ export const adminController = {
       if (!c.scheduled_at) continue;
       if (c.status !== "draft" && c.status !== "scheduled") continue;
       const parts = isoToJstParts(c.scheduled_at);
+      const warning = isCampaignReservationStale(c.scheduled_at, now)
+        ? "予約日時を過ぎています。自動実行の5分猶予を過ぎたため、配信オペレーションから手動実行するか、予約日時を変更してください。"
+        : null;
       upcoming.push({
         category: "キャンペーン",
         name: c.name,
         schedule: "予約日時",
         nextRun: parts ? `${parts.date} ${parts.time}` : null,
         enabled: true,
-        warning:
-          "予約の自動実行は未実装です。設定時刻になっても自動では飛ばないため、配信オペレーションから手動実行してください。",
+        warning,
         href: `/admin/segments/campaigns/${c.id}/edit`
       });
     }

@@ -1,8 +1,11 @@
 import { supabase } from "../config/supabase";
 import { logger } from "../lib/logger";
+import { CAMPAIGN_RESERVATION_CATCH_UP_WINDOW_MIN } from "../lib/deliveryCalendar";
 import { cycleFollowupService } from "./cycleFollowupService";
+import { missionHiddenRoomService } from "./missionHiddenRoomService";
 import { notificationSchedulerService } from "./notificationSchedulerService";
 import { projectDeliveryService } from "./projectDeliveryService";
+import { deliveryCampaignRepository } from "../repositories/deliveryCampaignRepository";
 import { deliveryTemplateRepository } from "../repositories/deliveryTemplateRepository";
 import type {
   DailyScheduleConfig,
@@ -12,7 +15,7 @@ import type {
 
 // 発火予定時刻からこの分数以内なら実行する（cron の遅延・取りこぼし対策）。
 // Vercel Cron を毎分実行する前提なので 5 分の窓があれば十分。
-const CATCH_UP_WINDOW_MIN = 5;
+const CATCH_UP_WINDOW_MIN = CAMPAIGN_RESERVATION_CATCH_UP_WINDOW_MIN;
 
 export interface CronJobOutcome {
   job_key: string;
@@ -98,7 +101,8 @@ class CronDispatchService {
    * 「今が発火時刻のジョブ」だけを実行する。Vercel Cron から毎分呼ばれる想定。
    */
   async dispatch(): Promise<CronJobOutcome[]> {
-    const jstNowDate = toJst(new Date());
+    const now = new Date();
+    const jstNowDate = toJst(now);
     const outcomes: CronJobOutcome[] = [];
 
     // --- デイリーアンケートのスケジューラ設定（morning / evening / reminder）---
@@ -208,7 +212,68 @@ class CronDispatchService {
       logger.warn("cronDispatch: delivery templates unavailable", { error: String(e) });
     }
 
-    // --- 繰り返しアンケート（サイクル）の遅延送信 — Migration 093 / 094 ---
+    // --- One-off campaign reservations (delivery_campaigns.scheduled_at) ---
+    //
+    // Cloudflare calls this dispatcher every minute. Only reservations that became due in the
+    // same short catch-up window as the other cron jobs are fired automatically; older overdue
+    // campaigns stay untouched so stale reservations do not suddenly send after a deploy/restart.
+    try {
+      const windowStart = new Date(now.getTime() - CATCH_UP_WINDOW_MIN * 60 * 1000);
+      const campaigns = await deliveryCampaignRepository.listDueReservations({
+        fromIso: windowStart.toISOString(),
+        toIso: now.toISOString(),
+      });
+
+      if (campaigns.length === 0) {
+        outcomes.push({ job_key: "campaign_reservations", ran: false, reason: "not-due" });
+      } else {
+        const { deliverCampaign, resolveCampaignTargets } = await import("../controllers/adminController");
+
+        for (const campaign of campaigns) {
+          const scheduledAt = campaign.scheduled_at ?? "unknown";
+          const jobKey = `campaign:${campaign.id}:${scheduledAt}`;
+          const last = await this.lastFired(jobKey);
+          if (last) {
+            outcomes.push({ job_key: jobKey, ran: false, reason: "already-claimed" });
+            continue;
+          }
+
+          const claimed = await this.recordRun(jobKey);
+          if (!claimed) {
+            outcomes.push({ job_key: jobKey, ran: false, reason: "record-failed" });
+            continue;
+          }
+
+          try {
+            const resolved = await resolveCampaignTargets({ campaignId: campaign.id });
+            const result = await deliverCampaign(resolved);
+            outcomes.push({
+              job_key: jobKey,
+              ran: true,
+              reason: "fired",
+              detail: {
+                campaign_id: campaign.id,
+                campaign_name: campaign.name,
+                scheduled_at: scheduledAt,
+                sent_count: result.sentCount,
+                failed_count: result.failedCount,
+              },
+            });
+          } catch (e) {
+            logger.error("cronDispatch: campaign reservation failed", {
+              campaignId: campaign.id,
+              scheduledAt,
+              error: String(e),
+            });
+            outcomes.push({ job_key: jobKey, ran: true, reason: "error", detail: String(e) });
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn("cronDispatch: campaign reservations unavailable", { error: String(e) });
+    }
+
+    // --- 繰り返しアンケート（サイクル）の遅延送信 - Migration 093 / 094 ---
     //
     // 他のジョブと違い recordRun による時刻ベースの重複防止を使わない。
     // 送信対象かどうかは各サイクル行の followup_sent_at / followup_b_sent_at が持ち、
@@ -236,6 +301,26 @@ class CronDispatchService {
         });
         outcomes.push({ job_key: job.key, ran: false, reason: "error", detail: String(e) });
       }
+    }
+
+    // --- 隠し部屋の山分け・抽選の確定 - Migration 099 ---
+    //
+    // cycle_followup と同じくクレーム方式で毎分安全:
+    // 対象は「ミッション終了済み・settled_at IS NULL の split/raffle」だけで、
+    // 付与は awards UNIQUE ＋ awardPoints idempotency_key の二重冪等。
+    // 抽選は seed=部屋ID の決定的選出なので、途中で落ちて再実行しても当選者が変わらない。
+    // 対象0件なら即返るため未使用の環境ではほぼコストゼロ。
+    try {
+      const detail = await missionHiddenRoomService.runSettleDispatch();
+      outcomes.push({
+        job_key: "hidden_room_settle",
+        ran: detail.settled > 0,
+        reason: detail.settled > 0 ? "fired" : "no-target",
+        detail,
+      });
+    } catch (e) {
+      logger.error("cronDispatch: hidden room settle failed", { error: String(e) });
+      outcomes.push({ job_key: "hidden_room_settle", ran: false, reason: "error", detail: String(e) });
     }
 
     return outcomes;

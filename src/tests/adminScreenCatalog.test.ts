@@ -21,6 +21,7 @@ import { adminRoutes } from "../routes/adminRoutes";
 import {
   ADMIN_SCREENS,
   buildNavGroups,
+  buildPinnedNavItems,
   getScreenByKey,
   resolveScreenByPath
 } from "../lib/adminScreenCatalog";
@@ -298,11 +299,53 @@ test("到達不能だった画面がナビか台帳から辿れる", () => {
   assert.ok(getScreenByKey("stores-index")?.related.includes("client-overview"));
 });
 
-test("配信オペレーションの強調と交換申請バッジがナビ項目に載る", () => {
+test("配信オペレーションの強調がナビ項目に載る", () => {
   const items = buildNavGroups().flatMap((g) => g.items);
   assert.equal(items.find((i) => i.href === "/admin/delivery-operations")?.primary, true);
+});
+
+// ---------------------------------------------------------------------------
+// buildPinnedNavItems（ヘッダー1段目の「よく使う」外出し列）
+// ---------------------------------------------------------------------------
+
+test("ピン留めは pinned:true の画面だけを宣言順で返す", () => {
+  const hrefs = buildPinnedNavItems().map((i) => i.href);
+  assert.deepEqual(hrefs, [
+    "/admin/projects",
+    "/admin/daily-surveys",
+    "/admin/respondents",
+    "/admin/exchange-requests",
+    "/admin/delivery-operations",
+    "/admin/delivery-calendar"
+  ]);
+});
+
+test("ピン留めした画面はグループ側からも消えない（近道であって引っ越しではない）", () => {
+  const groupHrefs = new Set(buildNavGroups().flatMap((g) => g.items.map((i) => i.href)));
+  for (const item of buildPinnedNavItems()) {
+    assert.ok(groupHrefs.has(item.href), `${item.href} がグループから消えている`);
+  }
+});
+
+test("交換申請バッジの DOM id はピン留め側にだけ出る（id 重複を作らない）", () => {
+  // 同じ id が2箇所にあると getElementById が先勝ちになり、片方が黙って更新されない。
   assert.equal(
-    items.find((i) => i.href === "/admin/exchange-requests")?.badgeId,
+    buildPinnedNavItems().find((i) => i.href === "/admin/exchange-requests")?.badgeId,
     "nav-exchange-badge"
   );
+  const groupItems = buildNavGroups().flatMap((g) => g.items);
+  assert.equal(
+    groupItems.find((i) => i.href === "/admin/exchange-requests")?.badgeId,
+    undefined
+  );
+  const badgeIds = [...buildPinnedNavItems(), ...groupItems]
+    .map((i) => i.badgeId)
+    .filter((id) => id !== undefined);
+  assert.equal(new Set(badgeIds).size, badgeIds.length, "ナビ全体でバッジ id が重複している");
+});
+
+test("ピン留めは全て nav:true（ドロップダウン側にも必ず居場所がある）", () => {
+  for (const screen of ADMIN_SCREENS) {
+    if (screen.pinned) assert.ok(screen.nav, `${screen.key} は pinned だが nav:false`);
+  }
 });

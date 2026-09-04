@@ -11,6 +11,7 @@
  */
 
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import ejs from "ejs";
@@ -26,9 +27,10 @@ import {
 } from "../lib/adminView";
 import { redirectWithFlash, readFlashFromQuery } from "../lib/adminFlash";
 import { getPortalOpsUrl, portalOpsHref, portalOpsNavLinks } from "../lib/portalOpsLinks";
-import { buildNavGroups, resolveScreenByPath } from "../lib/adminScreenCatalog";
+import { buildNavGroups, buildPinnedNavItems, resolveScreenByPath } from "../lib/adminScreenCatalog";
 
 const VIEWS_ROOT = path.join(process.cwd(), "src", "views");
+const PUBLIC_ROOT = path.join(process.cwd(), "src", "public");
 
 // ---------------------------------------------------------------------------
 // 日時ヘルパ
@@ -142,6 +144,7 @@ function baseLocals(overrides: Record<string, unknown> = {}) {
     adminFlash: null,
     currentPath,
     navGroups: buildNavGroups(),
+    pinnedNavItems: buildPinnedNavItems(),
     currentScreen: resolveScreenByPath(currentPath),
     adminUser: "admin",
     ...overrides
@@ -178,12 +181,79 @@ test("header: ナビが現在地を点灯させ、全ページへのリンクを
   ]) {
     assert.ok(html.includes(`href="${href}"`), `${href} へのリンクが無い`);
   }
-  // グループ見出し（カタログの group）と強調・バッジが現行どおり出ていること
+  // グループはドロップダウンの開閉ボタンになった。見出しの文字は残っていること。
   for (const group of ["調査", "店舗", "回答者", "報酬", "配信", "投稿・分析", "設定"]) {
-    assert.ok(html.includes(`>${group}</span>`), `グループ「${group}」の見出しが無い`);
+    assert.ok(
+      html.includes(`data-nav-toggle
+              >${group}<`) || html.includes(`>${group}<span class="nav-group-caret"`),
+      `グループ「${group}」の開閉ボタンが無い`
+    );
   }
   assert.ok(html.includes(" is-primary"), "配信オペレーションの強調が消えている");
   assert.ok(html.includes('id="nav-exchange-badge"'), "交換申請バッジが消えている");
+  // バッジ id はページ内で一意（重複すると getElementById が片方を黙って無視する）
+  assert.equal(html.split('id="nav-exchange-badge"').length - 1, 1, "バッジ id が重複している");
+});
+
+/**
+ * ⚠ 実ブラウザで踏んだ罠の回帰テスト。
+ * 著者スタイルの `display` は UA の `[hidden] { display: none }` に勝つため、
+ * `.nav-group-items { display: flex }` と無条件に書くと hidden 属性が効かず、
+ * サーバーが閉じて返してもメニューが全部開いたまま描画される
+ * （＝畳んだつもりが39項目そのまま出る）。CSS 側で必ず `:not([hidden])` を付ける。
+ */
+test("styles: ナビのドロップダウンは display 指定で hidden 属性を打ち消さない", () => {
+  const css = fs.readFileSync(path.join(PUBLIC_ROOT, "styles.css"), "utf8");
+  // `.nav-group-items` に対する display 宣言を持つセレクタを全部拾う
+  const blocks = css.match(/[^{}]*\.nav-group-items[^{}]*\{[^}]*\}/g) ?? [];
+  assert.ok(blocks.length > 0, ".nav-group-items の規則が見つからない");
+  for (const block of blocks) {
+    const [selector, body] = [block.slice(0, block.indexOf("{")), block.slice(block.indexOf("{"))];
+    if (!/display\s*:/.test(body)) continue;
+    assert.ok(
+      selector.includes(":not([hidden])") || selector.includes("[hidden]"),
+      `display を指定する規則が hidden を考慮していない: ${selector.trim()}`
+    );
+  }
+});
+
+test("header: よく使う（ピン留め）が1段目に外出しされ、グループにも残っている", async () => {
+  const html = await render("partials/header.ejs", {
+    ...baseLocals({ currentPath: "/admin/respondents" }),
+    title: "回答者"
+  });
+
+  const pinnedBlock = html.slice(html.indexOf('class="nav-pinned"'), html.indexOf('class="nav-groups"'));
+  for (const href of [
+    "/admin/projects",
+    "/admin/daily-surveys",
+    "/admin/respondents",
+    "/admin/exchange-requests",
+    "/admin/delivery-operations",
+    "/admin/delivery-calendar"
+  ]) {
+    assert.ok(pinnedBlock.includes(`href="${href}"`), `ピン留めに ${href} が無い`);
+    // グループ側にも残す（同じ画面が2箇所に出るのは意図どおり）
+    assert.equal(html.split(`href="${href}"`).length - 1, 2, `${href} がピン留めかグループの片方にしか無い`);
+  }
+});
+
+test("header: グループのメニューは既定で閉じている（サーバー側で hidden を付ける）", async () => {
+  const html = await render("partials/header.ejs", {
+    ...baseLocals({ currentPath: "/admin/respondents" }),
+    title: "回答者"
+  });
+
+  // 外部リンク群「アンケでYOTTO」も同じループで描かれるので、DOM 上のグループ数で数える。
+  // （PORTAL_OPS_URL の有無でカタログのグループ数と1ずれる）
+  const domGroupCount = html.split('<div class="nav-group" data-nav-group>').length - 1;
+  assert.ok(domGroupCount >= buildNavGroups().length, "グループが描画されていない");
+  // 全グループが hidden で閉じており、開いているものが1つも無いこと
+  assert.equal(html.split("data-nav-menu hidden").length - 1, domGroupCount);
+  assert.equal(html.split('aria-expanded="false"').length - 1, domGroupCount);
+  assert.ok(!html.includes('aria-expanded="true"'), "既定で開いているグループがある");
+  // 畳んでいても現在地のグループのボタンは点灯している
+  assert.ok(html.includes('class="nav-group-toggle is-active"'), "現在地グループの点灯が無い");
 });
 
 // ---------------------------------------------------------------------------

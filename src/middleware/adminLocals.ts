@@ -1,15 +1,16 @@
 import type { RequestHandler } from "express";
 import { readFlashFromQuery } from "../lib/adminFlash";
 import { adminViewHelpers } from "../lib/adminView";
-import { buildNavGroups, resolveScreenByPath } from "../lib/adminScreenCatalog";
+import { buildNavGroups, buildPinnedNavItems, resolveScreenByPath } from "../lib/adminScreenCatalog";
 
 /**
  * 管理画面の全ビューへ共通のロケールを配る。
  * - flash: 操作結果のトースト（partials/header.ejs が描画）
  * - fmtDateTime / statusLabel など: 日時とコード値の表記を全画面で揃えるためのヘルパ
  * - currentPath: ナビの現在地ハイライト用
- * - navGroups / currentScreen: 画面カタログ（lib/adminScreenCatalog.ts）から生成したナビと現在画面。
- *   ヘッダーの直書き配列を廃し、ナビ・検索・索引・道しるべAIが同じ台帳を見るようにする。
+ * - navGroups / pinnedNavItems / currentScreen: 画面カタログ（lib/adminScreenCatalog.ts）から
+ *   生成したナビと現在画面。ヘッダーの直書き配列を廃し、ナビ・検索・索引・道しるべAIが
+ *   同じ台帳を見るようにする。pinnedNavItems は「よく使う」の外出し列。
  */
 export const adminLocals: RequestHandler = (req, res, next) => {
   // キー名を `flash` にしないのは、scheduler-settings / reward-campaigns /
@@ -20,6 +21,8 @@ export const adminLocals: RequestHandler = (req, res, next) => {
   res.locals.currentPath = currentPath;
   // ナビはリクエストごとに組み直す（カタログは定数なので実質的なコストは配列の詰め替えだけ）。
   res.locals.navGroups = buildNavGroups();
+  // 「よく使う」外出し列。グループ側からは消していないので、ここが空でも到達性は落ちない。
+  res.locals.pinnedNavItems = buildPinnedNavItems();
   // 台帳に無いパス（api/エクスポート等）では null。ビュー側は null 前提で書く。
   const currentScreen = resolveScreenByPath(currentPath);
   res.locals.currentScreen = currentScreen;
