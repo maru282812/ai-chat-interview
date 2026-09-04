@@ -616,6 +616,200 @@ nav a.is-primary.is-active {
   font-weight: 700;
 }
 
+/* --- すべての画面パネル（右スライドのドロワー） ---------------------------- */
+
+/* ⚠ このセクションの display 指定は必ず `:not([hidden])` を付ける。
+   著者スタイルの display は UA の `[hidden] { display: none }` に勝つため、
+   無条件に書くと閉じられなくなる（ナビのドロップダウンで実際に踏んだ）。 */
+
+.header-directory-btn {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #dff6f3;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.header-directory-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.header-directory-btn[aria-expanded="true"] {
+  background: #fff;
+  color: #0b7a75;
+  border-color: transparent;
+  font-weight: 700;
+}
+
+.directory-overlay:not([hidden]) {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.directory-panel:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 61;
+  width: min(440px, 92vw);
+  background: #fff;
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.24);
+}
+
+.directory-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #0b7a75;
+  color: #fff;
+}
+
+.directory-title {
+  font-size: 15px;
+}
+
+.directory-close {
+  font: inherit;
+  font-size: 20px;
+  line-height: 1;
+  color: #fff;
+  background: transparent;
+  border: 0;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.directory-close:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.directory-filter {
+  padding: 10px 16px;
+  border-bottom: 1px solid #e4eceb;
+}
+
+.directory-filter-input {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  border: 1px solid #cddedc;
+  border-radius: 8px;
+}
+
+/* パネル内だけがスクロールする（背後の本文は JS 側で固定している） */
+.directory-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 16px 20px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.directory-group:not([hidden]) {
+  display: block;
+}
+
+.directory-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #0b7a75;
+  margin: 16px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e4eceb;
+}
+
+.directory-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.directory-item:not([hidden]) {
+  display: block;
+}
+
+.directory-link {
+  display: block;
+  padding: 7px 8px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: #14524f;
+}
+
+.directory-link:hover {
+  background: rgba(11, 122, 117, 0.08);
+}
+
+.directory-link.is-active {
+  background: #0b7a75;
+}
+
+.directory-link.is-active .directory-link-label,
+.directory-link.is-active .directory-link-desc {
+  color: #fff;
+}
+
+.directory-link-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* 台帳の説明文。ナビには出せない情報で、このパネルの主役 */
+.directory-link-desc {
+  display: block;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #5b7f7c;
+  margin-top: 2px;
+}
+
+.directory-children {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0 0 0 16px;
+}
+
+.directory-child {
+  display: inline-block;
+  font-size: 12px;
+  color: #0b7a75;
+  text-decoration: none;
+  padding: 3px 6px;
+  border-radius: 6px;
+}
+
+.directory-child::before {
+  content: "+ ";
+  opacity: 0.7;
+}
+
+.directory-child:hover {
+  background: rgba(11, 122, 117, 0.08);
+}
+
+.directory-empty:not([hidden]) {
+  display: block;
+  padding: 20px 8px;
+  font-size: 13px;
+  color: #6b7f7d;
+}
+
 /* --- 操作結果フラッシュ --------------------------------------------------- */
 
 .flash {

@@ -1275,6 +1275,81 @@ export function buildPinnedNavItems(): AdminNavItem[] {
 }
 
 /**
+ * 「すべての画面」パネル（ヘッダー右上のドロワー）用のデータ。
+ * ナビが近道なのに対し、こちらは**台帳の全体像**を出す場所。
+ */
+export interface AdminDirectoryEntry {
+  href: string;
+  label: string;
+  /** その画面で何ができるか。ナビには出せない情報で、ここの主役 */
+  description: string;
+  /** 「新規作成」など、この画面にぶら下がる静的URLの子画面 */
+  children: Array<{ href: string; label: string }>;
+}
+
+export interface AdminDirectoryGroup {
+  label: string;
+  entries: AdminDirectoryEntry[];
+}
+
+/**
+ * パネルに出す画面ディレクトリを組み立てる。
+ *
+ * - `nav:true` の画面を親として ADMIN_NAV_GROUP_ORDER 順に並べる。
+ * - `nav:false` でも**静的URL**なら踏めるので捨てない。`related` で親から
+ *   辿れるものはその子として（＝「プロジェクト」の下に「新規作成」）ぶら下げ、
+ *   親が居ないものはグループ直下に単独で出す。
+ * - 動的URL（`/:param` 入り）はURLを組み立てられないので出さない。
+ *   これらは検索と各一覧の行から入る（既存の設計どおり）。
+ */
+export function buildScreenDirectory(): AdminDirectoryGroup[] {
+  const isLinkable = (path: string) => !path.includes("/:");
+
+  // 子候補: nav:false かつ静的URL。どの親にぶら下げるかは related で決める。
+  const orphans = new Set(
+    ADMIN_SCREENS.filter((s) => !s.nav && isLinkable(s.path) && s.path !== "/admin").map((s) => s.key)
+  );
+
+  const byGroup = new Map<string, AdminDirectoryEntry[]>();
+  for (const screen of ADMIN_SCREENS) {
+    if (!screen.nav || !isLinkable(screen.path)) continue;
+
+    const children: Array<{ href: string; label: string }> = [];
+    for (const key of screen.related) {
+      if (!orphans.has(key)) continue;
+      const child = ADMIN_SCREENS.find((s) => s.key === key);
+      if (!child) continue;
+      children.push({ href: child.path, label: child.label });
+      orphans.delete(key); // 同じ子を複数の親に出さない
+    }
+
+    const list = byGroup.get(screen.group) ?? [];
+    list.push({ href: screen.path, label: screen.label, description: screen.description, children });
+    byGroup.set(screen.group, list);
+  }
+
+  // どの親からも参照されなかった静的URL画面を取りこぼさない
+  for (const key of orphans) {
+    const screen = ADMIN_SCREENS.find((s) => s.key === key);
+    if (!screen) continue;
+    const list = byGroup.get(screen.group) ?? [];
+    list.push({ href: screen.path, label: screen.label, description: screen.description, children: [] });
+    byGroup.set(screen.group, list);
+  }
+
+  const ordered: AdminDirectoryGroup[] = [];
+  for (const label of ADMIN_NAV_GROUP_ORDER) {
+    const entries = byGroup.get(label);
+    if (entries && entries.length > 0) ordered.push({ label, entries });
+    byGroup.delete(label);
+  }
+  for (const [label, entries] of byGroup) {
+    if (entries.length > 0) ordered.push({ label, entries });
+  }
+  return ordered;
+}
+
+/**
  * ヘッダーナビ用のグループ配列を組み立てる。
  * `nav:true` のエントリだけを ADMIN_NAV_GROUP_ORDER の順で並べる（グループ内は宣言順）。
  * 外部リンク群（portalOpsNavLinks）はカタログ対象外なので、header 側でこの後ろに push する。

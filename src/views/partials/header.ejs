@@ -22,6 +22,8 @@
       }
       // 「よく使う」外出し列。adminLocals が注入する（台帳の pinned:true）。
       const pinnedNavItems = Array.isArray(locals.pinnedNavItems) ? locals.pinnedNavItems : [];
+      // 「すべての画面」パネル用。adminLocals が注入する（動的URL画面は含まれない）。
+      const screenDirectory = Array.isArray(locals.screenDirectory) ? locals.screenDirectory : [];
       const activePath = typeof locals.currentPath === "string" ? locals.currentPath : "";
       // 「/admin/projects/xxx/edit」でも「プロジェクト」を現在地として点灯させる。
       // 外部リンク（絶対URL）は activePath と一致し得ないので点灯しない。
@@ -39,6 +41,16 @@
         <div class="header-account">
           <%# 画面カタログのグローバル検索。LLM を使わず /admin/api/screen-search を引くだけ。
               候補クリックは同タブ遷移（ナビ操作なので新規タブにしない）。 %>
+          <%# 「すべての画面」パネルを開く。ナビは近道、こちらは全体像。
+              aria-controls で対応するパネルを示す。 %>
+          <button
+            type="button"
+            id="screen-directory-open"
+            class="header-directory-btn"
+            aria-expanded="false"
+            aria-controls="screen-directory"
+            title="すべての画面"
+          ><span aria-hidden="true">▦</span> すべての画面</button>
           <div class="header-search">
             <input
               type="search"
@@ -102,6 +114,62 @@
         </div>
       </nav>
     </header>
+
+    <%# ---- すべての画面パネル（右からスライドするドロワー） -------------------
+        ナビが「よく使う近道」なのに対し、ここは画面カタログの全体像を出す場所。
+        各画面の説明文（台帳の description）を添えるので、ナビの単なる複製にはならない。
+        既定は hidden。JS が無い環境では開けないが、ナビと検索で到達性は確保済み。 %>
+    <div id="screen-directory-overlay" class="directory-overlay" hidden></div>
+    <aside
+      id="screen-directory"
+      class="directory-panel"
+      aria-label="すべての画面"
+      hidden
+    >
+      <div class="directory-head">
+        <strong class="directory-title">すべての画面</strong>
+        <button type="button" id="screen-directory-close" class="directory-close" aria-label="閉じる">×</button>
+      </div>
+      <div class="directory-filter">
+        <input
+          type="search"
+          id="screen-directory-filter"
+          class="directory-filter-input"
+          placeholder="画面名で絞り込む"
+          aria-label="画面名で絞り込む"
+          autocomplete="off"
+        />
+      </div>
+      <div class="directory-body">
+        <% for (const group of screenDirectory) { %>
+          <section class="directory-group" data-directory-group>
+            <h2 class="directory-group-label"><%= group.label %></h2>
+            <ul class="directory-list">
+              <% for (const entry of group.entries) { %>
+                <li class="directory-item" data-directory-item data-label="<%= entry.label %>">
+                  <a
+                    class="directory-link<%= isActive(entry.href) ? " is-active" : "" %>"
+                    href="<%= entry.href %>"
+                    <%- isActive(entry.href) ? 'aria-current="page"' : "" %>
+                  >
+                    <span class="directory-link-label"><%= entry.label %></span>
+                    <span class="directory-link-desc"><%= entry.description %></span>
+                  </a>
+                  <% if (entry.children.length > 0) { %>
+                    <ul class="directory-children">
+                      <% for (const child of entry.children) { %>
+                        <li><a class="directory-child" href="<%= child.href %>"><%= child.label %></a></li>
+                      <% } %>
+                    </ul>
+                  <% } %>
+                </li>
+              <% } %>
+            </ul>
+          </section>
+        <% } %>
+        <p class="directory-empty" id="screen-directory-empty" hidden>該当する画面はありません</p>
+      </div>
+    </aside>
     <script>
       // 申請中の交換申請件数をヘッダーの「交換申請」に通知バッジとして表示する
       (function () {
@@ -162,6 +230,70 @@
         document.addEventListener("keydown", function (e) {
           if (e.key === "Escape") closeAll(null);
         });
+      })();
+
+      // 「すべての画面」パネル。右からスライドして台帳の全体像を出す。
+      // 中身はサーバーが描画済みなので、ここは開閉と絞り込みだけ。
+      (function () {
+        var openBtn  = document.getElementById("screen-directory-open");
+        var panel    = document.getElementById("screen-directory");
+        var overlay  = document.getElementById("screen-directory-overlay");
+        var closeBtn = document.getElementById("screen-directory-close");
+        var filter   = document.getElementById("screen-directory-filter");
+        var empty    = document.getElementById("screen-directory-empty");
+        if (!openBtn || !panel || !overlay || !closeBtn) return;
+
+        var lastFocused = null;
+
+        function open() {
+          lastFocused = document.activeElement;
+          panel.hidden = false;
+          overlay.hidden = false;
+          openBtn.setAttribute("aria-expanded", "true");
+          // 背後がスクロールするとパネル内を読んでいる最中に本文が動いて紛らわしい
+          document.body.style.overflow = "hidden";
+          if (filter) filter.focus();
+        }
+
+        function close() {
+          panel.hidden = true;
+          overlay.hidden = true;
+          openBtn.setAttribute("aria-expanded", "false");
+          document.body.style.overflow = "";
+          // 開く前にフォーカスがあった場所へ戻す（キーボード操作で迷子にしない）
+          if (lastFocused && typeof lastFocused.focus === "function") lastFocused.focus();
+        }
+
+        openBtn.addEventListener("click", function () {
+          if (panel.hidden) open(); else close();
+        });
+        closeBtn.addEventListener("click", close);
+        overlay.addEventListener("click", close);
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "Escape" && !panel.hidden) close();
+        });
+
+        // 名前で絞り込む。サーバーを引かずその場で隠すだけ。
+        if (filter) {
+          filter.addEventListener("input", function () {
+            var q = filter.value.trim().toLowerCase();
+            var items = panel.querySelectorAll("[data-directory-item]");
+            var hitTotal = 0;
+            for (var i = 0; i < items.length; i++) {
+              var label = (items[i].getAttribute("data-label") || "").toLowerCase();
+              var hit = q === "" || label.indexOf(q) !== -1;
+              items[i].hidden = !hit;
+              if (hit) hitTotal++;
+            }
+            // 中身が全部隠れたグループは見出しごと隠す
+            var groups = panel.querySelectorAll("[data-directory-group]");
+            for (var g = 0; g < groups.length; g++) {
+              var visible = groups[g].querySelectorAll("[data-directory-item]:not([hidden])").length;
+              groups[g].hidden = visible === 0;
+            }
+            if (empty) empty.hidden = hitTotal !== 0;
+          });
+        }
       })();
 
       // グローバル検索。入力するたびに /admin/api/screen-search を引いて候補を出す。

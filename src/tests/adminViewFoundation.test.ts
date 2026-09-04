@@ -27,7 +27,12 @@ import {
 } from "../lib/adminView";
 import { redirectWithFlash, readFlashFromQuery } from "../lib/adminFlash";
 import { getPortalOpsUrl, portalOpsHref, portalOpsNavLinks } from "../lib/portalOpsLinks";
-import { buildNavGroups, buildPinnedNavItems, resolveScreenByPath } from "../lib/adminScreenCatalog";
+import {
+  buildNavGroups,
+  buildPinnedNavItems,
+  buildScreenDirectory,
+  resolveScreenByPath
+} from "../lib/adminScreenCatalog";
 import { assetUrl } from "../lib/compiledAssets";
 
 const VIEWS_ROOT = path.join(process.cwd(), "src", "views");
@@ -146,6 +151,7 @@ function baseLocals(overrides: Record<string, unknown> = {}) {
     currentPath,
     navGroups: buildNavGroups(),
     pinnedNavItems: buildPinnedNavItems(),
+    screenDirectory: buildScreenDirectory(),
     currentScreen: resolveScreenByPath(currentPath),
     adminUser: "admin",
     ...overrides
@@ -270,9 +276,45 @@ test("header: よく使う（ピン留め）が1段目に外出しされ、グ�
     "/admin/delivery-calendar"
   ]) {
     assert.ok(pinnedBlock.includes(`href="${href}"`), `ピン留めに ${href} が無い`);
-    // グループ側にも残す（同じ画面が2箇所に出るのは意図どおり）
-    assert.equal(html.split(`href="${href}"`).length - 1, 2, `${href} がピン留めかグループの片方にしか無い`);
+    // グループ側にも残す（同じ画面が複数箇所に出るのは意図どおり）。
+    // ピン留め・グループ・「すべての画面」パネルの3箇所に出る。
+    const groupsBlock = html.slice(html.indexOf('class="nav-groups"'), html.indexOf('id="screen-directory-overlay"'));
+    assert.ok(groupsBlock.includes(`href="${href}"`), `${href} がグループ側から消えている`);
   }
+});
+
+test("header: すべての画面パネルは既定で閉じており、全画面と説明を持つ", async () => {
+  const html = await render("partials/header.ejs", {
+    ...baseLocals({ currentPath: "/admin/daily-surveys" }),
+    title: "デイリーアンケート"
+  });
+
+  // 既定は閉じている（開いたまま配信するとページを覆ってしまう）
+  const panelTag = html.slice(html.indexOf('id="screen-directory"'));
+  assert.ok(panelTag.slice(0, panelTag.indexOf(">")).includes("hidden"), "パネルが hidden で出ていない");
+  const overlayTag = html.slice(html.indexOf('id="screen-directory-overlay"'));
+  assert.ok(overlayTag.slice(0, overlayTag.indexOf(">")).includes("hidden"), "オーバーレイが hidden で出ていない");
+  const btnTag = html.slice(html.indexOf('id="screen-directory-open"'));
+  assert.ok(
+    btnTag.slice(0, btnTag.indexOf(">")).includes('aria-expanded="false"'),
+    "開くボタンが aria-expanded=false で出ていない"
+  );
+
+  // 台帳の全画面（親＋子）へのリンクと説明文が載っていること
+  const dir = buildScreenDirectory();
+  for (const group of dir) {
+    assert.ok(html.includes(`>${group.label}</h2>`), `グループ「${group.label}」が無い`);
+    for (const entry of group.entries) {
+      assert.ok(html.includes(`href="${entry.href}"`), `${entry.href} が無い`);
+      for (const child of entry.children) {
+        assert.ok(html.includes(`href="${child.href}"`), `${child.href} が無い`);
+      }
+    }
+  }
+  // 説明文はこのパネルの主役なので、必ず描画されていること
+  assert.ok(html.includes("directory-link-desc"), "説明文の要素が無い");
+  // 現在地はパネル内でも点灯する
+  assert.ok(html.includes('class="directory-link is-active"'), "パネル内の現在地点灯が無い");
 });
 
 test("header: グループのメニューは既定で閉じている（サーバー側で hidden を付ける）", async () => {
@@ -287,8 +329,12 @@ test("header: グループのメニューは既定で閉じている（サーバ
   assert.ok(domGroupCount >= buildNavGroups().length, "グループが描画されていない");
   // 全グループが hidden で閉じており、開いているものが1つも無いこと
   assert.equal(html.split("data-nav-menu hidden").length - 1, domGroupCount);
-  assert.equal(html.split('aria-expanded="false"').length - 1, domGroupCount);
-  assert.ok(!html.includes('aria-expanded="true"'), "既定で開いているグループがある");
+  // aria-expanded は「すべての画面」パネルの開くボタンにも付くので、
+  // ナビの開閉ボタン（data-nav-toggle）に絞って数える。
+  // JS 内のセレクタ文字列 "[data-nav-toggle]" も含まれるため、マークアップ側だけを数える。
+  const navToggles = (html.match(/<button\b[^>]*\bdata-nav-toggle\b/g) ?? []).length;
+  assert.equal(navToggles, domGroupCount, "ナビの開閉ボタン数がグループ数と合わない");
+  assert.ok(!html.includes('aria-expanded="true"'), "既定で開いているものがある");
   // 畳んでいても現在地のグループのボタンは点灯している
   assert.ok(html.includes('class="nav-group-toggle is-active"'), "現在地グループの点灯が無い");
 });

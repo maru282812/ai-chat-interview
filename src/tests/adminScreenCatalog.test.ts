@@ -22,6 +22,7 @@ import {
   ADMIN_SCREENS,
   buildNavGroups,
   buildPinnedNavItems,
+  buildScreenDirectory,
   getScreenByKey,
   resolveScreenByPath
 } from "../lib/adminScreenCatalog";
@@ -347,5 +348,60 @@ test("交換申請バッジの DOM id はピン留め側にだけ出る（id 重
 test("ピン留めは全て nav:true（ドロップダウン側にも必ず居場所がある）", () => {
   for (const screen of ADMIN_SCREENS) {
     if (screen.pinned) assert.ok(screen.nav, `${screen.key} は pinned だが nav:false`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// buildScreenDirectory（「すべての画面」パネル）
+// ---------------------------------------------------------------------------
+
+test("ディレクトリはグループ順に並び、nav:true を親として全部載せる", () => {
+  const groups = buildScreenDirectory();
+  assert.deepEqual(groups.map((g) => g.label), [
+    "調査", "店舗", "回答者", "報酬", "配信", "投稿・分析", "設定"
+  ]);
+  const parents = groups.flatMap((g) => g.entries);
+  assert.equal(parents.length, ADMIN_SCREENS.filter((s) => s.nav).length);
+});
+
+test("ディレクトリは踏める静的URLを取りこぼさない（動的URLは除く）", () => {
+  const listed = new Set(
+    buildScreenDirectory().flatMap((g) =>
+      g.entries.flatMap((e) => [e.href, ...e.children.map((c) => c.href)])
+    )
+  );
+  for (const screen of ADMIN_SCREENS) {
+    if (screen.path.includes("/:")) continue;   // URLを組み立てられないので出せない
+    if (screen.path === "/admin") continue;     // ダッシュボードはナビの固定リンク
+    assert.ok(listed.has(screen.path), `${screen.path} がディレクトリから漏れている`);
+  }
+});
+
+test("ディレクトリに動的URLは絶対に入れない（踏むと必ず壊れる）", () => {
+  for (const group of buildScreenDirectory()) {
+    for (const entry of group.entries) {
+      assert.ok(!entry.href.includes("/:"), entry.href);
+      for (const child of entry.children) assert.ok(!child.href.includes("/:"), child.href);
+    }
+  }
+});
+
+test("ディレクトリの子（新規作成など）は1つの親にしか出ない", () => {
+  const seen = new Set<string>();
+  for (const group of buildScreenDirectory()) {
+    for (const entry of group.entries) {
+      for (const child of entry.children) {
+        assert.ok(!seen.has(child.href), `${child.href} が複数の親にぶら下がっている`);
+        seen.add(child.href);
+      }
+    }
+  }
+});
+
+test("ディレクトリの各画面に説明文がある（ナビの複製にしないための主役）", () => {
+  for (const group of buildScreenDirectory()) {
+    for (const entry of group.entries) {
+      assert.ok(entry.description.length > 0, `${entry.href} に説明が無い`);
+    }
   }
 });

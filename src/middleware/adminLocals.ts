@@ -1,7 +1,12 @@
 import type { RequestHandler } from "express";
 import { readFlashFromQuery } from "../lib/adminFlash";
 import { adminViewHelpers } from "../lib/adminView";
-import { buildNavGroups, buildPinnedNavItems, resolveScreenByPath } from "../lib/adminScreenCatalog";
+import {
+  buildNavGroups,
+  buildPinnedNavItems,
+  buildScreenDirectory,
+  resolveScreenByPath
+} from "../lib/adminScreenCatalog";
 
 /**
  * 管理画面の全ビューへ共通のロケールを配る。
@@ -23,6 +28,9 @@ export const adminLocals: RequestHandler = (req, res, next) => {
   res.locals.navGroups = buildNavGroups();
   // 「よく使う」外出し列。グループ側からは消していないので、ここが空でも到達性は落ちない。
   res.locals.pinnedNavItems = buildPinnedNavItems();
+  // 「すべての画面」パネル（右上ボタンで開くドロワー）。ナビが近道なのに対し
+  // こちらは台帳の全体像を出す。動的URL画面は踏めないので含まれない。
+  res.locals.screenDirectory = buildScreenDirectory();
   // 台帳に無いパス（api/エクスポート等）では null。ビュー側は null 前提で書く。
   const currentScreen = resolveScreenByPath(currentPath);
   res.locals.currentScreen = currentScreen;
