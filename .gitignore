@@ -25,3 +25,7 @@ dist-workers/
 
 # hallmark スキルの作業状態（ログ・プリフライト結果）。成果物ではないのでコミットしない。
 .hallmark/
+
+# wrangler dev のローカル env 上書き（認証情報が入るのでコミットしない）
+.dev.vars
+.dev.vars.*
