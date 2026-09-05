@@ -68,12 +68,56 @@
   .answer-chips .chip-item.selected { border-color: #2ca87a; background: #e8f7f0; }
   .answer-chips .chip-item .card-item-title { font-size: 14px; }
 
-  /* big_slider */
-  .answer-bigslider { padding: 8px 4px; }
+  /* big_slider
+     ネイティブ range をそのまま出すと、つまみが小さく（iOS は track タップで動かない）
+     「スライドしにくい」になる。見た目は range の疑似要素で描き、操作は .bigslider-hit の
+     Pointer Events で受ける（trackのどこを触っても最寄りの段階に飛ぶ／そのまま引きずれる）。 */
+  .answer-bigslider { padding: 8px 4px; --bs-thumb: 40px; --bs-track: 14px; --bs-fill: 50%; }
   .bigslider-value { text-align: center; min-height: 44px; display: flex; align-items: center; justify-content: center; }
-  .bigslider-label { font-size: 18px; font-weight: 700; color: #2ca87a; }
-  .bigslider-range { width: 100%; margin: 14px 0 6px; accent-color: #2ca87a; height: 28px; }
-  .bigslider-ends { display: flex; justify-content: space-between; font-size: 12px; color: #60726f; }
+  .bigslider-label { font-size: 18px; font-weight: 700; color: #90a29e; transition: color 0.15s; }
+  .answer-bigslider.engaged .bigslider-label { color: #2ca87a; }
+  .bigslider-hit {
+    position: relative; padding: 10px 0 4px; cursor: pointer;
+    touch-action: pan-y; /* 横は自前で受け、縦はページスクロールに渡す */
+    -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none;
+  }
+  .bigslider-range {
+    -webkit-appearance: none; appearance: none; display: block; width: 100%; margin: 0;
+    height: calc(var(--bs-thumb) + 8px); background: transparent; pointer-events: none;
+  }
+  .bigslider-range:focus { outline: none; }
+  .bigslider-range:focus-visible { outline: 3px solid rgba(44,168,122,0.45); outline-offset: 4px; border-radius: 8px; }
+  .bigslider-range::-webkit-slider-runnable-track {
+    height: var(--bs-track); border-radius: 999px;
+    background: linear-gradient(to right, #2ca87a var(--bs-fill), #d8e3e0 var(--bs-fill));
+  }
+  .bigslider-range::-webkit-slider-thumb {
+    -webkit-appearance: none; width: var(--bs-thumb); height: var(--bs-thumb); border-radius: 50%;
+    margin-top: calc((var(--bs-track) - var(--bs-thumb)) / 2);
+    background: #fff; border: 3px solid #2ca87a; box-shadow: 0 2px 8px rgba(26,47,42,0.25);
+    transition: transform 0.12s, border-color 0.15s, background 0.15s;
+  }
+  .bigslider-range::-moz-range-track {
+    height: var(--bs-track); border-radius: 999px;
+    background: linear-gradient(to right, #2ca87a var(--bs-fill), #d8e3e0 var(--bs-fill));
+  }
+  .bigslider-range::-moz-range-thumb {
+    width: var(--bs-thumb); height: var(--bs-thumb); border-radius: 50%;
+    background: #fff; border: 3px solid #2ca87a; box-shadow: 0 2px 8px rgba(26,47,42,0.25);
+  }
+  /* 未操作: つまみもゲージも灰色＝「まだ答えていない」を見た目で伝える */
+  .answer-bigslider:not(.engaged) .bigslider-range::-webkit-slider-runnable-track { background: #d8e3e0; }
+  .answer-bigslider:not(.engaged) .bigslider-range::-webkit-slider-thumb { border-color: #b7c7c2; background: #f3f7f5; }
+  .answer-bigslider:not(.engaged) .bigslider-range::-moz-range-track { background: #d8e3e0; }
+  .answer-bigslider:not(.engaged) .bigslider-range::-moz-range-thumb { border-color: #b7c7c2; background: #f3f7f5; }
+  .answer-bigslider.dragging .bigslider-range::-webkit-slider-thumb { transform: scale(1.12); }
+  /* 段階の目盛り。つまみの可動域（thumb/2 〜 width - thumb/2）に合わせて内側に寄せる */
+  .bigslider-ticks { display: flex; justify-content: space-between; padding: 0 calc(var(--bs-thumb) / 2 - 4px); margin-top: 2px; }
+  .bigslider-tick { width: 8px; height: 8px; border-radius: 50%; background: #d8e3e0; transition: background 0.15s, transform 0.15s; }
+  .answer-bigslider.engaged .bigslider-tick.on { background: #2ca87a; transform: scale(1.3); }
+  .bigslider-ends { display: flex; justify-content: space-between; font-size: 12px; color: #60726f; margin-top: 8px; }
+  .bigslider-ends span { max-width: 45%; }
+  .bigslider-ends span:last-child { text-align: right; }
 
   /* swipe_card / sort_swipe 共通のデッキ（フルハイト＝カードが画面の主役・確定はサムゾーンの丸ボタン） */
   .answer-swipe, .answer-sortswipe { display: flex; flex-direction: column; align-items: stretch; }
@@ -314,10 +358,18 @@
       var labels = JSON.stringify(choices.map(function (c) { return c.label; }));
       var first = choices[0] ? esc(choices[0].label) : '';
       var last = choices[n - 1] ? esc(choices[n - 1].label) : '';
+      var ticks = choices.map(function (_c, i) {
+        return '<span class="bigslider-tick" data-i="' + i + '"></span>';
+      }).join('');
+      // 初期位置は中央だが「未操作」扱い（.engaged なし）。触るまで値はホストへ渡さない。
       return '<div class="answer-bigslider" data-code="' + esc(q.question_code) + '">'
-        + '<div class="bigslider-value"><span class="bigslider-label">スライドして選択してください</span></div>'
+        + '<div class="bigslider-value"><span class="bigslider-label">スライドまたはタップで選択</span></div>'
+        + '<div class="bigslider-hit">'
         + '<input type="range" class="bigslider-range" min="0" max="' + (n - 1) + '" step="1" value="' + mid + '"'
+        + ' aria-label="' + esc(q.question_text || '') + '"'
         + " data-values='" + values + "' data-labels='" + labels + "' />"
+        + '<div class="bigslider-ticks">' + ticks + '</div>'
+        + '</div>'
         + '<div class="bigslider-ends"><span>' + first + '</span><span>' + last + '</span></div>'
         + '</div>';
     }
@@ -609,17 +661,86 @@
       var onCommit = handlers.onCommit || function () {};
 
       // big_slider: レンジ操作で選択肢 value を確定（決定はホスト側）
+      // 操作は .bigslider-hit の Pointer Events で受ける。track のどこを押しても最寄りの段階に
+      // 飛び、そのまま引きずれる（ネイティブ range はつまみを正確に掴む必要があり、iOS は
+      // track タップで動かない）。縦スクロールに取られたら（pointercancel）押下前に戻す。
       var slider = root.querySelector('.answer-bigslider[data-code="' + code + '"]');
       if (slider) {
         var range = slider.querySelector('.bigslider-range');
+        var hit = slider.querySelector('.bigslider-hit') || slider;
         var labelEl = slider.querySelector('.bigslider-label');
+        var ticks = slider.querySelectorAll('.bigslider-tick');
         var values = [], labels = [];
         try { values = JSON.parse(range.getAttribute('data-values') || '[]'); } catch (_e) {}
         try { labels = JSON.parse(range.getAttribute('data-labels') || '[]'); } catch (_e) {}
-        range.addEventListener('input', function () {
-          var i = parseInt(range.value, 10) || 0;
+        var n = values.length;
+        var thumbPx = parseFloat(getComputedStyle(slider).getPropertyValue('--bs-thumb')) || 40;
+
+        function paint(i) {
+          range.value = i;
+          slider.style.setProperty('--bs-fill', (n > 1 ? (i / (n - 1)) * 100 : 0) + '%');
           if (labelEl) labelEl.textContent = labels[i] || '';
+          ticks.forEach(function (t, ti) { t.classList.toggle('on', ti === i); });
+        }
+        function commit(i) {
+          slider.classList.add('engaged');
+          paint(i);
           onChange(values[i]);
+        }
+        function indexFromX(clientX) {
+          var rect = range.getBoundingClientRect();
+          var usable = Math.max(1, rect.width - thumbPx);
+          var ratio = (clientX - rect.left - thumbPx / 2) / usable;
+          return Math.round(Math.max(0, Math.min(1, ratio)) * (n - 1));
+        }
+
+        var drag = null; // { startVal, wasEngaged, last, moved }
+        hit.addEventListener('pointerdown', function (e) {
+          if (e.button != null && e.button !== 0) return;
+          drag = { startVal: parseInt(range.value, 10) || 0, wasEngaged: slider.classList.contains('engaged'), moved: false, x0: e.clientX };
+          drag.last = indexFromX(e.clientX);
+          try { hit.setPointerCapture(e.pointerId); } catch (_e) {}
+          slider.classList.add('dragging');
+          // 押した瞬間に見た目だけ追従（値の確定は pointerup／実際に動かした時）
+          slider.classList.add('engaged');
+          paint(drag.last);
+          if (e.pointerType === 'mouse') e.preventDefault();
+        });
+        hit.addEventListener('pointermove', function (e) {
+          if (!drag) return;
+          if (Math.abs(e.clientX - drag.x0) > 4) drag.moved = true;
+          var i = indexFromX(e.clientX);
+          if (i !== drag.last) {
+            drag.last = i;
+            paint(i);
+            if (drag.moved) {
+              onChange(values[i]);
+              try { if (navigator.vibrate) navigator.vibrate(6); } catch (_e) {}
+            }
+          }
+        });
+        function endDrag() {
+          if (!drag) return;
+          var i = drag.last;
+          drag = null;
+          slider.classList.remove('dragging');
+          commit(i);
+        }
+        hit.addEventListener('pointerup', endDrag);
+        hit.addEventListener('lostpointercapture', function () { if (drag) endDrag(); });
+        hit.addEventListener('pointercancel', function () {
+          // 縦スクロールに取られた: 押下前の状態に戻す（動かしていなければ回答扱いにしない）
+          if (!drag) return;
+          var d = drag; drag = null;
+          slider.classList.remove('dragging');
+          if (d.moved) { commit(d.last); return; }
+          if (d.wasEngaged) { paint(d.startVal); }
+          else { slider.classList.remove('engaged'); range.value = d.startVal; slider.style.setProperty('--bs-fill', '50%'); if (labelEl) labelEl.textContent = 'スライドまたはタップで選択'; ticks.forEach(function (t) { t.classList.remove('on'); }); }
+        });
+        // キーボード（フォーカスして←→）
+        range.addEventListener('input', function () {
+          if (drag) return;
+          commit(parseInt(range.value, 10) || 0);
         });
       }
 

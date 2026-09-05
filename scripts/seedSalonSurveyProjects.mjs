@@ -10,6 +10,11 @@
  *
  * すべて visibility_type=private_store なので「探す」一覧には出ない。
  *
+ * 【回答UI】案件は standard のまま、設問単位でスワイプ系を上書きしている。
+ *   swipe_card : A-Q1 / B-Q9 / C-Q5（2択）
+ *   big_slider : B-Q1 / B-Q6 / B-Q7 / C-Q1（5段階・選択肢は悪い→良い順＝左端が最低）
+ *   sort_swipe : C-Q2 / C-Q3（1項目ずつ◯✕）
+ *
  * 【選択肢の持ち越し（carry-forward）】
  *   同一案件内   : A-Q9 ← A-Q8 / B-Q3 ← B-Q2 / B-Q5 ← B-Q4
  *   別案件から   : C-Q2, C-Q3 ← A-Q5（今日のメニュー） ※Migration 092
@@ -125,7 +130,7 @@ const q = (projectId, code, text, type, sortOrder, config, extra = {}) => ({
 /** [value, label] のペア配列から options を作る。 */
 const opts = (...pairs) => pairs.map(([value, label]) => ({ value, label }));
 
-/** 5段階満足度（B-Q1 / B-Q2 の列 / C-Q1 で共通）。 */
+/** 5段階満足度（B-Q2 の列で使用。調査票どおり「とても満足」が先頭）。 */
 const SAT5 = opts(
   ["very_satisfied", "とても満足した"],
   ["satisfied", "やや満足した"],
@@ -133,6 +138,24 @@ const SAT5 = opts(
   ["dissatisfied", "あまり満足しなかった"],
   ["very_dissatisfied", "まったく満足しなかった"]
 );
+
+// ------------------------------------------------------------------
+// 回答UI（設問単位の表示パターン上書き・answerPresentation.ts）
+//   swipe_card = 2択を左右スワイプ / big_slider = 5段階をスライダー（trackタップでも可） /
+//   sort_swipe = 複数選択を1枚ずつ◯✕で振り分け
+// 案件全体は standard のまま、スワイプが効く設問だけに入れる。
+// ------------------------------------------------------------------
+
+const SWIPE = { presentation: { pattern: "swipe_card" } };
+const SLIDER = { presentation: { pattern: "big_slider" } };
+const SORT_SWIPE = { presentation: { pattern: "sort_swipe" } };
+
+/**
+ * スライダーで出す5段階は左端＝最低・右端＝最高になるよう「悪い→良い」の順に並べる
+ * （絵文字の face_scale は「ださい」で不採用。記号 ◎○△× は差し替え候補として温存）。
+ * value は SAT5 と同じなので集計上の意味は変わらない（順序尺度の ordinal が 1=最低 になるだけ）。
+ */
+const scale5 = (...pairs) => opts(...pairs.slice().reverse());
 
 /**
  * 満足度の評価項目11件。A-Q8/A-Q9（重視項目）と B-Q2/B-Q3/B-Q4 で value を共有する。
@@ -172,7 +195,8 @@ const questionsA = [
     "アンケートにご協力いただきありがとうございます。こちらにご協力していただけますか。（ひとつだけ）",
     "single_choice",
     1,
-    { options: opts(["yes", "はい"], ["no", "いいえ"]) },
+    // 最初の1タッチで「スワイプで答えるアンケート」だと体験させる（設問文60字以内＝降格しない）
+    { options: opts(["yes", "はい"], ["no", "いいえ"]), ...SWIPE },
     {
       comment_top:
         `こちらのアンケートは${STORE_NAME}の満足度を調べるためにYOTTOが${STORE_NAME}の委託を受けて実施しております。\n` +
@@ -332,7 +356,7 @@ const questionsB = [
     "本日のご利用について、総合的にどのくらい満足しましたか？（ひとつだけ）",
     "single_choice",
     1,
-    { options: SAT5 },
+    { options: scale5(...SAT5.map((o) => [o.value, o.label])), ...SLIDER },
     {
       comment_top:
         "本日のご来店ありがとうございました。1〜2分程度のお客様の満足度確認アンケートにご協力ください。\n" +
@@ -390,23 +414,25 @@ const questionsB = [
   ),
 
   q(P_B, "Q6", "来店前に期待していた内容と比べて、今日の体験はいかがでしたか？（ひとつだけ）", "single_choice", 6, {
-    options: opts(
+    options: scale5(
       ["far_above", "期待を大きく上回った"],
       ["above", "期待を少し上回った"],
       ["as_expected", "期待通りだった"],
       ["below", "期待を少し下回った"],
       ["far_below", "期待を大きく下回った"]
-    )
+    ),
+    ...SLIDER
   }),
 
   q(P_B, "Q7", "次回もこの美容室を利用したいと思いますか？（ひとつだけ）", "single_choice", 7, {
-    options: opts(
+    options: scale5(
       ["definitely", "とても利用したい"],
       ["probably", "やや利用したい"],
       ["undecided", "どちらともいえない・未定"],
       ["probably_not", "あまり利用したくない"],
       ["definitely_not", "まったく利用したくない"]
-    )
+    ),
+    ...SLIDER
   }),
 
   q(
@@ -425,7 +451,8 @@ const questionsB = [
     "こちらのサービスにご参加をしていただけますでしょうか。（ひとつだけ）",
     "single_choice",
     9,
-    { options: opts(["yes", "はい"], ["no", "いいえ"]) },
+    // Hibi への転換点。ここまでの顔絵文字/スワイプ体験の延長で「ポイ活も同じ操作」と伝える
+    { options: opts(["yes", "はい"], ["no", "いいえ"]), ...SWIPE },
     {
       comment_top:
         "アンケート調査を行っているYOTTOではこの美容室の満足度アンケートのほかにも、簡単なアンケート（ポイ活）を行っております。\n" +
@@ -451,13 +478,14 @@ const questionsC = [
     "single_choice",
     1,
     {
-      options: opts(
+      options: scale5(
         ["very_satisfied", "とても満足している"],
         ["satisfied", "やや満足している"],
         ["neutral", "どちらともいえない"],
         ["dissatisfied", "あまり満足していない"],
         ["very_dissatisfied", "まったく満足していない"]
-      )
+      ),
+      ...SLIDER
     },
     {
       comment_top:
@@ -488,7 +516,10 @@ const questionsC = [
         ),
         exclusiveNone
       ],
-      helpText: "前回ご利用いただいたメニューに関するものだけ表示しています。"
+      helpText: "前回ご利用いただいたメニューに関するものだけ表示しています。",
+      // 「本音」は1項目ずつ◯✕で判定させたほうが取りこぼしが少ない（後日回答＝急いでいない）。
+      // 排他の「特になし」はデッキから自動で外れ、全部✕＝特になし相当になる。
+      ...SORT_SWIPE
     },
     {
       // A-Q5 でカラー/パーマを選んでいない人には該当選択肢を出さない（Migration 092）
@@ -517,7 +548,8 @@ const questionsC = [
           OTHER
         ),
         exclusiveNone
-      ]
+      ],
+      ...SORT_SWIPE
     },
     {
       display_tags_parsed: { disableRules: colorPermDisableRulesNegative() }
@@ -549,7 +581,8 @@ const questionsC = [
     5,
     {
       options: opts(["yes", "はい（この店／別の店）"], ["no", "いいえ"]),
-      helpText: "※どこの美容室かは問いません。"
+      helpText: "※どこの美容室かは問いません。",
+      ...SWIPE
     }
   ),
 
