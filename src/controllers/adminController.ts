@@ -9401,6 +9401,10 @@ export const adminController = {
   // ---- 店舗QRコード（サーバ側生成） ----
   // 以前は api.qrserver.com へ entry_code 込みの限定URLをクエリで送って生成しており、
   // 限定URLが第三者サービスに渡る＋サービス停止でQRが表示されなくなる問題があった。
+  //
+  // 形式は SVG。PNG（QRCode.toBuffer）は Workers バンドルで qrcode がブラウザ版に解決されて
+  // `toBuffer is not a function` になり本番で 500 になった（Node では再現しない）。
+  // toString(svg) は Node/ブラウザ両ビルドにあり zlib も要らない。<img> でも印刷でもそのまま使える。
 
   async storeSurveyQr(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
@@ -9410,10 +9414,10 @@ export const adminController = {
 
     const sizeRaw = Number.parseInt(String(req.query.size ?? "180"), 10);
     const width = Number.isFinite(sizeRaw) ? Math.min(Math.max(sizeRaw, 120), 1200) : 180;
-    const png = await QRCode.toBuffer(entryUrl, { type: "png", width, margin: 2 });
-    res.setHeader("Content-Type", "image/png");
+    const svg = await QRCode.toString(entryUrl, { type: "svg", width, margin: 2 });
+    res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
     res.setHeader("Cache-Control", "private, max-age=300");
-    res.send(png);
+    res.send(svg);
   },
 
   // ---- 店舗マスタ（clients）CRUD ----

@@ -370,7 +370,7 @@ adminRoutes.get("/cycles",                              asyncHandler(adminContro
 adminRoutes.post("/cycles/:groupId",                     asyncHandler(adminController.updateCycleGroup));
 adminRoutes.get("/store-surveys",                       asyncHandler(adminController.storeSurveys));
 adminRoutes.get("/store-surveys/:projectId/flyer",      asyncHandler(adminController.storeSurveyFlyer));
-adminRoutes.get("/store-surveys/:projectId/qr.png",     asyncHandler(adminController.storeSurveyQr));
+adminRoutes.get("/store-surveys/:projectId/qr.svg",     asyncHandler(adminController.storeSurveyQr));
 adminRoutes.post("/store-surveys/mark",                 asyncHandler(adminController.markProjectAsStore));
 adminRoutes.post("/store-surveys/:projectId",           asyncHandler(adminController.updateStoreSurvey));
 adminRoutes.get("/clients/:clientId/overview",          asyncHandler(adminController.clientOverview));
