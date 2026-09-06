@@ -8,7 +8,7 @@
  *
  * ページ扱いしないもの（＝カタログ対象外）:
  * - `/api/*`（JSON API）
- * - `.csv` / `.png` / `.json` / `.zip`（エクスポート・画像）
+ * - `.csv` / `.png` / `.svg` / `.json` / `.zip`（エクスポート・画像）
  * - `/login`（認証前。ナビも出ない）
  * - 拡張子は無いが `res.json` を返す JSON API（下の JSON_API_PATHS）
  *
@@ -40,7 +40,7 @@ const JSON_API_PATHS = new Set([
   "/projects/:projectId/exports/stat/history"
 ]);
 
-const NON_PAGE_EXTENSIONS = [".csv", ".png", ".json", ".zip"];
+const NON_PAGE_EXTENSIONS = [".csv", ".png", ".svg", ".json", ".zip"];
 
 /** Express router stack から admin の GET ページルートを列挙する（`/admin` 込みのパスで返す）。 */
 function listAdminGetPagePaths(): string[] {

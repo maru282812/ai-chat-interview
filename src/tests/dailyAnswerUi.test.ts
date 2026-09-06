@@ -120,9 +120,9 @@ test("casual: 3択以上の single_choice は carousel", () => {
   assert.equal(view.presentation.pattern, "carousel");
 });
 
-test("casual: scale は face_scale（絵文字フェイス）で選択肢は 1〜5", () => {
+test("casual: scale は big_slider（スライダー）で選択肢は 1〜5", () => {
   const view = resolveDailyQuestionView(q({ question_type: "scale" }), "casual");
-  assert.equal(view.presentation.pattern, "face_scale");
+  assert.equal(view.presentation.pattern, "big_slider");
   assert.equal(view.choices.length, 5);
 });
 
@@ -151,7 +151,7 @@ test("casual: 設問文が長い2択は big_split へ降格する（サーバー
 test("preset 未指定はデイリー既定の casual で解決する", () => {
   const view = resolveDailyQuestionView(q({ question_type: "scale" }), null);
   assert.equal(view.presentation.preset, "casual");
-  assert.equal(view.presentation.pattern, "face_scale");
+  assert.equal(view.presentation.pattern, "big_slider");
 });
 
 // ---- casual 以外のプリセット ----
@@ -181,5 +181,5 @@ test("resolveDailyQuestionViews: 元のタイプと選択肢を保ったまま p
   assert.equal(views[0]?.question_type, "scale");
   assert.equal(views[1]?.question_type, "multiple_choice");
   assert.deepEqual(views[1]?.answer_options, [{ label: "A", value: "a" }]);
-  assert.equal(views[0]?.presentation.pattern, "face_scale");
+  assert.equal(views[0]?.presentation.pattern, "big_slider");
 });

@@ -8,6 +8,12 @@
  *   2. プロジェクト単位   projects.answer_ui_preset（casual|standard|formal・デフォルト standard）
  *   3. 自動フォールバック  適用不能条件（設問文長・選択肢数）で casual→standard→formal 方向に降格
  *
+ * casual（スワイプ）の既定は美容室ABCで実機確認して決めた組み合わせに揃えている（2026-09-06）:
+ *   2択 = swipe_card / 順序尺度 = big_slider / 複数選択（8件以下）= sort_swipe。
+ *   絵文字フェイス（face_scale）は既定から外した（「ださい」で不採用）。使いたい設問だけ
+ *   question_config.presentation.pattern で明示指定する。複数選択が9件以上のときは
+ *   1枚ずつ振り分ける sort_swipe が長すぎるので chip_select に落とす。
+ *
  * 責務外:
  *   - HTML/EJS 生成（描画は survey.ejs のパターンレジストリが担う）
  *   - 回答の保存形式（既存 answers 経路のまま。表示層のみの変換）
@@ -36,6 +42,8 @@ const SWIPE_TEXT_MAX = 60;
 const CAROUSEL_OPTION_MAX = 8;
 /** 選択肢数がこれ以上の face_scale / big_slider は tap_cards へ降格。 */
 const SCALE_OPTION_MAX = 6;
+/** casual の複数選択でこれを超える件数は sort_swipe（1枚1画面）にせず chip_select で描く。 */
+const SORT_SWIPE_OPTION_MAX = 8;
 /**
  * numeric の選択肢数がこれを超えたらドラムピッカー(number_wheel)で描く。
  * 0〜10 の11段階スケールまでは従来の丸ボタンで収まるため、それより多い場合のみ切り替える。
@@ -102,13 +110,15 @@ function basePattern(
     case "yes_no": {
       // 0–100 スライダー指定 / 順序尺度指定は scale 系レイアウトへ
       if (slider) return formal ? "radio_list" : "big_slider";
-      if (scale) return casual ? "face_scale" : standard ? "big_slider" : "radio_list";
+      // 順序尺度は casual / standard ともスライダー（絵文字フェイスは設問単位の明示指定のみ）
+      if (scale) return formal ? "radio_list" : "big_slider";
       if (n <= 2) return casual ? "swipe_card" : standard ? "big_split" : "radio_list";
       return casual ? "carousel" : standard ? "tap_cards" : "radio_list";
     }
     case "multi_choice":
     case "multi_select": // legacy 別名
-      return casual ? "sort_swipe" : standard ? "chip_select" : "checkbox_list";
+      if (casual) return n <= SORT_SWIPE_OPTION_MAX ? "sort_swipe" : "chip_select";
+      return standard ? "chip_select" : "checkbox_list";
     case "matrix_single":
     case "matrix_multi":
     case "matrix_mixed":
