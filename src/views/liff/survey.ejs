@@ -1885,17 +1885,23 @@
 
       // ---- 回答UI共通レンダラの配線（partials/answer-ui.ejs・migration 075 / Phase 3）----
       // onChange = 値の更新（未確定）／onCommit = 確定操作（タップ・スワイプ・カルーセルCTA・振り分け完了）。
-      // survey では確定＝「次へ」の自動発火。btnNext.click() を再利用するので検証・保存・probe・分岐は
-      // 既存経路をそのまま通る。回答UIプリセットは「1問1画面」の survey_question 専用なので、
-      // survey_page では自動遷移しない（値の格納だけ）。
+      // 自動で次へ進むのは onCommit の advance=true、つまりカードを倒す/振り分ける
+      // ジェスチャー系（swipe_card / split_swipe / sort_swipe）だけ。操作そのものが
+      // 「送る」動作なので、そこで止めるとかえって不自然になる。
+      // 一覧から1つタップして選ぶ系（tap_cards / big_split / face_scale / carousel）は
+      // advance=false で、遷移はユーザーが「次へ」を押したときだけ起きる。
+      // ＝「1つ選ぶ設問だけ勝手に進み、いくつでも選ぶ設問は止まる」挙動差をなくす。
+      // btnNext.click() を再利用するので検証・保存・probe・分岐は既存経路をそのまま通る。
+      // 回答UIプリセットは「1問1画面」の survey_question 専用なので survey_page では進めない。
       (function wireAnswerUi() {
         const qCode = q.question_code;
         const onChange = (value) => {
           answerCtx.answers[qCode.toLowerCase()] = value;
           checkNextEnabled();
         };
-        const onCommit = (value) => {
+        const onCommit = (value, advance) => {
           onChange(value);
+          if (!advance) return;
           if (DISPLAY_MODE !== 'survey_question') return;
           if (!isQuestionAnswered(q) || btnNext.disabled) return;
           setTimeout(() => { if (!btnNext.disabled) btnNext.click(); }, 220);

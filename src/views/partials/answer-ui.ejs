@@ -12,8 +12,14 @@
 
   ホストが決めること:
     - onChange(value) … 値が更新された（未確定）。survey は answerCtx へ格納、デイリーは送信ボタン活性化。
-    - onCommit(value) … 確定操作（タップ/スワイプ/CTA/振り分け完了）。survey は「次へ」自動遷移、
-                        デイリーは次の設問へ or 即送信。
+    - onCommit(value, advance) … 確定操作（タップ/スワイプ/CTA/振り分け完了）。
+                        advance=true はカードを倒す/振り分けるジェスチャー系（swipe_card /
+                        split_swipe / sort_swipe）＝操作そのものが「送る」動作なので、
+                        ホストはそのまま次の設問へ進んでよい。
+                        advance=false は一覧から1つ選ぶタップ系（tap_cards / big_split /
+                        face_scale / carousel）＝押した瞬間に画面が変わると「選んだだけ」の
+                        つもりで進んでしまうため、遷移はホストの「次へ」に任せる。
+                        デイリー/今日の1問のように1問完結の面は advance を見ずに常に進めてよい。
     - 保存形式は UI に依存させない（single=スカラー / multi=配列）。これは Phase 3 でも不変。
 
   実装上の罠（project_answer_ui_renderer_gotchas・触るときは必読）:
@@ -148,6 +154,19 @@
   .sort-title { font-size: 20px; font-weight: 800; color: #1a2f2a; }
   .sort-desc, .carousel-desc { font-size: 12px; color: #60726f; }
   .sort-done { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #2ca87a; }
+  /* スワイプ確定後の結果パネル（カードが飛んでいくので「何を選んだか」をここに残す） */
+  .swipe-result {
+    position: absolute; inset: 0; display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 12px; text-align: center;
+    border: 1.5px solid #2ca87a; border-radius: 20px; background: #f4fbf8; padding: 20px;
+  }
+  .swipe-result.shown { display: flex; }
+  .swipe-result-cap { font-size: 12px; font-weight: 700; color: #60726f; letter-spacing: 0.04em; }
+  .swipe-result-val { font-size: 22px; font-weight: 800; color: #14493a; }
+  .swipe-redo {
+    border: 1.5px solid #cfe0da; background: #fff; color: #2f4a44;
+    border-radius: 999px; padding: 9px 20px; font-size: 13px; font-weight: 700; cursor: pointer;
+  }
   /* サムゾーンの丸型確定ボタン */
   .swipe-round-btns { display: flex; justify-content: center; gap: 40px; }
   .round-btn {
@@ -266,6 +285,9 @@
   .answer-ui-compact .sort-chip { background: rgba(255,255,255,0.22); color: #eaf6f1; }
   .answer-ui-compact .sort-chip.active { background: #fff; color: #14493a; }
   .answer-ui-compact .sort-done { color: #fff; }
+  .answer-ui-compact .swipe-result { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.5); }
+  .answer-ui-compact .swipe-result-cap { color: rgba(255,255,255,0.85); }
+  .answer-ui-compact .swipe-result-val { color: #fff; }
   .answer-ui-compact .bigslider-label { color: #fff; }
   .answer-ui-compact .bigslider-ends { color: rgba(255,255,255,0.85); }
   .answer-ui-compact .split-label { font-size: 17px; }
@@ -278,8 +300,18 @@
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
+    /**
+     * ジェスチャー系＝カードを左右に倒す/振り分ける操作そのものが「送る」動作なので、
+     * 確定したらそのまま次の設問へ進む（onCommit に advance=true を渡す）。
+     */
+    var GESTURE_COMMIT_PATTERNS = ['swipe_card', 'split_swipe', 'sort_swipe'];
+    /**
+     * 選択肢タップ系＝一覧から1つ選ぶ操作。押した瞬間に画面が変わると
+     * 「選んだだけのつもりが進んでしまう」ので、遷移はホストの「次へ」に任せる。
+     */
+    var PICK_COMMIT_PATTERNS = ['tap_cards', 'big_split', 'face_scale', 'carousel'];
     /** 確定操作を自分で持つパターン（＝ホストの送信ボタンが要らない）。 */
-    var AUTO_COMMIT_PATTERNS = ['tap_cards', 'big_split', 'face_scale', 'swipe_card', 'split_swipe', 'carousel', 'sort_swipe'];
+    var AUTO_COMMIT_PATTERNS = PICK_COMMIT_PATTERNS.concat(GESTURE_COMMIT_PATTERNS);
     /** このレンダラが描けるパターン（対象外はホスト側の従来描画に任せる）。 */
     var SUPPORTED_PATTERNS = AUTO_COMMIT_PATTERNS.concat(['chip_select', 'big_slider']);
 
@@ -374,13 +406,56 @@
         + '</div>';
     }
 
+    /**
+     * スワイプ確定後の結果パネルの表示/復帰。
+     * ジェスチャー確定は通常そのまま次へ進むが、ホストが進めない文脈（survey_page 等）では
+     * カードが画面外へ飛んだまま止まるため、選んだ内容と「選び直す」をここに残す。
+     * enabled=false（既定）では何も出さない。
+     * @returns {{show:(label:string)=>void, reset:()=>void}|null}
+     */
+    function wireSwipeResult(rootEl, cardEl, enabled, onReset) {
+      var panel = rootEl.querySelector('.swipe-result');
+      if (!panel || !enabled) return null;
+      var valEl = panel.querySelector('.swipe-result-val');
+      var redo = panel.querySelector('.swipe-redo');
+      var reset = function () {
+        panel.classList.remove('shown');
+        if (cardEl) {
+          cardEl.style.transition = '';
+          cardEl.style.transform = '';
+          cardEl.style.opacity = '';
+        }
+        [].slice.call(rootEl.querySelectorAll('.swipe-stamp')).forEach(function (st) { st.style.opacity = '0'; });
+        [].slice.call(rootEl.querySelectorAll('.split-half')).forEach(function (h) { h.classList.remove('lit'); });
+        if (onReset) onReset();
+      };
+      if (redo) redo.addEventListener('click', reset);
+      return {
+        show: function (label) {
+          if (valEl) valEl.textContent = label;
+          panel.classList.add('shown');
+        },
+        reset: reset,
+      };
+    }
+
+    /** 結果パネルの器。実際に表示するかは wireSwipeResult の enabled が決める。 */
+    function swipeResultHtml() {
+      return '<div class="swipe-result">'
+        + '<span class="swipe-result-cap">この回答を選びました</span>'
+        + '<span class="swipe-result-val"></span>'
+        + '<button type="button" class="swipe-redo">選び直す</button>'
+        + '</div>';
+    }
+
     // ---- swipe_card（2択スワイプ）----
     // 左スワイプ=選択肢1 / 右スワイプ=選択肢2（options 並び順）。左右ボタンでも回答可。
     function buildSwipeCardHtml(q, choices) {
       if (choices.length < 2) return buildTapChoiceHtml(q, choices, 'tap_cards');
       var c0 = choices[0], c1 = choices[1];
       return '<div class="answer-swipe" data-code="' + esc(q.question_code) + '"'
-        + ' data-v0="' + esc(c0.value) + '" data-v1="' + esc(c1.value) + '">'
+        + ' data-v0="' + esc(c0.value) + '" data-v1="' + esc(c1.value) + '"'
+        + ' data-l0="' + esc(c0.label) + '" data-l1="' + esc(c1.label) + '">'
         + '<div class="swipe-deck">'
         + '<div class="swipe-back swipe-back2"></div>'
         + '<div class="swipe-back swipe-back1"></div>'
@@ -392,7 +467,9 @@
         + '<span class="swipe-opt">' + esc(c1.label) + ' ▶</span>'
         + '</div>'
         + '<span class="swipe-card-hint">カードを左右にスワイプ</span>'
-        + '</div></div>'
+        + '</div>'
+        + swipeResultHtml()
+        + '</div>'
         + '<div class="swipe-round-btns">'
         + '<button type="button" class="round-btn rb-l" data-dir="left"><span class="rb-circle">◀</span><span class="rb-label">' + esc(c0.label) + '</span></button>'
         + '<button type="button" class="round-btn rb-r" data-dir="right"><span class="rb-circle">▶</span><span class="rb-label">' + esc(c1.label) + '</span></button>'
@@ -409,7 +486,8 @@
       if (choices.length < 2) return buildTapChoiceHtml(q, choices, 'tap_cards');
       var c0 = choices[0], c1 = choices[1];
       return '<div class="answer-splitswipe" data-code="' + esc(q.question_code) + '"'
-        + ' data-v0="' + esc(c0.value) + '" data-v1="' + esc(c1.value) + '">'
+        + ' data-v0="' + esc(c0.value) + '" data-v1="' + esc(c1.value) + '"'
+        + ' data-l0="' + esc(c0.label) + '" data-l1="' + esc(c1.label) + '">'
         + '<div class="swipe-deck">'
         + '<div class="swipe-back swipe-back2"></div>'
         + '<div class="swipe-back swipe-back1"></div>'
@@ -426,8 +504,10 @@
         + (c1.description ? '<span class="split-desc">' + esc(c1.description) + '</span>' : '')
         + '</div>'
         + '</div>'
-        + '</div></div>'
-        + '<p class="swipe-tip">選択肢をタップ、またはカードを左右にスワイプ</p>'
+        + '</div>'
+        + swipeResultHtml()
+        + '</div>'
+        + '<p class="swipe-tip">選択肢をタップ、またはカードを左右にスワイプ（そのまま次へ進みます）</p>'
         + '</div>';
     }
 
@@ -625,8 +705,9 @@
           var val = collectChoiceVal(root, code, multi);
           onChange(val);
           // タップで確定できるのは「その他」記述を持たない radio のみ（記述は入力待ちのため）。
+          // 一覧から1つ選ぶ操作なので advance=false（遷移はホストの「次へ」に任せる）。
           if (input.type === 'radio' && card.closest('[data-autoadvance="1"]') && !card.querySelector('.other-text-input')) {
-            onCommit(val);
+            onCommit(val, false);
           }
         });
       });
@@ -657,6 +738,9 @@
      */
     function wirePatterns(root, ctx, handlers) {
       var code = ctx.code;
+      // ホストが onCommit で次へ進まない場合（survey_page などジェスチャー確定でも
+      // 画面が変わらない文脈）だけ、飛んでいったカードの代わりに結果パネルを残す。
+      var showResult = !!ctx.showCommitResult;
       var onChange = handlers.onChange || function () {};
       var onCommit = handlers.onCommit || function () {};
 
@@ -757,10 +841,13 @@
           if (stampL) stampL.style.opacity = dx < 0 ? String(k) : '0';
           if (stampR) stampR.style.opacity = dx > 0 ? String(k) : '0';
         };
+        var swipeLabels = { left: swipe.getAttribute('data-l0') || '', right: swipe.getAttribute('data-l1') || '' };
+        var swipeResult = wireSwipeResult(swipe, card, showResult, function () { onChange(''); });
         var commitDir = function (dir) {
           var val = dir === 'left' ? v0 : v1;
           onChange(val);
-          onCommit(val);
+          onCommit(val, true); // ジェスチャー確定＝そのまま次へ
+          if (swipeResult) swipeResult.show(swipeLabels[dir] || val);
         };
         if (card) attachHorizontalDrag(card, commitDir, showStamp);
         [].slice.call(swipe.querySelectorAll('.round-btn')).forEach(function (btn) {
@@ -794,10 +881,13 @@
           if (sHalfL) sHalfL.classList.toggle('lit', dx < -8);
           if (sHalfR) sHalfR.classList.toggle('lit', dx > 8);
         };
+        var splitLabels = { left: split.getAttribute('data-l0') || '', right: split.getAttribute('data-l1') || '' };
+        var splitResult = wireSwipeResult(split, scard, showResult, function () { onChange(''); });
         var sCommit = function (dir) {
           var val = dir === 'left' ? sv0 : sv1;
           onChange(val);
-          onCommit(val);
+          onCommit(val, true); // ジェスチャー確定＝そのまま次へ
+          if (splitResult) splitResult.show(splitLabels[dir] || val);
         };
         if (scard) attachHorizontalDrag(scard, sCommit, sPaint);
         [].slice.call(split.querySelectorAll('.split-half')).forEach(function (half) {
@@ -872,7 +962,7 @@
           cards.forEach(function (c, k) { c.classList.toggle('picked', k === pickedIdx); });
           sync();
           onChange(val);
-          onCommit(val);
+          onCommit(val, false); // CTA は「選択の確定」であって送信ではない＝次へ待ち
         });
         // 初回ナッジは操作が始まったら止める（2.6秒後にも保険で解除）
         var stopNudge = function () { track.classList.remove('carousel-nudge'); };
@@ -912,7 +1002,7 @@
           } else {
             sortCards.forEach(function (c) { c.style.display = 'none'; });
             if (doneEl) doneEl.style.display = '';
-            onCommit(selected.slice());
+            onCommit(selected.slice(), true); // 振り分け完了＝そのまま次へ
           }
         };
         sortCards.forEach(function (cardEl) {
@@ -947,6 +1037,10 @@
       applyExclusion: applyExclusion,
       faceIconsFor: faceIconsFor,
       AUTO_COMMIT_PATTERNS: AUTO_COMMIT_PATTERNS,
+      GESTURE_COMMIT_PATTERNS: GESTURE_COMMIT_PATTERNS,
+      PICK_COMMIT_PATTERNS: PICK_COMMIT_PATTERNS,
+      /** カードを倒す/振り分けるジェスチャーで確定するパターンか（＝確定でそのまま次へ進んでよい）。 */
+      isGestureCommit: function (pattern) { return GESTURE_COMMIT_PATTERNS.indexOf(pattern) >= 0; },
       /** そのパターンが自前で確定操作を持つか（ホストの送信ボタンが不要か）。 */
       isAutoCommit: function (pattern) { return AUTO_COMMIT_PATTERNS.indexOf(pattern) >= 0; },
       /** 共通レンダラが描けるパターンか（false ならホスト側の従来描画にフォールバックする）。 */
