@@ -10,10 +10,17 @@
  *
  * すべて visibility_type=private_store なので「探す」一覧には出ない。
  *
- * 【回答UI】案件は standard のまま、設問単位でスワイプ系を上書きしている。
- *   swipe_card : A-Q1 / B-Q9 / C-Q5（2択）
- *   big_slider : B-Q1 / B-Q6 / B-Q7 / C-Q1（5段階・選択肢は悪い→良い順＝左端が最低）
- *   sort_swipe : C-Q2 / C-Q3（1項目ずつ◯✕）
+ * 【回答UI】案件全体を casual（スワイプ）にしている。設問ごとの指定ではなく
+ * answer_ui_preset=casual の既定（answerPresentation.ts）でスワイプ系に揃うため、
+ * 「最初の1問だけスワイプで以降はタップ」というちぐはぐが起きない。
+ *   2択          → swipe_card（左右スワイプ）
+ *   3件以上の単一 → carousel（カードを横スワイプして選ぶ）
+ *   順序尺度      → big_slider（5段階スライダー・選択肢は悪い→良い順＝左端が最低）
+ *   複数選択8件迄 → sort_swipe（1項目ずつ◯✕）
+ *
+ * ただし選択肢が多い設問だけは既定側で自動的にタップ系へ降格する（仕様どおり）。
+ * A-Q6/Q7/Q9・B-Q3/Q4 の10件超をスワイプで1枚ずつ捌かせると長すぎて離脱するため、
+ * chip_select / tap_cards のまま残す。ここは「揃える」より短さを優先している。
  *
  * 【選択肢の持ち越し（carry-forward）】
  *   同一案件内   : A-Q9 ← A-Q8 / B-Q3 ← B-Q2 / B-Q5 ← B-Q4
@@ -58,7 +65,7 @@ const common = {
   delivery_enabled: false,
   research_mode: "survey",
   display_mode: "survey_question",
-  answer_ui_preset: "standard",
+  answer_ui_preset: "casual",
   ai_prompt_mode: "custom",
   primary_objectives: [],
   secondary_objectives: [],
@@ -143,7 +150,8 @@ const SAT5 = opts(
 // 回答UI（設問単位の表示パターン上書き・answerPresentation.ts）
 //   swipe_card = 2択を左右スワイプ / big_slider = 5段階をスライダー（trackタップでも可） /
 //   sort_swipe = 複数選択を1枚ずつ◯✕で振り分け
-// 案件全体は standard のまま、スワイプが効く設問だけに入れる。
+// 案件全体が casual なので下の指定は既定と同じ結果になるが、この3種は「調査票の意図として
+// この見せ方でなければ困る」設問なので、既定が変わっても動かないよう明示的に固定しておく。
 // ------------------------------------------------------------------
 
 const SWIPE = { presentation: { pattern: "swipe_card" } };
@@ -311,14 +319,31 @@ const questionsA = [
     helpText: "この回答をもとに、後日のアンケート（C）をお送りする時期を決めます。"
   }),
 
+  // A-Q12: 施術中の会話量の希望。Q13（自由記述）の前に置き、担当者が施術前に確認する。
   q(
     P_A,
     "Q12",
-    "今日の施術について、気になっていることやスタッフに伝えたいことはありますか？",
-    "free_text_long",
+    "今日は施術中に話しかけてもよいですか？（ひとつだけ）",
+    "single_choice",
     12,
     {
-      placeholder: "例）話すのが苦手なので施術中は会話は少なめでお願いします。／自分に合った髪型が知りたいです。",
+      options: opts(
+        ["welcome", "ぜひ話しかけてほしい"],
+        ["quiet", "できれば静かに過ごしたい"],
+        ["either", "どちらでもよい"]
+      ),
+      helpText: "この設問のみ担当者が施術前に確認いたします。会話の量はいつでも変えていただけます。"
+    }
+  ),
+
+  q(
+    P_A,
+    "Q13",
+    "今日の施術について、気になっていることやスタッフに伝えたいことはありますか？",
+    "free_text_long",
+    13,
+    {
+      placeholder: "例）自分に合った髪型が知りたいです。／髪のパサつきが気になっています。",
       helpText: "この設問のみ担当者が施術前に確認いたします。"
     },
     {
