@@ -74,6 +74,22 @@
   .answer-chips .chip-item.selected { border-color: #2ca87a; background: #e8f7f0; }
   .answer-chips .chip-item .card-item-title { font-size: 14px; }
 
+  /* スワイプ系から外した自由記述つき選択肢（「その他」）の行。
+     デッキの下に置き、タップで選択→記述欄に入力する。 */
+  .answer-freetext-rows { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .answer-freetext-rows .chip-item {
+    display: flex; flex-direction: column; align-items: stretch;
+    padding: 10px 14px; border: 2px solid #d8e3e0; border-radius: 14px;
+    background: #fff; cursor: pointer; transition: all 0.12s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .answer-freetext-rows .chip-item.selected { border-color: #2ca87a; background: #e8f7f0; }
+  .answer-freetext-rows .chip-item .card-item-title { font-size: 14px; font-weight: 700; color: #1a2f2a; }
+  .answer-ui-compact .answer-freetext-rows .chip-item { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.45); }
+  .answer-ui-compact .answer-freetext-rows .chip-item .card-item-title { color: #fff; }
+  .answer-ui-compact .answer-freetext-rows .chip-item.selected { background: #fff; }
+  .answer-ui-compact .answer-freetext-rows .chip-item.selected .card-item-title { color: #14493a; }
+
   /* big_slider
      ネイティブ range をそのまま出すと、つまみが小さく（iOS は track タップで動かない）
      「スライドしにくい」になる。見た目は range の疑似要素で描き、操作は .bigslider-hit の
@@ -321,6 +337,37 @@
       return 'data-exclusive="' + (c.exclusive ? '1' : '0') + '" data-exclusive-with="' + esc(ew) + '"';
     }
 
+    /**
+     * 自由記述つき選択肢（「その他（　）」等）か。
+     *
+     * この種の選択肢はスワイプ/スライド系のパターンから必ず外す。カードを倒す・
+     * 振り分けるジェスチャーには「文字を入力する」余地が無く、◯に倒しても記述欄が
+     * 出ないまま値だけ入って、回答者が具体的な内容を書けなくなるため
+     * （＝設問全体の指示がスワイプでも、その他だけはタップ＋入力欄で受ける）。
+     * 判定は allow_free_text 一本。ラベル文字列は見ない（「その他」以外の自由記述にも効かせる）。
+     */
+    function isFreeText(c) {
+      return !!(c && c.allow_free_text);
+    }
+
+    /**
+     * スワイプ系から外した自由記述つき選択肢を、デッキの下にタップ+入力欄で描く。
+     * .card-item を使うので配線は既存の wireChoiceItems がそのまま担当する
+     * （チェック状態・記述の収集・排他解除まで共通経路に乗る）。
+     */
+    function freeTextRowsHtml(q, choices, multi) {
+      var rows = choices.filter(isFreeText);
+      if (rows.length === 0) return '';
+      var items = rows.map(function (c) {
+        return '<div class="card-item chip-item freetext-item">'
+          + '<input type="' + (multi ? 'checkbox' : 'radio') + '" name="q_' + esc(q.question_code) + '" value="' + esc(c.value) + '" ' + exclAttrs(c) + ' style="display:none" />'
+          + '<span class="card-item-title">' + esc(c.label) + '</span>'
+          + otherInput(q, c, '', 6)
+          + '</div>';
+      }).join('');
+      return '<div class="answer-freetext-rows" data-type="' + (multi ? 'multi' : 'single') + '">' + items + '</div>';
+    }
+
     function otherInput(q, c, extraClass, marginTop) {
       if (!c.allow_free_text) return '';
       return '<input type="text" class="other-text-input' + (extraClass ? ' ' + extraClass : '') + '"'
@@ -384,6 +431,9 @@
     // ---- big_slider（順序尺度を標準プリセットで）----
     // 値の格納はレンジ操作時に onChange で行う（決定はホストの「次へ」/送信）。
     function buildBigSliderHtml(q, choices) {
+      // 自由記述つき選択肢はスライダーの目盛りでは入力できないうえ、順序尺度の中に
+      // 「その他」が混じること自体が尺度として成立しない。含むならタップ+入力欄で描く。
+      if (choices.some(isFreeText)) return buildTapChoiceHtml(q, choices, 'tap_cards');
       var n = choices.length;
       var mid = Math.floor((n - 1) / 2);
       var values = JSON.stringify(choices.map(function (c) { return c.value; }));
@@ -452,6 +502,9 @@
     // 左スワイプ=選択肢1 / 右スワイプ=選択肢2（options 並び順）。左右ボタンでも回答可。
     function buildSwipeCardHtml(q, choices) {
       if (choices.length < 2) return buildTapChoiceHtml(q, choices, 'tap_cards');
+      // 自由記述つき選択肢はカードを倒すジェスチャーでは入力できないので、
+      // 1つでも含むならスワイプをやめてタップ+入力欄で描く（isFreeText 参照）。
+      if (choices.some(isFreeText)) return buildTapChoiceHtml(q, choices, 'tap_cards');
       var c0 = choices[0], c1 = choices[1];
       return '<div class="answer-swipe" data-code="' + esc(q.question_code) + '"'
         + ' data-v0="' + esc(c0.value) + '" data-v1="' + esc(c1.value) + '"'
@@ -484,6 +537,9 @@
     // 保存形式は swipe_card と同じく single のスカラー（onChange / onCommit で value を返す）。
     function buildSplitSwipeHtml(q, choices) {
       if (choices.length < 2) return buildTapChoiceHtml(q, choices, 'tap_cards');
+      // 自由記述つき選択肢はカードを倒すジェスチャーでは入力できないので、
+      // 1つでも含むならスワイプをやめてタップ+入力欄で描く（isFreeText 参照）。
+      if (choices.some(isFreeText)) return buildTapChoiceHtml(q, choices, 'tap_cards');
       var c0 = choices[0], c1 = choices[1];
       return '<div class="answer-splitswipe" data-code="' + esc(q.question_code) + '"'
         + ' data-v0="' + esc(c0.value) + '" data-v1="' + esc(c1.value) + '"'
@@ -543,8 +599,9 @@
     // ---- sort_swipe（スワイプ振り分け・multi_choice）----
     // 1選択肢=1カードに分解し、右=該当 / 左=非該当で全件判定。保存形式は該当のみの配列で一致。
     // 排他選択肢（「特になし」等）はデッキから除外（全カード左＝空配列＝非該当全選択と等価）。
+    // 「その他」等の自由記述つき選択肢もデッキから除外し、下のタップ+入力欄で受ける（isFreeText 参照）。
     function buildSortSwipeHtml(q, choices) {
-      var deck = choices.filter(function (c) { return !c.exclusive; });
+      var deck = choices.filter(function (c) { return !c.exclusive && !isFreeText(c); });
       var strip = deck.map(function (c, i) {
         return '<span class="sort-chip" data-i="' + i + '">' + esc(c.label) + '</span>';
       }).join('');
@@ -567,6 +624,7 @@
         + '<button type="button" class="round-btn rb-r" data-dir="right"><span class="rb-circle">◯</span><span class="rb-label">あてはまる</span></button>'
         + '</div>'
         + '<p class="swipe-tip">スワイプまたはボタンで振り分け</p>'
+        + freeTextRowsHtml(q, choices, true)
         + '</div>';
     }
 
@@ -688,7 +746,13 @@
       var onChange = handlers.onChange || function () {};
       var onCommit = handlers.onCommit || function () {};
 
+      // スワイプ系が自前で合流させる自由記述行（.answer-freetext-rows 配下）は、
+      // ここで onChange を撃つと振り分け済みの値を上書きしてしまうので除外する。
+      // 選択状態のトグルだけは効かせたいので、配線自体は wirePatterns 側が担当する。
+      var ownedByPattern = function (el) { return !!el.closest('.answer-freetext-rows'); };
+
       [].slice.call(root.querySelectorAll('.card-item')).forEach(function (card) {
+        if (ownedByPattern(card)) return;
         card.addEventListener('click', function (e) {
           if (e.target.tagName === 'INPUT') return;
           var input = card.querySelector('input');
@@ -714,6 +778,7 @@
 
       // その他=自由記述: 入力したら該当選択肢を選択状態にして収集する。
       [].slice.call(root.querySelectorAll('.other-text-input')).forEach(function (inp) {
+        if (ownedByPattern(inp)) return;
         inp.addEventListener('input', function () {
           var wrap = inp.closest('.choice-item') || inp.closest('.card-item');
           var box = wrap && wrap.querySelector('input[name="q_' + code + '"]');
@@ -979,8 +1044,46 @@
         var doneEl = sort.querySelector('.sort-done');
         var selected = [];
         var si = 0;
+        // デッキから外した自由記述（「その他」）は下のタップ+入力欄が持つので、
+        // 振り分け結果と合流させてからホストへ渡す（どちらか一方だけにならないように）。
+        var freeRows = sort.querySelector('.answer-freetext-rows');
+        var freeVals = function () {
+          if (!freeRows) return [];
+          return [].slice.call(freeRows.querySelectorAll('input[name="q_' + code + '"]:checked')).map(function (el) {
+            var wrap = el.closest('.card-item');
+            var other = wrap && wrap.querySelector('.other-text-input');
+            return (other && other.value.trim()) ? other.value.trim() : el.value;
+          });
+        };
+        var merged = function () { return selected.concat(freeVals()); };
+        // その他側のタップ選択と記述入力（wireChoiceItems からは除外してあるのでここで配線）。
+        // どちらも「振り分け済みの内容を保ったまま」合流値を送り直す。
+        if (freeRows) {
+          [].slice.call(freeRows.querySelectorAll('.card-item')).forEach(function (row) {
+            row.addEventListener('click', function (e) {
+              if (e.target.tagName === 'INPUT') return; // 記述欄のタップで選択を外さない
+              var box = row.querySelector('input[name="q_' + code + '"]');
+              if (!box) return;
+              box.checked = !box.checked;
+              row.classList.toggle('selected', box.checked);
+              onChange(merged());
+            });
+          });
+          // 記述したら自動でその選択肢を ON にする（チェックし忘れで記述が消えるのを防ぐ）。
+          [].slice.call(freeRows.querySelectorAll('.other-text-input')).forEach(function (inp) {
+            inp.addEventListener('input', function () {
+              var row = inp.closest('.card-item');
+              var box = row && row.querySelector('input[name="q_' + code + '"]');
+              if (box && !box.checked) {
+                box.checked = true;
+                row.classList.add('selected');
+              }
+              onChange(merged());
+            });
+          });
+        }
         // multi は「1件も該当なし」も有効回答になり得るため、開始時に空配列を渡す
-        onChange([]);
+        onChange(merged());
         var show = function (i) {
           si = i;
           sortCards.forEach(function (c, k) {
@@ -996,13 +1099,15 @@
           if (dir === 'right') selected.push(card.getAttribute('data-val'));
           var chip = chips[si];
           if (chip) { chip.classList.add('done'); if (dir === 'right') chip.classList.add('yes'); }
-          onChange(selected.slice());
+          onChange(merged());
           if (si + 1 < sortCards.length) {
             show(si + 1);
           } else {
             sortCards.forEach(function (c) { c.style.display = 'none'; });
             if (doneEl) doneEl.style.display = '';
-            onCommit(selected.slice(), true); // 振り分け完了＝そのまま次へ
+            // 「その他」の記述欄がある場合は、振り分け完了で勝手に次へ進めない
+            // （入力する前に画面が変わると書けないため。遷移はホストの「次へ」に任せる）。
+            onCommit(merged(), !freeRows);
           }
         };
         sortCards.forEach(function (cardEl) {
