@@ -288,6 +288,21 @@ partnerRoutes.get(
   })
 );
 
+/**
+ * 店舗への申し送り設問の結果（利用規約 第9条3項に基づく開示）。
+ *
+ * 共有フラグが立った設問だけを返す。回答者の識別子は返さない。
+ * 判定はすべて service 側（getResults）で行う。
+ */
+partnerRoutes.get(
+  "/surveys/:id/results",
+  asyncHandler(async (req, res) => {
+    const partner = requirePartner(req);
+    const surveyId = parseSurveyId(req.params.id);
+    res.json(await partnerSurveyService.getResults(partner.storeId, surveyId));
+  })
+);
+
 /** 締め切り。 */
 partnerRoutes.post(
   "/surveys/:id/close",

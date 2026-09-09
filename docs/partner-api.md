@@ -425,6 +425,71 @@ draft を更新する。`title` と `questions` は**どちらか一方だけで
 
 ---
 
+### 5.6.1 `GET /api/partner/surveys/:id/results`
+
+**店舗への申し送り設問**の結果。設問ごとに「集計のみ」か「原文」を返す。
+
+回答者向け利用規約 **第9条3項**（migration 102）に基づく開示。
+運営が管理画面で**明示的に開示ONにした設問だけ**が返る（既定は返らない）。
+
+**レスポンス 200**
+
+```jsonc
+{
+  "survey_id": "0f2b...-uuid",
+  "status": "published",
+  "total_count": 42,
+  "questions": [
+    {
+      "question_code": "Q12",
+      "question_text": "今日は施術中に話しかけてもよいですか？（ひとつだけ）",
+      "notice": "この設問のみ担当者が施術前に確認いたします。会話の量はいつでも変えていただけます。",
+      "mode": "aggregate",
+      "choices": [
+        { "value": "welcome", "label": "ぜひ話しかけてほしい", "count": 12 },
+        { "value": "quiet",   "label": "できれば静かに過ごしたい", "count": 7 },
+        { "value": "either",  "label": "どちらでもよい", "count": 3 }
+      ],
+      "entries": null,
+      "answered_count": 22
+    },
+    {
+      "question_code": "Q13",
+      "question_text": "今日の施術について、気になっていることやスタッフに伝えたいことはありますか？",
+      "notice": "この設問のみ担当者が施術前に確認いたします。",
+      "mode": "verbatim",
+      "choices": null,
+      "entries": [
+        { "answered_at": "2026-09-09T02:11:00.000Z", "text": "髪のパサつきが気になっています。" }
+      ],
+      "answered_count": 1
+    }
+  ]
+}
+```
+
+| フィールド | 内容 |
+|---|---|
+| `notice` | 回答画面に出した告知文。**何を約束して集めたか**を店舗側にも示すため必ず返る |
+| `mode` | `aggregate`=選択肢別の件数のみ / `verbatim`=原文一覧 |
+| `choices` | `mode=aggregate` のときのみ。定義済み選択肢を**0埋めで全件**返す。それ以外は `null` |
+| `entries` | `mode=verbatim` のときのみ。**新しい順**。空文字の回答は除く。それ以外は `null` |
+| `answered_count` | 開示対象に絞ったあとの回答件数。`total_count` とは一致しない |
+
+**返らないもの（設計上の保証・変更しないこと）**
+
+- 回答者の識別子は一切返さない。`respondent_id` / `line_user_id` / 氏名はもちろん、
+  **`session_id` も返さない**（個票を横に並べると回答者の名寄せに使えてしまうため）。
+- 開示ONでない設問は、`questions` に**一切現れない**（ホワイトリスト方式）。
+- 告知文（`notice`）が未設定の設問は、開示ONでも返らない（規約上の根拠が無いため）。
+- `timing=on_close` の設問は、案件が `closed` になるまで返らない。
+- **規約 v2.0 に同意した日時より前の回答は返らない**（利用目的の追加は遡及しないため）。
+  そのため改定前に集めた回答は、フラグを立てても件数に入らない。
+
+`questions` が空配列で返ることは正常（開示設定した設問がまだ無い状態）。
+
+---
+
 ### 5.7 `POST /api/partner/surveys/:id/close`
 
 締め切る。ボディ不要。**冪等**（締切済みに再度呼んでも 200）。

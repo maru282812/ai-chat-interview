@@ -1495,6 +1495,10 @@ interface QuestionFormValues {
   question_goal: string;
   metric_code: string;
   metric_direction: string;
+  share_with_store_enabled: boolean;
+  share_with_store_mode: string;
+  share_with_store_timing: string;
+  share_with_store_notice: string;
   max_probes: string;
   placeholder: string;
   option_labels: string[];
@@ -1680,6 +1684,14 @@ function buildQuestionFormValues(
     question_goal: overrides.question_goal ?? meta.question_goal ?? "",
     metric_code: overrides.metric_code ?? meta.metric_code ?? "",
     metric_direction: overrides.metric_direction ?? meta.metric_direction ?? "",
+    share_with_store_enabled:
+      overrides.share_with_store_enabled ?? meta.share_with_store?.enabled === true,
+    share_with_store_mode:
+      overrides.share_with_store_mode ?? meta.share_with_store?.mode ?? "aggregate",
+    share_with_store_timing:
+      overrides.share_with_store_timing ?? meta.share_with_store?.timing ?? "on_close",
+    share_with_store_notice:
+      overrides.share_with_store_notice ?? meta.share_with_store?.notice ?? "",
     max_probes:
       overrides.max_probes ??
       String(typeof meta.probe_config?.max_probes === "number" ? meta.probe_config.max_probes : 1),
@@ -1853,6 +1865,10 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     question_goal: bodyString(req.body.question_goal),
     metric_code: bodyString(req.body.metric_code),
     metric_direction: bodyString(req.body.metric_direction),
+    share_with_store_enabled: req.body.share_with_store_enabled === "on",
+    share_with_store_mode: bodyString(req.body.share_with_store_mode),
+    share_with_store_timing: bodyString(req.body.share_with_store_timing),
+    share_with_store_notice: bodyString(req.body.share_with_store_notice),
     max_probes: bodyString(req.body.max_probes) || "1",
     placeholder: bodyString(req.body.placeholder),
     option_labels: normalizeTextList(bodyStringArray(req.body.option_labels)),
@@ -2303,6 +2319,22 @@ function buildQuestionConfigFromRequest(
       : null
   });
   questionConfig.meta = meta;
+
+  // 店舗への申し送り開示（利用規約 第9条3項・migration 102）。
+  // ⚠ 告知文が空なら「共有しない」に倒す。回答画面で明示していない設問を
+  //   店舗へ出すことは規約上できないため、UI 側の入力漏れを保存時にも塞ぐ。
+  const shareEnabled = req.body.share_with_store_enabled === "on";
+  const shareNotice = bodyString(req.body.share_with_store_notice).trim();
+  if (shareEnabled && shareNotice) {
+    questionConfig.meta.share_with_store = {
+      enabled: true,
+      mode: bodyString(req.body.share_with_store_mode) === "verbatim" ? "verbatim" : "aggregate",
+      timing: bodyString(req.body.share_with_store_timing) === "immediate" ? "immediate" : "on_close",
+      notice: shareNotice
+    };
+  } else {
+    delete questionConfig.meta.share_with_store;
+  }
 
   if (extractionEnabled && extractionItems.length > 0) {
     questionConfig.extraction = {

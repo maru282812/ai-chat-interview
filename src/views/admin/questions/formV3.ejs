@@ -400,6 +400,70 @@
           }
         })();
       </script>
+
+      <!-- 店舗への申し送り開示（利用規約 第9条3項・migration 102） -->
+      <%
+        const shareEnabled = safeForm.share_with_store_enabled === true;
+        const shareMode = safeForm.share_with_store_mode || 'aggregate';
+        const shareTiming = safeForm.share_with_store_timing || 'on_close';
+        const shareNotice = safeForm.share_with_store_notice || '';
+      %>
+      <fieldset class="authoring-subsection">
+        <legend>店舗への開示（申し送り設問）</legend>
+        <p class="muted" style="margin-top:0">
+          この設問の回答を、顧客ポータル（hibi）で<strong>店舗側に見せる</strong>ための設定です。
+          利用規約 第9条3項に基づき、<strong>回答画面に告知文を出した設問に限り</strong>開示できます。
+          告知文が空のときは、チェックが入っていても開示されません。
+        </p>
+        <label class="inline">
+          <input type="checkbox" name="share_with_store_enabled" id="shareEnabled"
+            <%= shareEnabled ? 'checked' : '' %> onchange="onShareToggle()" />
+          この設問の回答を店舗に開示する
+        </label>
+        <div id="shareDetail" style="<%= shareEnabled ? '' : 'display:none' %>">
+          <label>
+            回答画面に出す告知文（必須）
+            <input type="text" name="share_with_store_notice" id="shareNotice"
+              value="<%= shareNotice %>"
+              placeholder="例: この設問のみ担当者が施術前に確認いたします。" />
+            <small class="muted">回答者への約束そのものです。ここが空だと開示できません。</small>
+          </label>
+          <label>
+            見せ方
+            <select name="share_with_store_mode">
+              <option value="aggregate" <%= shareMode === 'aggregate' ? 'selected' : '' %>>集計のみ（選択肢ごとの件数）</option>
+              <option value="verbatim" <%= shareMode === 'verbatim' ? 'selected' : '' %>>原文（自由記述をそのまま見せる）</option>
+            </select>
+            <small class="muted">原文は回答者が書いた内容がそのまま店舗に見えます。自由記述で使う場合は内容を確認できる運用にしてください。</small>
+          </label>
+          <label>
+            見せるタイミング
+            <select name="share_with_store_timing">
+              <option value="on_close" <%= shareTiming === 'on_close' ? 'selected' : '' %>>締切後</option>
+              <option value="immediate" <%= shareTiming === 'immediate' ? 'selected' : '' %>>即時（回答が入り次第）</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+      <script>
+        function onShareToggle() {
+          var on = document.getElementById('shareEnabled').checked;
+          document.getElementById('shareDetail').style.display = on ? '' : 'none';
+        }
+        // 告知文が空のまま「開示する」で保存しようとしたら止める（サーバ側でも同じ判定をする）。
+        (function () {
+          var cb = document.getElementById('shareEnabled');
+          if (!cb) return;
+          var form = cb.closest('form');
+          if (!form) return;
+          form.addEventListener('submit', function (e) {
+            if (cb.checked && !(document.getElementById('shareNotice').value || '').trim()) {
+              e.preventDefault();
+              alert('店舗に開示するには、回答画面に出す告知文を入力してください。');
+            }
+          });
+        })();
+      </script>
     </section>
   </div>
 

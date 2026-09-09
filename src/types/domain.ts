@@ -717,6 +717,17 @@ export interface QuestionMeta {
   metric_code?: string;
   /** 指標の集計方向。ランキング/ビフォーアフターでの良し悪し判定に使う。任意。 */
   metric_direction?: "higher_is_better" | "lower_is_better" | "neutral";
+  /**
+   * 「店舗等への伝達を目的として設けた設問」の開示設定（利用規約 第9条3項・migration 102）。
+   * 未設定＝共有しない。判定は lib/questionShare.ts の resolveShareDecision に一本化する。
+   * notice（回答画面に出した告知文）が無いものは、enabled でも共有されない。
+   */
+  share_with_store?: {
+    enabled?: boolean;
+    mode?: "verbatim" | "aggregate";
+    timing?: "immediate" | "on_close";
+    notice?: string;
+  };
 }
 
 export interface Question {

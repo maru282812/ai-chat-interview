@@ -22,10 +22,13 @@ import {
   toPartnerQuestionType
 } from "../lib/partnerQuestions";
 import { computeSurveyVersion } from "../lib/partnerSurveyVersion";
+import { isCoveredByConsent, selectShareableQuestions } from "../lib/questionShare";
 import { answerRepository } from "../repositories/answerRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { questionRepository } from "../repositories/questionRepository";
+import { respondentRepository } from "../repositories/respondentRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
+import { userConsentRecordRepository } from "../repositories/userConsentRecordRepository";
 import type { Project, Question, QuestionOption } from "../types/domain";
 import { buildStoreEntryLiffUrl } from "./liffService";
 
@@ -117,12 +120,43 @@ export interface PartnerStatsView {
   demographics: DemographicSummary;
 }
 
+/** 店舗へ開示する設問1件ぶんの結果。 */
+export interface PartnerResultQuestionView {
+  question_code: string;
+  question_text: string;
+  /** 回答画面に出した告知文。店舗側にも「何を約束して集めたか」を見せる。 */
+  notice: string;
+  /** aggregate=選択肢別の件数のみ / verbatim=原文一覧。 */
+  mode: "aggregate" | "verbatim";
+  /** mode=aggregate のとき。選択肢ごとの件数（0埋め）。 */
+  choices: Array<{ value: string; label: string; count: number }> | null;
+  /** mode=verbatim のとき。原文の一覧（新しい順）。 */
+  entries: Array<{ answered_at: string; text: string }> | null;
+  /** この設問に回答した件数（開示対象に絞ったあとの数）。 */
+  answered_count: number;
+}
+
+export interface PartnerResultsView {
+  survey_id: string;
+  status: Project["status"];
+  /** 完了セッション数（stats と同じ定義）。 */
+  total_count: number;
+  questions: PartnerResultQuestionView[];
+}
+
 // ------------------------------------------------------------------
 // 内部ヘルパー
 // ------------------------------------------------------------------
 
 /** パートナー設問の sort_order の開始値。1,2 は性年代設問が占有する。 */
 const PARTNER_QUESTION_SORT_OFFSET = 10;
+
+/**
+ * 店舗開示の根拠となる書類（回答者向け利用規約）の document_id。
+ * 第9条3項を追加した v2.0 は migration 102 で作成した。
+ * ⚠ この書類への同意日時より前の回答は開示しない（利用目的の追加は遡及しないため）。
+ */
+const STORE_DISCLOSURE_DOCUMENT_ID = "d0000000-0000-0000-0000-000000000001";
 
 /** パートナー設問の question_code。sort_order 由来ではなく通し番号で安定させる。 */
 function partnerQuestionCode(index: number): string {
@@ -511,6 +545,164 @@ export const partnerSurveyService = {
       status: project.status,
       total_count: completedSessions.length,
       demographics: summarizeDemographics([...bySession.values()])
+    };
+  },
+
+  /**
+   * 「店舗等への伝達を目的として設けた設問」の回答を、当該店舗へ開示する。
+   *
+   * 利用規約 第9条3項（migration 102）に基づく開示。条文の限定をここで全て強制する:
+   *
+   *   1. ホワイトリスト方式
+   *      question_config.meta.share_with_store が有効な設問「だけ」を返す
+   *      （lib/questionShare.ts）。既定は共有しないので、新しく足した設問が
+   *      黙って流れ出ることはない。
+   *   2. 事前明示（notice）が無い設問は、フラグが立っていても返さない。
+   *   3. 所有者スコープ
+   *      loadOwnedProject で partner_store_id 一致を検証する。他店舗は 404。
+   *   4. 直接識別子を返さない
+   *      ⚠ respondents へは「同意日時の突き合わせ」のためだけに読みに行き、
+   *        line_user_id / display_name / respondent_id はレスポンスに一切載せない。
+   *        answers → sessions で止め、session_id すら返さない（申し送りは
+   *        個票の並びとして見せる必要が無く、回答者の名寄せに使われ得るため）。
+   *   5. 遡及しない
+   *      利用目的の追加は遡及しないため、規約へ同意した日時より前の回答は返さない
+   *      （isCoveredByConsent）。同意記録が無い回答者ぶんは落ちる。
+   *
+   * total_count の定義は getStats と同じ（完了セッション数）。
+   */
+  async getResults(partnerStoreId: string, surveyId: string): Promise<PartnerResultsView> {
+    const project = await loadOwnedProject(surveyId, partnerStoreId);
+
+    const [sessions, questions] = await Promise.all([
+      sessionRepository.listByProject(project.id),
+      questionRepository.listByProject(project.id, { includeHidden: true })
+    ]);
+    const completedSessions = sessions.filter((session) => session.status === "completed");
+
+    // 共有対象の設問だけを選ぶ（ホワイトリスト）。0件なら以降の回答読み出しごと省く。
+    const shareable = selectShareableQuestions(questions, project.status);
+    if (shareable.length === 0) {
+      return {
+        survey_id: project.id,
+        status: project.status,
+        total_count: completedSessions.length,
+        questions: []
+      };
+    }
+
+    // 同意の突き合わせ。respondent_id → line_user_id → 同意日時。
+    // ここで得た識別子はレスポンスに載せない（突き合わせにのみ使う）。
+    const respondents = await respondentRepository.listByProject(project.id);
+    const lineUserIdByRespondent = new Map(respondents.map((r) => [r.id, r.line_user_id]));
+    const consentRecords = await userConsentRecordRepository.listActiveByLineUserIds(
+      respondents.map((r) => r.line_user_id)
+    );
+
+    // 対象書類（回答者向け利用規約）について、最も古い同意日時を採用する。
+    // 同一書類の版を跨いで再同意していても、開示根拠が生じた最初の時点を基準にする。
+    const consentedAtByLineUser = new Map<string, string>();
+    for (const record of consentRecords) {
+      if (record.document_id !== STORE_DISCLOSURE_DOCUMENT_ID) {
+        continue;
+      }
+      const current = consentedAtByLineUser.get(record.line_user_id);
+      if (!current || record.consented_at < current) {
+        consentedAtByLineUser.set(record.line_user_id, record.consented_at);
+      }
+    }
+
+    const sessionById = new Map(completedSessions.map((s) => [s.id, s]));
+    const answers = await answerRepository.listBySessions(completedSessions.map((s) => s.id));
+
+    const views: PartnerResultQuestionView[] = [];
+    for (const { question, mode, notice } of shareable) {
+      const target = answers.filter(
+        (answer) =>
+          answer.question_id === question.id &&
+          answer.answer_role === "primary" &&
+          sessionById.has(answer.session_id)
+      );
+
+      // 同意より後の回答だけに絞る（遡及しない）。
+      const covered = target.filter((answer) => {
+        const session = sessionById.get(answer.session_id);
+        if (!session) {
+          return false;
+        }
+        const lineUserId = lineUserIdByRespondent.get(session.respondent_id);
+        if (!lineUserId) {
+          return false;
+        }
+        return isCoveredByConsent(consentedAtByLineUser.get(lineUserId), answer.created_at);
+      });
+
+      if (mode === "verbatim") {
+        const entries = covered
+          .map((answer) => ({
+            answered_at: answer.created_at,
+            // 自由記述は free_text_answer に入る場合と answer_text に入る場合がある。
+            // 片方だけ見ると取りこぼす（migration 019 で後から足した列のため）。
+            text: (answer.free_text_answer ?? answer.answer_text ?? "").trim()
+          }))
+          .filter((entry) => entry.text.length > 0)
+          .sort((a, b) => b.answered_at.localeCompare(a.answered_at));
+
+        views.push({
+          question_code: question.question_code,
+          question_text: question.question_text,
+          notice,
+          mode,
+          choices: null,
+          entries,
+          answered_count: entries.length
+        });
+        continue;
+      }
+
+      // aggregate: 選択肢ごとの件数。定義済みの選択肢は 0 埋めで必ず返す。
+      const options = (question.question_config?.options ?? []) as QuestionOption[];
+      const counts = new Map<string, number>();
+      for (const option of options) {
+        counts.set(option.value, 0);
+      }
+      for (const answer of covered) {
+        // multi_choice はカンマ連結で入る。⚠ クライアント側で分解させない。
+        for (const token of String(answer.answer_text ?? "").split(",")) {
+          const value = token.trim();
+          if (value.length === 0 || !counts.has(value)) {
+            continue;
+          }
+          counts.set(value, (counts.get(value) ?? 0) + 1);
+        }
+      }
+
+      views.push({
+        question_code: question.question_code,
+        question_text: question.question_text,
+        notice,
+        mode,
+        choices: options.map((option) => ({
+          value: option.value,
+          label: option.label,
+          count: counts.get(option.value) ?? 0
+        })),
+        entries: null,
+        answered_count: covered.length
+      });
+    }
+
+    logger.info("partnerSurvey.results", {
+      surveyId: project.id,
+      storeId: partnerStoreId,
+      questionCount: views.length
+    });
+
+    return {
+      survey_id: project.id,
+      status: project.status,
+      total_count: completedSessions.length,
+      questions: views
     };
   },
 

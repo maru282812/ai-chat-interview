@@ -10,6 +10,7 @@ import type {
   ProjectProbePolicy,
   ProjectResponseStyle,
   ProjectStatus,
+  Question,
   ResearchHypothesis,
   ResearchMode,
   ScreeningConfig
@@ -19,6 +20,31 @@ import { projectAssignmentRepository } from "./projectAssignmentRepository";
 import { FREE_COMMENT_QUESTION_CODE, questionRepository } from "./questionRepository";
 import { respondentRepository } from "./respondentRepository";
 import { sessionRepository } from "./sessionRepository";
+
+/**
+ * 複製時に「店舗への開示設定」を必ず落とす。
+ *
+ * copyProject は question_config をまるごと写すため、そのままだと複製元の
+ * share_with_store（利用規約 第9条3項の開示フラグ）が引き継がれる。
+ * 案件複製は店舗展開の主要経路（storeProvisioningService）なので、
+ * 引き継ぐと「新しく作った店舗の設問が、誰も設定していないのに開示される」事故になる。
+ * 開示は店舗ごとに管理画面で明示的に有効化させる（安全側に倒す）。
+ */
+export function stripStoreDisclosureOnCopy(
+  config: Question["question_config"]
+): Question["question_config"] {
+  if (!config) {
+    return config;
+  }
+  const next = { ...config };
+  if (next.meta && typeof next.meta === "object" && !Array.isArray(next.meta)) {
+    const nextMeta = { ...next.meta };
+    delete nextMeta.share_with_store;
+    next.meta = nextMeta;
+  }
+  return next;
+}
+
 
 interface ProjectMutationInput {
   name: string;
@@ -168,7 +194,7 @@ export const projectRepository = {
         is_required: question.is_required,
         sort_order: question.sort_order,
         branch_rule: question.branch_rule,
-        question_config: question.question_config,
+        question_config: stripStoreDisclosureOnCopy(question.question_config),
         ai_probe_enabled: question.ai_probe_enabled,
         is_system: question.is_system,
         is_hidden: question.is_hidden
@@ -186,7 +212,7 @@ export const projectRepository = {
         is_required: sourceSystemQuestion.is_required,
         sort_order: sourceSystemQuestion.sort_order,
         branch_rule: sourceSystemQuestion.branch_rule,
-        question_config: sourceSystemQuestion.question_config,
+        question_config: stripStoreDisclosureOnCopy(sourceSystemQuestion.question_config),
         ai_probe_enabled: sourceSystemQuestion.ai_probe_enabled,
         is_system: sourceSystemQuestion.is_system,
         is_hidden: sourceSystemQuestion.is_hidden
