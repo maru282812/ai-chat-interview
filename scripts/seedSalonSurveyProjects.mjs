@@ -139,6 +139,17 @@ const q = (projectId, code, text, type, sortOrder, config, extra = {}) => ({
   ...extra
 });
 
+/**
+ * A-Q12 / A-Q13 の告知文。
+ *
+ * 回答画面に出す文言（helpText）と、店舗開示の根拠（share_with_store.notice）を
+ * 必ず同じ文字列にするため定数にしている。利用規約 第9条3項は
+ * 「回答画面上であらかじめ明示したうえで」を開示の条件にしているので、
+ * 画面に出した文言と根拠がズレると説明がつかなくなる。
+ */
+const A_Q12_NOTICE = "この設問のみ担当者が施術前に確認いたします。会話の量はいつでも変えていただけます。";
+const A_Q13_NOTICE = "この設問のみ担当者が施術前に確認いたします。";
+
 /** [value, label] のペア配列から options を作る。 */
 const opts = (...pairs) => pairs.map(([value, label]) => ({ value, label }));
 
@@ -338,7 +349,18 @@ const questionsA = [
         ["quiet", "できれば静かに過ごしたい"],
         ["either", "どちらでもよい"]
       ),
-      helpText: "この設問のみ担当者が施術前に確認いたします。会話の量はいつでも変えていただけます。"
+      helpText: A_Q12_NOTICE,
+      // 店舗へ開示する（利用規約 第9条3項）。選択式なので集計のみ。
+      // notice は helpText と同一にする。回答画面に出した文言そのものが
+      // 開示の根拠になるため、ズレると規約上の説明がつかなくなる。
+      meta: {
+        share_with_store: {
+          enabled: true,
+          mode: "aggregate",
+          timing: "immediate",
+          notice: A_Q12_NOTICE
+        }
+      }
     }
   ),
 
@@ -350,7 +372,18 @@ const questionsA = [
     13,
     {
       placeholder: "例）自分に合った髪型が知りたいです。／髪のパサつきが気になっています。",
-      helpText: "この設問のみ担当者が施術前に確認いたします。"
+      helpText: A_Q13_NOTICE,
+      // 店舗へ開示する（利用規約 第9条3項）。施術前に読めないと意味がないので原文・即時。
+      // ⚠ 自由記述なので何が書かれるか制御できない。第三者の名前や要配慮情報が
+      //   混入し得るため、運用側で内容を確認できる状態を保つこと。
+      meta: {
+        share_with_store: {
+          enabled: true,
+          mode: "verbatim",
+          timing: "immediate",
+          notice: A_Q13_NOTICE
+        }
+      }
     },
     {
       is_required: false,
