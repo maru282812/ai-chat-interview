@@ -110,3 +110,36 @@ partnerAdminRoutes.post(
     res.json(await partnerAssignmentService.unassignFromStore(surveyId));
   })
 );
+
+// ------------------------------------------------------------------
+// 閲覧専用の紐づけ（migration 103・§8.8〜8.10）
+// 稼働中・回答ありの案件を、店舗に「見るだけ」で出すための別経路。
+// assign / unassign とは触る列が違う（entry_code / visibility_type に触らない）。
+// ------------------------------------------------------------------
+
+/** 閲覧専用の紐づけ候補。**設問本文は含まない**。 */
+partnerAdminRoutes.get(
+  "/watchable-surveys",
+  asyncHandler(async (_req, res) => {
+    res.json(await partnerAssignmentService.listWatchable());
+  })
+);
+
+/** 閲覧専用で店舗に紐づける。 */
+partnerAdminRoutes.post(
+  "/surveys/:id/watch",
+  asyncHandler(async (req, res) => {
+    const surveyId = parseSurveyId(req.params.id);
+    const body = parseBody(assignSchema, req.body);
+    res.json(await partnerAssignmentService.watchForStore(surveyId, body.store_id));
+  })
+);
+
+/** 閲覧専用の紐づけを外す（冪等）。 */
+partnerAdminRoutes.post(
+  "/surveys/:id/unwatch",
+  asyncHandler(async (req, res) => {
+    const surveyId = parseSurveyId(req.params.id);
+    res.json(await partnerAssignmentService.unwatchFromStore(surveyId));
+  })
+);

@@ -2,6 +2,7 @@ import { HttpError } from "../lib/http";
 import { logger } from "../lib/logger";
 import { isDemographicQuestion } from "../lib/partnerDemographics";
 import { toPartnerQuestionType } from "../lib/partnerQuestions";
+import { selectShareableQuestions } from "../lib/questionShare";
 import { projectRepository } from "../repositories/projectRepository";
 import { questionRepository } from "../repositories/questionRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
@@ -62,6 +63,27 @@ export interface AssignedSurveySummary {
   entry_code: string | null;
   created_at: string;
   updated_at: string;
+  /** 閲覧専用の紐づけ（migration 103）か。ポータル側の origin と突き合わせる。 */
+  readonly: boolean;
+}
+
+/**
+ * 閲覧専用の紐づけ候補の1件（§8.8）。設問本文は含めない。
+ * assign 候補と違って稼働中・締切済み・回答ありでもよい。
+ */
+export interface WatchableSurveySummary {
+  survey_id: string;
+  title: string;
+  status: Project["status"];
+  entry_code: string | null;
+  /** 完了セッション数。運営が「どの案件か」を見分ける材料 */
+  completed_count: number;
+  /** 店舗開示ON（notice あり）の設問数。0 なら申し送りは出ない */
+  shareable_question_count: number;
+  created_at: string;
+  /** そのまま紐づけられるか。false のとき blocked_reason が入る */
+  watchable: boolean;
+  blocked_reason: string | null;
 }
 
 /** 4種に写像できない設問（409 のときに返す）。 */
@@ -120,6 +142,24 @@ export function assignmentBlockedReason(project: Project): string | null {
   }
   if (project.is_discoverable) {
     return "project is discoverable in the public list";
+  }
+  return null;
+}
+
+/**
+ * 閲覧専用の紐づけとして妥当かを判定する。妥当なら null、駄目ならその理由。
+ * assign と違い、status（稼働中・締切済み）・回答の有無・設問型は問わない。
+ * 一覧（表示）と紐づけ（実行）で同じ判定を使う。
+ */
+export function watchBlockedReason(project: Project): string | null {
+  if (project.partner_store_id) {
+    return "already assigned to a store";
+  }
+  if (project.client_id) {
+    return "project belongs to a client";
+  }
+  if (project.status === "archived") {
+    return "archived survey cannot be watched";
   }
   return null;
 }
@@ -185,9 +225,98 @@ export const partnerAssignmentService = {
         store_id: project.partner_store_id ?? "",
         entry_code: project.entry_code,
         created_at: project.created_at,
-        updated_at: project.updated_at
+        updated_at: project.updated_at,
+        readonly: project.partner_readonly === true
       }))
     };
+  },
+
+  /**
+   * 閲覧専用の紐づけ候補（§8.8）。**設問本文は含めない**。
+   * 抽出条件は repository 側（listWatchableForPartner）。ここでは件数だけ足す。
+   */
+  async listWatchable(): Promise<{ surveys: WatchableSurveySummary[] }> {
+    const projects = await projectRepository.listWatchableForPartner();
+    const surveys: WatchableSurveySummary[] = [];
+    for (const project of projects) {
+      const [sessions, questions] = await Promise.all([
+        sessionRepository.listByProject(project.id),
+        questionRepository.listByProject(project.id, { includeHidden: true })
+      ]);
+      const reason = watchBlockedReason(project);
+      surveys.push({
+        survey_id: project.id,
+        title: project.user_display_title || project.name,
+        status: project.status,
+        entry_code: project.entry_code,
+        completed_count: sessions.filter((session) => session.status === "completed").length,
+        shareable_question_count: selectShareableQuestions(questions, project.status).length,
+        created_at: project.created_at,
+        watchable: reason === null,
+        blocked_reason: reason
+      });
+    }
+    return { surveys };
+  },
+
+  /**
+   * 閲覧専用で店舗に紐づける（§8.9）。
+   *
+   * assign と違って **partner_store_id と partner_readonly しか触らない**。
+   * entry_code / visibility_type / 性年代の固定設問には手を出さない
+   * （稼働中の案件の QR と設問構成を壊さないため）。
+   */
+  async watchForStore(surveyId: string, storeId: string): Promise<PartnerSurveyView> {
+    const project = await loadProject(surveyId);
+
+    const reason = watchBlockedReason(project);
+    if (reason) {
+      throw new HttpError(409, reason);
+    }
+
+    // 条件付きUPDATE（where partner_store_id is null）。同時実行の後勝ちを DB で防ぐ。
+    const watched = await projectRepository.watchPartnerStore(project.id, storeId);
+    if (!watched) {
+      throw new HttpError(409, "already assigned to a store");
+    }
+
+    logger.info("partnerAssignment.watched", {
+      surveyId: watched.id,
+      storeId,
+      status: watched.status
+    });
+
+    const views = await loadPartnerQuestionViews(watched.id);
+    return toSurveyView(watched, views);
+  },
+
+  /**
+   * 閲覧専用の紐づけを外す（§8.10）。ポータル側の書き込み失敗時の巻き戻しにも使う。
+   * **冪等**: 既に紐づいていなければ何もせず 200。
+   * 通常の割り当て案件（partner_readonly=false）に当てると 409（unassign を使うこと）。
+   */
+  async unwatchFromStore(surveyId: string): Promise<PartnerSurveyView> {
+    const project = await loadProject(surveyId);
+    if (!project.partner_store_id) {
+      const views = await loadPartnerQuestionViews(project.id);
+      return toSurveyView(project, views);
+    }
+    if (!project.partner_readonly) {
+      throw new HttpError(409, "survey is not read-only (use unassign)");
+    }
+
+    const unwatched = await projectRepository.unwatchPartnerStore(project.id);
+    if (!unwatched) {
+      throw new HttpError(404, "survey not found");
+    }
+
+    logger.info("partnerAssignment.unwatched", {
+      surveyId: unwatched.id,
+      storeId: project.partner_store_id
+    });
+
+    const views = await loadPartnerQuestionViews(unwatched.id);
+    return toSurveyView(unwatched, views);
   },
 
   /**
@@ -275,6 +404,11 @@ export const partnerAssignmentService = {
       // 巻き戻しが二重に走っても落とさない（既に未割り当て＝望む状態）。
       const views = await loadPartnerQuestionViews(project.id);
       return toSurveyView(project, views);
+    }
+    // 閲覧専用の紐づけに unassign を当てると entry_code が消えて稼働中の QR が死ぬ。
+    // 必ず unwatch を使わせる。
+    if (project.partner_readonly) {
+      throw new HttpError(409, "read-only survey (use unwatch)");
     }
 
     const unassigned = await projectRepository.unassignPartnerStore(project.id);

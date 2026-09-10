@@ -387,6 +387,13 @@ export interface Project {
    */
   partner_store_id?: string | null;
   /**
+   * 会員ポータルの店舗に「閲覧専用」で紐づいた案件か (Migration 103)。
+   * true のとき partner_store_id は入るが、店舗からの書き込み（PUT / publish / close）は 409。
+   * 運営API の unassign（entry_code を落とす）も当てられず、解除は unwatch だけ。
+   * 稼働中の QR（entry_code）を誤って殺さないための分離。
+   */
+  partner_readonly?: boolean;
+  /**
    * 「探す」一覧に出すか（管理画面の「一覧に出す」チェック）。
    * listDiscoverable / getDiscoverableById の抽出条件であり、
    * 運営専用API の割り当て候補（listAssignableForPartner）では false のものだけを対象にする。

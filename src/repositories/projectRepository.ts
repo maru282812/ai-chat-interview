@@ -517,5 +517,64 @@ export const projectRepository = {
     throwIfError(error);
     const rows = (data ?? []) as Project[];
     return rows[0] ?? null;
+  },
+
+  /**
+   * 「閲覧専用」で紐づけられる候補（migration 103・docs/partner-api.md §8.8）。
+   *
+   * assign と違い、稼働中（published / paused）や締切済み（closed）でもよい。
+   * 「まだ誰のものでもない」「他社クライアントの案件でない」「archived でない」だけを条件にする。
+   */
+  async listWatchableForPartner(): Promise<Project[]> {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .is("partner_store_id", null)
+      .is("client_id", null)
+      .neq("status", "archived")
+      .order("created_at", { ascending: false });
+    throwIfError(error);
+    return (data ?? []) as Project[];
+  },
+
+  /**
+   * 閲覧専用で店舗に紐づける**条件付きUPDATE**（`where partner_store_id is null`）。
+   *
+   * assignPartnerStore と違い、**partner_store_id と partner_readonly しか触らない**。
+   * visibility_type / entry_code / is_discoverable は稼働中の案件の生命線なので変えない。
+   * 更新行が0件なら null（呼び出し側は「既に紐づけ済み」として 409 にする）。
+   */
+  async watchPartnerStore(projectId: string, storeId: string): Promise<Project | null> {
+    const id = projectId.trim();
+    const store = storeId.trim();
+    if (!id || !store) return null;
+    const { data, error } = await supabase
+      .from("projects")
+      .update({ partner_store_id: store, partner_readonly: true })
+      .eq("id", id)
+      .is("partner_store_id", null)
+      .select("*");
+    throwIfError(error);
+    const rows = (data ?? []) as Project[];
+    return rows[0] ?? null;
+  },
+
+  /**
+   * 閲覧専用の紐づけを外す。**partner_store_id と partner_readonly を戻すだけ**。
+   * entry_code / visibility_type には触らない（unassign と決定的に違う点。QR を殺さない）。
+   * `partner_readonly = true` の行にしか当たらないので、通常の割り当て案件を誤って外せない。
+   */
+  async unwatchPartnerStore(projectId: string): Promise<Project | null> {
+    const id = projectId.trim();
+    if (!id) return null;
+    const { data, error } = await supabase
+      .from("projects")
+      .update({ partner_store_id: null, partner_readonly: false })
+      .eq("id", id)
+      .eq("partner_readonly", true)
+      .select("*");
+    throwIfError(error);
+    const rows = (data ?? []) as Project[];
+    return rows[0] ?? null;
   }
 };

@@ -176,6 +176,20 @@ async function loadOwnedProject(surveyId: string, partnerStoreId: string): Promi
 }
 
 /**
+ * 書き込み系（PUT / publish / close）の入口で呼ぶ。
+ * 閲覧専用で紐づいた案件（migration 103・partner_readonly=true）は、運営が ACI 管理画面で
+ * 回している稼働中の案件なので、店舗側から設問・公開状態・締切を変えさせない。
+ * 読み取り（GET / stats / results）は通す。
+ */
+async function loadOwnedWritableProject(surveyId: string, partnerStoreId: string): Promise<Project> {
+  const project = await loadOwnedProject(surveyId, partnerStoreId);
+  if (project.partner_readonly) {
+    throw new HttpError(409, "read-only survey");
+  }
+  return project;
+}
+
+/**
  * 一意な entry_code を生成する。
  * 既存の管理画面（adminController.generateUniqueEntryCode）と同じ体裁にそろえ、
  * パートナー経由であることが分かる `p-` プレフィックスを付ける。
@@ -423,7 +437,7 @@ export const partnerSurveyService = {
    * 性年代設問はここでも必ず再構築するため、パートナーからは消せない/変更できない。
    */
   async updateSurvey(input: UpdateSurveyInput): Promise<PartnerSurveyView> {
-    const project = await loadOwnedProject(input.surveyId, input.partnerStoreId);
+    const project = await loadOwnedWritableProject(input.surveyId, input.partnerStoreId);
     if (project.status === "closed" || project.status === "archived") {
       throw new HttpError(409, "closed survey cannot be updated");
     }
@@ -468,7 +482,7 @@ export const partnerSurveyService = {
     partnerStoreId: string,
     surveyId: string
   ): Promise<{ survey_id: string; status: Project["status"]; answer_url: string; entry_code: string }> {
-    const project = await loadOwnedProject(surveyId, partnerStoreId);
+    const project = await loadOwnedWritableProject(surveyId, partnerStoreId);
     if (project.status === "closed" || project.status === "archived") {
       throw new HttpError(409, "closed survey cannot be published");
     }
@@ -718,7 +732,7 @@ export const partnerSurveyService = {
     partnerStoreId: string,
     surveyId: string
   ): Promise<{ survey_id: string; status: Project["status"]; closed_at: string; total_count: number }> {
-    const project = await loadOwnedProject(surveyId, partnerStoreId);
+    const project = await loadOwnedWritableProject(surveyId, partnerStoreId);
     const closed =
       project.status === "closed"
         ? project

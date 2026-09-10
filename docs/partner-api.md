@@ -730,3 +730,73 @@ QR を発行する前に回答が集まると、店舗が意図しないまま�
 - `:id` が UUID でない / 存在しない → **404**
 
 **レスポンス 200** … `SurveyView`。`store_id` は空文字、`entry_code` / `answer_url` は `null`。
+
+- **閲覧専用の紐づけ（`partner_readonly=true`・8.8〜8.10）には当てられない → 409**
+  `"read-only survey (use unwatch)"`。unassign は `entry_code` を落とすため、
+  稼働中の案件に当てると QR が死ぬ。閲覧専用の解除は必ず 8.10 の `unwatch` を使う。
+
+### 8.8 `GET /api/partner-admin/watchable-surveys`（閲覧専用の紐づけ候補）
+
+**migration 103**。運営が ACI 管理画面で作って回している案件（美容室ABCサイクルの A/B/C 等）を、
+店舗のポータルに「見るだけ」で出すための別経路。assign と違い **稼働中・締切済み・回答あり・
+4種に写像できない設問を含む案件でもよい**。
+
+抽出条件（`listWatchableForPartner`）: `partner_store_id is null` ∧ `client_id is null` ∧ `status <> 'archived'`。
+設問本文は含まない。
+
+**レスポンス 200**
+
+```jsonc
+{
+  "surveys": [
+    {
+      "survey_id": "0f2b...-uuid",
+      "title": "美容室 A（ご来店時）",
+      "status": "published",
+      "entry_code": "yotto-salon-a",       // 運営が見分けるための材料
+      "completed_count": 42,               // 完了セッション数
+      "shareable_question_count": 2,       // 店舗開示ON（notice あり）の設問数。0 なら申し送りは出ない
+      "created_at": "2026-08-01T00:00:00.000Z",
+      "watchable": true,
+      "blocked_reason": null               // "already assigned to a store" / "project belongs to a client" / "archived survey cannot be watched"
+    }
+  ]
+}
+```
+
+### 8.9 `POST /api/partner-admin/surveys/:id/watch`（閲覧専用で紐づける）
+
+**リクエスト** … `{ "store_id": "<ポータル stores.id>" }`（8.6 と同じ）
+
+**ガード（409）**: `partner_store_id is null` / `client_id is null` / `status <> 'archived'` のみ。
+回答の有無・設問型・is_discoverable は問わない。条件付きUPDATE（`where partner_store_id is null`）で
+同時実行の後勝ちを防ぐ。
+
+**更新内容（これ以外は一切触らない）**
+
+| 列 | 値 |
+|---|---|
+| `partner_store_id` | リクエストの `store_id` |
+| `partner_readonly` | `true` |
+
+`visibility_type` / `entry_code` / `is_discoverable` / `status` は変えない。
+`ensureDemographicQuestions()` も呼ばない（稼働中の設問構成を変えない）。
+
+紐づけた案件に対して店舗向け API は次のように振る舞う:
+
+| エンドポイント | 挙動 |
+|---|---|
+| `GET /surveys/:id` / `GET /stats` / `GET /results` | 通常どおり返す |
+| `PUT /surveys/:id` / `POST /publish` / `POST /close` | **409 `"read-only survey"`** |
+
+**レスポンス 200** … `SurveyView`。`status` / `entry_code` は紐づけ前のまま。
+
+### 8.10 `POST /api/partner-admin/surveys/:id/unwatch`（閲覧専用の紐づけを外す）
+
+ボディ不要。**冪等**（既に未紐づけなら UPDATE を投げずに 200）。
+更新するのは `partner_store_id = null` / `partner_readonly = false` だけで、**`entry_code` には触らない**。
+
+- `partner_readonly = false` の割り当て案件に当てると 409 `"survey is not read-only (use unassign)"`
+- `:id` が UUID でない / 存在しない → 404
+
+**レスポンス 200** … `SurveyView`。`store_id` は空文字。`entry_code` は残る。
