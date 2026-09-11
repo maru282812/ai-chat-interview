@@ -10,6 +10,7 @@ import {
   partnerTypeRequiresOptions
 } from "../lib/partnerQuestions";
 import { partnerAuthMiddleware, requirePartner } from "../middleware/partnerAuth";
+import { partnerLegalService } from "../services/partnerLegalService";
 import { type PartnerQuestionInput, partnerSurveyService } from "../services/partnerSurveyService";
 
 /**
@@ -232,6 +233,18 @@ partnerRoutes.post(
     });
 
     res.status(201).json(survey);
+  })
+);
+
+/**
+ * 会員利用規約（店舗向け）の現在版（§5.8・migration 105）。
+ * 店舗スコープの検証は不要（全店舗に同じ文書）だが、鍵と店舗IDヘッダは他と同じく必須。
+ */
+partnerRoutes.get(
+  "/legal/store-terms",
+  asyncHandler(async (req, res) => {
+    requirePartner(req);
+    res.json(await partnerLegalService.getStoreTerms());
   })
 );
 
