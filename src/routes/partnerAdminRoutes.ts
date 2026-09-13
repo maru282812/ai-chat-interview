@@ -3,6 +3,7 @@ import { z } from "zod";
 import { HttpError, asyncHandler } from "../lib/http";
 import { partnerAdminAuthMiddleware } from "../middleware/partnerAdminAuth";
 import { partnerAssignmentService } from "../services/partnerAssignmentService";
+import { partnerSurveySetService } from "../services/partnerSurveySetService";
 
 /**
  * partnerAdminRoutes.ts
@@ -141,5 +142,56 @@ partnerAdminRoutes.post(
   asyncHandler(async (req, res) => {
     const surveyId = parseSurveyId(req.params.id);
     res.json(await partnerAssignmentService.unwatchFromStore(surveyId));
+  })
+);
+
+// ------------------------------------------------------------------
+// セット（A/B/C のサイクル調査） — docs/partner-api.md §9
+// ポータルのパッケージ編集（業種テンプレの選択・展示設問の取込）と、
+// 相談経路で運営が先に作ったセットの店舗割り当てに使う。
+// ------------------------------------------------------------------
+
+/** セットID を UUID として検証する。非 UUID は 404。 */
+function parseSetId(raw: string | string[] | undefined): string {
+  const value = Array.isArray(raw) ? String(raw[0] ?? "") : (raw ?? "");
+  const parsed = surveyIdSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new HttpError(404, "survey set not found");
+  }
+  return parsed.data;
+}
+
+/** 業種テンプレ一覧＋展示用の平坦化設問（パッケージ編集の「原本から取り込む」）。 */
+partnerAdminRoutes.get(
+  "/industry-templates",
+  asyncHandler(async (_req, res) => {
+    res.json(await partnerSurveySetService.listIndustryTemplates());
+  })
+);
+
+/** 会員店舗へ割り当てられるセットの候補。**設問本文は含まない**。 */
+partnerAdminRoutes.get(
+  "/assignable-survey-sets",
+  asyncHandler(async (_req, res) => {
+    res.json(await partnerSurveySetService.listAssignableSets());
+  })
+);
+
+/** セットを会員店舗へ割り当てる。ガードを満たさないセットは 409。 */
+partnerAdminRoutes.post(
+  "/survey-sets/:id/assign",
+  asyncHandler(async (req, res) => {
+    const setId = parseSetId(req.params.id);
+    const body = parseBody(assignSchema, req.body);
+    res.json(await partnerSurveySetService.assignSetToStore(setId, body.store_id));
+  })
+);
+
+/** セットの割り当てを取り消す（回答ありは 409・冪等）。 */
+partnerAdminRoutes.post(
+  "/survey-sets/:id/unassign",
+  asyncHandler(async (req, res) => {
+    const setId = parseSetId(req.params.id);
+    res.json(await partnerSurveySetService.unassignSet(setId));
   })
 );

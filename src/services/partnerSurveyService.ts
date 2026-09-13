@@ -13,11 +13,14 @@ import {
   summarizeDemographics
 } from "../lib/partnerDemographics";
 import {
+  type PartnerCarryForward,
   type PartnerQuestionTextImage,
   type PartnerQuestionType,
   type PartnerQuestionView,
+  buildCarryForwardTags,
   buildPartnerQuestionConfig,
   toInternalQuestionType,
+  toPartnerCarryForward,
   toPartnerQuestionTextImage,
   toPartnerQuestionType
 } from "../lib/partnerQuestions";
@@ -58,6 +61,11 @@ export interface PartnerQuestionInput {
   is_required?: boolean;
   /** 設問文に添える画像（任意）。省略・null なら画像なしで保存される。 */
   question_text_image?: PartnerQuestionTextImage | null;
+  /**
+   * 選択肢の持ち越し（任意）。参照は sort_order。
+   * 参照先の存在・種別・前後関係・value 共有は partnerRoutes の zod が検証済み。
+   */
+  carry_forward?: PartnerCarryForward | null;
 }
 
 export interface CreateSurveyInput {
@@ -277,6 +285,15 @@ async function replacePartnerQuestions(
   // 入力の sort_order 昇順で採番し直す（欠番・重複を含む入力でも決定的な並びにする）。
   const ordered = [...questions].sort((left, right) => left.sort_order - right.sort_order);
 
+  // carry_forward は sort_order で参照される。採番は入力順で決まるので、
+  // 先に「sort_order → 採番後の question_code」の対応表を作ってから本体を書く。
+  const questionCodeBySortOrder = new Map<number, string>();
+  ordered.forEach((input, index) => {
+    if (!questionCodeBySortOrder.has(input.sort_order)) {
+      questionCodeBySortOrder.set(input.sort_order, partnerQuestionCode(index));
+    }
+  });
+
   for (const [index, input] of ordered.entries()) {
     const questionCode = partnerQuestionCode(index);
     const internalType = toInternalQuestionType(input.question_type);
@@ -287,6 +304,11 @@ async function replacePartnerQuestions(
       input.answer_options,
       input.question_text_image ?? null
     );
+    // 参照先が解決できなければ持ち越し無しとして保存する（壊れた参照は書かない）。
+    // zod が弾いているので通常は必ず解決するが、サービスを直接呼ぶ経路への防御。
+    const carrySourceCode = input.carry_forward
+      ? questionCodeBySortOrder.get(input.carry_forward.from_sort_order)
+      : undefined;
     const payload = {
       question_text: input.question_text,
       question_role: "main" as const,
@@ -294,6 +316,10 @@ async function replacePartnerQuestions(
       is_required: input.is_required ?? true,
       sort_order: PARTNER_QUESTION_SORT_OFFSET + index,
       question_config: config,
+      // 全置換なので、送られてこなければ持ち越し設定も消える（画像と同じ扱い）。
+      display_tags_parsed: carrySourceCode
+        ? buildCarryForwardTags(input.carry_forward, carrySourceCode)
+        : null,
       ai_probe_enabled: false,
       is_system: false,
       is_hidden: false
@@ -327,6 +353,11 @@ async function replacePartnerQuestions(
 /** パートナーに見せる設問一覧（性年代設問を先頭・固定として含む）。 */
 export async function loadPartnerQuestionViews(projectId: string): Promise<PartnerQuestionView[]> {
   const questions = await questionRepository.listByProject(projectId, { includeHidden: false });
+  // carry_forward は sort_order で返す（リクエストと同じ表現）。
+  // 内部は question_code 参照なので、ここで逆引き表を作る。
+  const sortOrderByQuestionCode = new Map<string, number>(
+    questions.map((question) => [question.question_code.toLowerCase(), question.sort_order])
+  );
   const views: PartnerQuestionView[] = [];
   for (const question of questions) {
     // free_comment 等のシステム設問（is_hidden=true）は listByProject で既に除外される。
@@ -343,7 +374,8 @@ export async function loadPartnerQuestionViews(projectId: string): Promise<Partn
       sort_order: question.sort_order,
       is_required: question.is_required,
       is_fixed: isDemographicQuestion(question),
-      question_text_image: toPartnerQuestionTextImage(question.question_config?.question_text_image)
+      question_text_image: toPartnerQuestionTextImage(question.question_config?.question_text_image),
+      carry_forward: toPartnerCarryForward(question.display_tags_parsed, sortOrderByQuestionCode)
     });
   }
   return views.sort((left, right) => left.sort_order - right.sort_order);

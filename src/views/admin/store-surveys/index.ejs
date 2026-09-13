@@ -87,10 +87,15 @@ const opsAssignmentsHref = typeof locals.portalOpsHref === "function" ? locals.p
               <br><span style="color:#b14;font-size:11px">⚠ 公開中でないため回答できません</span>
             <% } %>
             <%
-              /* 会員ポータル（hibi-site）の店舗にも割り当て済み＝店舗側でも編集される案件。
-                 ここで設問を直すと店舗の画面にも即反映されるので、一覧の段階で分かるようにする。 */
+              /* 会員ポータル（hibi-site）の店舗に割り当て済みの案件。
+                 - 通常の割り当て: 店舗側でも設問を編集する。ここで直すと店舗画面にも即反映される。
+                 - 閲覧専用（partner_readonly・Migration 103/104）: 店舗は見るだけ。設問は運営が持つ。
+                   こちらは公開が店舗のQR発行（チケット消費）とセットなので、管理画面から公開できない。 */
             %>
-            <% if (p.partner_store_id) { %>
+            <% if (p.partner_store_id && p.partner_readonly) { %>
+              <br><span style="display:inline-block;margin-top:3px;background:#2a6;color:#fff;font-size:10px;padding:1px 6px;border-radius:3px">会員店舗のQR発行で公開</span>
+              <br><span style="color:#666;font-size:11px">管理画面からは公開できません（チケット消費とセットのため）</span>
+            <% } else if (p.partner_store_id) { %>
               <br><span style="display:inline-block;margin-top:3px;background:#c8851b;color:#fff;font-size:10px;padding:1px 6px;border-radius:3px">店舗が編集中</span>
             <% } %>
           </td>
@@ -135,12 +140,23 @@ const opsAssignmentsHref = typeof locals.portalOpsHref === "function" ? locals.p
                     <% } %>
                   </select>
                 </label>
+                <%
+                  /* 会員店舗に紐づいた未公開案件からは「公開」の選択肢そのものを外す。
+                     防御線はサーバー側（assertPortalStoreProjectNotPublishedByAdmin）で、
+                     ここは誤操作を減らすための体裁。 */
+                  const statusChoices = (p.partner_store_id && p.status !== 'published')
+                    ? ['draft','paused','closed']
+                    : ['draft','published','paused','closed'];
+                %>
                 <label style="font-size:12px">状態
                   <select name="status" style="width:100%">
-                    <% for (const s of ['draft','published','paused','closed']) { %>
+                    <% for (const s of statusChoices) { %>
                       <option value="<%= s %>" <%= p.status === s ? 'selected' : '' %>><%= STATUS_LABELS[s].label %></option>
                     <% } %>
                   </select>
+                  <% if (p.partner_store_id && p.status !== 'published') { %>
+                    <span style="color:#666;font-size:11px">公開は会員店舗のQR発行で行われます</span>
+                  <% } %>
                 </label>
                 <button type="submit" class="btn" style="padding:4px 10px;font-size:12px">保存</button>
               </form>

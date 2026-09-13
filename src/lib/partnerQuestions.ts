@@ -98,6 +98,62 @@ export function toPartnerQuestionTextImage(
 }
 
 /**
+ * 選択肢の持ち越し（carry-forward）。
+ *
+ * 「前の設問で選んだものだけを、この設問の選択肢にする」指定。
+ * 例: pq5「重視していることは？（いくつでも）」→ pq6「特に重視しているものは？（ひとつだけ）」
+ *
+ * **参照は sort_order で行う**。question_code はサーバーが採番する（pq1, pq2…）ため、
+ * パートナー側は自分が送った sort_order でしか前問を指せない。
+ * サーバーが採番時に sort_order → question_code を解決して保存する。
+ *
+ * mode:
+ *   selected   参照元で選んだ選択肢だけを残す（既定）
+ *   unselected 参照元で選ばなかった選択肢だけを残す
+ */
+export interface PartnerCarryForward {
+  /** 参照元設問の sort_order（同じリクエスト内に存在すること）。 */
+  from_sort_order: number;
+  mode?: "selected" | "unselected";
+}
+
+/**
+ * 参照元の解決結果を内部表現（display_tags_parsed.optionSource）に写す。
+ *
+ * fromQuestion は小文字の question_code。questionEngine 側が
+ * ctx.answers を小文字キーで引くため、ここで必ず小文字にそろえる。
+ */
+export function buildCarryForwardTags(
+  carry: PartnerCarryForward | null | undefined,
+  fromQuestionCode: string
+): Question["display_tags_parsed"] | null {
+  if (!carry) return null;
+  return {
+    optionSource: {
+      fromQuestion: fromQuestionCode.toLowerCase(),
+      mode: carry.mode ?? "selected"
+    }
+  };
+}
+
+/**
+ * 内部 display_tags_parsed → パートナー表現（sort_order 参照）に戻す。
+ *
+ * GET レスポンス用。question_code → sort_order の対応表を受け取る。
+ * 対応が取れない（参照先が消えている等）場合は null を返す＝壊れた参照は返さない。
+ */
+export function toPartnerCarryForward(
+  parsed: Question["display_tags_parsed"] | null | undefined,
+  sortOrderByQuestionCode: Map<string, number>
+): PartnerCarryForward | null {
+  const source = parsed?.optionSource;
+  if (!source) return null;
+  const from = sortOrderByQuestionCode.get(source.fromQuestion.toLowerCase());
+  if (from === undefined) return null;
+  return { from_sort_order: from, mode: source.mode };
+}
+
+/**
  * 内部 question_config を、パートナー種別と選択肢から組み立てる。
  *
  * image は任意。**渡されたときだけ** question_text_image を入れる
@@ -194,4 +250,6 @@ export interface PartnerQuestionView {
   is_fixed: boolean;
   /** 設問文に添えた画像。無ければ null。 */
   question_text_image: PartnerQuestionTextImage | null;
+  /** 選択肢の持ち越し設定。無ければ null。参照は sort_order。 */
+  carry_forward: PartnerCarryForward | null;
 }

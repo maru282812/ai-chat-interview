@@ -918,6 +918,11 @@ export interface Store {
   industry_template_id: UUID | null;
   name: string;
   code_slug: string;
+  /**
+   * hibi-portal（会員ポータル・別DB）の stores.id (Migration 104)。
+   * ポータル注文で生成された店舗のみ非NULL。UNIQUE＝ポータル店舗1件につき ACI 店舗1件。
+   */
+  partner_store_id: string | null;
   /** 店舗ごとの謝礼。NULL はテンプレ案件の値を使う（謝礼なしの店舗もある）。 */
   reward_points_override: number | null;
   is_active: boolean;

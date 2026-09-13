@@ -40,6 +40,8 @@ let originals: Record<string, unknown>;
 /** projectRepository.update に渡された内容を記録する */
 let updates: { id: string; input: Record<string, unknown> }[];
 let createdSteps: Record<string, unknown>[];
+/** storeRepository.create に渡された内容を記録する */
+let createdStores: Record<string, unknown>[];
 
 before(async () => {
   ({ storeProvisioningService } = await import("../services/storeProvisioningService"));
@@ -49,6 +51,7 @@ before(async () => {
   originals = {
     tplGet: industryTemplateRepository.getById,
     storeGetSlug: storeRepository.getByCodeSlug,
+    storeGetPartner: storeRepository.getByPartnerStoreId,
     storeCreate: storeRepository.create,
     listByStore: projectRepository.listByStore,
     copyProject: projectRepository.copyProject,
@@ -64,6 +67,7 @@ afterEach(() => {
   Object.assign(industryTemplateRepository, { getById: originals.tplGet });
   Object.assign(storeRepository, {
     getByCodeSlug: originals.storeGetSlug,
+    getByPartnerStoreId: originals.storeGetPartner,
     create: originals.storeCreate,
   });
   Object.assign(projectRepository, {
@@ -110,15 +114,27 @@ const store = (over: Partial<Store> = {}): Store =>
   }) as Store;
 
 /** 生成系の共通スタブ。既存案件ゼロ＝まっさらな店舗から始める。 */
-function stubProvision(opts: { existingProjects?: Project[]; existingStore?: Store | null } = {}) {
+function stubProvision(
+  opts: {
+    existingProjects?: Project[];
+    existingStore?: Store | null;
+    /** partner_store_id で引いたときに返す店舗（ポータル再注文の検証用）。 */
+    existingPartnerStore?: Store | null;
+  } = {}
+) {
   updates = [];
   createdSteps = [];
+  createdStores = [];
   let copyCount = 0;
 
   Object.assign(industryTemplateRepository, { getById: async () => template() });
   Object.assign(storeRepository, {
     getByCodeSlug: async () => opts.existingStore ?? null,
-    create: async (input: Record<string, unknown>) => store(input as Partial<Store>),
+    getByPartnerStoreId: async () => opts.existingPartnerStore ?? null,
+    create: async (input: Record<string, unknown>) => {
+      createdStores.push(input);
+      return store(input as Partial<Store>);
+    },
   });
   Object.assign(projectRepository, {
     listByStore: async () => opts.existingProjects ?? [],
@@ -375,4 +391,165 @@ test("テンプレが存在しなければ明示的に失敗する", async () =>
       }),
     /業種テンプレート/
   );
+});
+
+// ------------------------------------------------------------------
+// 会員ポータル（hibi）からの注文 — Migration 104
+// ------------------------------------------------------------------
+
+const PARTNER_STORE_ID = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+
+test("initialStatus=draft を指定すると案件が draft で生成される（QR発行まで回らない）", async () => {
+  stubProvision();
+  await storeProvisioningService.provisionStore(
+    { clientId: CLIENT_ID, industryTemplateId: TEMPLATE_ID, name: "店", codeSlug: "m1" },
+    { initialStatus: "draft" }
+  );
+
+  // 3案件すべてが draft。1本でも published だと、そこだけ無料で回ってしまう。
+  const statuses = updates.filter((u) => u.input.status).map((u) => u.input.status);
+  assert.deepEqual(statuses, ["draft", "draft", "draft"]);
+});
+
+test("既定（オプション無し）は従来どおり published のまま", async () => {
+  stubProvision();
+  await storeProvisioningService.provisionStore({
+    clientId: CLIENT_ID,
+    industryTemplateId: TEMPLATE_ID,
+    name: "店",
+    codeSlug: "s1",
+  });
+  const statuses = updates.filter((u) => u.input.status).map((u) => u.input.status);
+  assert.deepEqual(statuses, ["published", "published", "published"]);
+});
+
+test("partnerStoreId を渡すと3案件すべてが閲覧専用で店舗に紐づく", async () => {
+  stubProvision();
+  await storeProvisioningService.provisionStore(
+    { clientId: CLIENT_ID, industryTemplateId: TEMPLATE_ID, name: "店", codeSlug: "m1" },
+    { initialStatus: "draft", partnerStoreId: PARTNER_STORE_ID }
+  );
+
+  const linked = updates.filter((u) => u.input.partner_store_id);
+  assert.equal(linked.length, 3, "A/B/C すべてに紐づけること（1本でも漏れると店舗から見えない）");
+  for (const u of linked) {
+    assert.equal(u.input.partner_store_id, PARTNER_STORE_ID);
+    assert.equal(u.input.partner_readonly, true, "設問の全置換で B のマトリクスが壊れるため閲覧専用にする");
+  }
+});
+
+test("partnerStoreId は stores にも保存される（再注文の突き合わせに使う）", async () => {
+  stubProvision();
+  await storeProvisioningService.provisionStore(
+    { clientId: CLIENT_ID, industryTemplateId: TEMPLATE_ID, name: "店", codeSlug: "m1" },
+    { partnerStoreId: PARTNER_STORE_ID }
+  );
+  assert.equal(createdStores[0]?.partner_store_id, PARTNER_STORE_ID);
+});
+
+test("運営マスタからの生成は partner 列を一切触らない", async () => {
+  stubProvision();
+  await storeProvisioningService.provisionStore({
+    clientId: CLIENT_ID,
+    industryTemplateId: TEMPLATE_ID,
+    name: "店",
+    codeSlug: "s1",
+  });
+  assert.ok(
+    !updates.some((u) => "partner_store_id" in u.input || "partner_readonly" in u.input),
+    "オプション無しの呼び出しで partner 列に書いてはいけない"
+  );
+  assert.equal(createdStores[0]?.partner_store_id, null);
+});
+
+test("packageId は A 案件の objective にだけ入る", async () => {
+  stubProvision();
+  await storeProvisioningService.provisionStore(
+    { clientId: CLIENT_ID, industryTemplateId: TEMPLATE_ID, name: "店", codeSlug: "m1" },
+    { initialStatus: "draft", partnerStoreId: PARTNER_STORE_ID, packageId: "salon_abc_cycle" }
+  );
+
+  const withObjective = updates.filter((u) => u.input.objective);
+  assert.equal(withObjective.length, 1, "B/C に書くと枚数解決が3回数えてしまう");
+  assert.equal(withObjective[0]?.input.objective, "package:salon_abc_cycle");
+});
+
+test("同じポータル店舗の再注文では新しい店舗を作らない（code_slug が違っても）", async () => {
+  // 1周目とは違う slug で呼ばれても、partner_store_id で既存店舗に合流する。
+  const existing = store({ partner_store_id: PARTNER_STORE_ID, code_slug: "m1" });
+  stubProvision({
+    existingPartnerStore: existing,
+    existingProjects: [
+      { id: "p-a", template_step_role: "entry", entry_code: "m1-a" },
+      { id: "p-b", template_step_role: "followup", entry_code: "m1-b" },
+      { id: "p-c", template_step_role: "verify", entry_code: "m1-c" },
+    ] as Project[],
+  });
+
+  const result = await storeProvisioningService.provisionStore(
+    { clientId: CLIENT_ID, industryTemplateId: TEMPLATE_ID, name: "店", codeSlug: "m1-again" },
+    { initialStatus: "draft", partnerStoreId: PARTNER_STORE_ID }
+  );
+
+  assert.equal(createdStores.length, 0, "店舗を作り直してはいけない");
+  assert.equal(result.created, false);
+  assert.equal(result.store.code_slug, "m1");
+  assert.deepEqual(result.projects.map((p) => p.entryCode), ["m1-a", "m1-b", "m1-c"]);
+});
+
+test("別のポータル店舗が使っている店舗コードでは生成しない", async () => {
+  // slug 衝突で他店の store 行を掴むと、その店の案件をそのまま返してしまう。
+  stubProvision({ existingStore: store({ partner_store_id: "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb" }) });
+  await assert.rejects(
+    () =>
+      storeProvisioningService.provisionStore(
+        { clientId: CLIENT_ID, industryTemplateId: TEMPLATE_ID, name: "店", codeSlug: "m1" },
+        { partnerStoreId: PARTNER_STORE_ID }
+      ),
+    /既に使われています/
+  );
+});
+
+test("運営が作った店舗（partner紐づけなし）の店舗コードも横取りしない", async () => {
+  // ⚠ カネに直結する回帰。運営が店舗マスタで作った稼働中の店舗は partner_store_id=NULL。
+  // 「別のポータル店舗のときだけ弾く」実装だとここが素通りし、published で回っている
+  // A/B/C をそのままポータル会員へ返す＝チケット0枚で他店の調査に接続される。
+  stubProvision({
+    existingStore: store({ partner_store_id: null }),
+    existingProjects: [
+      { id: "p-a", template_step_role: "entry", entry_code: "m1-a", status: "published" },
+      { id: "p-b", template_step_role: "followup", entry_code: "m1-b", status: "published" },
+      { id: "p-c", template_step_role: "verify", entry_code: "m1-c", status: "published" },
+    ] as Project[],
+  });
+
+  await assert.rejects(
+    () =>
+      storeProvisioningService.provisionStore(
+        { clientId: CLIENT_ID, industryTemplateId: TEMPLATE_ID, name: "店", codeSlug: "m1" },
+        { initialStatus: "draft", partnerStoreId: PARTNER_STORE_ID }
+      ),
+    /既に使われています/
+  );
+});
+
+test("運営マスタ経由（partnerStoreId なし）は従来どおり既存店舗に合流する", async () => {
+  // 上の防御はポータル注文だけに効かせる。運営の再実行は今までどおり冪等でなければならない。
+  stubProvision({
+    existingStore: store({ partner_store_id: null }),
+    existingProjects: [
+      { id: "p-a", template_step_role: "entry", entry_code: "salon-shibuya-a" },
+      { id: "p-b", template_step_role: "followup", entry_code: "salon-shibuya-b" },
+      { id: "p-c", template_step_role: "verify", entry_code: "salon-shibuya-c" },
+    ] as Project[],
+  });
+
+  const result = await storeProvisioningService.provisionStore({
+    clientId: CLIENT_ID,
+    industryTemplateId: TEMPLATE_ID,
+    name: "店",
+    codeSlug: "salon-shibuya",
+  });
+  assert.equal(result.created, false);
+  assert.equal(result.projects.length, 3);
 });

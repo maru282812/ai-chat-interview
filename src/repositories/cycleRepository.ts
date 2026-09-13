@@ -64,6 +64,23 @@ export const cycleGroupRepository = {
     return (data as CycleGroup | null) ?? null;
   },
 
+  /**
+   * 店舗に属するサイクル定義の一覧 (Migration 104)。
+   * 運営の割り当て画面が「どのセットがまだ空いているか」を出すために、
+   * 候補になりうる店舗の ID をまとめて渡して引く。空配列なら何も返さない。
+   */
+  async listByStores(storeIds: string[]): Promise<CycleGroup[]> {
+    const ids = storeIds.map((id) => id.trim()).filter((id) => id.length > 0);
+    if (ids.length === 0) return [];
+    const { data, error } = await supabase
+      .from("cycle_groups")
+      .select("*")
+      .in("store_id", ids)
+      .order("created_at", { ascending: false });
+    throwIfError(error);
+    return (data ?? []) as CycleGroup[];
+  },
+
   async listSteps(cycleGroupId: string): Promise<CycleGroupStep[]> {
     const { data, error } = await supabase
       .from("cycle_group_steps")

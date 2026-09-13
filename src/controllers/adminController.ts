@@ -997,6 +997,29 @@ function getProjectRenderStatusCode(error: unknown): number {
   return error instanceof HttpError ? error.statusCode : 500;
 }
 
+/**
+ * 会員ポータルの店舗に紐づいた案件を、管理画面から公開させない（Migration 104）。
+ *
+ * ポータル注文の A/B/C は draft で作られ、**店舗が QR を発行してチケットを消費した
+ * ときだけ** published になる（partnerSurveySetService.publishSet）。
+ * ここを開けておくと、運営が管理画面で何気なく「公開」にした瞬間に
+ * 課金されないまま調査が回る。公開の入口を1つに保つための防御線。
+ *
+ * 非公開方向（published → draft/paused/closed）は止めない。運営が止めるのは常に安全側。
+ */
+export function assertPortalStoreProjectNotPublishedByAdmin(
+  existing: { partner_store_id?: string | null; status?: string } | null,
+  nextStatus: string
+): void {
+  if (!existing?.partner_store_id) return;
+  if (nextStatus !== "published") return;
+  if (existing.status === "published") return; // 既に公開済み＝状態は変わらない
+  throw new HttpError(
+    400,
+    "この案件は会員店舗に紐づいています。公開は店舗側のQR発行（チケット消費）で行われるため、管理画面からは公開できません"
+  );
+}
+
 function parseAIPromptPolicyFromRequest(req: Request): AIPromptPolicy | null {
   const raw = bodyString(req.body.ai_prompt_policy_json).trim();
   if (!raw) return null;
@@ -3169,6 +3192,11 @@ export const adminController = {
       const { versionId: packageVersionId, errorMessage: pkgError } =
         await resolvePackageVersionIdFromRequest(req, aiPromptMode);
       if (pkgError) throw new HttpError(400, pkgError);
+      // 会員店舗に紐づいた案件は管理画面から公開できない（公開はQR発行のみ）。
+      assertPortalStoreProjectNotPublishedByAdmin(
+        existing,
+        bodyString(req.body.status || "draft")
+      );
       const aiStateJson = buildProjectAiStateFromRequest({
         req,
         fallbackProject: {
@@ -9648,6 +9676,18 @@ export const adminController = {
     const statusInput = bodyString(req.body.status).trim();
     const allowedStatuses = ["draft", "published", "paused", "closed"];
     const clientId = bodyString(req.body.client_id).trim() || null;
+
+    // 会員店舗に紐づいた案件は管理画面から公開できない（公開はQR発行のみ・Migration 104）。
+    const target = await projectRepository.getById(projectId).catch(() => null);
+    try {
+      assertPortalStoreProjectNotPublishedByAdmin(target, statusInput);
+    } catch (error) {
+      res.redirect(
+        "/admin/store-surveys?err=" +
+          encodeURIComponent(getProjectRenderErrorMessage(error, "公開できません"))
+      );
+      return;
+    }
 
     await projectRepository.update(projectId, {
       entry_code: validation.code,

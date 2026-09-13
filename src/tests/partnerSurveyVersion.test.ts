@@ -25,6 +25,7 @@ function q(over: Partial<PartnerQuestionView> = {}): PartnerQuestionView {
     is_required: true,
     is_fixed: false,
     question_text_image: null,
+    carry_forward: null,
     ...over
   };
 }

@@ -189,6 +189,97 @@
 
 ---
 
+## 3.6 選択肢の持ち越し（`carry_forward`）
+
+**「前の設問で選んだものだけを、この設問の選択肢にする」指定。** 任意フィールド。
+
+調査票でよくある次の形を実現する:
+
+> pq5「今日、重視していることは何ですか？（**いくつでも**）」
+> → pq6「今日、**特に**重視していることは何ですか？（**ひとつだけ**）」
+>   ← pq5 で選んだものだけを出す
+
+### リクエスト
+
+```jsonc
+{
+  "question_text": "今日、特に重視していることは何ですか？（ひとつだけ）",
+  "question_type": "single_choice",
+  "answer_options": [
+    { "value": "finish",   "label": "仕上がり" },
+    { "value": "proposal", "label": "自分に合った提案" },
+    { "value": "price",    "label": "価格への納得感" }
+  ],
+  "sort_order": 15,
+  "carry_forward": {
+    "from_sort_order": 14,
+    "mode": "selected"
+  }
+}
+```
+
+| フィールド | 型 | 制約 |
+|---|---|---|
+| `from_sort_order` | `number` | **参照元設問の `sort_order`**。同一リクエスト内に存在すること |
+| `mode` | `"selected" \| "unselected"` | 既定 `"selected"`。`unselected` は「選ば**なかった**もの」を残す |
+
+- `carry_forward` 自体が**任意**（省略・`null` いずれも可）。**後方互換**のため、
+  このフィールドを送らない従来のリクエストはこれまでと完全に同じ挙動になる。
+
+### なぜ `question_code` ではなく `sort_order` で参照するのか
+
+`question_code`（`pq1`, `pq2`, …）は**サーバーが採番する**。
+ポータル側は保存するまで自分の設問がどのコードになるか知らないため、
+**自分が送った `sort_order`** でしか前問を指せない。
+サーバーが保存時に `sort_order → question_code` を解決して内部表現に変換する。
+
+> 例: `sort_order` が `14, 15` の2問を送ると、採番は入力の昇順で `pq1, pq2` になる。
+> `from_sort_order: 14` は `pq1` へ解決される（`pq14` ではない）。
+
+### 選択肢の `value` をそろえること（必須）
+
+持ち越しは **`value` の一致**で絞り込む。参照元と参照先で `value` が共有されていないと
+**選択肢が0件**になり回答不能になるため、サーバーが 400 で弾く。
+ラベルは違っていてよいが、`value` は必ずそろえること。
+
+### 400 になる条件（まとめ）
+
+| 条件 | メッセージ |
+|---|---|
+| 参照先が存在しない | `carry_forward.from_sort_order=99 does not match any question` |
+| 自分自身を参照した | `carry_forward.from_sort_order must not reference itself` |
+| 参照先が後ろにある（まだ回答されていない） | `carry_forward source must come before this question` |
+| 参照先が `free_text` / `scale` | `carry_forward source must be single_choice or multi_choice` |
+| `value` が一つも共有されていない | `carry_forward requires answer_options values shared with the source question` |
+| 参照先の `sort_order` が重複していて一意に定まらない | `carry_forward.from_sort_order=5 is ambiguous (duplicated sort_order)` |
+
+### レスポンス
+
+`SurveyView` の各設問に `carry_forward` が**必ず含まれる**（設定が無ければ `null`）。
+形はリクエストと同じ `sort_order` 参照に戻して返す。
+
+```jsonc
+{
+  "question_code": "pq6",
+  "question_text": "今日、特に重視していることは何ですか？（ひとつだけ）",
+  "sort_order": 15,
+  "carry_forward": { "from_sort_order": 14, "mode": "selected" }
+}
+```
+
+### 全置換であることの注意
+
+画像と同じく、`PUT /surveys/:id` に `questions` を送ると**毎回ゼロから組み直される**。
+したがって **`carry_forward` を送らなかった設問の持ち越し設定は消える**。
+ポータル側は毎回そろえて送ること。
+
+### 版（`version`）への影響
+
+`carry_forward` を**設定している設問だけ**が版の材料に含まれる。
+使っていない既存アンケートの版は変わらない（＝このフィールド追加で既存が 409 になることはない）。
+
+---
+
 ## 4. 性年代設問（サーバー固定・パートナーは編集不可）
 
 パートナー経由で作成したアンケートには、**作成時にサーバーが必ず2問を自動付与**する。
@@ -278,7 +369,8 @@ draft を作成する。
       "sort_order": 1,
       "is_required": true,
       "is_fixed": true,
-      "question_text_image": null       // 画像が無ければ null（3.5 参照）
+      "question_text_image": null,      // 画像が無ければ null（3.5 参照）
+      "carry_forward": null             // 持ち越しが無ければ null（3.6 参照）
     },
     { "question_code": "__partner_age__",  "…": "…", "sort_order": 2,  "is_fixed": true },
     { "question_code": "pq1", "…": "…", "sort_order": 10, "is_fixed": false },
@@ -836,3 +928,174 @@ QR を発行する前に回答が集まると、店舗が意図しないまま�
 - `:id` が UUID でない / 存在しない → 404
 
 **レスポンス 200** … `SurveyView`。`store_id` は空文字。`entry_code` は残る。
+
+---
+
+## 9. セットAPI（A/B/C のサイクル調査）
+
+**セット = サイクル定義（`cycle_groups`）1件 ＝ A/B/C の3案件をひとまとまりにしたもの。**
+美容室ABCサイクルのような「1回の来店で終わらない繰り返し調査」を、会員ポータルの
+注文1回で丸ごと立ち上げるための API。単発アンケート（§5 の `/surveys`）とは別系統。
+
+### 9.1 単発アンケートとの違い
+
+| | 単発（`/surveys`） | セット（`/survey-sets`） |
+|---|---|---|
+| 設問 | 店舗が作る（4種） | 運営の原本を複製。**店舗は編集できない**（`partner_readonly=true`） |
+| 案件数 | 1件 | 3件（A=entry / B=followup / C=verify） |
+| 回答導線 | QR（A のみ） | QR は A だけ。**B/C はサイクルの LINE 配信で届く** |
+| 公開 | `POST /surveys/:id/publish` | `POST /survey-sets/:id/publish`（**セット全体を一括**） |
+
+設問を編集させない理由: パートナー設問の更新は4種への**全置換**なので、B のマトリクス設問や
+A-Q11（来店頻度 → C の送付日を決める）の分岐が壊れる。設問変更の要望は
+ポータルの要望欄（change_requests）で受け、運営が ACI 側で直す。
+
+### 9.2 公開の入口は1つだけ（重要）
+
+セットは**必ず `draft` で作られる**。`published` になるのは
+`POST /api/partner/survey-sets/:id/publish`（＝ポータルが QR 発行でチケットを消費した
+直後に呼ぶ）だけ。
+
+- `draft` のままなら回答画面（`/liff/store?entry_code=...`）が
+  「公開中でないため回答できません」で止まる＝**チケットを払わずに調査が回ることはない**。
+- ACI **管理画面からも公開できない**。`partner_store_id` が付いた未公開案件を
+  `published` にしようとすると 400 で拒否される（`adminController` のガード）。
+  店舗専用アンケート一覧には「会員店舗のQR発行で公開」バッジが出る。
+
+このガードを外すと「無料で調査が回る」事故がそのまま復活するので、触らないこと。
+
+### 9.3 所有者スコープ
+
+`cycle_groups.store_id → stores.partner_store_id` が `X-Partner-Store-Id` と一致すること。
+**不一致・不在はどちらも 404**（他店のセットの存在を漏らさない）。
+
+`stores.partner_store_id` は migration 104 で追加した「hibi-portal の店舗ID」で、
+`projects.partner_store_id`（案件の所有者スコープ）と同じ値が入るが役割は別。
+
+### 9.4 `POST /api/partner/survey-sets`
+
+業種テンプレから A/B/C を **draft** で生成する。
+
+**リクエスト**
+
+```json
+{
+  "industry_template_id": "5a10c000-0000-4000-8000-00000000e001",
+  "package_id": "salon_abc_cycle",
+  "store": { "name": "テスト美容室", "member_no": "123" }
+}
+```
+
+- `industry_template_id` … 必須・UUID。無効化されたテンプレは 409。存在しなければ 404
+- `package_id` … 任意。A 案件の `objective` に `package:<id>` として残る（ポータルの消費枚数解決用）
+- `store.member_no` … 任意。店舗コード slug は `m<会員番号>`、無ければ店舗IDの先頭8桁から `m<8桁>`。
+  entry_code は `m123-a` / `m123-b` / `m123-c` になる
+
+**冪等**: 同じ `X-Partner-Store-Id` からの再注文は**新しいセットを作らず既存セットを返す**
+（`stores.partner_store_id` で既存店舗に合流する）。ポータルは失敗時にそのまま再試行してよい。
+
+**レスポンス 201** … `SurveySetView`
+
+```json
+{
+  "set_id": "…",
+  "title": "テスト美容室 美容室ABCサイクル",
+  "store_id": "<hibi の店舗ID>",
+  "store_name": "テスト美容室",
+  "package_id": "salon_abc_cycle",
+  "published": false,
+  "answer_url": null,
+  "surveys": [
+    { "role": "entry",    "survey_id": "…", "title": "…", "status": "draft", "entry_code": "m123-a", "answer_url": null, "completed_count": 0 },
+    { "role": "followup", "survey_id": "…", "title": "…", "status": "draft", "entry_code": "m123-b", "answer_url": null, "completed_count": 0 },
+    { "role": "verify",   "survey_id": "…", "title": "…", "status": "draft", "entry_code": "m123-c", "answer_url": null, "completed_count": 0 }
+  ],
+  "created_at": "…"
+}
+```
+
+- `surveys` は必ず **entry → followup → verify** の順
+- `published` は**全ステップが published のときだけ** true。1本でも draft なら false
+  （A だけ公開されて B/C が届かない状態を「公開済み」と見せない）
+- `answer_url` は entry が公開済みのときだけ入る。B/C は QR を出さないので常に null
+- 店舗コードが**別の会員店舗**に使われていると 409
+
+### 9.5 `GET /api/partner/survey-sets/:id`
+
+`SurveySetView`。各ステップの `completed_count`（完了セッション数）付き。
+他店のセット・非 UUID はどちらも 404。
+
+### 9.6 `POST /api/partner/survey-sets/:id/publish`
+
+セット全体を公開して A の回答URLを返す。ボディ不要。
+
+- **冪等**: 既に公開済みのステップには書き込まない。二度押ししても結果は同じ
+- `partner_readonly` でも通る（単発の publish が readonly を 409 にするのとは逆。
+  セットは設問を編集できない代わりに、公開できないと QR が出せないため）
+- どれか1つでも `closed` / `archived` なら 409（終わった調査を勝手に再開しない）
+- 他店からは 404（公開の横取りを防ぐ）
+
+**レスポンス 200** … `SurveySetView`（`published: true`・`answer_url` が入る）
+
+### 9.7 `GET /api/partner-admin/industry-templates`
+
+業種テンプレ一覧＋**展示用に平坦化した設問**。ポータルのパッケージ編集で
+「どのテンプレから作るか」を選び、紹介ページの設問例を原本から取り込むために使う。
+`is_enabled=false` のテンプレは返さない。
+
+```json
+{
+  "templates": [{
+    "industry_template_id": "…", "name": "美容室ABCサイクル", "industry_code": "salon",
+    "description": "…",
+    "questions": [
+      { "role": "entry", "question_text": "…", "question_type": "single_choice",
+        "answer_options": [{ "value": "…", "label": "…" }], "sort_order": 1, "note": null },
+      { "role": "followup", "question_text": "…", "question_type": "single_choice",
+        "answer_options": null, "sort_order": 12,
+        "note": "この設問は実際には「matrix_single」形式で出題されます（展示用の簡略表示）" }
+    ]
+  }]
+}
+```
+
+⚠ `questions` は**展示専用**。実際に回るのは ACI 側の原本そのもので、この写像の粗さは
+回答画面に影響しない。4種に落ちない設問（`matrix_single` / `numeric` など）は
+**黙って落とさず** `single_choice` の見出しとして残し `note` を付ける
+（消すと展示が実物より痩せて見えるため）。選択肢は実物と違うものを見せないよう null にする。
+
+### 9.8 `GET /api/partner-admin/assignable-survey-sets`
+
+会員店舗へ割り当てられるセットの候補（運営が ACI 店舗マスタで先に作ったもの）。
+**設問本文は含まない**。
+
+```json
+{ "sets": [{ "set_id": "…", "title": "…", "store_id": "<ACI stores.id>", "store_name": "…",
+             "step_count": 3, "completed_count": 0, "created_at": "…",
+             "assignable": true, "blocked_reason": null }] }
+```
+
+`blocked_reason` は `already linked to a portal store` / `set already has N completed session(s)`。
+
+### 9.9 `POST /api/partner-admin/survey-sets/:id/assign`
+
+相談経路（requests → 成約）の合流点。`{ "store_id": "<hibi の店舗ID・UUID>" }`。
+
+店舗マスタ行（`stores.partner_store_id`）と A/B/C の3案件（`partner_store_id` +
+`partner_readonly=true`）に同じ会員店舗IDを書く。**`published` にはしない**（公開は QR 発行だけ）。
+
+- 既に会員店舗に紐づいたセット → 409 `already linked to a portal store`
+- 回答が1件でもある → 409（他店で集めた回答者データを見せない）
+- その会員店舗が既に別セットを持っている → 409 `portal store already has a survey set`
+- 3案件のうち一部しか紐づけられなかった → **店舗行の紐づけごと巻き戻して** 409
+  （片側だけ書けた状態を残さない）
+
+**レスポンス 200** … `SurveySetView`（`published: false`）
+
+### 9.10 `POST /api/partner-admin/survey-sets/:id/unassign`
+
+割り当てを取り消す（ポータル側の書き込み失敗時の巻き戻しにも使う）。ボディ不要。
+
+- **冪等**: 既に外れていれば何もせず 200
+- 回答が1件でもあれば 409（回答を集め始めたセットは外させない）
+- `entry_code` には触らない（QR を殺さない）

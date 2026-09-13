@@ -22,6 +22,31 @@ import { respondentRepository } from "./respondentRepository";
 import { sessionRepository } from "./sessionRepository";
 
 /**
+ * 複製時に必ず引き継ぐ「表示制御」項目。
+ *
+ * copyProject はもともと question_config と branch_rule しか写しておらず、
+ * display_tags_parsed / visibility_conditions / comment_top / comment_bottom が
+ * 落ちていた。この4つが落ちると、複製先の設問は「選択肢は全部あるのに
+ * 前問の回答で絞られない」状態になる（carry-forward = display_tags_parsed.optionSource、
+ * <disable> = display_tags_parsed.disableRules、表示条件 = visibility_conditions）。
+ *
+ * 店舗展開（storeProvisioningService）はこの copyProject を通るため、
+ * 落ちたまま本番の店舗アンケートが作られていた。
+ *
+ * page_group_id は意図的に写さない。複製元の page_groups の行を指しており、
+ * そのまま持ち越すと別案件のブロックを参照する不整合になるため。
+ */
+function copiedDisplayControlFields(question: Question) {
+  return {
+    comment_top: question.comment_top ?? null,
+    comment_bottom: question.comment_bottom ?? null,
+    display_tags_raw: question.display_tags_raw ?? null,
+    display_tags_parsed: question.display_tags_parsed ?? null,
+    visibility_conditions: question.visibility_conditions ?? null
+  };
+}
+
+/**
  * 複製時に「店舗への開示設定」を必ず落とす。
  *
  * copyProject は question_config をまるごと写すため、そのままだと複製元の
@@ -197,7 +222,8 @@ export const projectRepository = {
         question_config: stripStoreDisclosureOnCopy(question.question_config),
         ai_probe_enabled: question.ai_probe_enabled,
         is_system: question.is_system,
-        is_hidden: question.is_hidden
+        is_hidden: question.is_hidden,
+        ...copiedDisplayControlFields(question)
       });
     }
 
@@ -215,7 +241,8 @@ export const projectRepository = {
         question_config: stripStoreDisclosureOnCopy(sourceSystemQuestion.question_config),
         ai_probe_enabled: sourceSystemQuestion.ai_probe_enabled,
         is_system: sourceSystemQuestion.is_system,
-        is_hidden: sourceSystemQuestion.is_hidden
+        is_hidden: sourceSystemQuestion.is_hidden,
+        ...copiedDisplayControlFields(sourceSystemQuestion)
       });
     }
 
@@ -557,6 +584,65 @@ export const projectRepository = {
     throwIfError(error);
     const rows = (data ?? []) as Project[];
     return rows[0] ?? null;
+  },
+
+  /**
+   * セット（A/B/C）を会員店舗へ閲覧専用で一括紐づけする (Migration 104)。
+   *
+   * watchPartnerStore と同じく **partner_store_id と partner_readonly しか触らない**
+   * （entry_code / visibility_type は稼働中の QR の生命線なので変えない）。
+   * 未紐づけの案件だけを対象にする条件付きUPDATE で、既に別店舗のものは黙って対象外になる。
+   * 返り値は実際に更新できた案件。呼び出し側が「3件そろったか」を判定する。
+   */
+  async linkPartnerStoreForProjects(
+    projectIds: string[],
+    storeId: string
+  ): Promise<Project[]> {
+    const ids = projectIds.map((id) => id.trim()).filter((id) => id.length > 0);
+    const store = storeId.trim();
+    if (ids.length === 0 || !store) return [];
+    const { data, error } = await supabase
+      .from("projects")
+      .update({ partner_store_id: store, partner_readonly: true })
+      .in("id", ids)
+      .is("partner_store_id", null)
+      .select("*");
+    throwIfError(error);
+    return (data ?? []) as Project[];
+  },
+
+  /**
+   * セットの紐づけを一括で外す (Migration 104)。
+   * 巻き戻しにも使うので、閲覧専用（partner_readonly=true）の行だけを対象にする
+   * ＝通常の割り当て案件を巻き添えで外さない。
+   */
+  async unlinkPartnerStoreForProjects(projectIds: string[]): Promise<Project[]> {
+    const ids = projectIds.map((id) => id.trim()).filter((id) => id.length > 0);
+    if (ids.length === 0) return [];
+    const { data, error } = await supabase
+      .from("projects")
+      .update({ partner_store_id: null, partner_readonly: false })
+      .in("id", ids)
+      .eq("partner_readonly", true)
+      .select("*");
+    throwIfError(error);
+    return (data ?? []) as Project[];
+  },
+
+  /**
+   * 案件のステータスだけを更新する（セットの一括公開に使う）。
+   * update() は巨大な部分更新で使い回しにくいので、公開経路を1本に絞るための薄い口。
+   */
+  async updateStatus(projectId: string, status: Project["status"]): Promise<Project | null> {
+    const id = projectId.trim();
+    if (!id) return null;
+    const { data, error } = await supabase
+      .from("projects")
+      .update({ status })
+      .eq("id", id)
+      .select("*");
+    throwIfError(error);
+    return ((data ?? []) as Project[])[0] ?? null;
   },
 
   /**

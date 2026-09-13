@@ -34,6 +34,40 @@ export interface ProvisionResult {
   created: boolean;
 }
 
+/**
+ * ポータル会員店舗の受け皿となる固定法人 (Migration 104)。
+ * ポータル店舗は1店舗＝1事業者でチェーンを構成しないため、法人を店舗ごとに作ると
+ * clients が店舗数ぶん増える。受け皿を1件に固定する。
+ * ⚠ migration 104 の INSERT と同じ UUID。片方だけ変えると店舗が作れなくなる。
+ */
+export const PORTAL_CLIENT_ID = "c0000000-0000-4000-8000-000000000001";
+
+/**
+ * 店舗一式の生成オプション。すべて任意で、既定は従来の運営マスタ挙動そのまま。
+ */
+export interface ProvisionOptions {
+  /**
+   * 生成した案件の初期ステータス。
+   * 既定 `published`＝運営の店舗マスタ画面からの生成（従来どおり作った瞬間から回る）。
+   * ポータル注文は `draft`。公開はチケットを消費する QR 発行（publishSet）だけを入口にする
+   * ＝ draft のまま渡せば storeEntryService が「公開中でない」で止めるので無料では回らない。
+   */
+  initialStatus?: "draft" | "published";
+  /**
+   * hibi-portal の店舗ID。指定すると stores.partner_store_id に保存し、
+   * 生成する案件すべてに partner_store_id と partner_readonly=true を付ける。
+   *
+   * readonly にする理由: パートナー設問の編集（PUT /api/partner/surveys/:id）は
+   * 設問を4種へ全置換するため、B のマトリクスや A-Q11 の分岐が壊れる。
+   */
+  partnerStoreId?: string | null;
+  /** 参照した hibi パッケージID。A 案件の objective に `package:<id>` として残す。 */
+  packageId?: string | null;
+}
+
+/** objective に埋めるパッケージ参照の接頭辞（partnerSurveyService と同じ表現）。 */
+const PACKAGE_MARKER_PREFIX = "package:";
+
 /** テンプレの3案件を役割順に並べる。未設定の役割は飛ばす（A→Bだけの業種もありうる）。 */
 function templateSteps(
   template: IndustryTemplate
@@ -54,13 +88,16 @@ export const storeProvisioningService = {
    *
    * @param input.codeSlug entry_code の接頭辞。`<slug>-a` のようなコードになる。
    */
-  async provisionStore(input: {
-    clientId: string;
-    industryTemplateId: string;
-    name: string;
-    codeSlug: string;
-    rewardPointsOverride?: number | null;
-  }): Promise<ProvisionResult> {
+  async provisionStore(
+    input: {
+      clientId: string;
+      industryTemplateId: string;
+      name: string;
+      codeSlug: string;
+      rewardPointsOverride?: number | null;
+    },
+    options: ProvisionOptions = {}
+  ): Promise<ProvisionResult> {
     const template = await industryTemplateRepository.getById(input.industryTemplateId);
     if (!template) throw new Error("業種テンプレートが見つかりません");
 
@@ -69,7 +106,29 @@ export const storeProvisioningService = {
       throw new Error("店舗コードは英小文字・数字・ハイフンで指定してください");
     }
 
-    const existing = await storeRepository.getByCodeSlug(slug);
+    const partnerStoreId = (options.partnerStoreId ?? "").trim() || null;
+
+    // ポータル注文の冪等性は **partner_store_id を先に見る**。
+    // code_slug は店舗名や member_no から作るので、同じポータル店舗でも呼び出し次第で
+    // 変わりうる。slug だけで判定すると同じ店舗に2つ目の store ができてしまう。
+    const linkedStore = partnerStoreId
+      ? await storeRepository.getByPartnerStoreId(partnerStoreId)
+      : null;
+    const slugStore = await storeRepository.getByCodeSlug(slug);
+
+    // ⚠ slug 衝突で**他人の店舗**を掴んではいけない。
+    //
+    // ここを「別のポータル店舗のときだけ弾く」にすると、運営が店舗マスタで作った店舗
+    // （partner_store_id = NULL・A/B/C が published で稼働中）が素通りし、その稼働中の
+    // セットをそのままポータル会員に返してしまう。会員はチケットを1枚も払わずに
+    // 他店の調査へ接続され、さらに partner_store_id が書かれないので以後 404 になる。
+    // ＝「自分が既に紐づいている店舗」以外は、既存行を絶対に使い回さない。
+    if (partnerStoreId && slugStore && slugStore.id !== linkedStore?.id) {
+      throw new Error("店舗コードが既に使われています");
+    }
+
+    const existing = linkedStore ?? slugStore;
+
     const store =
       existing ??
       (await storeRepository.create({
@@ -78,9 +137,10 @@ export const storeProvisioningService = {
         name: input.name,
         code_slug: slug,
         reward_points_override: input.rewardPointsOverride ?? null,
+        partner_store_id: partnerStoreId,
       }));
 
-    const result = await this.ensureStoreProjects(store, template);
+    const result = await this.ensureStoreProjects(store, template, options);
     return { ...result, created: !existing };
   },
 
@@ -90,8 +150,13 @@ export const storeProvisioningService = {
    */
   async ensureStoreProjects(
     store: Store,
-    template: IndustryTemplate
+    template: IndustryTemplate,
+    options: ProvisionOptions = {}
   ): Promise<Omit<ProvisionResult, "created">> {
+    // ポータル紐づけは store 側の値を正とする（呼び出し側が渡し忘れても既存店舗の値で揃う）。
+    const partnerStoreId = (options.partnerStoreId ?? store.partner_store_id ?? "").trim() || null;
+    const initialStatus = options.initialStatus ?? "published";
+    const packageId = (options.packageId ?? "").trim() || null;
     // 既存の店舗案件を役割別に引いておく（冪等性の判定材料）。
     const existingProjects = await projectRepository.listByStore(store.id);
     const byRole = new Map(existingProjects.map((p) => [p.template_step_role, p]));
@@ -129,7 +194,17 @@ export const storeProvisioningService = {
         delivery_enabled: false,
         // 謝礼は店舗指定があればそれを使う（謝礼なしの店舗は 0 を指定する）。
         reward_points: store.reward_points_override ?? source.reward_points,
-        status: "published",
+        status: initialStatus,
+        // ポータル注文のときだけ、会員ポータルの店舗に「閲覧専用」で紐づける (Migration 103/104)。
+        // partner_store_id があると店舗の /api/partner/surveys/:id から読めるようになり、
+        // partner_readonly=true が書き込み（PUT / publish / close）を 409 で止める。
+        ...(partnerStoreId
+          ? { partner_store_id: partnerStoreId, partner_readonly: true }
+          : {}),
+        // A 案件にだけパッケージ参照を残す。hibi の消費チケット枚数の解決に使う。
+        ...(packageId && step.role === "entry"
+          ? { objective: `${PACKAGE_MARKER_PREFIX}${packageId}` }
+          : {}),
       } as Parameters<typeof projectRepository.update>[1]);
 
       created.push({ role: step.role, project, entryCode });

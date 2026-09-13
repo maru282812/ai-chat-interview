@@ -12,6 +12,7 @@ import {
 import { partnerAuthMiddleware, requirePartner } from "../middleware/partnerAuth";
 import { partnerLegalService } from "../services/partnerLegalService";
 import { type PartnerQuestionInput, partnerSurveyService } from "../services/partnerSurveyService";
+import { partnerSurveySetService } from "../services/partnerSurveySetService";
 
 /**
  * partnerRoutes.ts
@@ -54,6 +55,19 @@ const questionTextImageSchema = z.object({
   caption: z.string().max(200).nullable().optional()
 });
 
+/**
+ * 選択肢の持ち越し（carry-forward）。
+ *
+ * 参照は **sort_order**。question_code はサーバー採番（pq1, pq2…）なので、
+ * パートナーは自分が送った sort_order でしか前問を指せない。
+ * 参照先が同一リクエスト内に存在するか等の相関検証は questionListSchema 側で行う
+ * （単問スキーマからは他の設問が見えないため）。
+ */
+const carryForwardSchema = z.object({
+  from_sort_order: z.number().int().min(0).max(1000),
+  mode: z.enum(["selected", "unselected"]).optional()
+});
+
 const questionSchema = z
   .object({
     question_text: z.string().min(1).max(2000),
@@ -61,7 +75,8 @@ const questionSchema = z
     answer_options: z.array(answerOptionSchema).max(50).nullable().optional(),
     sort_order: z.number().int().min(0).max(1000),
     is_required: z.boolean().optional(),
-    question_text_image: questionTextImageSchema.nullable().optional()
+    question_text_image: questionTextImageSchema.nullable().optional(),
+    carry_forward: carryForwardSchema.nullable().optional()
   })
   .superRefine((value, ctx) => {
     const disallowed = collectDisallowedImageUrls(
@@ -106,10 +121,79 @@ const questionSchema = z
     }
   });
 
-const questionListSchema = z.array(questionSchema).min(1).max(50);
+/**
+ * 設問リスト。carry_forward の相関検証はここで行う（単問からは他の設問が見えない）。
+ *
+ * 落とす理由はすべて「回答画面で選択肢が0件になる」＝回答不能になるため。
+ * 保存を許して実機で気づくより、400 で弾いて送信元に直させる。
+ */
+const questionListSchema = z
+  .array(questionSchema)
+  .min(1)
+  .max(50)
+  .superRefine((questions, ctx) => {
+    const bySortOrder = new Map<number, (typeof questions)[number]>();
+    for (const question of questions) {
+      // sort_order の重複は許容仕様（サーバーが採番し直す）。
+      // 重複があると参照先が一意に定まらないので、carry_forward からは参照させない。
+      if (bySortOrder.has(question.sort_order)) {
+        bySortOrder.set(question.sort_order, null as never);
+        continue;
+      }
+      bySortOrder.set(question.sort_order, question);
+    }
+
+    questions.forEach((question, index) => {
+      const carry = question.carry_forward;
+      if (!carry) return;
+      const path = [index, "carry_forward"] as (string | number)[];
+      const fail = (message: string) => ctx.addIssue({ code: "custom", path, message });
+
+      if (carry.from_sort_order === question.sort_order) {
+        fail("carry_forward.from_sort_order must not reference itself");
+        return;
+      }
+      const source = bySortOrder.get(carry.from_sort_order);
+      if (source === undefined) {
+        fail(`carry_forward.from_sort_order=${carry.from_sort_order} does not match any question`);
+        return;
+      }
+      if (source === null) {
+        fail(
+          `carry_forward.from_sort_order=${carry.from_sort_order} is ambiguous (duplicated sort_order)`
+        );
+        return;
+      }
+      // 参照元は「選んだ値」が残る種別でなければならない。
+      // free_text には選択肢が無く、scale は順序尺度なので絞り込みの意味がない。
+      if (source.question_type !== "single_choice" && source.question_type !== "multi_choice") {
+        fail(
+          `carry_forward source must be single_choice or multi_choice (got ${source.question_type})`
+        );
+        return;
+      }
+      // 先に回答されていなければ絞り込めない。
+      if (source.sort_order > question.sort_order) {
+        fail("carry_forward source must come before this question");
+        return;
+      }
+      // 持ち越しは value 一致で絞る。共通の value が無ければ必ず0件になる。
+      const sourceValues = new Set((source.answer_options ?? []).map((option) => option.value));
+      const shared = (question.answer_options ?? []).filter((option) =>
+        sourceValues.has(option.value)
+      );
+      if (shared.length === 0) {
+        fail(
+          "carry_forward requires answer_options values shared with the source question (none matched)"
+        );
+      }
+    });
+  });
 
 /** テストから参照する（HTTP を立てずに 400 判定を検証するため）。 */
 export const partnerQuestionSchemaForTest = questionSchema;
+/** carry_forward の相関検証は設問リスト単位なので、リストごと公開する。 */
+export const partnerQuestionListSchemaForTest = questionListSchema;
 export const partnerToQuestionInputForTest = toQuestionInput;
 /** `base_version`（楽観ロック）の受け入れ規則をテストから検証するために公開する。 */
 export const partnerUpdateSurveySchemaForTest = () => updateSurveySchema;
@@ -186,7 +270,8 @@ function toQuestionInput(question: z.infer<typeof questionSchema>): PartnerQuest
           additional_urls: image.additional_urls ?? [],
           caption: image.caption ?? null
         }
-      : null
+      : null,
+    carry_forward: question.carry_forward ?? null
   };
 }
 
@@ -313,6 +398,73 @@ partnerRoutes.get(
     const partner = requirePartner(req);
     const surveyId = parseSurveyId(req.params.id);
     res.json(await partnerSurveyService.getResults(partner.storeId, surveyId));
+  })
+);
+
+// ------------------------------------------------------------------
+// セット（A/B/C のサイクル調査） — docs/partner-api.md §9
+// 単発アンケート（/surveys）と違い、設問は運営の原本から複製され店舗は編集できない。
+// 公開はここの publish（＝ポータルの QR 発行）だけが入口。
+// ------------------------------------------------------------------
+
+const createSetSchema = z.object({
+  industry_template_id: z.string().uuid(),
+  package_id: z.string().min(1).max(100).nullable().optional(),
+  store: z.object({
+    name: z.string().min(1).max(200),
+    member_no: z.string().min(1).max(50).nullable().optional()
+  })
+});
+
+/** テストから参照する（HTTP を立てずに 400 判定を検証するため）。 */
+export const partnerCreateSetSchemaForTest = createSetSchema;
+
+/** :id を UUID として検証する。非 UUID は 404。 */
+function parseSetId(raw: string | string[] | undefined): string {
+  const value = Array.isArray(raw) ? String(raw[0] ?? "") : (raw ?? "");
+  const parsed = surveyIdSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new HttpError(404, "survey set not found");
+  }
+  return parsed.data;
+}
+
+/** セット作成（draft）。同じ店舗の再注文は既存セットを冪等に返す。 */
+partnerRoutes.post(
+  "/survey-sets",
+  asyncHandler(async (req, res) => {
+    const partner = requirePartner(req);
+    const body = parseBody(createSetSchema, req.body);
+
+    const set = await partnerSurveySetService.createSet({
+      partnerStoreId: partner.storeId,
+      industryTemplateId: body.industry_template_id,
+      storeName: body.store.name,
+      memberNo: body.store.member_no ?? null,
+      packageId: body.package_id ?? null
+    });
+
+    res.status(201).json(set);
+  })
+);
+
+/** 1件取得（ポータルの閲覧専用エディタ・回答状況用）。 */
+partnerRoutes.get(
+  "/survey-sets/:id",
+  asyncHandler(async (req, res) => {
+    const partner = requirePartner(req);
+    const setId = parseSetId(req.params.id);
+    res.json(await partnerSurveySetService.getSet(partner.storeId, setId));
+  })
+);
+
+/** セット全体を公開して A の回答URLを返す（冪等）。 */
+partnerRoutes.post(
+  "/survey-sets/:id/publish",
+  asyncHandler(async (req, res) => {
+    const partner = requirePartner(req);
+    const setId = parseSetId(req.params.id);
+    res.json(await partnerSurveySetService.publishSet(partner.storeId, setId));
   })
 );
 
