@@ -116,6 +116,10 @@ adminRoutes.get(
   asyncHandler(adminController.listProjectSnapshots)
 );
 adminRoutes.get("/questions/:questionId/edit", asyncHandler(adminController.editQuestion));
+// 設問プレビュー（回答者の実画面 liff/survey をそのまま描く・書込みなし）
+// POST は編集中（未保存）のフォーム内容で描くためのもので、保存は一切しない。
+adminRoutes.get("/questions/:questionId/preview", asyncHandler(adminController.previewQuestion));
+adminRoutes.post("/questions/:questionId/preview", asyncHandler(adminController.previewQuestion));
 adminRoutes.post("/questions/:questionId", asyncHandler(adminController.updateQuestion));
 
 adminRoutes.get("/respondents", asyncHandler(adminController.respondents));

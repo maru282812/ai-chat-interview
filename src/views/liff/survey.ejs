@@ -545,6 +545,10 @@
   const LIFF_AUTH_AVAIL = <%- JSON.stringify(locals.liffAuthAvailable === true) %>;
   // ALLOW_LIFF_AUTH_SKIP=false のとき本人確認失敗・スキップを禁止する
   const SKIP_ALLOWED    = <%- JSON.stringify(locals.skipAllowed !== false) %>;
+  // 管理画面の設問プレビュー（/admin/questions/:id/preview）。true のときは
+  // 回答・完了の書込み系APIを一切叩かず、画面遷移だけをローカルで進める。
+  // ＝プレビューでも「実際に出る画面」そのものを描くためのフラグで、描画側は一切分岐させない。
+  const PREVIEW_MODE    = <%- JSON.stringify(locals.previewMode === true) %>;
   // 'screening' | 'main'
   const SURVEY_PHASE           = <%- JSON.stringify(locals.surveyPhase || 'main') %>;
   const SCREENING_FAIL_MESSAGE = <%- JSON.stringify(locals.screeningFailMessage || '今回はご参加いただけませんでした。またの機会にご協力をお願いします。') %>;
@@ -1609,6 +1613,8 @@
 
   // ---- image_upload ヘルパー ----
   async function uploadImageToServer(file, questionCode) {
+    // プレビューは Storage へ上げない。ローカルの object URL を返してサムネイル表示だけ再現する。
+    if (PREVIEW_MODE) return URL.createObjectURL(file);
     const base64 = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result.split(',')[1]);
@@ -1686,6 +1692,12 @@
   async function submitAnswer(questionCode, answerValue, opts) {
     const answerRole = (opts && opts.answerRole === 'probe') ? 'probe' : 'primary';
     const isProbe = answerRole === 'probe';
+    // プレビューは保存しない。answerCtx には入れる（分岐・表示条件の確認はできる）が、
+    // サーバーへは一切送らず成功扱いで返して画面遷移だけ進める。
+    if (PREVIEW_MODE) {
+      if (!isProbe) answerCtx.answers[questionCode.toLowerCase()] = answerValue;
+      return { ok: true, status: 200, message: '' };
+    }
     console.log('SUBMIT_START', { questionCode, answerRole });
     console.log('INPUT_VALUE', answerValue);
     if (!isProbe) {
@@ -2181,6 +2193,8 @@
 
     async function checkAndShowProbe(q, val, nextCursor) {
       if (!q.ai_probe_enabled) return false;
+      // プレビューは AI 深掘り（実LLM）を呼ばない。深掘り無しとして次の設問へ進む。
+      if (PREVIEW_MODE) return false;
       try {
         // 他の書込み系APIと同じ apiHeaders()（Authorization: Bearer <id_token>）を付ける。
         // サーバー側は session から assignment を引いて所有者検証するので assignment_id は必須ではないが、
@@ -2346,6 +2360,10 @@
       document.querySelector('.nav-btns').style.display = 'none';
       completeScreen.style.display = 'block';
       progressBar.style.width = '100%';
+
+      // プレビューは完了確定APIを叩かない（ポイント付与・ステータス更新を起こさない）。
+      // 完了画面の見た目まで確認できるよう、画面自体は通常どおり出したまま止める。
+      if (PREVIEW_MODE) return;
 
       const completeActions = document.getElementById('completeActions');
       const completeError = document.getElementById('completeError');
@@ -2845,7 +2863,8 @@
       addBubble(displayText, 'user');
       const typingWrap = showTypingIndicator();
 
-      if (q.ai_probe_enabled) {
+      // プレビューは AI 深掘り（実LLM・課金と保存が走る）を呼ばず、そのまま次の設問へ進む。
+      if (q.ai_probe_enabled && !PREVIEW_MODE) {
         try {
           const res = await fetch('/liff/chat', {
             method: 'POST',
@@ -2948,6 +2967,8 @@
     // /complete を叩き、店舗専用アンケートなら「Hibiに参加する（会員登録）」CTA を出す。
     // IDトークン失効(401)は一度だけ再ログインし survey_complete_resume で戻り先を完了確定に直行させる。
     async function finalizeChatCompletion() {
+      // プレビューは完了確定APIを叩かない（完了メッセージは呼び出し側で既に出ている）。
+      if (PREVIEW_MODE) return;
       try {
         const resp = await fetch('/liff/survey/' + ASSIGNMENT_ID + '/complete', {
           method: 'POST',

@@ -206,6 +206,17 @@ export const ADMIN_SCREENS: AdminScreenEntry[] = [
     related: ["questions-index", "question-flow"]
   },
   {
+    key: "question-preview",
+    path: "/admin/questions/:questionId/preview",
+    label: "設問プレビュー",
+    group: "調査",
+    nav: false,
+    description: "設問が回答者の画面にどう出るかを、実際の回答画面そのもので確認する。回答は保存されない。",
+    settings: ["表示モード", "回答UIプリセット", "表示範囲（この設問／案件全体）"],
+    synonyms: ["回答画面プレビュー", "設問の見た目確認", "実画面プレビュー"],
+    related: ["question-edit", "questions-index"]
+  },
+  {
     key: "project-page-groups",
     path: "/admin/projects/:projectId/page-groups",
     label: "ページグループ",

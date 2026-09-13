@@ -83,10 +83,50 @@
   .tag-error-list li.error   { color:#8a0000; }
   .tag-error-list li.warning { color:#8a5b00; }
   .form-3col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+
+  /* ── 編集フォーム + 右カラムのライブプレビュー ───────────────── */
+  .qedit-layout { display:grid; grid-template-columns:minmax(0,1fr) 420px; gap:18px; align-items:start; }
+  /* 右カラムを置く余白が無い画面では 1 カラムに落とし、プレビューはモーダルで見る */
+  @media (max-width:1200px) {
+    .qedit-layout { grid-template-columns:minmax(0,1fr); }
+    .qedit-preview { display:none; }
+  }
+  /* スクロールしても付いてくる。ヘッダー分を少し空ける */
+  .qedit-preview-inner {
+    position:sticky; top:12px;
+    display:flex; flex-direction:column; gap:8px;
+    border:1px solid #d8e3e0; border-radius:14px; background:#fff; padding:12px;
+    max-height:calc(100vh - 24px);
+  }
+  .qedit-preview-head { display:flex; align-items:center; gap:8px; }
+  .qedit-preview-state { font-size:11px; color:#60726f; }
+  .qedit-preview-state.is-stale { color:#8a5b00; }
+  .qedit-preview-controls { display:flex; gap:6px; flex-wrap:wrap; }
+  /* 管理画面CSSの select{width:100%} を打ち消さないと3つが縦積みになり、
+     プレビュー本体の高さを奪う（実機で確認済みの罠） */
+  .qedit-preview-controls select {
+    width:auto; flex:0 1 auto;
+    border:1px solid #ccc; border-radius:6px; padding:3px 6px; font-size:11px;
+  }
+  .qedit-preview-stage {
+    flex:1; min-height:0; display:flex; justify-content:center;
+    background:#f5f7f6; border:1px solid #e0ede9; border-radius:12px; overflow:hidden;
+  }
+  /* 実画面はモバイル幅が正。390px 相当で見せる */
+  .qedit-preview-stage iframe {
+    width:100%; max-width:390px; height:100%; min-height:520px;
+    border:none; background:#f5f7f6;
+  }
+  .qedit-preview-note { margin:0; font-size:11px; color:#60726f; }
 </style>
 
 <%- include("../../partials/partner-store-warning", { project }) %>
 
+<%#
+  編集フォーム（左）と実画面プレビュー（右）の2カラム。
+  画面が狭いときは 1 カラムに落として、プレビューは従来どおりモーダルで見る。
+%>
+<div class="qedit-layout">
 <form class="card stack" method="post" action="<%= action %>" id="mainForm">
   <input type="hidden" name="question_code" value="<%= safeForm.question_code || '' %>" />
 
@@ -1208,25 +1248,101 @@
   </div>
 </form>
 
+<%#
+  ── 右カラム：実画面ライブプレビュー ───────────────────────────────
+  中身は自前モックではなく、回答者が実際に見る画面（liff/survey）の iframe。
+  編集中（未保存）の内容を POST /admin/questions/:id/preview へ送って描くので、
+  保存前でも見た目が確認できる。変換は保存時と同じ buildQuestionConfigFromRequest を通る。
+%>
+<aside class="qedit-preview" id="livePreviewPane">
+  <div class="qedit-preview-inner">
+    <div class="qedit-preview-head">
+      <strong style="font-size:14px;">プレビュー</strong>
+      <span class="qedit-preview-state" id="livePreviewState">最新</span>
+      <button type="button" id="livePreviewReload" class="button-link secondary"
+              style="font-size:11px;padding:3px 8px;margin-left:auto;">↻</button>
+    </div>
+
+    <%# 管理画面CSSの select は既定で width:100% なので、ここで幅を戻さないと縦積みになる %>
+    <div class="qedit-preview-controls">
+      <select id="livePreviewMode">
+        <option value="survey_question">1問ずつ</option>
+        <option value="survey_page">ページ</option>
+        <option value="interview_chat">チャット</option>
+      </select>
+      <select id="livePreviewPreset" title="回答UIプリセット">
+        <option value="">案件の設定</option>
+        <option value="casual">casual</option>
+        <option value="standard">standard</option>
+        <option value="formal">formal</option>
+      </select>
+      <select id="livePreviewScope" title="表示範囲">
+        <option value="one">この設問</option>
+        <option value="all">通しで</option>
+      </select>
+    </div>
+
+    <div class="qedit-preview-stage">
+      <iframe id="livePreviewFrame" title="回答画面ライブプレビュー" name="livePreviewFrame"></iframe>
+    </div>
+
+    <p class="qedit-preview-note">
+      編集中の内容をそのまま表示しています（回答は保存されません）。
+    </p>
+  </div>
+</aside>
+</div><%# /.qedit-layout %>
+
 <!-- ============================================================ -->
 <!-- プレビューモーダル                                             -->
 <!-- ============================================================ -->
+<%#
+  プレビューモーダル
+
+  中身は管理画面の自前モックではなく、回答者が実際に見る画面（/admin/questions/:id/preview →
+  liff/survey）を iframe でそのまま表示する。以前はここで簡易HTMLを組み立てていたため、
+  チップ選択・スワイプ・「その他」の自由記述欄・排他制御が本番と食い違っていた。
+  プレビューでは回答は一切保存されない（survey.ejs の PREVIEW_MODE ガード）。
+%>
 <div id="previewModal" style="
   display:none; position:fixed; inset:0; background:rgba(0,0,0,.5);
   z-index:1000; align-items:center; justify-content:center;">
-  <div style="background:#fff;border-radius:16px;padding:24px;max-width:480px;width:90%;max-height:80vh;overflow-y:auto;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-      <h2 style="margin:0;">プレビュー</h2>
-      <div style="display:flex;gap:8px;">
-        <select id="previewMode" style="border:1px solid #ccc;border-radius:6px;padding:4px 8px;">
-          <option value="survey_question">survey_question (1問ずつ)</option>
-          <option value="survey_page">survey_page (ページ)</option>
-          <option value="interview_chat">interview_chat (チャット)</option>
-        </select>
-        <button id="closePreview" style="border:none;background:none;font-size:20px;cursor:pointer;">✕</button>
-      </div>
+  <div style="background:#fff;border-radius:16px;padding:16px;max-width:560px;width:94%;height:92vh;display:flex;flex-direction:column;gap:10px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <h2 style="margin:0;font-size:18px;">プレビュー<span style="font-size:12px;font-weight:normal;color:#60726f;margin-left:8px;">実際の回答画面（保存されません）</span></h2>
+      <button type="button" id="closePreview" title="閉じる（Esc）" style="border:none;background:none;font-size:20px;cursor:pointer;line-height:1;">✕</button>
     </div>
-    <div id="previewContent"></div>
+
+    <%# 管理画面CSSの select は既定で width:100% のため、ここで幅を戻さないと
+        3つが縦積みになりプレビュー本体の高さを奪う（実機で確認） %>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;">
+      <select id="previewMode" style="width:auto;flex:0 1 auto;border:1px solid #ccc;border-radius:6px;padding:4px 8px;font-size:12px;">
+        <option value="survey_question">1問ずつ (survey_question)</option>
+        <option value="survey_page">ページ (survey_page)</option>
+        <option value="interview_chat">チャット (interview_chat)</option>
+      </select>
+      <select id="previewPreset" title="回答UIプリセット" style="width:auto;flex:0 1 auto;border:1px solid #ccc;border-radius:6px;padding:4px 8px;font-size:12px;">
+        <option value="">案件の設定のまま</option>
+        <option value="casual">casual（スワイプ/チップ）</option>
+        <option value="standard">standard（タップ）</option>
+        <option value="formal">formal（従来のラジオ）</option>
+      </select>
+      <select id="previewScope" title="表示範囲" style="width:auto;flex:0 1 auto;border:1px solid #ccc;border-radius:6px;padding:4px 8px;font-size:12px;">
+        <option value="one">この設問だけ</option>
+        <option value="all">案件の設問を通しで</option>
+      </select>
+      <button type="button" id="previewReload" class="button-link secondary" style="font-size:12px;padding:4px 10px;">↻ 再読込</button>
+    </div>
+
+    <%# 実画面はモバイル幅が正。iframe を 390px 相当の枠で見せる %>
+    <div style="flex:1;min-height:0;background:#f5f7f6;border:1px solid #e0ede9;border-radius:12px;overflow:hidden;display:flex;justify-content:center;">
+      <iframe id="previewFrame" title="回答画面プレビュー"
+              style="width:100%;max-width:390px;height:100%;min-height:420px;border:none;background:#f5f7f6;"></iframe>
+    </div>
+
+    <p style="margin:0;font-size:11px;color:#60726f;">
+      ※ 保存前の編集内容は反映されません。変更を確認するには先に「更新する」で保存してください。
+    </p>
   </div>
 </div>
 
@@ -2077,85 +2193,161 @@
   // プレビュー
   // ----------------------------------------------------------------
   const previewModal = document.getElementById('previewModal');
-  document.getElementById('previewBtn').onclick = () => {
-    const qText = document.querySelector('[name="question_text"]').value;
-    const qType = document.getElementById('questionType').value;
-    const mode  = document.getElementById('previewMode').value;
-    const opts  = Array.from(document.querySelectorAll('[name="option_labels"]')).map(el => el.value).filter(Boolean);
-    const commentTop    = document.querySelector('[name="comment_top"]')?.value || '';
-    const commentBottom = document.querySelector('[name="comment_bottom"]')?.value || '';
-    const matrixRows    = (document.querySelector('[name="matrix_rows"]')?.value || '').split('\n').filter(Boolean);
-    const matrixCols    = (document.querySelector('[name="matrix_cols"]')?.value || '').split('\n').filter(Boolean);
+  const previewFrame = document.getElementById('previewFrame');
+  // 新規作成中の設問はまだ id が無く、サーバーが実画面を組み立てられない。
+  const PREVIEW_QUESTION_ID = <%- JSON.stringify(question ? question.id : null) %>;
+  const PREVIEW_PROJECT_MODE = <%- JSON.stringify(project.display_mode || 'survey_question') %>;
 
-    let html = buildPreviewHtml(qText, qType, mode, opts, commentTop, commentBottom, matrixRows, matrixCols);
-    document.getElementById('previewContent').innerHTML = html;
-    previewModal.style.display = 'flex';
-  };
-  document.getElementById('closePreview').onclick  = () => { previewModal.style.display = 'none'; };
-  document.getElementById('previewMode').onchange  = () => document.getElementById('previewBtn').click();
-
-  function buildPreviewHtml(qText, qType, mode, opts, commentTop, commentBottom, matrixRows, matrixCols) {
-    const wrapStyle = mode === 'interview_chat'
-      ? 'font-family:sans-serif;background:#f0f0f0;padding:16px;border-radius:12px;'
-      : 'font-family:sans-serif;padding:8px;';
-    let inner = '';
-
-    if (commentTop) inner += `<p style="font-size:12px;color:#60726f;margin:0 0 6px">${escHtml(commentTop)}</p>`;
-
-    const bubble = mode === 'interview_chat'
-      ? `<div style="background:#fff;border-radius:12px;padding:12px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.1);">${escHtml(qText)}</div>`
-      : `<p style="font-weight:600;margin:0 0 10px">${escHtml(qText)}</p>`;
-    inner += bubble;
-
-    if (commentBottom) inner += `<p style="font-size:12px;color:#60726f;margin:0 0 8px">${escHtml(commentBottom)}</p>`;
-
-    if (['single_choice','text_with_image'].includes(qType) && opts.length > 0) {
-      inner += opts.map(o => `<label style="display:block;margin:4px 0;"><input type="radio" /> ${escHtml(o)}</label>`).join('');
-    } else if (qType === 'multi_choice' && opts.length > 0) {
-      inner += opts.map(o => `<label style="display:block;margin:4px 0;"><input type="checkbox" /> ${escHtml(o)}</label>`).join('');
-    } else if (['text','free_text_short','numeric'].includes(qType)) {
-      inner += `<input type="text" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;" placeholder="回答を入力..." />`;
-    } else if (['free_text_long'].includes(qType)) {
-      inner += `<textarea rows="4" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;" placeholder="回答を入力..."></textarea>`;
-    } else if (['scale'].includes(qType)) {
-      inner += `<input type="range" min="1" max="5" style="width:100%" />`;
-    } else if (['matrix_single','matrix_multi','matrix_mixed'].includes(qType)) {
-      if (matrixRows.length > 0 && matrixCols.length > 0) {
-        const isMulti = qType === 'matrix_multi';
-        inner += `<table style="width:100%;border-collapse:collapse;font-size:13px;">
-          <tr><th style="padding:6px;border-bottom:1px solid #eee;text-align:left;"></th>`;
-        for (const col of matrixCols) {
-          inner += `<th style="padding:6px;border-bottom:1px solid #eee;text-align:center;">${escHtml(col)}</th>`;
-        }
-        inner += `</tr>`;
-        for (const row of matrixRows) {
-          inner += `<tr><td style="padding:6px;border-bottom:1px solid #eee;">${escHtml(row)}</td>`;
-          for (let ci = 0; ci < matrixCols.length; ci++) {
-            inner += `<td style="padding:6px;border-bottom:1px solid #eee;text-align:center;">
-              <input type="${isMulti ? 'checkbox' : 'radio'}" name="prev_row_${escHtml(row)}" />
-            </td>`;
-          }
-          inner += `</tr>`;
-        }
-        inner += `</table>`;
-      } else {
-        inner += `<p style="font-size:12px;color:#888;">[マトリクス - 行・列を「2. 回答形式」タブで設定してください]</p>`;
-      }
-    }
-
-    if (mode === 'interview_chat') {
-      inner += `<div style="margin-top:8px;">
-        <input type="text" placeholder="返信する..." style="width:calc(100% - 60px);padding:8px;border:1px solid #ccc;border-radius:20px;" />
-        <button style="padding:8px 12px;background:#2ca87a;color:#fff;border:none;border-radius:20px;margin-left:4px;">送信</button>
-      </div>`;
-    } else {
-      inner += `<div style="margin-top:16px;text-align:right;">
-        <button style="padding:8px 24px;background:#2ca87a;color:#fff;border:none;border-radius:8px;">次へ</button>
-      </div>`;
-    }
-
-    return `<div style="${wrapStyle}">${inner}</div>`;
+  function previewUrl() {
+    const params = new URLSearchParams();
+    params.set('mode', document.getElementById('previewMode').value);
+    const preset = document.getElementById('previewPreset').value;
+    if (preset) params.set('preset', preset);
+    params.set('scope', document.getElementById('previewScope').value);
+    // 同じ URL でも必ず再読込させる（select 変更時に iframe が古い画面のまま残らないように）
+    params.set('_t', String(Date.now()));
+    return '/admin/questions/' + encodeURIComponent(PREVIEW_QUESTION_ID) + '/preview?' + params.toString();
   }
+
+  function loadPreview() {
+    if (!PREVIEW_QUESTION_ID) return;
+    previewFrame.src = previewUrl();
+  }
+
+  function openPreview() {
+    if (!PREVIEW_QUESTION_ID) {
+      alert('プレビューは保存後に確認できます。先に「作成する」で保存してください。');
+      return;
+    }
+    // 案件の表示モードを初期値にする（＝回答者が実際に見る条件から始める）
+    document.getElementById('previewMode').value = PREVIEW_PROJECT_MODE;
+    previewModal.style.display = 'flex';
+    loadPreview();
+  }
+
+  function closePreview() {
+    previewModal.style.display = 'none';
+    // 中の画面を止める（iframe を残すと裏でタイマー等が動き続ける）
+    previewFrame.src = 'about:blank';
+  }
+
+  // ----------------------------------------------------------------
+  // 右カラムのライブプレビュー
+  //
+  // 編集中のフォームを丸ごと POST して、サーバー側で保存時と同じ変換
+  // （buildQuestionConfigFromRequest）を通してから実画面を描かせる。
+  // ＝ここで question_config を組み立て直さない。組み立てるとプレビュー専用の
+  //   変換がもう1つ生まれ、本番とズレる（以前のモックが壊れた原因そのもの）。
+  //
+  // 送信方法は「フォームを複製して iframe を target にした POST」。
+  // fetch + srcdoc だと相対URLの解決基準が変わって画面内の fetch が壊れるため、
+  // 実際に iframe へ POST してナビゲートさせる。
+  // ----------------------------------------------------------------
+  // mainForm は下の方で const 宣言されるため、ここでは自前に取り直す（TDZ回避）
+  const liveForm  = document.getElementById('mainForm');
+  const livePane  = document.getElementById('livePreviewPane');
+  const liveFrame = document.getElementById('livePreviewFrame');
+  const liveState = document.getElementById('livePreviewState');
+
+  function livePreviewUrl() {
+    const params = new URLSearchParams();
+    params.set('mode', document.getElementById('livePreviewMode').value);
+    const preset = document.getElementById('livePreviewPreset').value;
+    if (preset) params.set('preset', preset);
+    params.set('scope', document.getElementById('livePreviewScope').value);
+    return '/admin/questions/' + encodeURIComponent(PREVIEW_QUESTION_ID) + '/preview?' + params.toString();
+  }
+
+  let liveTimer   = null;
+  let liveBusy    = false;
+  let livePending = false;
+
+  function renderLivePreview() {
+    if (!PREVIEW_QUESTION_ID || !livePane) return;
+    // 画面が狭くて右カラムを畳んでいるときは描かない（無駄なリクエストを出さない）
+    if (livePane.offsetParent === null) return;
+    // 描画中の要求は捨てずに覚えておき、終わってから1回だけ描き直す。
+    // 捨てると「プリセットを変えたのに反映されない」等の取りこぼしになる。
+    if (liveBusy) { livePending = true; return; }
+
+    liveBusy = true;
+    liveState.textContent = '更新中…';
+    liveState.classList.remove('is-stale');
+
+    // 複製した form を画面外に置いて POST する。元フォームの action/method は触らない。
+    const ghost = liveForm.cloneNode(true);
+    ghost.setAttribute('action', livePreviewUrl());
+    ghost.setAttribute('method', 'post');
+    ghost.setAttribute('target', 'livePreviewFrame');
+    ghost.removeAttribute('id');
+    ghost.style.display = 'none';
+    // 複製した中の id は元の要素と衝突するので落とす（getElementById の先勝ちを避ける）
+    ghost.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+    // ファイル入力は複製しても中身が運べない。送っても意味が無いので外す。
+    ghost.querySelectorAll('input[type="file"]').forEach((el) => el.remove());
+
+    document.body.appendChild(ghost);
+    ghost.submit();
+    document.body.removeChild(ghost);
+
+    // onload を待ってから次の更新を許可する（連打で積み上がらないように）
+    const done = () => {
+      liveBusy = false;
+      liveFrame.removeEventListener('load', done);
+      if (livePending) { livePending = false; renderLivePreview(); return; }
+      liveState.textContent = '最新';
+    };
+    liveFrame.addEventListener('load', done);
+    // 何らかの理由で load が来なくても固まらないようにする
+    setTimeout(() => { if (liveBusy) done(); }, 8000);
+  }
+
+  function scheduleLivePreview(delay) {
+    if (!PREVIEW_QUESTION_ID || !livePane) return;
+    liveState.textContent = '未反映';
+    liveState.classList.add('is-stale');
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(renderLivePreview, delay);
+  }
+
+  if (livePane && PREVIEW_QUESTION_ID) {
+    document.getElementById('livePreviewMode').value = PREVIEW_PROJECT_MODE;
+
+    // 打鍵中は落ち着くまで待ち、選択の変更は即反映する
+    liveForm.addEventListener('input',  () => scheduleLivePreview(600));
+    liveForm.addEventListener('change', () => scheduleLivePreview(120));
+    // 選択肢の追加/削除など、JS でDOMを組み替える操作も拾う
+    new MutationObserver(() => scheduleLivePreview(400))
+      .observe(liveForm, { childList: true, subtree: true });
+
+    document.getElementById('livePreviewReload').onclick = renderLivePreview;
+    document.getElementById('livePreviewMode').onchange   = renderLivePreview;
+    document.getElementById('livePreviewPreset').onchange = renderLivePreview;
+    document.getElementById('livePreviewScope').onchange  = renderLivePreview;
+
+    renderLivePreview();
+  } else if (livePane) {
+    // 新規作成中は id が無く、サーバーが案件の文脈を組み立てられない
+    livePane.querySelector('.qedit-preview-stage').innerHTML =
+      '<p class="qedit-preview-note" style="padding:16px;text-align:center;">' +
+      '保存するとここに実際の回答画面が表示されます。</p>';
+  }
+
+  document.getElementById('previewBtn').onclick = openPreview;
+  document.getElementById('closePreview').onclick = closePreview;
+  document.getElementById('previewReload').onclick = loadPreview;
+  document.getElementById('previewMode').onchange = loadPreview;
+  document.getElementById('previewPreset').onchange = loadPreview;
+  document.getElementById('previewScope').onchange = loadPreview;
+
+  // 背景クリックで閉じる（オーバーレイ自身を押したときだけ＝中身のクリックでは閉じない）
+  previewModal.addEventListener('click', (e) => {
+    if (e.target === previewModal) closePreview();
+  });
+  // Esc で閉じる
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && previewModal.style.display === 'flex') closePreview();
+  });
 
   // ----------------------------------------------------------------
   // util

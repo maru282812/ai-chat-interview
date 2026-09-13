@@ -111,6 +111,10 @@ import type {
 import { parseDisplayTags, generateTagsFromParsed } from "../lib/tagParser";
 import { validateDisplayTags } from "../lib/tagValidator";
 import { questionPageGroupRepository } from "../repositories/questionPageGroupRepository";
+// 設問プレビュー（previewQuestion）を回答者の実画面と同じ経路で描くために使う。
+// どちらも「描画直前の前処理」なので、これを省くとプレビューだけ別物になる。
+import { resolveAnswerPresentation } from "../lib/answerPresentation";
+import { applyAutoFreeText } from "../lib/otherOption";
 import { segmentRepository } from "../repositories/segmentRepository";
 import { userAttributeRepository } from "../repositories/userAttributeRepository";
 import { deliveryCampaignRepository } from "../repositories/deliveryCampaignRepository";
@@ -3432,6 +3436,118 @@ export const adminController = {
       rawdataInfo: rawdataEntry
         ? { ...rawdataEntry, snapshotConfirmed: rawdataIndex?.snapshotConfirmed ?? false }
         : null,
+    });
+  },
+
+  /**
+   * GET  /admin/questions/:questionId/preview … 保存済みの内容でプレビュー
+   * POST /admin/questions/:questionId/preview … 編集中（未保存）のフォーム内容でプレビュー
+   *
+   * 設問プレビュー。管理画面の自前モックではなく、回答者が実際に見る liff/survey を
+   * そのまま描画する（＝プレビューと本番の見た目が構造的にズレない）。
+   *
+   * 本番と同じ経路を通すために、surveyPage と同一の前処理を必ず通す:
+   *   - applyAutoFreeText … 「その他」の自由記述欄は DB 未保存で描画直前に付与される
+   *   - resolveAnswerPresentation … chip_select / swipe_card 等の表示パターンをサーバーで解決
+   * この2つを省くと「素のcheckboxで、その他に入力欄が無い」という実画面と違う絵になる。
+   *
+   * POST は編集フォームをそのまま受け取り、**保存時とまったく同じ**
+   * buildQuestionConfigFromRequest に通してから描く（＝プレビュー専用の変換を書かない）。
+   * DB は読むだけで、書込みは GET / POST どちらも一切しない。
+   * session/assignment を作らず previewMode をビューへ渡し、survey.ejs 側が
+   * 回答・完了・深掘り・画像アップロードのAPIを叩かないようにする。
+   */
+  async previewQuestion(req: Request, res: Response): Promise<void> {
+    const saved = await questionRepository.getById(routeParam(req, "questionId"));
+    const project = await projectRepository.getById(saved.project_id);
+
+    // POST は編集中のフォーム値で上書きする。未保存のまま見た目を確かめるための経路。
+    // 入力途中は選択肢ゼロなど不正な状態を通るのが普通なので、変換に失敗したら
+    // 例外を投げずに保存済みの内容へ黙って落とす（プレビューが赤画面で止まらないように）。
+    let question = saved;
+    if (req.method === "POST") {
+      try {
+        const questionType = parseQuestionType(bodyString(req.body.question_type || saved.question_type));
+        question = {
+          ...saved,
+          question_text: bodyString(req.body.question_text) || saved.question_text,
+          question_type: questionType,
+          is_required: req.body.is_required === "on",
+          ai_probe_enabled: req.body.ai_probe_enabled === "on",
+          question_config: buildQuestionConfigFromRequest(req, questionType, saved.question_config),
+        };
+      } catch {
+        question = saved;
+      }
+    }
+
+    // scope=one（既定）はこの設問だけ。scope=all は同じ案件の設問を通しで確認する。
+    const scope = typeof req.query.scope === "string" ? req.query.scope : "one";
+    const all = await questionRepository.listByProject(question.project_id);
+    // 通しで見るときも、編集中の設問だけは差し替える（他はDBのまま）
+    const visible = all.filter((q) => !q.is_hidden).map((q) => (q.id === question.id ? question : q));
+    const targets = scope === "all"
+      ? (visible.length > 0 ? visible : [question])
+      : [question];
+
+    // プリセットと表示モードはクエリで上書きできる（管理者が casual/standard/formal を見比べるため）。
+    // 未指定なら案件の設定＝回答者が実際に見る条件。
+    const presetParam = typeof req.query.preset === "string" ? req.query.preset : "";
+    const answerUiPreset = (["casual", "standard", "formal"].includes(presetParam)
+      ? presetParam
+      : project.answer_ui_preset ?? "standard") as import("../types/domain").AnswerUiPreset;
+    const modeParam = typeof req.query.mode === "string" ? req.query.mode : "";
+    const displayMode = (["survey_question", "survey_page", "interview_chat"].includes(modeParam)
+      ? modeParam
+      : project.display_mode ?? "survey_question") as import("../types/domain").DisplayMode;
+
+    const questionsForClient = targets.map((q) => {
+      const question_config = q.question_config
+        ? { ...q.question_config, options: applyAutoFreeText(q.question_config.options) }
+        : q.question_config;
+      return {
+        ...q,
+        question_config,
+        presentation: resolveAnswerPresentation(
+          { question_type: q.question_type, question_text: q.question_text, question_config },
+          answerUiPreset,
+        ),
+      };
+    });
+
+    const pageGroups = displayMode === "survey_page"
+      ? await questionPageGroupRepository.listByProject(question.project_id).catch(() => [])
+      : [];
+
+    res.render("liff/survey", {
+      title: `プレビュー: ${project.user_display_title || project.name}`,
+      project,
+      projectData: {
+        id: project.id,
+        name: project.user_display_title || project.name,
+        display_mode: displayMode,
+      },
+      questions: questionsForClient,
+      answerUiPreset,
+      pageGroups,
+      // session / assignment は作らない（プレビューは何も保存しない）
+      sessionId: null,
+      assignmentId: null,
+      displayMode,
+      // 判定APIを呼ばせないため常にメインフェーズ扱いにする
+      surveyPhase: "main",
+      screeningFailMessage: "",
+      // LIFF は読み込ませない。authRequired=false かつ skipAllowed=true で
+      // survey.ejs の既存「認証不要パス」に乗り、そのまま startSurvey() が走る。
+      liffId: null,
+      liffAuthAvailable: false,
+      authRequired: false,
+      skipAllowed: true,
+      previewMode: true,
+      isStoreSurvey: false,
+      experience: await experienceService.resolveForProjectConfig(project.experience_config),
+      projectsUrl: "/liff/projects",
+      memberJoinUrl: "/liff/consent?mode=initial&redirect=/liff/mypage",
     });
   },
 
