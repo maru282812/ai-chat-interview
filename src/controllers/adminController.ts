@@ -498,6 +498,10 @@ function resolveNoticeMessage(value: unknown): string | null {
       return "プロジェクトを削除しました。";
     case "project_archived":
       return "回答履歴があるため、プロジェクトを archived に変更しました。";
+    case "question_created":
+      return "設問を作成しました。続けてこの画面で編集できます。";
+    case "question_updated":
+      return "設問を更新しました。";
     case "prompt_package_unset":
       return "プロジェクトを作成しました。プロンプトパッケージが未選択のため、公開済みパッケージ・バージョンを選択してください（未選択のままだと既定プロンプトで動作します）。";
     default:
@@ -3398,7 +3402,7 @@ export const adminController = {
       }
       const createMaxProbeCount = parseOptionalInteger(bodyString(req.body.max_probe_count));
       const createTagFields = buildTagFieldsFromRequest(req);
-      await questionRepository.create({
+      const createdQuestion = await questionRepository.create({
         project_id: projectId,
         question_code: questionCode,
         question_text: bodyString(req.body.question_text),
@@ -3416,7 +3420,8 @@ export const adminController = {
         ...createTagFields,
       });
 
-      res.redirect(`/admin/projects/${projectId}/questions`);
+      // 保存のたびに一覧へ戻さず、作成した設問の編集画面に留まる
+      res.redirect(`/admin/questions/${createdQuestion.id}/edit?notice=question_created`);
     } catch (error) {
       renderQuestionForm(res, {
         title: "質問作成",
@@ -3682,7 +3687,8 @@ export const adminController = {
         ...updateTagFields,
       });
 
-      res.redirect(`/admin/projects/${existing.project_id}/questions`);
+      // 保存のたびに一覧へ戻さず、同じ編集画面に留まる（一覧へは「一覧へ戻る」で明示的に戻る）
+      res.redirect(`/admin/questions/${questionId}/edit?notice=question_updated`);
     } catch (error) {
       renderQuestionForm(res, {
         title: "質問編集",
