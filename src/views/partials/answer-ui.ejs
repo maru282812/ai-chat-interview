@@ -73,9 +73,23 @@
   }
   .answer-chips .chip-item.selected { border-color: #2ca87a; background: #e8f7f0; }
   .answer-chips .chip-item .card-item-title { font-size: 14px; }
+  /* 自由記述つきチップ（「その他（　）」等）はピルに収まらない。
+     .chip-item は flex-direction:row のため、そのままだと width:100% の入力欄が
+     ラベルと同じ行に入り、ピルの右を飛び出したうえにラベルが1文字ずつ折り返される。
+     行を独占させ、角丸カードとして縦積みにする（.answer-freetext-rows と同じ形）。 */
+  .answer-chips .chip-item.has-freetext {
+    flex: 1 0 100%; flex-direction: column; align-items: stretch;
+    border-radius: 14px; padding: 10px 14px;
+  }
 
   /* スワイプ系から外した自由記述つき選択肢（「その他」）の行。
      デッキの下に置き、タップで選択→記述欄に入力する。 */
+  /* 自由記述欄はどのパターンでも親カードからはみ出させない。 */
+  .other-text-input {
+    max-width: 100%; min-width: 0; box-sizing: border-box;
+    padding: 8px 10px; border: 1px solid #d8e3e0; border-radius: 8px;
+    font-size: 14px; line-height: 1.4; background: #fff;
+  }
   .answer-freetext-rows { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
   .answer-freetext-rows .chip-item {
     display: flex; flex-direction: column; align-items: stretch;
@@ -372,7 +386,9 @@
       if (!c.allow_free_text) return '';
       return '<input type="text" class="other-text-input' + (extraClass ? ' ' + extraClass : '') + '"'
         + ' data-code="' + esc(q.question_code) + '" data-val="' + esc(c.value) + '" placeholder="自由記述"'
-        + ' onclick="event.stopPropagation();" style="margin-top:' + marginTop + 'px;width:100%;box-sizing:border-box;" />';
+        // 幅は .other-text-input（max-width:100%）に任せる。inline の width:100% は
+        // 横並びの親（chip/choice-item）だと gap/padding 分あふれるため付けない。
+        + ' onclick="event.stopPropagation();" style="margin-top:' + marginTop + 'px;" />';
     }
 
     // ---- タップ確定系（tap_cards / big_split・migration 075）----
@@ -419,7 +435,8 @@
     // 共通クリック配線の input.checked 反転が二重発火して相殺され、選択できなくなる。
     function buildChipSelectHtml(q, choices) {
       var items = choices.map(function (c) {
-        return '<div class="card-item chip-item">'
+        // has-freetext: 記述欄つきは1行を独占する縦積みカードにする（ピルには収まらない）。
+        return '<div class="card-item chip-item' + (isFreeText(c) ? ' has-freetext' : '') + '">'
           + '<input type="checkbox" name="q_' + esc(q.question_code) + '" value="' + esc(c.value) + '" ' + exclAttrs(c) + ' style="display:none" />'
           + '<span class="card-item-title">' + esc(c.label) + '</span>'
           + otherInput(q, c, '', 6)

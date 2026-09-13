@@ -30,7 +30,7 @@ function loadAnswerUi(): any {
   assert.ok(m, "answer-ui.ejs から <script> を取り出せませんでした");
   const sandbox: any = { window: {} };
   vm.createContext(sandbox);
-  vm.runInContext(m![1], sandbox);
+  vm.runInContext(m?.[1] ?? "", sandbox);
   assert.ok(sandbox.window.AnswerUI, "AnswerUI が定義されていません");
   return sandbox.window.AnswerUI;
 }

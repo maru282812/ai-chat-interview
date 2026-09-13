@@ -52,10 +52,26 @@
       width: 100%; height: 90px; object-fit: cover;
       border-radius: 6px; display: block;
     }
-    .choice-label { font-size: 14px; line-height: 1.4; }
+    .choice-label { font-size: 14px; line-height: 1.4; min-width: 0; }
     .choice-item.has-img .choice-label { text-align: center; font-size: 13px; }
     .choice-item.selected { background: #e8f7f0; border-color: #2ca87a; }
     .choice-item input    { accent-color: #2ca87a; flex-shrink: 0; }
+    /* 自由記述つき選択肢（「その他（　）」等）は、ラベル行の下に入力欄を敷く。
+       .choice-item は既定が横並び(row)なので、そのままだと width:100% の入力欄が
+       ラベルと同じ行に入り、カードの右枠を飛び出したうえにラベルが1文字ずつ
+       折り返される（「そ/の/他」）。縦積みにして入力欄へ一行まるごと渡す。
+       partials/answer-ui.ejs の .answer-freetext-rows .chip-item と同じ考え方。 */
+    .choice-item.has-freetext {
+      flex-wrap: wrap;
+      row-gap: 6px;
+    }
+    .choice-item.has-freetext .other-text-input { flex: 1 0 100%; }
+    /* 入力欄は必ずカード内に収める（inline の width:100% だけだと gap/padding 分あふれる）。 */
+    .other-text-input {
+      max-width: 100%; min-width: 0;
+      padding: 8px 10px; border: 1px solid #d8e3e0; border-radius: 8px;
+      font-size: 14px; line-height: 1.4; background: #fff;
+    }
     .free-text-input {
       width: 100%; padding: 10px; border: 1px solid #d8e3e0;
       border-radius: 10px; font-size: 15px; resize: vertical; line-height: 1.5;
@@ -1249,12 +1265,13 @@
     }
 
     function choiceListItem(inputEl, c) {
-      return `<label class="choice-item${c.imageUrl ? ' has-img' : ''}">
+      // has-freetext: 自由記述欄を持つ選択肢は縦積みにする（CSS 側で入力欄を次の行へ送る）。
+      return `<label class="choice-item${c.imageUrl ? ' has-img' : ''}${c.allow_free_text ? ' has-freetext' : ''}">
         ${inputEl}
         ${choiceImg(c)}
         <span class="choice-label">${esc(c.label)}</span>
         ${c.description ? `<span class="choice-desc">${esc(c.description)}</span>` : ''}
-        ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" style="margin-top:6px;width:100%;box-sizing:border-box;" onclick="event.stopPropagation();" />` : ''}
+        ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" style="box-sizing:border-box;" onclick="event.stopPropagation();" />` : ''}
         ${choiceAdditionalImgs(c)}
       </label>`;
     }
