@@ -2446,6 +2446,50 @@ function resolveExpectedSlotKeyByLabel(
   return matched.key;
 }
 
+/**
+ * ラベル配列だけを送ってくる画面（フロー設計）の保存で、既存の選択肢 value を守る。
+ *
+ * value は表示条件（"q5=yes"）や分岐条件（branch_rule.when）が指す識別子で、
+ * ラベル文字列で作り直すと条件が一致しなくなり、分岐と出し分けが黙って全滅する。
+ * 実際に美容室ABCの Q5-Q7 がこれで壊れた（seed は value:"yes" を入れていたのに
+ * フロー設計画面で保存した時点で value がラベルへ置き換わっていた）。
+ *
+ * 引き継ぎ方針: ラベル一致を最優先。一致が無ければ同じ位置の選択肢の value を使う
+ * （＝ラベルの誤字修正）。どちらも無ければ新規選択肢なのでラベルを value にする。
+ */
+export function mergeOptionLabelsPreservingValues(
+  labels: string[],
+  previousOptions: Array<{ label?: string; value?: string }>
+): Array<{ label: string; value: string }> {
+  const usedValues = new Set<string>();
+  const consumedIndexes = new Set<number>();
+
+  return labels
+    .filter((l) => typeof l === "string" && l.trim())
+    .map((rawLabel) => ({ label: rawLabel.trim() }))
+    .map(({ label }, index) => {
+      const byLabelIdx = previousOptions.findIndex(
+        (o, i) => !consumedIndexes.has(i) && typeof o?.label === "string" && o.label.trim() === label
+      );
+      let carried: string | undefined;
+      if (byLabelIdx >= 0) {
+        consumedIndexes.add(byLabelIdx);
+        carried = previousOptions[byLabelIdx]?.value;
+      } else if (!consumedIndexes.has(index)) {
+        // ラベルが変わった場合でも、同じ位置の選択肢なら同一の選択肢とみなして value を保つ
+        const sameSlot = previousOptions[index];
+        if (sameSlot) {
+          consumedIndexes.add(index);
+          carried = sameSlot.value;
+        }
+      }
+      const value =
+        typeof carried === "string" && carried.trim() && !usedValues.has(carried) ? carried : label;
+      usedValues.add(value);
+      return { label, value };
+    });
+}
+
 function buildBranchRuleFromRequest(
   req: Request,
   expectedSlots: NonNullable<NonNullable<Question["question_config"]>["meta"]>["expected_slots"]
@@ -3501,21 +3545,37 @@ export const adminController = {
     if (req.method === "POST") {
       try {
         const questionType = parseQuestionType(bodyString(req.body.question_type || saved.question_type));
+        const questionConfig = buildQuestionConfigFromRequest(req, questionType, saved.question_config);
+        // branch_rule は question_config とは別カラムなので、ここで明示的に組み直さないと
+        // 「分岐を編集 → 未保存のままプレビュー」が保存済みの古い分岐で動いてしまう。
+        // 分岐行が1つも無いフォーム（＝null）のときは保存済みを残さず null にする。
+        const branchRule = buildBranchRuleFromRequest(req, questionConfig.meta?.expected_slots ?? []);
         question = {
           ...saved,
           question_text: bodyString(req.body.question_text) || saved.question_text,
           question_type: questionType,
           is_required: req.body.is_required === "on",
           ai_probe_enabled: req.body.ai_probe_enabled === "on",
-          question_config: buildQuestionConfigFromRequest(req, questionType, saved.question_config),
+          question_config: questionConfig,
+          branch_rule: branchRule,
         };
       } catch {
         question = saved;
       }
     }
 
-    // scope=one（既定）はこの設問だけ。scope=all は同じ案件の設問を通しで確認する。
-    const scope = typeof req.query.scope === "string" ? req.query.scope : "one";
+    // scope=all は同じ案件の設問を通しで確認する。scope=one はこの設問だけ。
+    // 分岐を持つ設問は「この設問だけ」だと次が1件も無く必ず完了画面に落ちて分岐を確認できないため、
+    // 明示指定が無いときは通しを既定にする（分岐が無ければ従来どおりこの設問だけ）。
+    const branchRuleForScope = question.branch_rule;
+    const hasBranches = Boolean(
+      branchRuleForScope &&
+      !Array.isArray(branchRuleForScope) &&
+      ((branchRuleForScope.branches?.length ?? 0) > 0 || branchRuleForScope.default_next)
+    );
+    const scope = typeof req.query.scope === "string" && req.query.scope
+      ? req.query.scope
+      : (hasBranches ? "all" : "one");
     const all = await questionRepository.listByProject(question.project_id);
     // 通しで見るときも、編集中の設問だけは差し替える（他はDBのまま）
     const visible = all.filter((q) => !q.is_hidden).map((q) => (q.id === question.id ? question : q));
@@ -4767,10 +4827,19 @@ export const adminController = {
     const newConfig: Record<string, unknown> = { ...existingConfig };
 
     // 選択肢（選択型）
+    //
+    // フロー設計画面はラベル文字列の配列しか送ってこないが、value をラベルで作り直しては
+    // **いけない**。value は表示条件（"q5=yes"）や分岐条件が指す識別子で、ラベルに
+    // 置き換わると条件が一致しなくなり、分岐と出し分けが黙って全滅する（実際に
+    // 美容室ABCで発生した）。ラベルが一致する既存選択肢の value を引き継ぎ、
+    // 新規追加された選択肢にだけラベル由来の value を与える。
     if (CHOICE_QUESTION_TYPES.includes(questionType) && Array.isArray(body.options)) {
-      newConfig.options = (body.options as string[])
-        .filter((l) => l && l.trim())
-        .map((label) => ({ label: label.trim(), value: label.trim() }));
+      newConfig.options = mergeOptionLabelsPreservingValues(
+        body.options as string[],
+        Array.isArray(existingConfig.options)
+          ? (existingConfig.options as Array<{ label?: string; value?: string }>)
+          : []
+      );
     }
 
     // マトリクス設定

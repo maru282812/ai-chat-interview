@@ -519,6 +519,12 @@
         <button id="btnCloseLiff" class="btn-next" style="min-width:160px;">LINEに戻る</button>
         <p id="completeCloseTip" style="display:none;font-size:13px;color:#60726f;margin-top:8px;">アンケートは完了しました。この画面を閉じてください。</p>
       </div>
+      <!-- プレビュー専用。なぜここで終わったのかと、別の選択肢を試す導線を出す（管理者にしか出ない） -->
+      <div id="previewCompleteNote" style="display:none;margin-top:18px;padding:12px 14px;border:1px dashed #cfe3de;border-radius:10px;background:#f7fbfa;text-align:left;">
+        <p style="margin:0 0 8px;font-size:13px;color:#0b5a55;font-weight:600;">プレビューはここで終了です</p>
+        <p id="previewCompleteReason" style="margin:0 0 10px;font-size:12px;color:#5d726f;line-height:1.6;"></p>
+        <button type="button" id="btnPreviewRestart" class="btn-next" style="min-width:150px;font-size:13px;">最初からやり直す</button>
+      </div>
       <!-- 店舗専用アンケート完了後の Hibi 参加 CTA。中身は buildStoreJoinCtaHtml() で描画する -->
       <div id="storeSurveyCta" style="margin-top:24px;display:none;"></div>
       <p id="completeError" style="display:none;color:#e53e3e;font-size:14px;margin-top:12px;">完了処理に失敗しました。時間をおいて再度お試しください。</p>
@@ -1777,6 +1783,33 @@
     const btnBack = document.getElementById('btnBack');
     const progressBar = document.getElementById('progressBar');
     const completeScreen = document.getElementById('completeScreen');
+
+    // プレビューで完了画面に来た理由を出し、やり直せるようにする。
+    // 設問が1件しか渡っていない（表示範囲＝この設問）ときは、分岐先が存在しないので必ずここに来る。
+    function showPreviewCompleteNote() {
+      const note = document.getElementById('previewCompleteNote');
+      const reason = document.getElementById('previewCompleteReason');
+      if (!note || !reason) return;
+      reason.textContent = QUESTIONS.length <= 1
+        ? '表示範囲が「この設問」のため、次の設問が読み込まれていません。分岐先まで確認するには、上の表示範囲を「通しで」に変えてください。'
+        : 'この回答では、これ以上進む設問がありませんでした（分岐の遷移先かデフォルト遷移先が終了になっています）。';
+      note.style.display = 'block';
+
+      // 状態（cursor / answerCtx）は各所に散っているため、確実に初期状態へ戻すには描き直しが要る。
+      // ライブプレビューは親が form を POST して描いており、iframe 内で reload すると
+      // 再送信の確認ダイアログになる。そこで親に描き直しを頼み、単独で開いている場合だけ reload する。
+      const restartBtn = document.getElementById('btnPreviewRestart');
+      if (restartBtn && !restartBtn.dataset.wired) {
+        restartBtn.dataset.wired = '1';
+        restartBtn.addEventListener('click', function () {
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage({ type: 'hibi:preview-restart' }, window.location.origin);
+            return;
+          }
+          window.location.reload();
+        });
+      }
+    }
     const answerErrorEl = document.getElementById('answerError');
 
     // 送信失敗の表示制御（Phase 2）。表示中はカーソルを進めていないので、
@@ -2363,7 +2396,12 @@
 
       // プレビューは完了確定APIを叩かない（ポイント付与・ステータス更新を起こさない）。
       // 完了画面の見た目まで確認できるよう、画面自体は通常どおり出したまま止める。
-      if (PREVIEW_MODE) return;
+      // ただし「分岐を追いたいのに完了に来た」ときに理由が分からないと行き止まりになるので、
+      // なぜ終わったのかと、別の選択肢をもう一度試す導線を出す。
+      if (PREVIEW_MODE) {
+        showPreviewCompleteNote();
+        return;
+      }
 
       const completeActions = document.getElementById('completeActions');
       const completeError = document.getElementById('completeError');

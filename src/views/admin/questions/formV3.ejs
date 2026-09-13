@@ -4,6 +4,10 @@
   const branchRows = Array.isArray(safeForm.branch_rows) && safeForm.branch_rows.length > 0
     ? safeForm.branch_rows
     : [{ source: "answer", field_label: "", operator: "equals", value: "", next: "" }];
+  // 分岐を持つ設問は、プレビューを「この設問だけ」で開くと次が無く必ず完了画面に落ちて
+  // 分岐を確認できない。値と遷移先が両方埋まった行が1つでもあれば通しを既定にする。
+  const hasBranchRule = Array.isArray(safeForm.branch_rows)
+    && safeForm.branch_rows.some((r) => r && String(r.value || '').trim() && String(r.next || '').trim());
   const optionLabels = Array.isArray(safeForm.option_labels) && safeForm.option_labels.length > 0
     ? safeForm.option_labels
     : [""];
@@ -1277,8 +1281,8 @@
         <option value="formal">formal</option>
       </select>
       <select id="livePreviewScope" title="表示範囲">
-        <option value="one">この設問</option>
-        <option value="all">通しで</option>
+        <option value="one" <%= hasBranchRule ? '' : 'selected' %>>この設問</option>
+        <option value="all" <%= hasBranchRule ? 'selected' : '' %>>通しで</option>
       </select>
     </div>
 
@@ -1328,8 +1332,8 @@
         <option value="formal">formal（従来のラジオ）</option>
       </select>
       <select id="previewScope" title="表示範囲" style="width:auto;flex:0 1 auto;border:1px solid #ccc;border-radius:6px;padding:4px 8px;font-size:12px;">
-        <option value="one">この設問だけ</option>
-        <option value="all">案件の設問を通しで</option>
+        <option value="one" <%= hasBranchRule ? '' : 'selected' %>>この設問だけ</option>
+        <option value="all" <%= hasBranchRule ? 'selected' : '' %>>案件の設問を通しで</option>
       </select>
       <button type="button" id="previewReload" class="button-link secondary" style="font-size:12px;padding:4px 10px;">↻ 再読込</button>
     </div>
@@ -2319,6 +2323,14 @@
     // 選択肢の追加/削除など、JS でDOMを組み替える操作も拾う
     new MutationObserver(() => scheduleLivePreview(400))
       .observe(liveForm, { childList: true, subtree: true });
+
+    // プレビュー内の「最初からやり直す」からの依頼。iframe 内で reload すると POST の
+    // 再送信ダイアログになるため、親から描き直す。origin を検査して他所からの指示は無視する。
+    window.addEventListener('message', (ev) => {
+      if (ev.origin !== window.location.origin) return;
+      if (!ev.data || ev.data.type !== 'hibi:preview-restart') return;
+      renderLivePreview();
+    });
 
     document.getElementById('livePreviewReload').onclick = renderLivePreview;
     document.getElementById('livePreviewMode').onchange   = renderLivePreview;

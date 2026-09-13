@@ -375,19 +375,26 @@
     var textPreview = q.question_text.length > 25 ? q.question_text.slice(0, 25) + '…' : q.question_text;
 
     // Build branch output handles (right side for each branch)
+    // ポートの丸だけでは「どの選択肢の出口か」が図から読めないため、
+    // 丸の右に選択肢ラベルを実テキストで出す（hover の title 頼みにしない）。
     var branchHandles = (branchRule.branches || []).map(function (b, i) {
-      var label = getBranchLabel(b);
+      var label = getBranchLabel(b, q);
+      var shown = label || '分岐' + (i + 1);
       var topPct = (i + 1) / (branchCount + 1);
       var topPx = Math.round(topPct * DIAMOND_H);
+      var unset = b && b.next ? '' : ' is-unset';
       return '<div class="node-handle node-handle-out" style="bottom:auto;left:' + (DIAMOND_W - 4) + 'px;top:' + topPx + 'px;transform:none;" ' +
-             'data-handle-out="' + q.id + '" data-branch-key="branch_' + i + '" title="' + esc(label || '分岐' + (i+1)) + '"></div>';
+             'data-handle-out="' + q.id + '" data-branch-key="branch_' + i + '" title="' + esc(shown) + '"></div>' +
+             '<span class="node-port-label' + unset + '" style="left:' + (DIAMOND_W + 14) + 'px;top:' + (topPx - 7) + 'px;" ' +
+             'title="' + esc(shown) + '">' + esc(truncLabel(shown, 14)) + '</span>';
     }).join('');
 
     el.innerHTML =
       '<div class="node-diamond-bg"></div>' +
       '<div class="node-handle node-handle-in" data-handle-in="' + q.id + '"></div>' +
       // bottom tip = default out
-      '<div class="node-handle node-handle-out" style="top:113px;left:93px;bottom:auto;transform:none;" data-handle-out="' + q.id + '" data-branch-key="default" title="デフォルト遷移"></div>' +
+      '<div class="node-handle node-handle-out" style="top:113px;left:93px;bottom:auto;transform:none;" data-handle-out="' + q.id + '" data-branch-key="default" title="どの分岐にも当たらないとき"></div>' +
+      '<span class="node-port-label node-port-label-default" style="left:113px;top:113px;">それ以外</span>' +
       branchHandles +
       '<div class="node-diamond-content">' +
         '<span class="node-code">' + esc(q.question_code) + '</span>' +
@@ -451,7 +458,7 @@
       for (var bi = 0; bi < branches.length; bi++) {
         var branch = branches[bi];
         if (!branch.next) continue;
-        var label = getBranchLabel(branch);
+        var label = truncLabel(getBranchLabel(branch, q), 12);
         var connId = q.id + ':branch_' + bi;
         if (branch.next === 'END') {
           drawArrow(defs, q.id, '__end__', label, '#dda020', true, connId);
@@ -465,10 +472,10 @@
       if (branchRule.default_next) {
         var defConnId = q.id + ':default';
         if (branchRule.default_next === 'END') {
-          drawArrow(defs, q.id, '__end__', 'default', '#2ca87a', false, defConnId);
+          drawArrow(defs, q.id, '__end__', 'それ以外', '#2ca87a', false, defConnId);
         } else {
           var defQ = questions.find(function (x) { return x.question_code === branchRule.default_next; });
-          if (defQ) drawArrow(defs, q.id, defQ.id, 'default', '#2ca87a', false, defConnId);
+          if (defQ) drawArrow(defs, q.id, defQ.id, 'それ以外', '#2ca87a', false, defConnId);
         }
       } else if (branches.length === 0) {
         // Sequential
@@ -590,11 +597,76 @@
     }
   }
 
-  function getBranchLabel(branch) {
+  // 分岐条件の値から、その設問の選択肢ラベルを引く。
+  // branch.when の値は保存経路によって「選択肢のvalue（＝labelと同じ文字列）」のことも
+  // 「1始まりの選択肢番号」のこともあるため、value一致 → 番号 の順に解決する。
+  // どちらにも当たらなければ値をそのまま返す（自由記述や数値条件はこれで正しい）。
+  function resolveOptionLabel(q, rawValue) {
+    if (rawValue === undefined || rawValue === null) return '';
+    var value = String(rawValue);
+    var options = (q && q.question_config && q.question_config.options) || [];
+    if (!options.length) return value;
+
+    for (var i = 0; i < options.length; i++) {
+      var o = options[i] || {};
+      if (String(o.value) === value) return String(o.label || o.value);
+    }
+    // 1始まりの選択肢番号として解釈する（旧データの equals:1 形式）
+    if (/^[0-9]+$/.test(value)) {
+      var idx = parseInt(value, 10) - 1;
+      if (idx >= 0 && idx < options.length) {
+        var hit = options[idx] || {};
+        return String(hit.label || hit.value || value);
+      }
+    }
+    return value;
+  }
+
+  // 選択肢ラベルが長いとノードの外まで伸びて図が読めなくなるので詰める
+  function truncLabel(s, max) {
+    var t = String(s == null ? '' : s);
+    return t.length > max ? t.slice(0, max) + '…' : t;
+  }
+
+  // 右パネルの条件セレクト用。選択式設問なら {cond:'equals:値', label:'表示名'} を返す。
+  // cond の文字列形式は parseBranchCond / collectRpData がそのまま解釈する契約。
+  function getBranchChoiceOptions(q) {
+    var options = (q && q.question_config && q.question_config.options) || [];
+    return options.map(function (o, i) {
+      var value = (o && o.value !== undefined && o.value !== null) ? String(o.value) : '';
+      var label = (o && o.label) ? String(o.label) : value;
+      if (!value) return null;
+      // 既存データは条件が 1始まりの選択肢番号（equals:1）で入っていることがある。
+      // 同じ選択肢を指す別表記なので、セレクトの照合用に番号も持たせる。
+      // これが無いと保存済みの分岐が「選択肢外」に落ち、再保存で番号が
+      // ラベル文字列に書き換わってデータが黙って変わってしまう。
+      return { cond: 'equals:' + value, altCond: 'equals:' + (i + 1), label: label };
+    }).filter(Boolean);
+  }
+
+  /** 保存済みの条件文字列が、その選択肢を指しているか（value 一致・番号一致の両方を見る） */
+  function condMatchesChoice(condStr, choice) {
+    return Boolean(condStr) && (condStr === choice.cond || condStr === choice.altCond);
+  }
+
+  // branch.when を「equals:値」等の編集用文字列に戻す
+  function branchCondToString(b) {
+    var w = (b && b.when) || {};
+    if (w.equals   !== undefined) return 'equals:'   + w.equals;
+    if (w.any_of   !== undefined) return 'any_of:'   + (w.any_of || []).join(',');
+    if (w.includes !== undefined) return 'includes:' + w.includes;
+    if (w.gte      !== undefined) return 'gte:'      + w.gte;
+    if (w.lte      !== undefined) return 'lte:'      + w.lte;
+    return '';
+  }
+
+  function getBranchLabel(branch, q) {
     var w = branch.when || {};
-    if (w.equals   !== undefined) return '=' + w.equals;
-    if (w.any_of   !== undefined) return '∈[' + (w.any_of || []).join(',') + ']';
-    if (w.includes !== undefined) return '含' + w.includes;
+    if (w.equals   !== undefined) return resolveOptionLabel(q, w.equals);
+    if (w.any_of   !== undefined) {
+      return (w.any_of || []).map(function (v) { return resolveOptionLabel(q, v); }).join(' / ');
+    }
+    if (w.includes !== undefined) return resolveOptionLabel(q, w.includes);
     if (w.gte      !== undefined) return '≥' + w.gte;
     if (w.lte      !== undefined) return '≤' + w.lte;
     return '';
@@ -730,9 +802,13 @@
     } else if (branchKey.startsWith('branch_')) {
       var bidx = parseInt(branchKey.slice(7), 10);
       if (!branchRule.branches) branchRule.branches = [];
-      if (branchRule.branches[bidx]) {
-        branchRule.branches[bidx].next = toCode;
+      if (!branchRule.branches[bidx]) {
+        // 対応する分岐行が無い＝条件が未定義。黙って捨てると「線を引いたのに何も起きない」
+        // ことになるので、理由を出して止める。
+        showStatus('この分岐には条件がありません。右パネルの「分岐」タブで条件を設定してください', 'error');
+        return;
       }
+      branchRule.branches[bidx].next = toCode;
     }
 
     // Persist
@@ -1134,14 +1210,34 @@
         allNextOpts +
       '</select>';
 
+    // 条件は「equals:値」の文字列で保持する（collectRpData/parseBranchCond の契約）。
+    // 選択式の設問では、その文字列を value に持つ <select> にして選択肢から選ばせる。
+    // 手打ちを強いると選択肢の表記ゆれで無言に一致しなくなるため。
+    var branchOptionChoices = getBranchChoiceOptions(q);
+
+    function condControlHtml(condStr) {
+      if (!branchOptionChoices.length) {
+        return '<input type="text" class="rp-branch-cond" value="' + esc(condStr) + '" placeholder="equals:値" />';
+      }
+      var known = false;
+      var opts = branchOptionChoices.map(function (c) {
+        var sel = condMatchesChoice(condStr, c) ? ' selected' : '';
+        if (sel) known = true;
+        // 一致した既存条件は、その表記のまま value に残す（equals:1 を勝手に書き換えない）
+        var val = sel ? condStr : c.cond;
+        return '<option value="' + esc(val) + '"' + sel + '>' + esc(c.label) + '</option>';
+      }).join('');
+      // 選択肢に無い条件（数値条件や旧データ）は消さずに残す
+      var extra = (condStr && !known)
+        ? '<option value="' + esc(condStr) + '" selected>' + esc(condStr) + '（選択肢外）</option>'
+        : '';
+      return '<select class="rp-branch-cond">' +
+               '<option value="">選択肢を選ぶ…</option>' + opts + extra +
+             '</select>';
+    }
+
     var branchRowsHtml = branches.map(function (b, i) {
-      var w = b.when || {};
-      var condStr =
-        w.equals   !== undefined ? 'equals:'   + w.equals :
-        w.any_of   !== undefined ? 'any_of:'   + (w.any_of || []).join(',') :
-        w.includes !== undefined ? 'includes:' + w.includes :
-        w.gte      !== undefined ? 'gte:'      + w.gte :
-        w.lte      !== undefined ? 'lte:'      + w.lte : '';
+      var condStr = branchCondToString(b);
       var nextOpts = questions
         .filter(function (x) { return x.id !== q.id; })
         .map(function (x) {
@@ -1151,7 +1247,7 @@
       return (
         '<div class="rp-branch-row" data-bidx="' + i + '">' +
           '<div class="rp-row">' +
-            '<div class="rp-field"><label>条件</label><input type="text" class="rp-branch-cond" value="' + esc(condStr) + '" placeholder="equals:1" /></div>' +
+            '<div class="rp-field"><label>この選択肢なら</label>' + condControlHtml(condStr) + '</div>' +
             '<div class="rp-field"><label>遷移先</label>' +
               '<select class="rp-branch-next">' +
                 '<option value="">未設定</option>' +
@@ -1169,9 +1265,14 @@
       '<div class="rp-tab-pane' + activeClass + '" id="rp-tab-branch">' +
         '<div class="rp-field"><label>デフォルト遷移先</label>' + defaultNextSel + '</div>' +
         '<div class="rp-section-title">条件分岐</div>' +
-        '<p style="font-size:10px;color:#60726f;margin:0 0 8px">条件式: <code>equals:値</code>, <code>any_of:1,2,3</code>, <code>gte:数値</code>, <code>lte:数値</code></p>' +
+        (branchOptionChoices.length
+          ? '<p style="font-size:10px;color:#60726f;margin:0 0 8px">選択肢ごとに遷移先を決めます。どれにも当たらない回答は「デフォルト遷移先」へ進みます。</p>'
+          : '<p style="font-size:10px;color:#60726f;margin:0 0 8px">条件式: <code>equals:値</code>, <code>any_of:1,2,3</code>, <code>gte:数値</code>, <code>lte:数値</code></p>') +
         '<div id="rp-branch-rows">' + branchRowsHtml + '</div>' +
         '<button type="button" class="rp-add-btn" id="rp-add-branch">＋ 分岐追加</button>' +
+        (branchOptionChoices.length
+          ? '<button type="button" class="rp-add-btn" id="rp-branch-from-options" style="margin-left:6px">選択肢から分岐を作る（' + branchOptionChoices.length + '件）</button>'
+          : '') +
       '</div>'
     );
   }
@@ -1218,28 +1319,78 @@
     }
     // Add branch
     if (e.target.id === 'rp-add-branch') {
-      var bc = document.getElementById('rp-branch-rows');
-      if (!bc) return;
-      var blen = bc.querySelectorAll('.rp-branch-row').length;
-      var q = questions.find(function (x) { return x.id === selectedId; });
-      var nextOpts2 = q ? questions
-        .filter(function (x) { return x.id !== q.id; })
-        .map(function (x) { return '<option value="' + esc(x.question_code) + '">' + esc(x.question_code) + '</option>'; }).join('') : '';
-      var brow = document.createElement('div');
-      brow.className = 'rp-branch-row';
-      brow.setAttribute('data-bidx', blen);
-      brow.innerHTML =
-        '<div class="rp-row">' +
-          '<div class="rp-field"><label>条件</label><input type="text" class="rp-branch-cond" value="" placeholder="equals:1" /></div>' +
-          '<div class="rp-field"><label>遷移先</label>' +
-            '<select class="rp-branch-next"><option value="">未設定</option><option value="END">END</option>' + nextOpts2 + '</select>' +
-          '</div>' +
-        '</div>' +
-        '<button type="button" class="rp-add-btn" style="color:#c04040;border-color:#e8c0c0" data-del-branch="' + blen + '">削除</button>';
-      bc.appendChild(brow);
+      appendBranchRow('');
+      return;
+    }
+    // 選択肢から分岐を一括生成。分岐行が無いとポート自体が出ず線が引けないため、
+    // 「選択肢ぶんの行をまとめて作る」を1操作で済ませる。既にある条件は重複させない。
+    if (e.target.id === 'rp-branch-from-options') {
+      var fq = questions.find(function (x) { return x.id === selectedId; });
+      if (!fq) return;
+      var choices = getBranchChoiceOptions(fq);
+      if (!choices.length) { showStatus('この設問には選択肢がありません', 'info'); return; }
+
+      var existing = [];
+      document.querySelectorAll('#rp-branch-rows .rp-branch-row .rp-branch-cond').forEach(function (el) {
+        if (el.value) existing.push(el.value);
+      });
+
+      var added = 0;
+      choices.forEach(function (c) {
+        // equals:値 と equals:番号 は同じ選択肢を指すので、どちらかがあれば作らない
+        var dup = existing.some(function (v) { return condMatchesChoice(v, c); });
+        if (dup) return;
+        appendBranchRow(c.cond);
+        added++;
+      });
+      showStatus(added > 0
+        ? added + '件の分岐行を作りました。遷移先を選んで保存してください'
+        : '選択肢ぶんの分岐行はすべて作成済みです', added > 0 ? 'success' : 'info');
       return;
     }
   });
+
+  // 分岐行を1行追加する。cond は 'equals:値' 形式（空なら未設定）。
+  function appendBranchRow(cond) {
+    var bc = document.getElementById('rp-branch-rows');
+    if (!bc) return;
+    var blen = bc.querySelectorAll('.rp-branch-row').length;
+    var q = questions.find(function (x) { return x.id === selectedId; });
+    var nextOpts2 = q ? questions
+      .filter(function (x) { return x.id !== q.id; })
+      .map(function (x) { return '<option value="' + esc(x.question_code) + '">' + esc(x.question_code) + '</option>'; }).join('') : '';
+
+    var choices = q ? getBranchChoiceOptions(q) : [];
+    var condHtml;
+    if (choices.length) {
+      var known = false;
+      var optsHtml = choices.map(function (c) {
+        var sel = condMatchesChoice(cond, c) ? ' selected' : '';
+        if (sel) known = true;
+        var val = sel ? cond : c.cond;
+        return '<option value="' + esc(val) + '"' + sel + '>' + esc(c.label) + '</option>';
+      }).join('');
+      var extra = (cond && !known)
+        ? '<option value="' + esc(cond) + '" selected>' + esc(cond) + '（選択肢外）</option>'
+        : '';
+      condHtml = '<select class="rp-branch-cond"><option value="">選択肢を選ぶ…</option>' + optsHtml + extra + '</select>';
+    } else {
+      condHtml = '<input type="text" class="rp-branch-cond" value="' + esc(cond || '') + '" placeholder="equals:値" />';
+    }
+
+    var brow = document.createElement('div');
+    brow.className = 'rp-branch-row';
+    brow.setAttribute('data-bidx', blen);
+    brow.innerHTML =
+      '<div class="rp-row">' +
+        '<div class="rp-field"><label>この選択肢なら</label>' + condHtml + '</div>' +
+        '<div class="rp-field"><label>遷移先</label>' +
+          '<select class="rp-branch-next"><option value="">未設定</option><option value="END">END</option>' + nextOpts2 + '</select>' +
+        '</div>' +
+      '</div>' +
+      '<button type="button" class="rp-add-btn" style="color:#c04040;border-color:#e8c0c0" data-del-branch="' + blen + '">削除</button>';
+    bc.appendChild(brow);
+  }
 
   async function fetchAiSuggestion() {
     if (!selectedId || ['__start__','__end__'].includes(selectedId)) return;

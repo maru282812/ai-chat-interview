@@ -588,6 +588,39 @@
   background: #0b7a75;
   transform: translateX(-50%) scale(1.25);
 }
+
+/* ─── Port labels ────────────────────────────
+   分岐ポートは緑丸だけでは「どの選択肢の出口か」が分からないため、
+   丸の右に選択肢ラベルを実テキストで置く（hover の title に頼らない）。 */
+.node-port-label {
+  position: absolute;
+  z-index: 21;
+  max-width: 130px;
+  padding: 1px 6px;
+  border: 1px solid #cfe3de;
+  border-radius: 9px;
+  background: #f4fbf9;
+  color: #0b5a55;
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+/* 遷移先が未設定の分岐は、線が引かれていないことが一目で分かるようにする */
+.node-port-label.is-unset {
+  border-style: dashed;
+  border-color: #dda020;
+  background: #fdf6e7;
+  color: #8a6410;
+}
+.node-port-label-default {
+  border-color: #d8e6e3;
+  background: #f7faf9;
+  color: #5d726f;
+}
+
 /* Diamond input handle – top tip */
 .flow-node.node-branch .node-handle-in {
   top: 13px;
