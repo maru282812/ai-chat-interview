@@ -694,12 +694,16 @@
         <div id="exclusivePreviewNote" style="font-size:12px;color:#1a7a57;min-height:16px;"></div>
       </div>
 
-      <!-- スケール設定（未使用） -->
+      <!-- スケール設定（未使用）
+           ⚠ このブロックは syncTypeVisibility() で常に hidden になる。hidden は「送らない」を
+              意味しないため、disabled を付けずに置くと scale_min=1 / scale_max=5 が常時 POST され、
+              型によっては保存済みの min/max をその既定値で上書きしてしまう（年齢設問が 1〜5 に
+              化けた事故の原因）。表示状態と disabled は syncTypeVisibility() で必ず連動させる。 -->
       <div id="typeScaleFields" class="form-grid hidden">
-        <label>最小値 <input type="number" name="scale_min" value="<%= safeForm.scale_min_text || '1' %>" /></label>
-        <label>最小ラベル <input type="text" name="scale_min_label" value="<%= safeForm.scale_min_label || '' %>" /></label>
-        <label>最大値 <input type="number" name="scale_max" value="<%= safeForm.scale_max_text || '5' %>" /></label>
-        <label>最大ラベル <input type="text" name="scale_max_label" value="<%= safeForm.scale_max_label || '' %>" /></label>
+        <label>最小値 <input type="number" name="scale_min" value="<%= safeForm.scale_min_text || '1' %>" disabled /></label>
+        <label>最小ラベル <input type="text" name="scale_min_label" value="<%= safeForm.scale_min_label || '' %>" disabled /></label>
+        <label>最大値 <input type="number" name="scale_max" value="<%= safeForm.scale_max_text || '5' %>" disabled /></label>
+        <label>最大ラベル <input type="text" name="scale_max_label" value="<%= safeForm.scale_max_label || '' %>" disabled /></label>
       </div>
 
       <!-- テキスト入力補助 -->
@@ -1378,7 +1382,12 @@
       !CHOICE_TYPES.includes(type));
     document.getElementById('typeMultiFields').classList.toggle('hidden',
       type !== 'multi_choice');
-    document.getElementById('typeScaleFields').classList.toggle('hidden', true);
+    // スケール設定は現状どの型でも出さない。hidden のままでも中の input は POST されるため、
+    // 表示状態と disabled を必ず連動させる（隠しフィールドが既定値 1/5 を注入する事故の再発防止）。
+    const scaleFields = document.getElementById('typeScaleFields');
+    const scaleHidden = true;
+    scaleFields.classList.toggle('hidden', scaleHidden);
+    scaleFields.querySelectorAll('input, select, textarea').forEach((el) => { el.disabled = scaleHidden; });
     document.getElementById('typeMatrixFields').classList.toggle('hidden',
       !MATRIX_TYPES.includes(type));
     document.getElementById('typeImageUploadFields').classList.toggle('hidden',

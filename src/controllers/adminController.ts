@@ -2113,7 +2113,7 @@ const MULTI_CHOICE_TYPES: QuestionType[] = ["multi_choice"];
 const EXCLUSIVE_AUTO_LABEL_RE = /特になし|わからない|分からない|該当なし|その他/;
 const SCREENING_CHOICE_QUESTION_TYPES: QuestionType[] = ["single_choice", "multi_choice"];
 
-function buildQuestionConfigFromRequest(
+export function buildQuestionConfigFromRequest(
   req: Request,
   questionType: QuestionType,
   existing: Question["question_config"] | null
@@ -2282,6 +2282,22 @@ function buildQuestionConfigFromRequest(
         questionConfig.min_label = bodyString(req.body.scale_min_label).trim() || undefined;
         questionConfig.max_label = bodyString(req.body.scale_max_label).trim() || undefined;
         break;
+      case "numeric": {
+        // numeric の min/max は専用の編集UIを持たない。normalizeQuestionConfig が
+        // MANAGED_CONFIG_KEYS として一旦落とすので、ここで保存済みの値へ復元する。
+        //
+        // ⚠ scale_min / scale_max は読まない。あの入力は常時 hidden な「スケール設定（未使用）」
+        //   ブロックのもので、hidden でも POST され、空なら 1 / 5 に化ける。これを採用すると
+        //   年齢(10〜100=91件)が 1〜5 の5件に潰れ、表示パターンが number_wheel から
+        //   legacy(丸ボタン) へ落ちる＝プレビューだけ実機と違う画面になる。
+        if (typeof existing?.min === "number") { questionConfig.min = existing.min; } else { delete questionConfig.min; }
+        if (typeof existing?.max === "number") { questionConfig.max = existing.max; } else { delete questionConfig.max; }
+        const numericMinLabel = typeof existing?.min_label === "string" ? existing.min_label.trim() : "";
+        const numericMaxLabel = typeof existing?.max_label === "string" ? existing.max_label.trim() : "";
+        if (numericMinLabel) { questionConfig.min_label = numericMinLabel; } else { delete questionConfig.min_label; }
+        if (numericMaxLabel) { questionConfig.max_label = numericMaxLabel; } else { delete questionConfig.max_label; }
+        break;
+      }
       case "image_upload": {
         const maxCount = parseOptionalInteger(req.body.image_upload_max_count);
         const allowedTypesRaw = bodyString(req.body.image_upload_allowed_types).trim();
