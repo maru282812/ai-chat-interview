@@ -183,6 +183,25 @@ export const projectAssignmentRepository = {
     return (data as ProjectAssignment | null) ?? null;
   },
 
+  /**
+   * この周のこの案件に、既に完了した回答があるか（2026-09-19）。
+   *
+   * B の合流先を決めるのに使う。案内を送った周が既に答えられているなら、
+   * そちらへ引き戻さず通常どおり開いている周に合流させる。
+   * respondent は案件ごとに別レコードなので、ここでは案件と周だけで見る。
+   */
+  async existsCompletedForCycle(projectId: string, cycleId: string): Promise<boolean> {
+    const { data, error } = await supabase
+      .from("project_assignments")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("cycle_id", cycleId)
+      .eq("status", "completed")
+      .limit(1);
+    throwIfError(error);
+    return (data ?? []).length > 0;
+  },
+
   async create(input: ProjectAssignmentCreateInput): Promise<ProjectAssignment> {
     const nowIso = input.assigned_at ?? new Date().toISOString();
     const { data, error } = await supabase

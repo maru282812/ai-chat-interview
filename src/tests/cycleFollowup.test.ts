@@ -257,6 +257,28 @@ test("B も送信前にクレームする（二重送信しない）", async () 
   assert.equal(updates[0]?.followup_b_sent_at, NOW.toISOString());
 });
 
+test("B の抽出には「古すぎる予約を落とす」下限を渡す（復旧時の一斉送信を防ぐ）", async () => {
+  const updates: Record<string, unknown>[] = [];
+  stubSend(updates);
+
+  let passedArgs: unknown[] = [];
+  Object.assign(surveyCycleRepository, {
+    listFollowupBDue: async (...args: unknown[]) => {
+      passedArgs = args;
+      return [];
+    },
+  });
+
+  await cycleFollowupService.runFollowupBDispatch(NOW);
+
+  assert.equal(passedArgs[0], NOW.toISOString(), "上限は現在時刻");
+  assert.equal(
+    passedArgs[2],
+    new Date(NOW.getTime() - 24 * 3600_000).toISOString(),
+    "24時間より前の予約は対象外にする"
+  );
+});
+
 test("B のステップが定義されていないグループはスキップ", async () => {
   const updates: Record<string, unknown>[] = [];
   stubSend(updates);

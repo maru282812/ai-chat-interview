@@ -28,6 +28,7 @@ import {
 } from "../lib/cycleRules";
 import { logger } from "../lib/logger";
 import { cycleGroupRepository, surveyCycleRepository } from "../repositories/cycleRepository";
+import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
 import type { CycleGroup, CycleGroupStep, SurveyCycle } from "../types/domain";
 
 export interface CycleResolution {
@@ -65,6 +66,35 @@ export const cycleService = {
 
     // B / C は既に開いている周に合流するだけ。周を新設しない。
     const open = await surveyCycleRepository.findOpen(group.id, lineUserId);
+
+    // B（followup）だけは「案内を送ったのに、まだ答えられていない周」を優先する。
+    //
+    // B の案内が届いた後に A をもう一度回答すると周が切り替わる。
+    // 開いている周に入れてしまうと、送った覚えのない新しい周に B の回答が付き、
+    // どの A に対する B かが分からなくなる（＝離脱分析の横串が切れる）。
+    // 送った周が既に閉じていても、そちらへ紐づけるのが正しい。
+    //
+    // 「まだ答えられていない」の判定は呼び出し側が持つ（assignment の有無）ため、
+    // ここでは候補を返すだけにし、既に回答済みなら通常の合流へ落とす。
+    if (step.step_role === "followup") {
+      const sent = await surveyCycleRepository.findLatestFollowupBSent(group.id, lineUserId);
+      // 送った周が「開いている周」と違うときだけ差し替えを検討する。
+      if (sent && (!open || sent.id !== open.id)) {
+        const answered = await projectAssignmentRepository.existsCompletedForCycle(
+          projectId,
+          sent.id
+        );
+        if (!answered) {
+          logger.info("cycle.followupBJoinedSentCycle", {
+            cycleId: sent.id,
+            cycleNo: sent.cycle_no,
+            openCycleNo: open?.cycle_no ?? null,
+          });
+          return { cycle: sent, group, step, startedNew: false };
+        }
+      }
+    }
+
     if (!open) return null;
     return { cycle: open, group, step, startedNew: false };
   },
@@ -113,6 +143,12 @@ export const cycleService = {
 
     // 新しい周を開始する。前の周が開いたままなら「再来店で確定」として閉じる。
     if (latest && !latest.closed_at) {
+      // ⚠ 閉じると C の対象から外れるのは意図どおり。**B は道連れにしない。**
+      // B の抽出条件から closed_at を外したので（listFollowupBDue）、
+      // ここで閉じても未送信の B は送られる。
+      // B は「その周の A に答えた事実」への返礼であって、次の来店とは無関係。
+      const pendingB = Boolean(latest.followup_b_scheduled_at) && !latest.followup_b_sent_at;
+
       await surveyCycleRepository.update(latest.id, {
         returned_at: now.toISOString(),
         closed_at: now.toISOString(),
@@ -120,7 +156,7 @@ export const cycleService = {
         // いずれにせよ C を送る必要は無くなる。
         close_reason: "returned",
       });
-      logger.info("cycle.closedByReturn", { cycleId: latest.id, lineUserId });
+      logger.info("cycle.closedByReturn", { cycleId: latest.id, lineUserId, pendingB });
     }
 
     const created = await surveyCycleRepository.create({
@@ -210,16 +246,21 @@ export const cycleService = {
 
       const question = params.questions.find((q) => q.question_code?.toLowerCase() === normalized);
       if (!question) {
+        // 頻度設問が無い案件（業種テンプレの構成差・設問コードの付け替え）でも
+        // ここで return してはいけない。B の送信予約は頻度と無関係なのに、
+        // 巻き添えで立たなくなり「A に答えても B が永久に来ない」事故になる。
+        // 頻度 null で先へ進めば C だけが対象外になる（判定できないものは判定しない）。
         logger.warn("cycle.frequencyQuestionMissing", {
           cycleId: params.cycleId,
           code: normalized,
         });
-        return;
       }
 
-      const answer = params.answers.find(
-        (a) => a.question_id === question.id && (a.answer_role ?? "primary") === "primary"
-      );
+      const answer = question
+        ? params.answers.find(
+            (a) => a.question_id === question.id && (a.answer_role ?? "primary") === "primary"
+          )
+        : undefined;
 
       await this.applyEntryFrequency(
         params.cycleId,

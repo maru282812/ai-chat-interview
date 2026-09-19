@@ -186,6 +186,31 @@ export const surveyCycleRepository = {
     return (data as SurveyCycle | null) ?? null;
   },
 
+  /**
+   * B の案内を送った直近の周（開閉を問わない / 2026-09-19）。
+   *
+   * B の案内が届いた後に A をもう一度回答すると周が切り替わる。
+   * 「開いている周」に合流させると、送った覚えのない新しい周に
+   * B の回答が付き、どの A に対する B かが分からなくなる。
+   * 送った事実（followup_b_sent_at）を持つ周を合流先の候補にする。
+   */
+  async findLatestFollowupBSent(
+    cycleGroupId: string,
+    lineUserId: string
+  ): Promise<SurveyCycle | null> {
+    const { data, error } = await supabase
+      .from("survey_cycles")
+      .select("*")
+      .eq("cycle_group_id", cycleGroupId)
+      .eq("line_user_id", lineUserId)
+      .not("followup_b_sent_at", "is", null)
+      .order("followup_b_sent_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    throwIfError(error);
+    return (data as SurveyCycle | null) ?? null;
+  },
+
   /** 開閉を問わない最新サイクル（クールダウン判定に使う）。 */
   async findLatest(cycleGroupId: string, lineUserId: string): Promise<SurveyCycle | null> {
     const { data, error } = await supabase
@@ -286,15 +311,28 @@ export const surveyCycleRepository = {
   /**
    * B（来店後アンケート）の送信予定時刻を過ぎたサイクルを引く (Migration 094)。
    * 部分インデックス ix_survey_cycles_followup_b_due がそのまま効く条件で絞る。
+   *
+   * ⚠ closed_at は**見ない**。B は「その周の A に答えた人」への返礼であって、
+   * 次の来店があったかとは無関係。closed_at を条件に入れていたため、
+   * A 完了の直後にもう一度 A を開くと（周が閉じ）未送信の B が黙って消えていた。
+   *
+   * 代わりに staleAfterIso（既定24時間前）で古すぎる予約は落とす。
+   * 停止や不具合で溜まった B が復旧時に一斉送信されると、
+   * 受け取る側には何日も前の施術についての問い合わせが届くことになる。
    */
-  async listFollowupBDue(nowIso: string, limit = 200): Promise<SurveyCycle[]> {
-    const { data, error } = await supabase
+  async listFollowupBDue(nowIso: string, limit = 200, staleAfterIso?: string): Promise<SurveyCycle[]> {
+    let query = supabase
       .from("survey_cycles")
       .select("*")
       .is("followup_b_sent_at", null)
-      .is("closed_at", null)
       .not("followup_b_scheduled_at", "is", null)
-      .lte("followup_b_scheduled_at", nowIso)
+      .lte("followup_b_scheduled_at", nowIso);
+
+    if (staleAfterIso) {
+      query = query.gte("followup_b_scheduled_at", staleAfterIso);
+    }
+
+    const { data, error } = await query
       .order("followup_b_scheduled_at", { ascending: true })
       .limit(limit);
     throwIfError(error);
