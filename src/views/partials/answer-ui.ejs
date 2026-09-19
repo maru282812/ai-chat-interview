@@ -84,11 +84,59 @@
 
   /* スワイプ系から外した自由記述つき選択肢（「その他」）の行。
      デッキの下に置き、タップで選択→記述欄に入力する。 */
-  /* 自由記述欄はどのパターンでも親カードからはみ出させない。 */
+  /* 自由記述欄はどのパターンでも親カードからはみ出させない。
+     他の選択肢は「触って終わり」だが、ここだけは文字を打つ。同じ高さの1行ボックスだと
+     選択肢の一部にしか見えず、書ける場所だと気付かれない（＝その他が空のまま確定される）。
+     2行ぶんの高さ＋沈んだ下地＋破線で「書く欄」だと形で分かるようにする（文言は足さない）。 */
   .other-text-input {
+    display: block; width: 100%;
     max-width: 100%; min-width: 0; box-sizing: border-box;
-    padding: 8px 10px; border: 1px solid #d8e3e0; border-radius: 8px;
-    font-size: 14px; line-height: 1.4; background: #fff;
+    /* 2行分: line-height 1.5 × 14px × 2 = 42px + 上下 padding 9px×2 + 枠 2px = 62px */
+    min-height: 62px;
+    padding: 9px 11px; border: 1px dashed #78918c; border-radius: 10px;
+    font-size: 14px; line-height: 1.5; background-color: #f6faf8; color: #1a2f2a;
+    font-family: inherit;
+    transition: border-color 0.15s cubic-bezier(0, 0, 0.2, 1),
+                background-color 0.15s cubic-bezier(0, 0, 0.2, 1);
+  }
+  .other-text-input::placeholder { color: #5a736e; }
+  .other-text-input:hover { border-color: #4f6b65; }
+  .other-text-input:focus,
+  .other-text-input:focus-visible {
+    outline: 2px solid #2ca87a; outline-offset: 1px;
+    border-style: solid; border-color: #2ca87a; background-color: #fff;
+  }
+  .other-text-input:disabled { opacity: 0.5; cursor: not-allowed; }
+  /* 何か書かれたら「下書きの欄」から「確定した回答」の見た目へ（破線→実線）。 */
+  .other-text-input:not(:placeholder-shown) {
+    border-style: solid; border-color: #2ca87a; background-color: #fff;
+  }
+  /* ダーク(compact)側。白い箱のままだと下地から浮いて別部品に見えるので、
+     親カードの半透明ルールに合わせる。 */
+  .answer-ui-compact .other-text-input {
+    background-color: rgba(255,255,255,0.10); border-color: rgba(255,255,255,0.75); color: #fff;
+  }
+  /* 0.88 未満だと下地(緑)とのコントラストが 4.5:1 を切って読めなくなる。 */
+  .answer-ui-compact .other-text-input::placeholder { color: rgba(255,255,255,0.88); }
+  /* ⚠ background は必ず color と同じルールで上書きすること。
+     compact の base( rgba(255,255,255,0.10) )が残ったまま color だけ #14493a になると、
+     濃緑の下地に濃緑の文字＝入力した内容が見えなくなる。 */
+  .answer-ui-compact .other-text-input:focus,
+  .answer-ui-compact .other-text-input:focus-visible,
+  .answer-ui-compact .other-text-input:not(:placeholder-shown) {
+    background-color: #fff; color: #14493a; border-color: #2ca87a;
+  }
+  .answer-ui-compact .other-text-input:focus,
+  .answer-ui-compact .other-text-input:focus-visible { outline-color: #fff; }
+  /* 選択済みカードの中では下地が白なので、compact の半透明を戻す。 */
+  .answer-ui-compact .chip-item.selected .other-text-input,
+  .answer-ui-compact .card-item.selected .other-text-input {
+    background-color: #f6faf8; border-color: #78918c; color: #1a2f2a;
+  }
+  .answer-ui-compact .chip-item.selected .other-text-input::placeholder,
+  .answer-ui-compact .card-item.selected .other-text-input::placeholder { color: #5a736e; }
+  @media (prefers-reduced-motion: reduce) {
+    .other-text-input { transition-duration: 0.01ms; }
   }
   .answer-freetext-rows { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
   .answer-freetext-rows .chip-item {
@@ -385,10 +433,12 @@
     function otherInput(q, c, extraClass, marginTop) {
       if (!c.allow_free_text) return '';
       return '<input type="text" class="other-text-input' + (extraClass ? ' ' + extraClass : '') + '"'
-        + ' data-code="' + esc(q.question_code) + '" data-val="' + esc(c.value) + '" placeholder="自由記述"'
+        + ' data-code="' + esc(q.question_code) + '" data-val="' + esc(c.value) + '" placeholder="ご自由にご記入ください"'
         // 幅は .other-text-input（max-width:100%）に任せる。inline の width:100% は
         // 横並びの親（chip/choice-item）だと gap/padding 分あふれるため付けない。
-        + ' onclick="event.stopPropagation();" style="margin-top:' + marginTop + 'px;" />';
+        // margin-top は 8px を下限にする。ラベルと記述欄がくっつくと「ラベルの続き」に
+        // 見えて、別の入力欄だと分かりにくいため。
+        + ' onclick="event.stopPropagation();" style="margin-top:' + Math.max(8, marginTop || 0) + 'px;" />';
     }
 
     // ---- タップ確定系（tap_cards / big_split・migration 075）----

@@ -66,11 +66,57 @@
       row-gap: 6px;
     }
     .choice-item.has-freetext .other-text-input { flex: 1 0 100%; }
-    /* 入力欄は必ずカード内に収める（inline の width:100% だけだと gap/padding 分あふれる）。 */
+    /* 入力欄は必ずカード内に収める（inline の width:100% だけだと gap/padding 分あふれる）。
+       他の選択肢は「触って終わり」だが、ここだけは文字を打つ。同じ高さの1行ボックスだと
+       選択肢の一部にしか見えず、書ける場所だと気付かれない（＝その他が空のまま確定される）。
+       2行ぶんの高さ＋沈んだ下地＋破線で「書く欄」だと形で分かるようにする（文言は足さない）。
+       partials/answer-ui.ejs の .other-text-input と同じ見た目に揃えること。 */
     .other-text-input {
-      max-width: 100%; min-width: 0;
-      padding: 8px 10px; border: 1px solid #d8e3e0; border-radius: 8px;
-      font-size: 14px; line-height: 1.4; background: #fff;
+      display: block; width: 100%;
+      max-width: 100%; min-width: 0; box-sizing: border-box;
+      /* 2行分: line-height 1.5 × 14px × 2 = 42px + 上下 padding 9px×2 + 枠 2px = 62px */
+      min-height: 62px;
+      margin-top: 8px;
+      padding: 9px 11px; border: 1px dashed #78918c; border-radius: 10px;
+      font-size: 14px; line-height: 1.5; background-color: #f6faf8; color: #1a2f2a;
+      font-family: inherit;
+      transition: border-color 0.15s cubic-bezier(0, 0, 0.2, 1),
+                  background-color 0.15s cubic-bezier(0, 0, 0.2, 1);
+    }
+    .other-text-input::placeholder { color: #5a736e; }
+    /* ⚠ :not(.answer-ui-compact ...) で必ずダーク側を除外する。
+       このページは partials/answer-ui.ejs の style ブロックも同時に読み込まれ、こちらが後勝ちになる。
+       除外しないと compact の「入力済み＝白地に濃緑文字」指定を background だけ剥がしてしまい、
+       濃緑の下地に濃緑の文字（＝入力内容が見えない）になる。 */
+    .other-text-input:hover { border-color: #4f6b65; }
+    .other-text-input:focus,
+    .other-text-input:focus-visible {
+      outline: 2px solid #2ca87a; outline-offset: 1px;
+      border-style: solid; border-color: #2ca87a; background-color: #fff;
+    }
+    .other-text-input:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* 何か書かれたら「下書きの欄」から「確定した回答」の見た目へ（破線→実線）。 */
+    .other-text-input:not(:placeholder-shown) {
+      border-style: solid; border-color: #2ca87a; background-color: #fff;
+    }
+    /* ダーク側の復元。
+       このページは answer-ui(include) → この style ブロックの順に読まれるため、素の
+       `.other-text-input:not(:placeholder-shown)` がダーク用指定を後勝ちで潰す。
+       :where() で詳細度を上げずに、ダーク側だけ確実に復元する。 */
+    .answer-ui.answer-ui-compact .other-text-input {
+      background-color: rgba(255,255,255,0.10); color: #fff; border-color: rgba(255,255,255,0.75);
+    }
+    .answer-ui.answer-ui-compact .other-text-input::placeholder { color: rgba(255,255,255,0.88); }
+    .answer-ui.answer-ui-compact .other-text-input:hover { border-color: rgba(255,255,255,0.9); }
+    .answer-ui.answer-ui-compact .other-text-input:focus,
+    .answer-ui.answer-ui-compact .other-text-input:focus-visible,
+    .answer-ui.answer-ui-compact .other-text-input:not(:placeholder-shown) {
+      background-color: #fff; color: #14493a; border-color: #2ca87a; outline-color: #fff;
+    }
+    .answer-ui.answer-ui-compact .other-text-input:focus::placeholder,
+    .answer-ui.answer-ui-compact .other-text-input:not(:placeholder-shown)::placeholder { color: #5a736e; }
+    @media (prefers-reduced-motion: reduce) {
+      .other-text-input { transition-duration: 0.01ms; }
     }
     .free-text-input {
       width: 100%; padding: 10px; border: 1px solid #d8e3e0;
@@ -306,6 +352,17 @@
     .complete-icon   { font-size: 40px; margin-bottom: 12px; }
     .complete-title  { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
     .complete-sub    { font-size: 14px; color: #60726f; }
+    /* 案件ごとのお礼文 (Migration 108)。
+       .complete-sub は「ご協力ありがとうございます。」1行用の控えめな字。
+       案件のお礼は複数行の"読ませる文章"なので、キャプションに見えないよう
+       本文の字送りを与え、カードに載せて完了アイコン群と分ける。 */
+    .complete-message {
+      margin: 18px auto 0; max-width: 34em;
+      padding: 14px 16px;
+      background: #f6faf8; border: 1px solid #dceae5; border-radius: 12px;
+      font-size: 14px; line-height: 1.85; color: #33443f;
+      text-align: left; white-space: pre-wrap; overflow-wrap: anywhere;
+    }
     /* 店舗アンケートでは主役をポイ活CTAに譲り、LINEに戻るは最下部の控えめリンクにする */
     .complete-return-link {
       background: none; border: none; box-shadow: none; padding: 8px;
@@ -511,8 +568,10 @@
 
     <div id="completeScreen" class="complete-screen" style="display:none">
       <div class="complete-icon">✅</div>
-      <p class="complete-title">回答が完了しました</p>
-      <p class="complete-sub">ご協力ありがとうございます。</p>
+      <p class="complete-title">アンケートを送信しました</p>
+      <p class="complete-sub" id="completeSub">ご協力ありがとうございます。</p>
+      <!-- 案件ごとのお礼文 (Migration 108)。未設定なら出さない（上の汎用文だけ残る）。 -->
+      <p class="complete-message" id="completeMessage" style="display:none"></p>
       <div id="completeActions" style="margin-top:20px;display:none">
         <!-- 通常アンケートは完了後に案件一覧へ戻れるようにする（店舗専用は非会員のため出さない） -->
         <button id="btnBackToProjects" class="btn-next" style="min-width:160px;display:none;">案件一覧に戻る</button>
@@ -558,6 +617,8 @@
   // 'screening' | 'main'
   const SURVEY_PHASE           = <%- JSON.stringify(locals.surveyPhase || 'main') %>;
   const SCREENING_FAIL_MESSAGE = <%- JSON.stringify(locals.screeningFailMessage || '今回はご参加いただけませんでした。またの機会にご協力をお願いします。') %>;
+  // 送信完了画面に出す案件ごとのお礼文 (Migration 108)。未設定は null。
+  const COMPLETION_MESSAGE = <%- JSON.stringify(locals.completionMessage || null) %>;
   // 店舗専用アンケート完了後に通常案件へ誘導する（希望者のみ）
   const IS_STORE_SURVEY = <%- JSON.stringify(locals.isStoreSurvey === true) %>;
   const PROJECTS_URL    = <%- JSON.stringify(locals.projectsUrl || '/liff/projects') %>;
@@ -1281,7 +1342,7 @@
         ${choiceImg(c)}
         <span class="choice-label">${esc(c.label)}</span>
         ${c.description ? `<span class="choice-desc">${esc(c.description)}</span>` : ''}
-        ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" style="box-sizing:border-box;" onclick="event.stopPropagation();" />` : ''}
+        ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="ご自由にご記入ください" onclick="event.stopPropagation();" />` : ''}
         ${choiceAdditionalImgs(c)}
       </label>`;
     }
@@ -1311,7 +1372,7 @@
               ${imgSrc ? `<img class="card-item-img" src="${esc(imgSrc)}" alt="" loading="lazy" onerror="this.style.display='none'" />` : ''}
               <span class="card-item-title">${esc(c.title || c.label)}</span>
               ${c.description ? `<span class="card-item-desc">${esc(c.description)}</span>` : ''}
-              ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" onclick="event.stopPropagation();" style="margin-top:6px;width:100%;box-sizing:border-box;" />` : ''}
+              ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="ご自由にご記入ください" onclick="event.stopPropagation();" />` : ''}
               ${additionals.length ? `<div class="card-extra-imgs">${additionals.map(u => `<img class="card-extra-img" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.display='none'" />`).join('')}</div>` : ''}
             </label>`;
           }).join('') + `</div>`;
@@ -1357,7 +1418,7 @@
               ${imgSrc ? `<img class="card-item-img" src="${esc(imgSrc)}" alt="" loading="lazy" onerror="this.style.display='none'" />` : ''}
               <span class="card-item-title">${esc(c.title || c.label)}</span>
               ${c.description ? `<span class="card-item-desc">${esc(c.description)}</span>` : ''}
-              ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" onclick="event.stopPropagation();" style="margin-top:6px;width:100%;box-sizing:border-box;" />` : ''}
+              ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="ご自由にご記入ください" onclick="event.stopPropagation();" />` : ''}
               ${additionals.length ? `<div class="card-extra-imgs">${additionals.map(u => `<img class="card-extra-img" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.display='none'" />`).join('')}</div>` : ''}
             </label>`;
           }).join('') + `</div>`;
@@ -2343,6 +2404,28 @@
       }
     });
 
+    /**
+     * 案件ごとのお礼文を送信完了画面に出す (Migration 108)。
+     *
+     * 従来この文言は「最後の設問の comment_bottom」に置かれていた。comment_bottom は
+     * 設問の下＝まだ送信前の画面に出るため、回答者から見ると「お礼が出たのに
+     * まだ送信していない」状態だった。お礼は送信が終わったこの画面で出す。
+     *
+     * textContent で入れる（案件文言は管理画面から編集され得るため HTML として解釈させない）。
+     * 改行は CSS の white-space:pre-wrap がそのまま反映する。
+     */
+    function renderCompletionMessage() {
+      var el = document.getElementById('completeMessage');
+      if (!el) return;
+      var msg = (COMPLETION_MESSAGE || '').trim();
+      if (!msg) return;              // 未設定の案件は汎用文だけ（従来どおり）
+      el.textContent = msg;
+      el.style.display = 'block';
+      // 案件のお礼が出る場合、汎用の「ご協力ありがとうございます。」は二重になるので下げる。
+      var sub = document.getElementById('completeSub');
+      if (sub) sub.style.display = 'none';
+    }
+
     async function showComplete() {
       // スクリーニングフェーズ: 判定API → 境界画面を表示
       if (SURVEY_PHASE === 'screening') {
@@ -2393,6 +2476,7 @@
       document.querySelector('.nav-btns').style.display = 'none';
       completeScreen.style.display = 'block';
       progressBar.style.width = '100%';
+      renderCompletionMessage();
 
       // プレビューは完了確定APIを叩かない（ポイント付与・ステータス更新を起こさない）。
       // 完了画面の見た目まで確認できるよう、画面自体は通常どおり出したまま止める。
@@ -2866,7 +2950,12 @@
           return;
         }
 
-        addBubble('ご回答ありがとうございました。アンケートが完了しました。', 'ai');
+        addBubble('アンケートを送信しました。', 'ai');
+        // 案件ごとのお礼文 (Migration 108)。survey_question 側の renderCompletionMessage() と対。
+        // 完了系は2経路あるため片方だけ直すと必ず不揃いになる（過去の事故パターン）。
+        if (COMPLETION_MESSAGE && COMPLETION_MESSAGE.trim()) {
+          addBubble(COMPLETION_MESSAGE.trim(), 'ai');
+        }
         chatAnswerArea.style.display = 'none';
         chatAnswerArea.innerHTML = '';
         chatTextRow.style.display = 'none';

@@ -93,6 +93,8 @@ interface ProjectMutationInput {
   research_hypothesis_json?: ResearchHypothesis | null;
   screening_config?: ScreeningConfig | null;
   screening_last_question_order?: number | null;
+  /** 送信完了画面のお礼文 (Migration 108)。 */
+  completion_message?: string | null;
   is_discoverable?: boolean;
   category?: string | null;
   display_thumbnail_url?: string | null;
@@ -182,6 +184,10 @@ export const projectRepository = {
       objective: source.objective,
       status: "draft",
       reward_points: source.reward_points,
+      // 送信完了画面のお礼文 (Migration 108)。copyProject は明示列挙なので、
+      // ここに足さないとコピーした案件だけお礼が消える（share_with_store と違い、
+      // これは開示フラグではなく文言なので引き継ぐのが正しい）。
+      completion_message: source.completion_message ?? null,
       research_mode: source.research_mode,
       primary_objectives: source.primary_objectives,
       secondary_objectives: source.secondary_objectives,

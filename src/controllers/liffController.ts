@@ -1074,6 +1074,8 @@ export const liffController = {
       displayMode: project.display_mode ?? "survey_question",
       surveyPhase,
       screeningFailMessage: project.screening_config?.fail_message?.trim() || DEFAULT_FAIL_MSG,
+      // 送信完了画面のお礼文 (Migration 108)。未設定は null を渡し、描画側で汎用文に落とす。
+      completionMessage: project.completion_message?.trim() || null,
       liffId: liffConfig.liffId,
       liffAuthAvailable: liffConfig.liffAuthAvailable,
       authRequired: liffConfig.authRequired,

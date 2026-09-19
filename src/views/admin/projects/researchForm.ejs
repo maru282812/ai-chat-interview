@@ -168,6 +168,11 @@
         <input type="text" name="user_display_title" value="<%= form.user_display_title || '' %>" placeholder="例: 飲食店の利用体験に関するアンケート" />
       </label>
       <label>
+        送信完了画面のお礼文
+        <small class="helper-text">回答を送信し終えた画面に表示します。空白なら「ご協力ありがとうございます。」が出ます。<br>⚠ お礼は設問の「下部コメント」に書かないでください。そちらは<strong>送信前</strong>の画面に出るため、回答者には「お礼が出たのにまだ送信していない」ように見えます。</small>
+        <textarea name="completion_message" rows="3" placeholder="例: ご協力ありがとうございました。続きは施術後にお答えください。"><%= form.completion_message || "" %></textarea>
+      </label>
+      <label>
         調査モード
         <select name="research_mode">
           <% for (const mode of modeOptions) { %>

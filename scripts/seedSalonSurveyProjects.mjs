@@ -88,6 +88,8 @@ const projects = [
     reward_points: 5,
     estimated_minutes: 1,
     entry_code: "yotto-salon-a",
+    // 送信完了画面のお礼 (Migration 108)。この後 B が控えるので「続きは施術後」で繋ぐ。
+    completion_message: "ご協力ありがとうございました。続きは施術後にお答えください。",
     carry_forward_sources: null
   },
   {
@@ -98,6 +100,8 @@ const projects = [
     reward_points: 5,
     estimated_minutes: 2,
     entry_code: "yotto-salon-b",
+    // この後 C（後日）が控えるので、そこへ繋ぐ言い方にする。
+    completion_message: "ご協力ありがとうございました。後日、最後のアンケートをお送りしますので、そちらもどうぞよろしくお願いいたします。",
     carry_forward_sources: null
   },
   {
@@ -108,6 +112,8 @@ const projects = [
     reward_points: 10,
     estimated_minutes: 2,
     entry_code: "yotto-salon-c",
+    // サイクルの最後。次に繋がず締めの挨拶にする。
+    completion_message: "ご協力ありがとうございました。引き続き美容室ぐるとアンケートサイトHibiをどうぞよろしくお願いいたします。",
     // C-Q2 / C-Q3 の選択肢を A-Q5（今日のメニュー）で絞るための宣言（Migration 092）
     carry_forward_sources: [{ namespace: "a", entry_code: "yotto-salon-a" }]
   }
@@ -385,11 +391,9 @@ const questionsA = [
         }
       }
     },
-    {
-      is_required: false,
-      comment_bottom:
-        "ご協力ありがとうございました。続きは施術後にお答えください。"
-    }
+    // お礼は projects.completion_message（送信完了画面）へ移した (Migration 108)。
+    // comment_bottom に書くと設問の下＝送信前に出てしまうため、ここには置かない。
+    { is_required: false }
   )
 ];
 
@@ -768,9 +772,8 @@ const questionsC = [
           type: "pipe_expression",
           expression: "q6=other or q6=both or q7=other or q7=undecided"
         }
-      ],
-      comment_bottom:
-        "ご協力ありがとうございました。引き続き美容室ぐるとアンケートサイトHibiをどうぞよろしくお願いいたします。"
+      ]
+      // お礼は projects.completion_message（送信完了画面）へ移した (Migration 108)。
     }
   )
 ];

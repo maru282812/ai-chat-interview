@@ -345,6 +345,13 @@ export interface Project {
   research_hypothesis_json?: ResearchHypothesis | null;
   screening_config: ScreeningConfig | null;
   screening_last_question_order: number | null;
+  /**
+   * 送信完了画面に出すお礼文 (Migration 108)。
+   * NULL なら汎用文（ご協力ありがとうございます。）にフォールバックする。
+   * ⚠ お礼を設問の comment_bottom に書かないこと。comment_bottom は設問の下＝
+   *    「送信前」に出るため、回答者には「お礼が出たのにまだ送信していない」状態に見える。
+   */
+  completion_message?: string | null;
   /** AIプロンプト方針設定 */
   ai_prompt_policy_json: AIPromptPolicy | null;
   /** ベースプロンプトテンプレート上書き設定 */

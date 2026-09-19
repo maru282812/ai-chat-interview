@@ -806,6 +806,8 @@ type ProjectDisplayStyle = "survey" | "interview";
 type ProjectFormOverrides = Partial<{
   name: string;
   user_display_title: string;
+  /** 送信完了画面のお礼文 (Migration 108)。空文字なら汎用文。 */
+  completion_message: string;
   client_name: string;
   objective: string;
   status: string;
@@ -893,6 +895,7 @@ function buildProjectForm(project: Project | null, overrides: ProjectFormOverrid
   return {
     name,
     user_display_title: overrides.user_display_title ?? project?.user_display_title ?? "",
+    completion_message: overrides.completion_message ?? project?.completion_message ?? "",
     client_name: overrides.client_name ?? project?.client_name ?? "",
     objective,
     status: overrides.status ?? project?.status ?? "draft",
@@ -921,6 +924,7 @@ function buildProjectFormOverridesFromRequest(req: Request): ProjectFormOverride
   return {
     name: bodyString(req.body.name),
     user_display_title: bodyString(req.body.user_display_title),
+    completion_message: bodyString(req.body.completion_message),
     client_name: bodyString(req.body.client_name),
     objective: bodyString(req.body.objective),
     status: bodyString(req.body.status) || "draft",
@@ -3129,6 +3133,7 @@ export const adminController = {
       const created = await projectRepository.create({
         name,
         user_display_title: bodyString(req.body.user_display_title) || null,
+        completion_message: bodyString(req.body.completion_message).trim() || null,
         client_name: bodyString(req.body.client_name) || null,
         objective,
         status: bodyString(req.body.status || "draft") as import("../types/domain").ProjectStatus,
@@ -3277,6 +3282,7 @@ export const adminController = {
       await projectRepository.update(projectId, {
         name,
         user_display_title: bodyString(req.body.user_display_title) || null,
+        completion_message: bodyString(req.body.completion_message).trim() || null,
         client_name: bodyString(req.body.client_name) || null,
         objective,
         status: bodyString(req.body.status || "draft") as import("../types/domain").ProjectStatus,
