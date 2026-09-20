@@ -516,6 +516,25 @@ function buildProjectEditRedirectPath(
   return `/admin/projects/${projectId}/edit?notice=${notice}`;
 }
 
+/**
+ * フォームから渡された保存後の遷移先を検証する。
+ *
+ * 画面側が任意の URL を送れるため、そのまま res.redirect に渡すと
+ * オープンリダイレクトになる。管理画面内の相対パスだけを許可し、
+ * それ以外（絶対 URL・プロトコル相対 //evil.com・/admin 以外）は null を返す。
+ */
+export function sanitizeAdminRedirect(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const value = raw.trim();
+  if (!value) return null;
+  // "//evil.com" はブラウザがプロトコル相対 URL として外部へ飛ばす
+  if (!value.startsWith("/") || value.startsWith("//")) return null;
+  if (value.includes("\\")) return null;
+  const path = value.split("?")[0] ?? "";
+  if (path !== "/admin" && !path.startsWith("/admin/")) return null;
+  return value;
+}
+
 function renderProjectsIndex(
   res: Response,
   input: {
@@ -3769,8 +3788,10 @@ export const adminController = {
         ...updateTagFields,
       });
 
-      // 保存のたびに一覧へ戻さず、同じ編集画面に留まる（一覧へは「一覧へ戻る」で明示的に戻る）
-      res.redirect(`/admin/questions/${questionId}/edit?notice=question_updated`);
+      // 前後の設問へ移動する場合は、保存してからその設問へ送る（保存ボタンを押させないため）。
+      // 指定が無ければ従来どおり同じ編集画面に留まる（一覧へは「一覧へ戻る」で明示的に戻る）。
+      const requestedRedirect = sanitizeAdminRedirect(req.body._redirect_to);
+      res.redirect(requestedRedirect ?? `/admin/questions/${questionId}/edit?notice=question_updated`);
     } catch (error) {
       renderQuestionForm(res, {
         title: "質問編集",
@@ -4832,16 +4853,23 @@ export const adminController = {
     const questionText = String(body.question_text ?? "").trim();
     const existingConfig = (existing.question_config ?? {}) as Record<string, unknown>;
     const existingMeta = (existingConfig.meta ?? {}) as Record<string, unknown>;
-    // body に question_goal が含まれていない場合は既存の research_goal を引き継ぐ
-    const questionGoal = String(body.question_goal ?? existingMeta.research_goal ?? "").trim();
+    // body に question_goal が無い／空の場合は既存の research_goal を引き継ぐ。
+    // フロー画面は常にこのキーを送るため、?? だけだと「空欄のまま別ノードへ移った」
+    // 自動保存が、既に入っていた値を空で上書きしてしまう。
+    const questionGoal =
+      String(body.question_goal ?? "").trim() || String(existingMeta.research_goal ?? "").trim();
     const sortOrder    = Number(body.sort_order)    || existing.sort_order;
 
     if (!questionText) {
       res.status(400).json({ error: "question_text は必須です" });
       return;
     }
-    if (!questionGoal) {
-      res.status(400).json({ error: "question_goal は必須です" });
+    // 「この質問で知りたいこと」は AI 深掘りの材料。深掘りを使わない設問にまで必須にすると、
+    // 既存設問（8割が未入力）を編集するたびに保存が 400 で弾かれ、自動保存が事実上効かなくなる。
+    // 詳細編集画面も同じ条件（syncProbeOptions）で必須を出し分けている。
+    const aiProbeEnabled = Boolean(body.ai_probe_enabled);
+    if (aiProbeEnabled && !questionGoal) {
+      res.status(400).json({ error: "AI深掘りを使う設問では question_goal が必須です" });
       return;
     }
 
@@ -5131,6 +5159,51 @@ export const adminController = {
    * POST /admin/api/questions/:questionId/delete
    * フローデザイナーから質問を削除する
    */
+  /**
+   * POST /admin/api/projects/:projectId/questions/reorder
+   * 設問の並び順（sort_order）をまとめて更新する。
+   * 一覧のドラッグ&ドロップとフロー設計のノード移動の両方がここを叩く。
+   */
+  async apiReorderQuestions(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+
+    const rawIds = req.body?.orderedIds;
+    if (!Array.isArray(rawIds) || rawIds.length === 0) {
+      res.status(400).json({ error: "orderedIds（並び順の設問ID配列）が必要です。" });
+      return;
+    }
+    const orderedIds = rawIds.map((v: unknown) => String(v));
+
+    // 同じ id が二重に来ると、片方の設問が並びから落ちて順序が壊れる
+    if (new Set(orderedIds).size !== orderedIds.length) {
+      res.status(400).json({ error: "orderedIds に同じ設問IDが重複しています。" });
+      return;
+    }
+
+    // 「この案件の設問か」を必ずサーバ側で検証する。
+    // 他案件の設問IDを混ぜられると、案件をまたいで並び順を書き換えられてしまう。
+    const existing = await questionRepository.listByProject(projectId, { includeHidden: true });
+    const existingIds = new Set(existing.map((q) => q.id));
+    const unknown = orderedIds.filter((id) => !existingIds.has(id));
+    if (unknown.length > 0) {
+      res.status(400).json({ error: "この案件に存在しない設問IDが含まれています。" });
+      return;
+    }
+
+    // 画面には出ないシステム設問（自由記述など）は並べ替えの対象外。
+    // 受け取った並びの後ろへ、元の順序を保ったまま連結して番号を振り直す。
+    // こうしないと、画面に無い設問の sort_order が欠番のまま残り、
+    // sort_order で次を決めるサーバ側の遷移（determineNextQuestion）がずれる。
+    const tail = existing
+      .filter((q) => !orderedIds.includes(q.id))
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((q) => q.id);
+
+    await questionRepository.reorderByIds(projectId, [...orderedIds, ...tail]);
+
+    res.json({ ok: true, count: orderedIds.length });
+  },
+
   async apiDeleteQuestion(req: Request, res: Response): Promise<void> {
     const questionId = routeParam(req, "questionId");
     // Verify question exists (throws HttpError 404 if not)

@@ -248,6 +248,8 @@
 .node-badge.required { background: #fee8e8; color: #8a2020; }
 .node-badge.ai       { background: #ede8ff; color: #5820a0; }
 .node-badge.branch   { background: #fff3cd; color: #856404; }
+/* 必須未入力で保存できていない設問。作りかけを見失わないための目印。 */
+.node-badge.warn     { background: #ffe9d6; color: #8a4b14; font-weight: 600; }
 
 /* SVG overlay */
 .flow-svg {
@@ -335,6 +337,39 @@
 }
 .rp-tab-pane { display: none; }
 .rp-tab-pane.active { display: block; }
+
+/* 未保存の下書き提示（自動復元はせず必ず選ばせる） */
+.rp-draft-banner {
+  background: #fff8e6;
+  border: 1px solid #e8d08a;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+}
+.rp-draft-text {
+  font-size: 11px;
+  color: #6b5312;
+  margin-bottom: 6px;
+}
+.rp-draft-actions {
+  display: flex;
+  gap: 6px;
+}
+.rp-draft-actions button {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid #d3b978;
+  background: #fff;
+  color: #6b5312;
+}
+.rp-draft-actions .rp-draft-restore {
+  background: #6b5312;
+  border-color: #6b5312;
+  color: #fff;
+  font-weight: 600;
+}
 
 .rp-footer {
   padding: 10px 14px;
