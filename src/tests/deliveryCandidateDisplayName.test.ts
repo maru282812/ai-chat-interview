@@ -7,6 +7,7 @@ import { respondentRepository } from "../repositories/respondentRepository";
 import { rankRepository } from "../repositories/rankRepository";
 import { userProfileRepository } from "../repositories/userProfileRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
+import { userPointService } from "../services/userPointService";
 
 /**
  * 手動配信画面（/admin/projects/:id/delivery）の表示名。
@@ -49,10 +50,16 @@ function profileFixture(over: Record<string, unknown> = {}) {
 }
 
 async function withStubs<T>(
-  stubs: { respondents: unknown[]; profiles: unknown[]; assignments?: unknown[] },
+  stubs: {
+    respondents: unknown[];
+    profiles: unknown[];
+    assignments?: unknown[];
+    balances?: Record<string, number>;
+  },
   run: () => Promise<T>
 ): Promise<T> {
   const originals = {
+    listBalances: userPointService.listBalancesByLineUserIds,
     expire: projectAssignmentRepository.expireOverdueAssignments,
     getProject: projectRepository.getById,
     listProjects: projectRepository.list,
@@ -72,6 +79,13 @@ async function withStubs<T>(
     rankRepository.list = async () => [] as never;
     userProfileRepository.listByLineUserIds = async () => stubs.profiles as never;
     sessionRepository.listAll = async () => [] as never;
+    userPointService.listBalancesByLineUserIds = async () =>
+      new Map(
+        Object.entries(stubs.balances ?? {}).map(([id, pts]) => [
+          id,
+          { line_user_id: id, available_points: pts } as never
+        ])
+      );
     return await run();
   } finally {
     projectAssignmentRepository.expireOverdueAssignments = originals.expire;
@@ -82,6 +96,7 @@ async function withStubs<T>(
     rankRepository.list = originals.listRanks;
     userProfileRepository.listByLineUserIds = originals.listProfiles;
     sessionRepository.listAll = originals.listSessions;
+    userPointService.listBalancesByLineUserIds = originals.listBalances;
   }
 }
 
@@ -151,4 +166,39 @@ test("配信済み一覧（assignments 側）の表示名もニックネーム�
   );
 
   assert.equal(overview.assignments[0]?.assignment.respondent?.display_name, "とむそーや");
+});
+
+/**
+ * 保有ポイントの出どころ。
+ *
+ * respondents.total_points はレガシーで、案件ごとに1行ずつ持つため
+ * 「どの行を見るか」で値が変わる。マイページは正準の user_points を出しており、
+ * 管理画面だけがレガシー側を見ていたので両画面の数字が食い違っていた
+ * （本番で 18pt vs 21pt / 56pt vs 90pt の乖離を確認）。
+ */
+
+test("保有ポイントは正準の user_points を出す（レガシーの respondents ではない）", async () => {
+  const overview = await withStubs(
+    {
+      respondents: [respondentFixture({ total_points: 18 })],
+      profiles: [profileFixture()],
+      balances: { "U0000000000000000000000000000001": 21 }
+    },
+    () => assignmentService.getProjectDeliveryOverview(PROJECT_ID)
+  );
+
+  assert.equal(overview.candidates[0]?.total_points, 21);
+});
+
+test("user_points に行が無い旧データは respondents へフォールバックする", async () => {
+  const overview = await withStubs(
+    {
+      respondents: [respondentFixture({ total_points: 18 })],
+      profiles: [profileFixture()],
+      balances: {}
+    },
+    () => assignmentService.getProjectDeliveryOverview(PROJECT_ID)
+  );
+
+  assert.equal(overview.candidates[0]?.total_points, 18);
 });

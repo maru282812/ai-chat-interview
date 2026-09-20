@@ -22,6 +22,7 @@ import type {
 } from "../types/domain";
 import { lineMessagingService } from "./lineMessagingService";
 import { buildProjectStartUrl } from "./liffService";
+import { userPointService } from "./userPointService";
 import { buildProjectStartFlex } from "../templates/flex";
 
 export interface AssignmentRuleFilter {
@@ -504,6 +505,12 @@ export const assignmentService = {
     const profiles = await userProfileRepository.listByLineUserIds(lineUserIds);
     const profileByLineUserId = new Map(profiles.map((p) => [p.line_user_id, p]));
 
+    // 保有ポイントは正準台帳 user_points を出す。
+    // respondents.total_points はレガシー（旧集計）で、案件ごとに1行ずつ持つため
+    // 「どの行を見るか」で値が変わり、マイページ（user_points）と食い違っていた。
+    // 行が無い旧データは従来どおり respondents 側へフォールバックする。
+    const balanceByLineUserId = await userPointService.listBalancesByLineUserIds(lineUserIds);
+
     const sessionsByRespondent = await listSessionsByRespondentMap(respondents);
     const assignmentsByRespondent = new Map(assignments.map((item) => [item.respondent_id, item]));
 
@@ -571,7 +578,10 @@ export const assignmentService = {
             pointLeader.display_name ??
             null,
           has_line_user_id: hasLineUserId(pointLeader.line_user_id),
-          total_points: pointLeader.total_points,
+          total_points:
+            (hasLineUserId(pointLeader.line_user_id)
+              ? balanceByLineUserId.get(pointLeader.line_user_id)?.available_points
+              : undefined) ?? pointLeader.total_points,
           rank_name: pointLeader.current_rank?.rank_name ?? null,
           rank_code: pointLeader.current_rank?.rank_code ?? null,
           last_participated_at: lastParticipatedAt,
