@@ -206,6 +206,23 @@ export const questionRepository = {
     return data as Question;
   },
 
+  // 並べ替え用: 複数設問の sort_order をまとめて書き換える。
+  // sort_order に UNIQUE は無いので、一時退避せずそのまま目的の値を書いてよい。
+  // 呼び出し側（controller）が「渡された id が全部この案件のものか」を検証済みである
+  // ことが前提。ここでも project_id で絞って、取り違えた id が他案件を書き換えるのを防ぐ。
+  async reorderByIds(projectId: string, orderedIds: string[]): Promise<void> {
+    // トランザクションは張れない（PostgREST）。途中で失敗しても各行は
+    // 独立した整数を持つだけで整合は壊れないため、素直に順に当てる。
+    for (let i = 0; i < orderedIds.length; i++) {
+      const { error } = await supabase
+        .from("questions")
+        .update({ sort_order: i + 1 })
+        .eq("id", orderedIds[i])
+        .eq("project_id", projectId);
+      throwIfError(error);
+    }
+  },
+
   // ブロック割当用: page_group_id を直接更新する（null で割当解除も可能）。
   // 通常の update() は page_group_id=null をペイロードから除外するため別経路を用意する。
   async setPageGroup(id: string, pageGroupId: string | null): Promise<void> {

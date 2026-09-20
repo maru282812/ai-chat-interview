@@ -190,6 +190,30 @@
       // hidden はサーバーが付けているので JS 無効時は閉じっぱなしになる。
       // それでは到達できないので、ここで最初に「JS が動いている」印を付け、
       // CSS 側は .js-nav が付いていないときだけメニューを強制表示する。
+      // グローバルヘッダーの実高さを CSS 変数へ流す。
+      // ナビは幅によって2段→3段と折り返すので高さが一定しない。画面側の sticky
+      // （設問一覧のツールバー等）はこの値を top に使うため、固定値だと
+      // 折り返した瞬間に隠れるか浮くかのどちらかになる。
+      (function () {
+        var headerEl = document.querySelector("header");
+        if (!headerEl) return;
+
+        function syncHeaderHeight() {
+          // position:static に落ちている（縦が狭い）ときは 0 を配る。
+          // そうしないと本文が固定でもないヘッダーの分だけ押し下げられる。
+          var isSticky = getComputedStyle(headerEl).position === "sticky";
+          var h = isSticky ? Math.round(headerEl.getBoundingClientRect().height) : 0;
+          document.documentElement.style.setProperty("--admin-header-h", h + "px");
+        }
+
+        syncHeaderHeight();
+        window.addEventListener("resize", syncHeaderHeight);
+        // ドロップダウンの開閉やフォント読み込みでも高さが変わる
+        if (typeof ResizeObserver === "function") {
+          new ResizeObserver(syncHeaderHeight).observe(headerEl);
+        }
+      })();
+
       (function () {
         var shell = document.querySelector(".nav-shell");
         if (!shell) return;

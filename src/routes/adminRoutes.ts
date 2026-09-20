@@ -178,6 +178,8 @@ adminRoutes.post("/api/questions/:questionId",                 asyncHandler(admi
 adminRoutes.post("/api/questions/:questionId/delete",          asyncHandler(adminController.apiDeleteQuestion));
 adminRoutes.post("/api/questions/:questionId/suggest-options", asyncHandler(adminController.apiSuggestAnswerOptions));
 adminRoutes.post("/api/projects/:projectId/questions",         asyncHandler(adminController.apiCreateQuestionFlow));
+// 並べ替え（一覧のドラッグ&ドロップ／フロー設計のノード移動が共通で使う）
+adminRoutes.post("/api/projects/:projectId/questions/reorder", asyncHandler(adminController.apiReorderQuestions));
 
 // フロー流用・自動生成 API
 adminRoutes.get("/api/projects-for-import",                               asyncHandler(adminController.apiListProjectsForImport));

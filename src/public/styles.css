@@ -22,6 +22,33 @@ header {
   background: linear-gradient(135deg, #123b3a, #0b7a75);
   color: #fff;
   padding: 20px 28px;
+  /* スクロールしても管理メニューに手が届くようにする。
+     position:sticky は「スクロールする祖先」を基準に効くので、body 直下の
+     この位置でしか成立しない（main の中に入れると効かなくなる）。 */
+  position: sticky;
+  top: 0;
+  /* 画面内の sticky（設問一覧のツールバー等）より必ず上に重なること。
+     下位の sticky は --admin-header-z 未満を使う約束にしている。 */
+  z-index: 200;
+}
+
+/* 画面側の sticky（設問一覧・詳細ページの内部ヘッダー）が
+   「グローバルヘッダーの下端」を基準に貼り付けるための共有値。
+   ナビは幅によって段数が変わり高さが一定しないので、実値は header.ejs の
+   JS が実測して上書きする。ここの値は JS が動くまでの暫定。 */
+:root {
+  --admin-header-h: 132px;
+}
+
+/* 縦が狭い画面ではヘッダーを固定すると本文が読めなくなるので、固定をやめる。
+   （ノートPCの横向き・ブラウザを縦に潰した状態で実測して入れた） */
+@media (max-height: 560px) {
+  header {
+    position: static;
+  }
+  :root {
+    --admin-header-h: 0px;
+  }
 }
 
 nav a {

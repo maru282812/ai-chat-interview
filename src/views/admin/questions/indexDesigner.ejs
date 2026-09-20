@@ -1,6 +1,8 @@
 <%- include("../../partials/header", { title }) %>
 
-<div class="question-header-nav" style="position:sticky;top:0;z-index:10;background:#fff;padding:8px 0;border-bottom:1px solid #e0e0e0;">
+<%# グローバルヘッダーが sticky になったので、top:0 だとその裏に潜る。
+    実測値が入る --admin-header-h を基準に貼り付ける。 %>
+<div class="question-header-nav" style="position:sticky;top:var(--admin-header-h,0px);z-index:100;background:#fff;padding:8px 0;border-bottom:1px solid #e0e0e0;">
   <div class="actions-row" style="justify-content: space-between;">
     <div class="actions-row">
       <a class="button-link secondary" href="/admin/projects">一覧へ戻る</a>
@@ -29,9 +31,43 @@
   </p>
 <% } %>
 
-<table style="margin-top: 16px;">
+<style>
+  /* ── 並べ替え ───────────────────────────────────── */
+  .q-drag-handle {
+    cursor:grab; user-select:none; color:#8aa5a0;
+    font-size:16px; line-height:1; padding:2px 4px;
+  }
+  .q-drag-handle:active { cursor:grabbing; }
+  tr.q-row.is-dragging { opacity:0.4; }
+  /* 落下先の目印。行の上/下どちらに入るかを線で見せる */
+  tr.q-row.drop-before td { box-shadow:inset 0 2px 0 0 #0b7a75; }
+  tr.q-row.drop-after  td { box-shadow:inset 0 -2px 0 0 #0b7a75; }
+  .q-order-cell { white-space:nowrap; }
+  .q-reorder-bar {
+    display:none; gap:10px; align-items:center; flex-wrap:wrap;
+    margin-top:12px; padding:10px 12px;
+    border:1px solid #f2cf88; border-radius:10px; background:#fff7e8; color:#8a5b00;
+  }
+  .q-reorder-bar.is-open { display:flex; }
+  .q-status { font-size:12px; color:#60726f; min-height:16px; margin-top:8px; }
+  .q-status.is-error { color:#8a2020; }
+  .q-status.is-ok    { color:#1a7a57; }
+  .q-del-btn { font-size:12px; }
+</style>
+
+<%# 並べ替えは「ドラッグして離す→この帯で保存」の2段。
+    離した瞬間に保存すると、掴み損ねただけで本番の設問順が変わってしまう。 %>
+<div class="q-reorder-bar" id="reorderBar">
+  <span>並び順を変更しました。保存すると回答者に届く順番が変わります。</span>
+  <button type="button" class="button-link primary" id="reorderSaveBtn" style="font-size:13px;">並び順を保存</button>
+  <button type="button" class="button-link secondary" id="reorderCancelBtn" style="font-size:13px;">元に戻す</button>
+</div>
+<p class="q-status" id="qStatus"></p>
+
+<table style="margin-top: 16px;" id="questionTable">
   <thead>
     <tr>
+      <th style="width:28px;"></th>
       <th>Order</th>
       <th>Code</th>
       <th>ロウデータ列</th>
@@ -45,10 +81,13 @@
       <th>Action</th>
     </tr>
   </thead>
-  <tbody>
+  <tbody id="questionRows">
     <% for (const row of questions) { %>
-      <tr>
-        <td><%= row.question.sort_order %></td>
+      <tr class="q-row" draggable="true"
+          data-question-id="<%= row.question.id %>"
+          data-question-code="<%= row.question.question_code %>">
+        <td class="q-drag-handle" title="ドラッグで並べ替え" aria-hidden="true">⠿</td>
+        <td class="q-order-cell"><%= row.question.sort_order %></td>
         <td><strong><%= row.question.question_code %></strong></td>
         <td>
           <% const rd = rawdataIndex ? rawdataIndex.byQuestionId[row.question.id] : null; %>
@@ -71,10 +110,189 @@
         </td>
         <td><%= row.nextSummary || "-" %></td>
         <td><strong><%= row.question.question_text %></strong></td>
-        <td><a href="/admin/questions/<%= row.question.id %>/edit">Edit</a></td>
+        <td style="white-space:nowrap;">
+          <a href="/admin/questions/<%= row.question.id %>/edit">Edit</a>
+          <button type="button" class="button-link danger q-del-btn"
+                  data-question-id="<%= row.question.id %>"
+                  data-question-code="<%= row.question.question_code %>"
+                  style="margin-left:8px;">削除</button>
+        </td>
       </tr>
     <% } %>
   </tbody>
 </table>
+
+<script>
+(function () {
+  var PROJECT_ID = <%- JSON.stringify(project.id) %>;
+  var tbody   = document.getElementById('questionRows');
+  var bar     = document.getElementById('reorderBar');
+  var statusEl= document.getElementById('qStatus');
+  if (!tbody) return;
+
+  // 掴んだ時点の並び。「元に戻す」と、保存失敗時の巻き戻しに使う。
+  var savedOrder = rowIds();
+  var dragRow = null;
+
+  function rowIds() {
+    return [].slice.call(tbody.querySelectorAll('tr.q-row'))
+      .map(function (tr) { return tr.dataset.questionId; });
+  }
+
+  function setStatus(msg, kind) {
+    statusEl.textContent = msg || '';
+    statusEl.className = 'q-status' + (kind ? ' is-' + kind : '');
+  }
+
+  function orderChanged() {
+    var now = rowIds();
+    if (now.length !== savedOrder.length) return true;
+    for (var i = 0; i < now.length; i++) if (now[i] !== savedOrder[i]) return true;
+    return false;
+  }
+
+  // Order 列は見た目だけの通し番号。保存前でも動かした結果が分かるよう振り直す。
+  // 実際の sort_order はサーバーが 1..n で詰め直す。
+  function renumber() {
+    [].slice.call(tbody.querySelectorAll('tr.q-row')).forEach(function (tr, i) {
+      var cell = tr.querySelector('.q-order-cell');
+      if (cell) cell.textContent = String(i + 1);
+    });
+  }
+
+  function syncBar() {
+    bar.classList.toggle('is-open', orderChanged());
+  }
+
+  function clearDropMarks() {
+    [].slice.call(tbody.querySelectorAll('tr.q-row')).forEach(function (tr) {
+      tr.classList.remove('drop-before', 'drop-after');
+    });
+  }
+
+  // ─── ドラッグ&ドロップ ───────────────────────────
+  tbody.addEventListener('dragstart', function (e) {
+    var tr = e.target.closest ? e.target.closest('tr.q-row') : null;
+    if (!tr) return;
+    dragRow = tr;
+    tr.classList.add('is-dragging');
+    // Firefox はデータをセットしないと dragover が発火しない
+    try { e.dataTransfer.setData('text/plain', tr.dataset.questionId); } catch (_) {}
+    e.dataTransfer.effectAllowed = 'move';
+  });
+
+  tbody.addEventListener('dragover', function (e) {
+    if (!dragRow) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+
+    var tr = e.target.closest ? e.target.closest('tr.q-row') : null;
+    clearDropMarks();
+    if (!tr || tr === dragRow) return;
+    // 行の上半分なら手前、下半分なら後ろに入れる
+    var box = tr.getBoundingClientRect();
+    var after = (e.clientY - box.top) > box.height / 2;
+    tr.classList.add(after ? 'drop-after' : 'drop-before');
+  });
+
+  tbody.addEventListener('drop', function (e) {
+    if (!dragRow) return;
+    e.preventDefault();
+    var tr = e.target.closest ? e.target.closest('tr.q-row') : null;
+    clearDropMarks();
+    if (!tr || tr === dragRow) return;
+
+    var box = tr.getBoundingClientRect();
+    var after = (e.clientY - box.top) > box.height / 2;
+    if (after) tr.parentNode.insertBefore(dragRow, tr.nextSibling);
+    else       tr.parentNode.insertBefore(dragRow, tr);
+
+    renumber();
+    syncBar();
+  });
+
+  tbody.addEventListener('dragend', function () {
+    if (dragRow) dragRow.classList.remove('is-dragging');
+    clearDropMarks();
+    dragRow = null;
+  });
+
+  // ─── 保存 / 取り消し ────────────────────────────
+  document.getElementById('reorderSaveBtn').addEventListener('click', async function () {
+    var btn = this;
+    var ordered = rowIds();
+    btn.disabled = true;
+    setStatus('並び順を保存しています…');
+
+    try {
+      var resp = await fetch('/admin/api/projects/' + PROJECT_ID + '/questions/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds: ordered })
+      });
+      var data = await resp.json().catch(function () { return {}; });
+      if (!resp.ok) {
+        setStatus('並び順の保存に失敗しました: ' + (data.error || resp.statusText), 'error');
+        return;
+      }
+      savedOrder = ordered;
+      syncBar();
+      setStatus('並び順を保存しました。', 'ok');
+    } catch (err) {
+      setStatus('並び順の保存でエラーが発生しました: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById('reorderCancelBtn').addEventListener('click', function () {
+    // savedOrder の順に DOM を並べ直す
+    savedOrder.forEach(function (id) {
+      var tr = tbody.querySelector('tr.q-row[data-question-id="' + id + '"]');
+      if (tr) tbody.appendChild(tr);
+    });
+    renumber();
+    syncBar();
+    setStatus('');
+  });
+
+  // ─── 削除 ──────────────────────────────────────
+  // 回答が付いた設問はサーバーが 409 で拒否する（ロウデータの列契約を壊すため）。
+  // ここでは消せる前提で投げて、返ってきた理由をそのまま出す。
+  tbody.addEventListener('click', async function (e) {
+    var btn = e.target.closest ? e.target.closest('.q-del-btn') : null;
+    if (!btn) return;
+
+    var code = btn.dataset.questionCode || '';
+    if (!confirm(code + ' を削除します。元に戻せません。よろしいですか？')) return;
+
+    btn.disabled = true;
+    setStatus(code + ' を削除しています…');
+    try {
+      var resp = await fetch('/admin/api/questions/' + btn.dataset.questionId + '/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      var data = await resp.json().catch(function () { return {}; });
+      if (!resp.ok) {
+        setStatus('削除できませんでした: ' + (data.error || resp.statusText), 'error');
+        btn.disabled = false;
+        return;
+      }
+      var tr = btn.closest('tr.q-row');
+      if (tr) tr.remove();
+      // 消えた行は元の並びからも外す。残したままだと「元に戻す」で復活できない
+      // 行を探し続け、以後の並べ替えが savedOrder と食い違う。
+      savedOrder = savedOrder.filter(function (id) { return id !== btn.dataset.questionId; });
+      renumber();
+      syncBar();
+      setStatus(code + ' を削除しました。', 'ok');
+    } catch (err) {
+      setStatus('削除でエラーが発生しました: ' + err.message, 'error');
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
 
 <%- include("../../partials/footer") %>
