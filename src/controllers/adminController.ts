@@ -523,6 +523,146 @@ function buildProjectEditRedirectPath(
  * オープンリダイレクトになる。管理画面内の相対パスだけを許可し、
  * それ以外（絶対 URL・プロトコル相対 //evil.com・/admin 以外）は null を返す。
  */
+/**
+ * 並べ替えの結果に合わせて question_code を q_1..q_n に振り直す。
+ *
+ * question_code は表示用のラベルではなく、ロウデータ(wide/long/codebook)の列の
+ * 意味・分岐(branch_rule)の行き先・表示条件の式が指す「識別子」でもある。
+ * 振り直すと過去データとの突合が壊れるため、**壊れようのない案件に限って**行う。
+ *
+ * 実行する条件（ひとつでも欠けたらやらない）:
+ *   1. 回答が1件も無い（answers は question_id で繋がるので消えはしないが、
+ *      収集済みの回答と列の意味の対応が壊れる）
+ *   2. 「調査票を確定」していない（スナップショットがあると列が凍結される）
+ *   3. 案件が公開されていない（配信済みなら外部に出た番号と食い違う）
+ *   4. 自動採番の形（q_数字）の設問しかない。人が付けた名前（health_q1 など）が
+ *      1つでもあれば、その意図を消さないよう案件ごと対象外にする
+ *
+ * 振り直すときは branch_rule と表示条件の中のコードも一緒に書き換える。
+ * ここを漏らすと、分岐だけが存在しない設問を指す（過去に実際に起きた事故）。
+ */
+async function renumberQuestionCodesIfSafe(
+  projectId: string,
+  orderedIds: string[]
+): Promise<{ applied: number; skippedReason: string | null }> {
+  const questions = await questionRepository.listByProject(projectId, { includeHidden: true });
+
+  // 条件4: 自動採番の形以外が混ざっていたら触らない
+  const AUTO_CODE = /^q_\d+$/;
+  const renamable = questions.filter((q) => !q.is_system && !q.is_hidden);
+  if (renamable.length === 0) return { applied: 0, skippedReason: null };
+  if (!renamable.every((q) => AUTO_CODE.test(q.question_code))) {
+    return { applied: 0, skippedReason: "custom_codes" };
+  }
+
+  // 条件2・3
+  const [project, snapshot] = await Promise.all([
+    projectRepository.getById(projectId).catch(() => null),
+    snapshotService.getActive(projectId).catch(() => null)
+  ]);
+  if (snapshot) return { applied: 0, skippedReason: "snapshot_confirmed" };
+  if (project && project.status !== "draft") {
+    return { applied: 0, skippedReason: "project_not_draft" };
+  }
+
+  // 条件1: 1件でも回答があれば触らない
+  const counts = await Promise.all(
+    questions.map((q) => answerRepository.countByQuestion(q.id).catch(() => null))
+  );
+  if (counts.some((c) => c === null)) return { applied: 0, skippedReason: "count_failed" };
+  if (counts.some((c) => (c ?? 0) > 0)) return { applied: 0, skippedReason: "has_answers" };
+
+  // 新しい番号を決める（並び順そのまま q_1..q_n）
+  const byId = new Map(questions.map((q) => [q.id, q]));
+  const mapping: Record<string, string> = {};
+  let n = 0;
+  for (const id of orderedIds) {
+    const q = byId.get(id);
+    if (!q || q.is_system || q.is_hidden) continue;
+    n += 1;
+    const next = `q_${n}`;
+    if (q.question_code !== next) mapping[q.question_code] = next;
+  }
+  if (Object.keys(mapping).length === 0) return { applied: 0, skippedReason: null };
+
+  const rename = (code: string | null | undefined): string | null =>
+    code == null || code === "END" ? (code ?? null) : (mapping[code] ?? code);
+
+  // unique(project_id, question_code) があるので、直接 q_13→q_11 と書くと
+  // まだ残っている q_11 と衝突する。一度ぶつからない名前へ逃がしてから入れ直す。
+  // id → 新コード を先に確定させる。逃がした後は DB 上の code が temp に
+  // なっており、元の code から引き直せなくなるため。
+  const targetById = new Map<string, string>();
+  for (const q of questions) {
+    const target = mapping[q.question_code];
+    if (target) targetById.set(q.id, target);
+  }
+  for (const id of targetById.keys()) {
+    await questionRepository.update(id, { question_code: `__reorder_${id.slice(0, 8)}` });
+  }
+  for (const [id, target] of targetById) {
+    await questionRepository.update(id, { question_code: target });
+  }
+
+  // 分岐・合流・表示条件の中に書かれたコードも一緒に直す。
+  // 漏らすと分岐だけが存在しない設問を指す。
+  for (const q of questions) {
+    const updates: Record<string, unknown> = {};
+
+    const rule = q.branch_rule;
+    if (rule && !Array.isArray(rule)) {
+      const newRule: Record<string, unknown> = { ...rule };
+      let touched = false;
+      if (rule.default_next) {
+        const v = rename(rule.default_next);
+        if (v !== rule.default_next) { newRule.default_next = v; touched = true; }
+      }
+      if (rule.merge_question_code) {
+        const v = rename(rule.merge_question_code);
+        if (v !== rule.merge_question_code) { newRule.merge_question_code = v; touched = true; }
+      }
+      if (Array.isArray(rule.branches)) {
+        const branches = rule.branches.map((b) => {
+          const nb = b as unknown as Record<string, unknown>;
+          const v = rename(nb.next as string | null | undefined);
+          if (v !== nb.next) { touched = true; return { ...nb, next: v }; }
+          return nb;
+        });
+        if (touched) newRule.branches = branches;
+      }
+      if (touched) updates.branch_rule = newRule;
+    }
+
+    // 表示条件は "q5=yes" のように式の中にコードが入る。
+    // 語として一致するものだけを置き換える（q_1 が q_10 に食い込まないよう \b で区切る）。
+    const conds = q.visibility_conditions;
+    if (Array.isArray(conds) && conds.length > 0) {
+      let touched = false;
+      const newConds = conds.map((c) => {
+        const cond = c as unknown as Record<string, unknown>;
+        if (typeof cond.expression !== "string") return cond;
+        // 置換は1回の走査で済ませる。順番に replace を重ねると、入れ替え
+        // （q_3→q_1 と q_1→q_3 が同時にある）のときに二度置換されて元へ戻る。
+        const codes = Object.keys(mapping)
+          .sort((a, b) => b.length - a.length)   // q_1 が q_10 に食い込まないよう長い方から
+          .map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+        if (codes.length === 0) return cond;
+        const re = new RegExp(`\\b(${codes.join("|")})\\b`, "g");
+        const expr = cond.expression.replace(re, (m) => mapping[m] ?? m);
+        if (expr !== cond.expression) touched = true;
+        return expr === cond.expression ? cond : { ...cond, expression: expr };
+      });
+      if (touched) updates.visibility_conditions = newConds;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await questionRepository.update(q.id, updates as Parameters<typeof questionRepository.update>[1]);
+    }
+  }
+
+  return { applied: Object.keys(mapping).length, skippedReason: null };
+}
+
 export function sanitizeAdminRedirect(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const value = raw.trim();
@@ -5212,9 +5352,6 @@ export const adminController = {
     // default_next を持つ設問（フロー設計で線を引いた／並べ替え前は隣だったので
     // 保存された）は昔の相手を指したまま残り、並びを飛び越す矢印になる。
     //
-    // 「もともと直後の設問を指していた」＝順番に流れていただけの線は、
-    // 新しい並びの直後へ付け替える。分岐（branches）や、隣ではない相手を
-    // 明示的に指している線は設計意図なので触らない。
     const rewrites: Promise<unknown>[] = [];
     for (const q of existing) {
       const rule = q.branch_rule;
@@ -5236,7 +5373,15 @@ export const adminController = {
     }
     await Promise.all(rewrites);
 
-    res.json({ ok: true, count: orderedIds.length, unlinked: rewrites.length });
+    const renumbered = await renumberQuestionCodesIfSafe(projectId, finalOrder);
+
+    res.json({
+      ok: true,
+      count: orderedIds.length,
+      unlinked: rewrites.length,
+      renumbered: renumbered.applied,
+      renumberSkippedReason: renumbered.skippedReason
+    });
   },
 
   async apiDeleteQuestion(req: Request, res: Response): Promise<void> {

@@ -37,18 +37,24 @@ const PROJECT_ID = "00000000-0000-4000-8000-0000000000a1";
 
 let adminController: typeof import("../controllers/adminController").adminController;
 let questionRepository: typeof import("../repositories/questionRepository").questionRepository;
+let projectRepository: typeof import("../repositories/projectRepository").projectRepository;
+let answerRepository: typeof import("../repositories/answerRepository").answerRepository;
+let snapshotService: typeof import("../services/snapshotService").snapshotService;
 
 /** reorderByIds に渡った引数を記録する */
 let reordered: { projectId: string; orderedIds: string[] } | null;
 /** update で書き換えられた branch_rule を記録する */
 let updated: { id: string; branchRule: unknown }[];
+/** update に渡った入力をそのまま記録する（question_code の振り直し確認用） */
+let updatedAll: { id: string; input: Record<string, unknown> }[];
 
 function makeQuestion(
   id: string,
   code: string,
   sortOrder: number,
   isHidden = false,
-  branchRule: Record<string, unknown> | null = null
+  branchRule: Record<string, unknown> | null = null,
+  visibilityConditions: Array<Record<string, unknown>> | null = null
 ) {
   return {
     id,
@@ -59,7 +65,8 @@ function makeQuestion(
     sort_order: sortOrder,
     is_hidden: isHidden,
     is_system: isHidden,
-    branch_rule: branchRule
+    branch_rule: branchRule,
+    visibility_conditions: visibilityConditions
   };
 }
 
@@ -94,11 +101,15 @@ function makeReq(orderedIds: unknown) {
 before(async () => {
   ({ adminController } = await import("../controllers/adminController"));
   ({ questionRepository } = await import("../repositories/questionRepository"));
+  ({ projectRepository } = await import("../repositories/projectRepository"));
+  ({ answerRepository } = await import("../repositories/answerRepository"));
+  ({ snapshotService } = await import("../services/snapshotService"));
 });
 
 beforeEach(() => {
   reordered = null;
   updated = [];
+  updatedAll = [];
 
   questionRepository.listByProject = (async () =>
     PROJECT_QUESTIONS) as unknown as typeof questionRepository.listByProject;
@@ -109,8 +120,18 @@ beforeEach(() => {
 
   questionRepository.update = (async (id: string, input: Record<string, unknown>) => {
     updated.push({ id, branchRule: input.branch_rule });
+    updatedAll.push({ id, input });
     return { id, ...input };
   }) as unknown as typeof questionRepository.update;
+
+  // 振り直しの前提を既定では満たさせない（既存テストが巻き込まれないように）。
+  // 振り直しを試すテストは setupRenumberable() で明示的に条件をそろえる。
+  projectRepository.getById = (async () => ({
+    id: PROJECT_ID, name: "検証用", status: "published"
+  })) as unknown as typeof projectRepository.getById;
+  snapshotService.getActive = (async () => null) as unknown as typeof snapshotService.getActive;
+  answerRepository.countByQuestion = (async () =>
+    0) as unknown as typeof answerRepository.countByQuestion;
 });
 
 test("渡した並び順どおりに sort_order を詰め直す", async () => {
@@ -400,4 +421,165 @@ test("線を持たない設問は書き換えない（Next は sort_order から
   await adminController.apiReorderQuestions(makeReq(["q3", "q2", "q1"]) as never, res as never);
 
   assert.equal(updated.length, 0, "branch_rule が無い設問は触らないこと");
+});
+
+// ─────────────────────────────────────────────────────────────
+// 並べ替えに合わせて question_code を振り直す（安全な案件に限る）
+//
+// question_code は表示用のラベルではなく、ロウデータ(wide/long/codebook)の
+// 列の意味・分岐の行き先・表示条件の式が指す識別子でもある。
+// 振り直すと過去データとの突合が壊れるので、壊れようのない案件だけに絞る。
+// ここでは「やらない条件」が確実に効くことを固定する。
+// ─────────────────────────────────────────────────────────────
+
+/** 振り直しの前提が全部そろった状態（draft・回答0・スナップショット無し・自動採番のみ）。 */
+function setupRenumberable(questions?: ReturnType<typeof makeQuestion>[]) {
+  const qs = questions ?? [
+    makeQuestion("q1", "q_1", 1),
+    makeQuestion("q2", "q_2", 2),
+    makeQuestion("q3", "q_3", 3)
+  ];
+  questionRepository.listByProject = (async () =>
+    qs) as unknown as typeof questionRepository.listByProject;
+  projectRepository.getById = (async () => ({
+    id: PROJECT_ID,
+    name: "検証用",
+    status: "draft"
+  })) as unknown as typeof projectRepository.getById;
+  snapshotService.getActive = (async () => null) as unknown as typeof snapshotService.getActive;
+  answerRepository.countByQuestion = (async () =>
+    0) as unknown as typeof answerRepository.countByQuestion;
+  return qs;
+}
+
+/** question_code の書き換えだけを拾う（temp 経由の2段書きは最終値だけ見る）。 */
+function finalCodes(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const u of updatedAll) {
+    if (typeof u.input.question_code === "string") out[u.id] = u.input.question_code;
+  }
+  return out;
+}
+
+test("条件がそろえば q_1..q_n に振り直す", async () => {
+  setupRenumberable();
+  const { res, captured } = makeRes();
+  // 逆順にする → q3,q2,q1 が q_1,q_2,q_3 になる
+  await adminController.apiReorderQuestions(makeReq(["q3", "q2", "q1"]) as never, res as never);
+
+  const codes = finalCodes();
+  assert.equal(codes["q3"], "q_1", "先頭に来た設問が q_1 になる");
+  assert.equal(codes["q1"], "q_3", "最後に来た設問が q_3 になる");
+  assert.equal((captured.body as { renumbered: number }).renumbered > 0, true);
+});
+
+test("一意制約に当たらないよう、いったん別名へ逃がしてから入れ直す", async () => {
+  setupRenumberable();
+  const { res } = makeRes();
+  await adminController.apiReorderQuestions(makeReq(["q3", "q2", "q1"]) as never, res as never);
+
+  // q_3 → q_1 の書き換えは、まだ q_1 が残っている状態では通らない。
+  // 一時コードを挟んでいること（同じ設問に2回 question_code が書かれること）を確認する。
+  const writes = updatedAll.filter((u) => typeof u.input.question_code === "string");
+  const tempWrites = writes.filter((u) => String(u.input.question_code).startsWith("__reorder_"));
+  assert.ok(tempWrites.length > 0, "一時コードへ逃がしていない（unique 制約で失敗する）");
+  for (const t of tempWrites) {
+    const after = writes.filter((w) => w.id === t.id).pop();
+    assert.ok(
+      after && !String(after.input.question_code).startsWith("__reorder_"),
+      "一時コードのまま残っている設問がある"
+    );
+  }
+});
+
+test("分岐・合流・表示条件の中のコードも一緒に直す", async () => {
+  setupRenumberable([
+    makeQuestion("q1", "q_1", 1, false, {
+      branches: [{ value: "yes", next: "q_3" }],
+      merge_question_code: "q_2"
+    }),
+    makeQuestion("q2", "q_2", 2, false, null, [
+      { type: "pipe_expression", expression: "q_3=yes" }
+    ]),
+    makeQuestion("q3", "q_3", 3)
+  ]);
+  const { res } = makeRes();
+  await adminController.apiReorderQuestions(makeReq(["q3", "q2", "q1"]) as never, res as never);
+
+  // q_3 は先頭へ動いたので q_1 になる。それを指していた参照が追従すること。
+  const branchWrite = updatedAll.find((u) => u.id === "q1" && u.input.branch_rule);
+  const rule = branchWrite?.input.branch_rule as Record<string, unknown> | undefined;
+  assert.deepEqual(
+    (rule?.branches as Array<Record<string, unknown>>)?.[0]?.next,
+    "q_1",
+    "分岐の行き先が新しいコードに追従すること（漏らすと存在しない設問を指す）"
+  );
+
+  const visWrite = updatedAll.find((u) => u.id === "q2" && u.input.visibility_conditions);
+  const conds = visWrite?.input.visibility_conditions as Array<Record<string, unknown>> | undefined;
+  assert.equal(conds?.[0]?.expression, "q_1=yes", "表示条件の式も追従すること");
+});
+
+test("回答が1件でもあれば振り直さない", async () => {
+  setupRenumberable();
+  answerRepository.countByQuestion = (async (id: string) =>
+    id === "q2" ? 1 : 0) as unknown as typeof answerRepository.countByQuestion;
+
+  const { res, captured } = makeRes();
+  await adminController.apiReorderQuestions(makeReq(["q3", "q2", "q1"]) as never, res as never);
+
+  assert.equal(Object.keys(finalCodes()).length, 0, "コードを1件も書き換えないこと");
+  assert.equal((captured.body as { renumberSkippedReason: string }).renumberSkippedReason, "has_answers");
+});
+
+test("「調査票を確定」済みなら振り直さない", async () => {
+  setupRenumberable();
+  snapshotService.getActive = (async () => ({
+    id: "snap-1",
+    definition_json: {}
+  })) as unknown as typeof snapshotService.getActive;
+
+  const { res, captured } = makeRes();
+  await adminController.apiReorderQuestions(makeReq(["q3", "q2", "q1"]) as never, res as never);
+
+  assert.equal(Object.keys(finalCodes()).length, 0);
+  assert.equal(
+    (captured.body as { renumberSkippedReason: string }).renumberSkippedReason,
+    "snapshot_confirmed"
+  );
+});
+
+test("公開済み（draft 以外）なら振り直さない", async () => {
+  setupRenumberable();
+  projectRepository.getById = (async () => ({
+    id: PROJECT_ID,
+    name: "検証用",
+    status: "published"
+  })) as unknown as typeof projectRepository.getById;
+
+  const { res, captured } = makeRes();
+  await adminController.apiReorderQuestions(makeReq(["q3", "q2", "q1"]) as never, res as never);
+
+  assert.equal(Object.keys(finalCodes()).length, 0);
+  assert.equal(
+    (captured.body as { renumberSkippedReason: string }).renumberSkippedReason,
+    "project_not_draft"
+  );
+});
+
+test("人が付けた名前が1つでもあれば案件ごと対象外にする", async () => {
+  setupRenumberable([
+    makeQuestion("q1", "health_q1", 1),   // 人が付けた名前
+    makeQuestion("q2", "q_2", 2),
+    makeQuestion("q3", "q_3", 3)
+  ]);
+
+  const { res, captured } = makeRes();
+  await adminController.apiReorderQuestions(makeReq(["q3", "q2", "q1"]) as never, res as never);
+
+  assert.equal(Object.keys(finalCodes()).length, 0, "意図のある名前を消さないこと");
+  assert.equal(
+    (captured.body as { renumberSkippedReason: string }).renumberSkippedReason,
+    "custom_codes"
+  );
 });
