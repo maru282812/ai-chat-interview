@@ -186,6 +186,12 @@
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
 
+    // 掴んだまま画面の端に来たらページを送る。無いと、画面に映っていない
+    // 位置へは行ごと運べない（設問が増えるほど遠くへ動かせなくなる）。
+    var EDGE = 90, SPEED = 20;
+    if (e.clientY < EDGE) window.scrollBy(0, -SPEED);
+    else if (e.clientY > window.innerHeight - EDGE) window.scrollBy(0, SPEED);
+
     var tr = e.target.closest ? e.target.closest('tr.q-row') : null;
     clearDropMarks();
     if (!tr || tr === dragRow) return;

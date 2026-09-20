@@ -238,3 +238,71 @@ test("設問一覧: 一覧とフローが同じ reorder API を使う", () => {
     "一覧とフローで保存経路が分かれています（片方だけ直す事故が起きます）"
   );
 });
+
+// ─────────────────────────────────────────────────────────────
+// 詳細ページ右カラム（プレビュー）の貼り付き
+//
+// sticky は「親の箱の中」しか移動できない。grid の align-items:start だと
+// 右カラム(aside)が中身の高さまでしか伸びず、その高さを超えてスクロールした
+// 時点でプレビューが一緒に流れて画面から消えていた（実機で発覚）。
+// top も固定値だと sticky なヘッダーの裏に潜る。
+// ─────────────────────────────────────────────────────────────
+
+const formV3Src = readSrc("src/views/admin/questions/formV3.ejs");
+
+test("右カラムは中身の高さで切り上げない（sticky の可動域を潰さない）", () => {
+  const m = formV3Src.match(/\.qedit-layout \{[^}]*\}/);
+  assert.ok(m, ".qedit-layout の定義が見つかりません");
+  assert.ok(
+    !/align-items:\s*start/.test(m[0]),
+    "align-items:start だと aside が中身の高さで止まり、途中でプレビューが流れて消えます"
+  );
+});
+
+test("プレビューはヘッダーの高さを避けて貼り付く", () => {
+  const m = formV3Src.match(/\.qedit-preview-inner \{[^}]*\}/);
+  assert.ok(m, ".qedit-preview-inner の定義が見つかりません");
+  assert.ok(
+    /top:\s*calc\(var\(--admin-header-h/.test(m[0]),
+    "top が --admin-header-h 基準ではありません（ヘッダーの裏に潜ります）"
+  );
+  assert.ok(
+    /max-height:\s*calc\(100vh - var\(--admin-header-h/.test(m[0]),
+    "max-height がヘッダー分を引いていません（下端が画面の外へ出ます）"
+  );
+});
+
+test("プレビューのiframeは枠より高くならない", () => {
+  const m = formV3Src.match(/\.qedit-preview-stage iframe \{[^}]*\}/);
+  assert.ok(m, ".qedit-preview-stage iframe の定義が見つかりません");
+  assert.ok(
+    /min-height:\s*0/.test(m[0]),
+    "固定の min-height があると画面が低いとき下端（次へボタン）がはみ出します"
+  );
+});
+
+test("新規作成でも保存後の遷移先の指定を尊重する", () => {
+  const src = readSrc("src/controllers/adminController.ts");
+  const start = src.indexOf("async createQuestion(");
+  assert.ok(start >= 0, "createQuestion が見つかりません");
+  const body = src.slice(start, start + 4000);
+  assert.ok(
+    /sanitizeAdminRedirect\(req\.body\._redirect_to\)/.test(body),
+    "createQuestion が _redirect_to を見ていません（新規作成中だけ一覧へ戻れなくなります）"
+  );
+});
+
+test("ドラッグ中は端で自動スクロールし、落下位置を線で示す", () => {
+  assert.ok(
+    /function autoScrollWhileDragging\(/.test(flowCanvasSrc),
+    "自動スクロールがありません（画面外の位置へは設問を運べません）"
+  );
+  assert.ok(
+    /function showDropIndicator\(/.test(flowCanvasSrc),
+    "落下位置の表示がありません（離すまで結果が分かりません）"
+  );
+  assert.ok(
+    /autoScrollWhileDragging\(e\.clientY\)/.test(flowCanvasSrc),
+    "mousemove から自動スクロールが呼ばれていません"
+  );
+});

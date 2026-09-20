@@ -3505,8 +3505,12 @@ export const adminController = {
         ...createTagFields,
       });
 
-      // 保存のたびに一覧へ戻さず、作成した設問の編集画面に留まる
-      res.redirect(`/admin/questions/${createdQuestion.id}/edit?notice=question_created`);
+      // 「一覧へ戻る」「フロー設計」など、保存してから移動したい場合はその行き先へ送る。
+      // ここで _redirect_to を見ないと、新規作成中だけ画面内の移動が全部
+      // 編集画面へ引き戻されて「戻れない」状態になる（更新側は対応済みだった）。
+      // 指定が無ければ従来どおり作成した設問の編集画面に留まる。
+      const createdRedirect = sanitizeAdminRedirect(req.body._redirect_to);
+      res.redirect(createdRedirect ?? `/admin/questions/${createdQuestion.id}/edit?notice=question_created`);
     } catch (error) {
       renderQuestionForm(res, {
         title: "質問作成",

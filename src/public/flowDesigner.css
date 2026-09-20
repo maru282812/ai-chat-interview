@@ -1188,3 +1188,16 @@
 .fd-coverage { font-size: 12px; line-height: 1.8; color: #1a3330; }
 .fd-coverage-ok   { color: #0b7a55; }
 .fd-coverage-warn { color: #b06a10; }
+
+/* ドラッグ中、掴んだ設問が「どの設問の間に入るか」を示す線。
+   離すまで結果が分からないと、狙った位置へ入れるのに何度も試すことになる。 */
+.flow-drop-indicator {
+  position: absolute;
+  display: none;
+  height: 3px;
+  background: #0b7a75;
+  border-radius: 2px;
+  z-index: 5;
+  pointer-events: none;
+  box-shadow: 0 0 0 3px rgba(11, 122, 117, 0.16);
+}

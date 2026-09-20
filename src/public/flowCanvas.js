@@ -2142,10 +2142,73 @@
     var el = document.getElementById('node-' + dragState.nodeId);
     if (el) { el.style.left = nx + 'px'; el.style.top = ny + 'px'; }
 
+    // 掴んだまま画面の端に来たらキャンバスを送る。
+    // これが無いと、画面に映っていない位置へは物理的に運べない
+    // （設問が増えるほど下の設問を上へ持ち上げられなくなる）。
+    autoScrollWhileDragging(e.clientY);
+    // どこに入るのかを線で示す。出してやらないと、離すまで結果が分からない。
+    showDropIndicator(dragState.nodeId, ny);
+
     renderConnections();
     renderGroupBoxes();
     updateCanvasSize();
   });
+
+  /** ドラッグ中、カーソルが上下の端に近ければキャンバスをスクロールする。 */
+  function autoScrollWhileDragging(clientY) {
+    var wrap = document.querySelector('.flow-canvas-wrapper');
+    if (!wrap) return;
+    var box = wrap.getBoundingClientRect();
+    var EDGE = 70;   // 端とみなす幅
+    var SPEED = 18;  // 1イベントあたりの送り量
+    if (clientY < box.top + EDGE) {
+      wrap.scrollTop -= SPEED;
+    } else if (clientY > box.bottom - EDGE) {
+      wrap.scrollTop += SPEED;
+    }
+  }
+
+  /**
+   * 掴んでいるノードが「今どの設問の間に入るか」を横線で示す。
+   * 並び順は縦位置で決まるので、判定は commitDragReorder と同じ基準にする。
+   */
+  function showDropIndicator(draggingId, draggingY) {
+    var line = document.getElementById('flow-drop-indicator');
+    if (!line) {
+      line = makeEl('div');
+      line.id = 'flow-drop-indicator';
+      line.className = 'flow-drop-indicator';
+      $canvas.appendChild(line);
+    }
+
+    // 自分以外の設問を縦位置で並べ、何番目に割り込むかを数える
+    var others = questions.filter(function (q) { return q.id !== draggingId; })
+      .map(function (q) { return { id: q.id, y: (nodePositions[q.id] || { y: 0 }).y }; })
+      .sort(function (a, b) { return a.y - b.y; });
+
+    var idx = 0;
+    while (idx < others.length && others[idx].y < draggingY) idx++;
+
+    // 割り込む位置の「すぐ上のノードの下端」に線を出す
+    var y;
+    if (idx === 0) {
+      y = others.length ? others[0].y - 18 : draggingY;
+    } else {
+      var prev = others[idx - 1];
+      var prevEl = document.getElementById('node-' + prev.id);
+      y = prev.y + (prevEl ? prevEl.offsetHeight : 80) + 8;
+    }
+
+    line.style.top = y + 'px';
+    line.style.left = (COL_X - 14) + 'px';
+    line.style.width = (NODE_W + 28) + 'px';
+    line.style.display = 'block';
+  }
+
+  function hideDropIndicator() {
+    var line = document.getElementById('flow-drop-indicator');
+    if (line) line.style.display = 'none';
+  }
 
   document.addEventListener('mouseup', function (e) {
     if (connDrag) {
@@ -2160,10 +2223,12 @@
     if (dragState && dragState.moved) {
       var movedId = dragState.nodeId;
       dragState = null;
+      hideDropIndicator();
       commitDragReorder(movedId);
       return;
     }
     dragState = null;
+    hideDropIndicator();
   });
 
   /**
