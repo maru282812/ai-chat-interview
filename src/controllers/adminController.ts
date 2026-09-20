@@ -5203,9 +5203,40 @@ export const adminController = {
       .sort((a, b) => a.sort_order - b.sort_order)
       .map((q) => q.id);
 
-    await questionRepository.reorderByIds(projectId, [...orderedIds, ...tail]);
+    const finalOrder = [...orderedIds, ...tail];
+    await questionRepository.reorderByIds(projectId, finalOrder);
 
-    res.json({ ok: true, count: orderedIds.length });
+    // 並べ替えただけなのに「次の設問」が前のままだと、Order と Next が食い違う。
+    //
+    // 線を引いていない設問の Next は sort_order から導くので自動で追従するが、
+    // default_next を持つ設問（フロー設計で線を引いた／並べ替え前は隣だったので
+    // 保存された）は昔の相手を指したまま残り、並びを飛び越す矢印になる。
+    //
+    // 「もともと直後の設問を指していた」＝順番に流れていただけの線は、
+    // 新しい並びの直後へ付け替える。分岐（branches）や、隣ではない相手を
+    // 明示的に指している線は設計意図なので触らない。
+    const rewrites: Promise<unknown>[] = [];
+    for (const q of existing) {
+      const rule = q.branch_rule;
+      // 配列形式のレガシー branch_rule は触らない
+      if (!rule || Array.isArray(rule)) continue;
+      // 分岐（選択肢ごとの分かれ道）は設計意図そのものなので必ず残す
+      if ((rule.branches?.length ?? 0) > 0) continue;
+      if (!rule.default_next) continue;
+
+      // 「それ以外の次はここ」という単純な線だけを外す。
+      // 外した後は sort_order 順に流れる（determineNextQuestion の既定）ので、
+      // 画面の Order と実際の遷移が必ず一致する。
+      const { default_next: _dropped, ...rest } = rule;
+      rewrites.push(
+        questionRepository.update(q.id, {
+          branch_rule: Object.keys(rest).length > 0 ? rest : null
+        })
+      );
+    }
+    await Promise.all(rewrites);
+
+    res.json({ ok: true, count: orderedIds.length, unlinked: rewrites.length });
   },
 
   async apiDeleteQuestion(req: Request, res: Response): Promise<void> {

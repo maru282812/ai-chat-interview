@@ -40,8 +40,16 @@ let questionRepository: typeof import("../repositories/questionRepository").ques
 
 /** reorderByIds に渡った引数を記録する */
 let reordered: { projectId: string; orderedIds: string[] } | null;
+/** update で書き換えられた branch_rule を記録する */
+let updated: { id: string; branchRule: unknown }[];
 
-function makeQuestion(id: string, code: string, sortOrder: number, isHidden = false) {
+function makeQuestion(
+  id: string,
+  code: string,
+  sortOrder: number,
+  isHidden = false,
+  branchRule: Record<string, unknown> | null = null
+) {
   return {
     id,
     project_id: PROJECT_ID,
@@ -50,7 +58,8 @@ function makeQuestion(id: string, code: string, sortOrder: number, isHidden = fa
     question_type: "single_choice",
     sort_order: sortOrder,
     is_hidden: isHidden,
-    is_system: isHidden
+    is_system: isHidden,
+    branch_rule: branchRule
   };
 }
 
@@ -89,6 +98,7 @@ before(async () => {
 
 beforeEach(() => {
   reordered = null;
+  updated = [];
 
   questionRepository.listByProject = (async () =>
     PROJECT_QUESTIONS) as unknown as typeof questionRepository.listByProject;
@@ -96,6 +106,11 @@ beforeEach(() => {
   questionRepository.reorderByIds = (async (projectId: string, orderedIds: string[]) => {
     reordered = { projectId, orderedIds };
   }) as unknown as typeof questionRepository.reorderByIds;
+
+  questionRepository.update = (async (id: string, input: Record<string, unknown>) => {
+    updated.push({ id, branchRule: input.branch_rule });
+    return { id, ...input };
+  }) as unknown as typeof questionRepository.update;
 });
 
 test("渡した並び順どおりに sort_order を詰め直す", async () => {
@@ -305,4 +320,84 @@ test("ドラッグ中は端で自動スクロールし、落下位置を線で�
     /autoScrollWhileDragging\(e\.clientY\)/.test(flowCanvasSrc),
     "mousemove から自動スクロールが呼ばれていません"
   );
+});
+
+// ─────────────────────────────────────────────────────────────
+// 並べ替えたら「それ以外の次はここ」という線は外すこと
+//
+// 実機で発覚: 並べ替えると Order は 1..n に振り直されるのに、Next 列だけが
+// 前の相手を指したままで、並びを飛び越す矢印になっていた。
+// 線を引いていない設問の Next は sort_order から導くので自動で追従するが、
+// default_next を持つ設問は昔の相手が保存されたまま残るため。
+//
+// 方針（ユーザー判断）: 並べ替えたら単純な線は外す。外した後は sort_order 順に
+// 流れるので、画面の Order と実際の遷移が必ず一致する。
+// 分岐（選択肢ごとの分かれ道）は設計意図そのものなので必ず残す。
+// ─────────────────────────────────────────────────────────────
+
+/** q1→q2→q3 と並び、q1 だけが branch_rule を持っている状態。 */
+function setupWithDefaultNext(branchRule: Record<string, unknown> | null) {
+  const qs = [
+    makeQuestion("q1", "Q1", 1, false, branchRule),
+    makeQuestion("q2", "Q2", 2),
+    makeQuestion("q3", "Q3", 3)
+  ];
+  questionRepository.listByProject = (async () =>
+    qs) as unknown as typeof questionRepository.listByProject;
+}
+
+test("並べ替えると「それ以外の次はここ」の線は外れる", async () => {
+  setupWithDefaultNext({ default_next: "Q2" });
+  const { res } = makeRes();
+  await adminController.apiReorderQuestions(makeReq(["q2", "q3", "q1"]) as never, res as never);
+
+  const q1 = updated.find((u) => u.id === "q1");
+  assert.ok(q1, "Q1 の線が外されること");
+  assert.equal(q1?.branchRule, null, "default_next だけの branch_rule は null になる");
+});
+
+test("隣ではない相手を指していた線も外れる（並びを飛び越す矢印を残さない）", async () => {
+  // 並べ替え前から Q1 の直後は Q2 なのに Q3 を指している＝すでに食い違っている状態
+  setupWithDefaultNext({ default_next: "Q3" });
+  const { res } = makeRes();
+  await adminController.apiReorderQuestions(makeReq(["q1", "q2", "q3"]) as never, res as never);
+
+  const q1 = updated.find((u) => u.id === "q1");
+  assert.ok(q1, "すでに食い違っていた線も外れること（古いデータの修復になる）");
+  assert.equal(q1?.branchRule, null);
+});
+
+test("分岐を持つ設問は残す（選択肢ごとの分かれ道は設計意図）", async () => {
+  setupWithDefaultNext({
+    default_next: "Q2",
+    branches: [{ value: "yes", next: "Q3" }]
+  });
+  const { res } = makeRes();
+  await adminController.apiReorderQuestions(makeReq(["q2", "q3", "q1"]) as never, res as never);
+
+  assert.equal(
+    updated.find((u) => u.id === "q1"),
+    undefined,
+    "分岐がある設問は並べ替えで書き換えないこと"
+  );
+});
+
+test("branch_rule の他の設定は消さず、default_next だけを外す", async () => {
+  setupWithDefaultNext({ default_next: "Q2", merge_question_code: "Q3" });
+  const { res } = makeRes();
+  await adminController.apiReorderQuestions(makeReq(["q2", "q1", "q3"]) as never, res as never);
+
+  assert.deepEqual(
+    updated.find((u) => u.id === "q1")?.branchRule,
+    { merge_question_code: "Q3" },
+    "default_next 以外の設定は残すこと"
+  );
+});
+
+test("線を持たない設問は書き換えない（Next は sort_order から導かれる）", async () => {
+  setupWithDefaultNext(null);
+  const { res } = makeRes();
+  await adminController.apiReorderQuestions(makeReq(["q3", "q2", "q1"]) as never, res as never);
+
+  assert.equal(updated.length, 0, "branch_rule が無い設問は触らないこと");
 });
