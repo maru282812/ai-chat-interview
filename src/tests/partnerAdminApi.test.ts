@@ -318,19 +318,21 @@ test("混ざって返ってきた不適格案件は assignable=false + 理由付
 // 4種への写像
 // ------------------------------------------------------------------
 
-test("findUnmappableQuestions: 4種に写像できない設問だけを拾う（性年代とシステム設問は対象外）", () => {
+test("findUnmappableQuestions: 写像できない設問だけを拾う（性年代とシステム設問は対象外）", () => {
   const unmappable = findUnmappableQuestions([
     question({ question_code: "q1", question_type: "single_choice" }),
+    // マトリクスは設問形式の拡張（4種→9種）で写像できるようになったので対象外
     question({ id: "q2", question_code: "q2", question_type: "matrix_single" }),
     question({ id: "q3", question_code: "q3", question_type: "image_upload" }),
+    question({ id: "q6", question_code: "q6", question_type: "pairwise" }),
     // システム設問（free_comment）は元々パートナーに見せないので対象外
-    question({ id: "q4", question_code: "free_comment", question_type: "matrix_single", is_system: true }),
+    question({ id: "q4", question_code: "free_comment", question_type: "image_upload", is_system: true }),
     // 既に退避済み（is_hidden）も対象外
-    question({ id: "q5", question_code: "q5_retired0", question_type: "matrix_single", is_hidden: true })
+    question({ id: "q5", question_code: "q5_retired0", question_type: "image_upload", is_hidden: true })
   ]);
   assert.deepEqual(
     unmappable.map((entry) => entry.question_code),
-    ["q2", "q3"]
+    ["q3", "q6"]
   );
 });
 
@@ -434,12 +436,13 @@ test("完了セッションが1件でもあれば assign は 409", async () => {
   }
 });
 
-test("4種に写像できない設問を含む案件の assign は 409（その設問を返す）", async () => {
+test("写像できない設問を含む案件の assign は 409（その設問を返す）", async () => {
   const restore = stubAssignEnvironment({
     target: project({ id: TARGET_ID }),
     questions: [
       question({ question_code: "q1" }),
-      question({ id: "qid2", question_code: "q2", question_type: "matrix_single" })
+      // マトリクスは写像できるようになったので、今も運営専用の種別で検証する
+      question({ id: "qid2", question_code: "q2", question_type: "image_upload" })
     ]
   });
   try {
@@ -448,7 +451,7 @@ test("4種に写像できない設問を含む案件の assign は 409（その�
       body: { store_id: STORE_ID }
     });
     assert.equal(result.status, 409);
-    assert.equal(String(result.body.error).includes("q2(matrix_single)"), true);
+    assert.equal(String(result.body.error).includes("q2(image_upload)"), true);
   } finally {
     restore();
   }

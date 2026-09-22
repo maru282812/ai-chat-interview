@@ -263,21 +263,30 @@ function restoreAll(restores: (() => void)[]): void {
 // 純関数
 // ------------------------------------------------------------------
 
-test("展示用の平坦化: 4種に落ちる設問はそのまま、落ちない設問は note を付けて残す", () => {
+test("展示用の平坦化: 表現できる設問はそのまま、できない設問は note を付けて残す", () => {
   const mapped = flattenTemplateQuestion(question({ question_type: "single_choice" }), "entry");
   assert.equal(mapped.question_type, "single_choice");
   assert.equal(mapped.note, null);
   assert.deepEqual(mapped.answer_options, [{ value: "a", label: "A" }]);
 
-  // マトリクス等は4種に落ちない。黙って消すと展示が実物より痩せるので残す。
-  const unmapped = flattenTemplateQuestion(
+  // マトリクスは設問形式の拡張（4種→9種）で表現できるようになったので、
+  // note 送りにせず種別そのままで展示する。
+  const matrix = flattenTemplateQuestion(
     question({ question_type: "matrix_single", question_config: null }),
+    "followup"
+  );
+  assert.equal(matrix.question_type, "matrix_single");
+  assert.equal(matrix.role, "followup");
+
+  // 一対比較など、今も表現できない種別は従来どおり note を付けて残す
+  // （黙って消すと展示が実物より痩せる）。
+  const unmapped = flattenTemplateQuestion(
+    question({ question_type: "pairwise", question_config: null }),
     "followup"
   );
   assert.equal(unmapped.question_type, "single_choice");
   assert.equal(unmapped.answer_options, null, "実物と違う選択肢を見せてはいけない");
-  assert.match(unmapped.note ?? "", /matrix_single/);
-  assert.equal(unmapped.role, "followup");
+  assert.match(unmapped.note ?? "", /pairwise/);
 });
 
 test("free_text の展示には選択肢を付けない", () => {

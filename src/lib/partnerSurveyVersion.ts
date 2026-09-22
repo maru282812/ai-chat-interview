@@ -55,6 +55,17 @@ interface VersionedQuestion {
    * sort_order はサーバーが振り直すため実値が安定しない）。
    */
   carry?: { fromIndex: number; mode: string };
+  /**
+   * マトリクスの列・数値の範囲。
+   *
+   * carry と同じ理由で、**値があるときだけキーを生やす**。常に生やすと
+   * JSON.stringify の出力が変わり、マトリクスを使っていない既存アンケートの
+   * 版まで動いて「誰も編集していないのに 409」になる。
+   */
+  cols?: { value: string; label: string }[];
+  min?: number;
+  max?: number;
+  unit?: string;
 }
 
 /**
@@ -93,6 +104,18 @@ function toVersionedQuestions(questions: PartnerQuestionView[]): VersionedQuesti
         label: normalizeText(option.label)
       }))
     };
+    // マトリクスの列・数値の範囲も版の材料に含める。
+    // 含めないと「列だけ直した」編集が版に出ず、楽観ロックが変更を取りこぼす。
+    // 既定値と未設定の揺れを版に出さないため、値があるときだけ足す。
+    if (question.matrix_cols && question.matrix_cols.length > 0) {
+      material.cols = question.matrix_cols.map((col) => ({
+        value: normalizeText(col.value),
+        label: normalizeText(col.label)
+      }));
+    }
+    if (typeof question.min === "number") material.min = question.min;
+    if (typeof question.max === "number") material.max = question.max;
+    if (question.unit) material.unit = normalizeText(question.unit);
     const carry = question.carry_forward;
     const fromIndex = carry ? indexBySortOrder.get(carry.from_sort_order) : undefined;
     if (carry && fromIndex !== undefined) {

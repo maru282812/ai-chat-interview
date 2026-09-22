@@ -56,7 +56,14 @@ import { buildStoreEntryLiffUrl } from "./liffService";
 export interface PartnerQuestionInput {
   question_text: string;
   question_type: PartnerQuestionType;
+  /** 選択肢。マトリクス系ではここが「行」になる。 */
   answer_options: QuestionOption[] | null;
+  /** マトリクス系の「列」。matrix_* / matrix_sd のときだけ使う。 */
+  matrix_cols?: QuestionOption[] | null;
+  /** numeric: 最小値・最大値・単位。 */
+  min?: number | null;
+  max?: number | null;
+  unit?: string | null;
   sort_order: number;
   is_required?: boolean;
   /** 設問文に添える画像（任意）。省略・null なら画像なしで保存される。 */
@@ -302,7 +309,13 @@ async function replacePartnerQuestions(
     const config = buildPartnerQuestionConfig(
       input.question_type,
       input.answer_options,
-      input.question_text_image ?? null
+      input.question_text_image ?? null,
+      {
+        matrix_cols: input.matrix_cols ?? null,
+        min: input.min ?? null,
+        max: input.max ?? null,
+        unit: input.unit ?? null
+      }
     );
     // 参照先が解決できなければ持ち越し無しとして保存する（壊れた参照は書かない）。
     // zod が弾いているので通常は必ず解決するが、サービスを直接呼ぶ経路への防御。
@@ -371,6 +384,11 @@ export async function loadPartnerQuestionViews(projectId: string): Promise<Partn
       question_text: question.question_text,
       question_type: partnerType,
       answer_options: question.question_config?.options ?? null,
+      // マトリクス系は「行 = options / 列 = matrix_cols」。列は別フィールドで返す。
+      matrix_cols: question.question_config?.matrix_cols ?? null,
+      min: question.question_config?.min ?? null,
+      max: question.question_config?.max ?? null,
+      unit: question.question_config?.unit ?? null,
       sort_order: question.sort_order,
       is_required: question.is_required,
       is_fixed: isDemographicQuestion(question),

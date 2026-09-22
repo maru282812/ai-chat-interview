@@ -58,16 +58,43 @@
 
 ---
 
-## 3. 設問タイプ（4種）
+## 3. 設問タイプ（7種）
 
-ポータルが扱えるのは以下の4つだけ。文字列値は**完全一致**で送ること。
+ポータルが扱えるのは以下の7つ。文字列値は**完全一致**で送ること。
 
 | `question_type` | 意味 | `answer_options` | 内部保存 |
 |---|---|---|---|
-| `"single_choice"` | 単一選択 | 必須（2件以上） | `question_type='single_choice'` |
-| `"multi_choice"` | 複数選択 | 必須（2件以上） | `question_type='multi_choice'` |
-| `"free_text"` | 自由記述 | **禁止**（`null` か省略） | `question_type='free_text_long'` |
+| `"single_choice"` | 単一選択（SA） | 必須（2件以上） | `question_type='single_choice'` |
+| `"multi_choice"` | 複数選択（MA） | 必須（2件以上） | `question_type='multi_choice'` |
 | `"scale"` | スケール（段階評価） | 必須（2件以上） | `question_type='single_choice'` ＋ `question_config.presentation.scale=true` |
+| `"matrix_single"` | マトリクス（行ごとに1つ） | **行**として必須（2件以上）＋ `matrix_cols` 必須 | `question_type='matrix_single'` |
+| `"matrix_multi"` | マトリクス（行ごとに複数） | 同上 | `question_type='matrix_multi'` |
+| `"sd"` | SD法（対になる言葉の間で評価する**単一スケール**） | 必須（2件以上＝目盛り） | `question_type='sd'` |
+
+⚠ **`sd` はマトリクスではない**。回答UI（`survey.ejs:1436`）は `options` を目盛りとして1本のスケールで描くので、`matrix_cols` を送ると 400。
+| `"numeric"` | フリー数値 | **禁止**（`null` か省略） | `question_type='numeric'` |
+| `"free_text"` | 自由記述（大） | **禁止**（`null` か省略） | `question_type='free_text_long'` |
+
+### 種別ごとの追加フィールド
+
+| フィールド | 対象種別 | 内容 |
+|---|---|---|
+| `matrix_cols` | `matrix_single` / `matrix_multi` | **列**。1〜30件・`value` は一意。⚠ **行は `answer_options` 側**（内部表現が「行=options / 列=matrix_cols」なので取り違えると回答UIが崩れる） |
+| `min` / `max` / `unit` | `numeric` | 入力範囲と単位（例: `歳`）。`min > max` は **400** |
+
+**マトリクス以外に `matrix_cols` を送ると 400**（黙って捨てると「設定したのに反映されない」になるため）。
+
+⚠ 次の種別は**パートナーには出さない**。GET レスポンスからも除外される
+（表現できない設問を別種別に化けさせない）:
+
+- `ranking_top_n` … **回答UIが未実装**（`answerPresentation` は `podium` を返すが
+  `survey.ejs` / `answer-ui.ejs` に描画が無く、プレーンな textarea に落ちる）。
+  描画を実装してから開放すること。
+- `matrix_mixed` / `pairwise` / `point_allocation` / `image_heatmap` /
+  `image_upload` / `text_with_image` / `hidden_*` … 運営専用。
+- `free_text_short` … **内部型としては存在するが `"free_text"` に寄せて返す**。
+  別種別として返すと既存アンケートの版文字列が変わり、誰も編集していないのに
+  409（偽の競合）になるため（版の材料に `question_type` が入る）。
 
 `answer_options` の要素:
 
@@ -87,8 +114,8 @@
 
 ## 3.5 設問文の画像（`question_text_image`）
 
-**設問タイプは上の4種のまま増えない。`text_with_image` のような専用タイプは存在しない。
-代わりに、4種すべての設問に画像を添えられる**（「画像付きの単一選択」も作れる）。
+**画像は上の7種すべてに添えられる。`text_with_image` のような専用タイプは存在しない**
+（「画像付きの単一選択」も作れる）。
 
 ### リクエスト（`POST /surveys` / `PUT /surveys/:id` の各設問に付ける）
 

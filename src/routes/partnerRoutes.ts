@@ -6,6 +6,7 @@ import { RESERVED_QUESTION_CODES } from "../lib/partnerDemographics";
 import {
   PARTNER_QUESTION_TYPES,
   collectDisallowedImageUrls,
+  isPartnerMatrixType,
   parseImageUrlAllowedHosts,
   partnerTypeRequiresOptions
 } from "../lib/partnerQuestions";
@@ -73,6 +74,12 @@ const questionSchema = z
     question_text: z.string().min(1).max(2000),
     question_type: z.enum(PARTNER_QUESTION_TYPES),
     answer_options: z.array(answerOptionSchema).max(50).nullable().optional(),
+    // マトリクス系の「列」。行は answer_options 側。
+    matrix_cols: z.array(answerOptionSchema).max(30).nullable().optional(),
+    // numeric: 範囲と単位。
+    min: z.number().nullable().optional(),
+    max: z.number().nullable().optional(),
+    unit: z.string().max(20).nullable().optional(),
     sort_order: z.number().int().min(0).max(1000),
     is_required: z.boolean().optional(),
     question_text_image: questionTextImageSchema.nullable().optional(),
@@ -93,6 +100,81 @@ const questionSchema = z
     }
 
     const options = value.answer_options ?? null;
+    const cols = value.matrix_cols ?? null;
+
+    /** value の重複を弾く（同じ value が2つあると回答が一意に定まらない）。 */
+    const assertUniqueValues = (
+      items: { value: string }[],
+      path: "answer_options" | "matrix_cols"
+    ): void => {
+      const values = new Set(items.map((item) => item.value));
+      if (values.size !== items.length) {
+        ctx.addIssue({ code: "custom", path: [path], message: `${path} must have unique values` });
+      }
+    };
+
+    // ---- マトリクス系: 行(answer_options)と列(matrix_cols)の両方が要る ----
+    //
+    // ⚠ 下限は **1件**。運営の管理画面（adminController.ts:2393-2394）は行・列を
+    //   1件でも保存できるため、ここで2件必須にすると、運営が作って店舗へ割り当てた
+    //   案件を店舗が開いたとき、文言を1文字直しただけで 400 になり保存できなくなる。
+    //   0件は回答画面で表にならないので弾く。
+    if (isPartnerMatrixType(value.question_type)) {
+      if (!options || options.length < 1) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["answer_options"],
+          message: `question_type=${value.question_type} requires at least 1 answer_options (rows)`
+        });
+      } else {
+        assertUniqueValues(options, "answer_options");
+      }
+      if (!cols || cols.length < 1) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["matrix_cols"],
+          message: `question_type=${value.question_type} requires at least 1 matrix_cols (columns)`
+        });
+      } else {
+        assertUniqueValues(cols, "matrix_cols");
+      }
+      return;
+    }
+
+    // ここから先はマトリクスではないので、列を送られても解釈できない。
+    // 黙って捨てると「設定したのに反映されない」になるため 400 で返す。
+    if (cols && cols.length > 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["matrix_cols"],
+        message: `question_type=${value.question_type} must not have matrix_cols`
+      });
+    }
+
+    // ---- numeric: 範囲の整合 ----
+    if (value.question_type === "numeric") {
+      if (
+        typeof value.min === "number" &&
+        typeof value.max === "number" &&
+        value.min > value.max
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["min"],
+          message: "min must be less than or equal to max"
+        });
+      }
+      if (options && options.length > 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["answer_options"],
+          message: "question_type=numeric must not have answer_options"
+        });
+      }
+      return;
+    }
+
+    // ---- 選択肢が必要な種別（single/multi/scale/ranking）----
     if (partnerTypeRequiresOptions(value.question_type)) {
       if (!options || options.length < 2) {
         ctx.addIssue({
@@ -102,21 +184,16 @@ const questionSchema = z
         });
         return;
       }
-      const values = new Set(options.map((option) => option.value));
-      if (values.size !== options.length) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["answer_options"],
-          message: "answer_options must have unique values"
-        });
-      }
+      assertUniqueValues(options, "answer_options");
       return;
     }
+
+    // ---- 自由記述（free_text / free_text_short）----
     if (options && options.length > 0) {
       ctx.addIssue({
         code: "custom",
         path: ["answer_options"],
-        message: "question_type=free_text must not have answer_options"
+        message: `question_type=${value.question_type} must not have answer_options`
       });
     }
   });
@@ -262,6 +339,10 @@ function toQuestionInput(question: z.infer<typeof questionSchema>): PartnerQuest
     question_text: question.question_text,
     question_type: question.question_type,
     answer_options: question.answer_options ?? null,
+    matrix_cols: question.matrix_cols ?? null,
+    min: question.min ?? null,
+    max: question.max ?? null,
+    unit: question.unit ?? null,
     sort_order: question.sort_order,
     is_required: question.is_required,
     question_text_image: image

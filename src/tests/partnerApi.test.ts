@@ -176,17 +176,31 @@ test("summarizeDemographics: 片方だけ未回答なら、判明している軸
 // 設問タイプの写像
 // ------------------------------------------------------------------
 
-test("パートナー設問タイプは4種のみ", () => {
+test("パートナー設問タイプは9種（顧客の作成画面に出す形式）", () => {
   assert.deepEqual(
     [...PARTNER_QUESTION_TYPES],
-    ["single_choice", "multi_choice", "free_text", "scale"]
+    [
+      "single_choice",
+      "multi_choice",
+      "scale",
+      "matrix_single",
+      "matrix_multi",
+      "sd",
+      "numeric",
+      "free_text"
+    ]
   );
 });
 
-test("toInternalQuestionType: 4種が既存の内部型へ写像される", () => {
+test("toInternalQuestionType: 各種別が既存の内部型へ写像される", () => {
   assert.equal(toInternalQuestionType("single_choice"), "single_choice");
   assert.equal(toInternalQuestionType("multi_choice"), "multi_choice");
   assert.equal(toInternalQuestionType("free_text"), "free_text_long");
+  assert.equal(toInternalQuestionType("numeric"), "numeric");
+  assert.equal(toInternalQuestionType("matrix_single"), "matrix_single");
+  assert.equal(toInternalQuestionType("matrix_multi"), "matrix_multi");
+  // SD法はマトリクスの一種として見せるが、内部型は "sd"
+  assert.equal(toInternalQuestionType("sd"), "sd");
   // scale は「順序尺度として描画する single_choice」として保存する
   assert.equal(toInternalQuestionType("scale"), "single_choice");
 });
@@ -201,9 +215,18 @@ test("toPartnerQuestionType: 内部設問からパートナー種別へ戻せる
     ),
     "scale"
   );
-  // パートナーが表現できない種別は null（レスポンスから落とす）
-  assert.equal(toPartnerQuestionType(question({ question_type: "matrix_single" })), null);
+  // 設問形式の拡張（4種→9種）で表現できるようになったもの
+  assert.equal(toPartnerQuestionType(question({ question_type: "matrix_single" })), "matrix_single");
+  assert.equal(toPartnerQuestionType(question({ question_type: "matrix_multi" })), "matrix_multi");
+  assert.equal(toPartnerQuestionType(question({ question_type: "sd" })), "sd");
+  assert.equal(toPartnerQuestionType(question({ question_type: "numeric" })), "numeric");
+  assert.equal(toPartnerQuestionType(question({ question_type: "ranking_top_n" })), null);
+  // ⚠ free_text_short は "free_text" に寄せる（別種別にすると既存の版が変わり偽409）
+  assert.equal(toPartnerQuestionType(question({ question_type: "free_text_short" })), "free_text");
+  // 今も運営専用の種別は null（レスポンスから落とす）
   assert.equal(toPartnerQuestionType(question({ question_type: "image_upload" })), null);
+  assert.equal(toPartnerQuestionType(question({ question_type: "pairwise" })), null);
+  assert.equal(toPartnerQuestionType(question({ question_type: "matrix_mixed" })), null);
 });
 
 test("scale の往復変換で種別が保存される", () => {
@@ -403,3 +426,64 @@ test("collectDisallowedImageUrls: additional_urls の1件でも許可外なら�
   );
 });
 
+
+
+// ------------------------------------------------------------------
+// 回答UIが読む形になっているか（question_config の形）
+//
+// ここがズレると「保存はできるが回答画面が壊れる」。回答UI側の期待:
+//   sd            … survey.ejs:1436 が question_config.options を目盛りとして1本のスケールで描く
+//   matrix_*      … survey.ejs:1476 が (matrix_rows || options) を行・matrix_cols を列として描く
+//   ranking_top_n … question_config.ranking.top_n を読む
+// ------------------------------------------------------------------
+
+test("sd の config は options に目盛りを持ち、matrix_cols を持たない", () => {
+  const config = buildPartnerQuestionConfig("sd", [
+    { value: "1", label: "そう思わない" },
+    { value: "5", label: "そう思う" }
+  ]);
+  assert.equal(config?.options?.length, 2, "目盛りは options に入る");
+  assert.equal(config?.matrix_cols, undefined, "sd はマトリクスではない");
+  assert.equal(toInternalQuestionType("sd"), "sd");
+});
+
+test("マトリクスの config は options=行 / matrix_cols=列 になる", () => {
+  const config = buildPartnerQuestionConfig(
+    "matrix_single",
+    [
+      { value: "r1", label: "接客" },
+      { value: "r2", label: "清潔さ" }
+    ],
+    null,
+    {
+      matrix_cols: [
+        { value: "c1", label: "満足" },
+        { value: "c2", label: "不満" }
+      ]
+    }
+  );
+  assert.deepEqual(
+    config?.options?.map((o) => o.label),
+    ["接客", "清潔さ"],
+    "行は options"
+  );
+  assert.deepEqual(
+    config?.matrix_cols?.map((c) => c.label),
+    ["満足", "不満"],
+    "列は matrix_cols"
+  );
+});
+
+test("numeric の config は min/max/unit を持ち、指定が無ければ入れない", () => {
+  const withRange = buildPartnerQuestionConfig("numeric", null, null, {
+    min: 0,
+    max: 120,
+    unit: "歳"
+  });
+  assert.equal(withRange?.min, 0);
+  assert.equal(withRange?.max, 120);
+  assert.equal(withRange?.unit, "歳");
+  const bare = buildPartnerQuestionConfig("numeric", null, null, null);
+  assert.equal(bare?.min, undefined);
+  assert.equal(bare?.unit, undefined);
+});

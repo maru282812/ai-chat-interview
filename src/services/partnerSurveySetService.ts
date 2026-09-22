@@ -1,7 +1,11 @@
 import { HttpError } from "../lib/http";
 import { logger } from "../lib/logger";
 import { isDemographicQuestion } from "../lib/partnerDemographics";
-import { toPartnerQuestionType } from "../lib/partnerQuestions";
+import {
+  type PartnerQuestionType,
+  partnerTypeRequiresOptions,
+  toPartnerQuestionType
+} from "../lib/partnerQuestions";
 import { cycleGroupRepository } from "../repositories/cycleRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { questionRepository } from "../repositories/questionRepository";
@@ -84,10 +88,11 @@ export interface IndustryTemplateView {
 export interface FlattenedTemplateQuestion {
   role: CycleStepRole;
   question_text: string;
-  question_type: "single_choice" | "multi_choice" | "free_text" | "scale";
+  /** パートナーが表現できる種別（`PARTNER_QUESTION_TYPES`）。 */
+  question_type: PartnerQuestionType;
   answer_options: { value: string; label: string }[] | null;
   sort_order: number;
-  /** 4種にそのまま落ちなかった設問への注記。落ちたものは null。 */
+  /** パートナー種別にそのまま落ちなかった設問への注記。落ちたものは null。 */
   note: string | null;
 }
 
@@ -132,7 +137,7 @@ export function flattenTemplateQuestion(
       question_text: question.question_text,
       question_type: mapped,
       answer_options:
-        mapped === "free_text" || !options
+        !options || !partnerTypeRequiresOptions(mapped)
           ? null
           : options.map((option) => ({ value: option.value, label: option.label })),
       sort_order: question.sort_order,
