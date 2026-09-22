@@ -4,13 +4,14 @@ import { adminAuthMiddleware } from "./middleware/adminAuth";
 import { adminCsrfMiddleware } from "./middleware/adminCsrf";
 import { adminLocals } from "./middleware/adminLocals";
 import { perfTiming } from "./middleware/perfTiming";
-import { errorHandler } from "./lib/http";
+import { asyncHandler, errorHandler } from "./lib/http";
 import { adminRoutes } from "./routes/adminRoutes";
 import { liffRoutes } from "./routes/liffRoutes";
 import { webhookRoutes } from "./routes/webhookRoutes";
 import { cronRoutes } from "./routes/cronRoutes";
 import { mentalProxyRoutes } from "./routes/mentalProxyRoutes";
 import { partnerAdminRoutes } from "./routes/partnerAdminRoutes";
+import { surveyPreviewController } from "./controllers/surveyPreviewController";
 import { partnerRoutes } from "./routes/partnerRoutes";
 import { registerAdminChatTools } from "./services/adminChat/registerTools";
 import { renderCompiled } from "./lib/compiledViews";
@@ -169,6 +170,14 @@ export function createApp() {
   app.use("/webhooks", webhookRoutes);
   app.use("/api/cron", cronRoutes);
   app.use("/api/mental", mentalProxyRoutes);
+  // 調査票プレビュー（読み取り専用・HTML を返す）。
+  // **partnerRoutes より先に置く**。partnerRoutes はルータ全体に JSON 前提の
+  // 認証ミドルウェアを掛けており、iframe からの GET（ヘッダを付けられない）を
+  // 通せないため、このルートだけ独自に鍵とスコープを検証する。
+  app.get(
+    "/api/partner/surveys/:id/preview",
+    asyncHandler(surveyPreviewController.preview)
+  );
   // 会員ポータル（hibi-portal）向けパートナーAPI（docs/partner-api.md）。
   // 認証は X-Partner-Key（partnerRoutes 内でルータ全体に適用）。
   app.use("/api/partner", partnerRoutes);

@@ -126,5 +126,8 @@ MAX_AI_PROBES_PER_SESSION = "2"
 #    効かないので、既存の設問画像がこの変更で消えることはない。
 PARTNER_IMAGE_URL_ALLOWED_HOSTS = "hibi.yottollc.com,portal.local.test"
 PORTAL_OPS_URL = "https://hibi.yottollc.com"
+# 調査票プレビュー（GET /api/partner/surveys/:id/preview）を iframe 埋め込みできる元。
+# CSP の frame-ancestors にそのまま入る。**未設定なら 'self'＝ポータルから出せない**。
+PARTNER_PREVIEW_FRAME_ANCESTORS = "https://hibi.yottollc.com"
 CYCLE_TEST_LINE_USER_IDS = "U0f5d4dac42b9a403b1fb4666481b7b35"
 MENU_ACTION_DEBUG_FORCE_PROJECT_LIST = "false"
