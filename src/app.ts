@@ -175,7 +175,15 @@ export function createApp() {
   // 運営専用API（docs/partner-api.md §8）。ポータルの /ops から案件を店舗へ割り当てる。
   // 認証は X-Partner-Admin-Key（PARTNER_ADMIN_API_KEY・店舗用の鍵とは別物）。
   app.use("/api/partner-admin", partnerAdminRoutes);
-  app.use("/admin", adminAuthMiddleware, adminCsrfMiddleware, adminLocals, adminRoutes);
+  // 管理画面の HTML はキャッシュさせない。
+  // 一覧の「ロウデータ列」「Code」「Next」はサーバーが並び順から計算して描くため、
+  // 並べ替えたあと読み直したときに古いものを返されると「並べ替えたのに列が
+  // 直っていない」ように見える（ETag だけ付いていて Cache-Control が無かった）。
+  // 配信物(/public)は指紋付きURLで別管理なのでここには含めない。
+  app.use("/admin", (_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store, must-revalidate");
+    next();
+  }, adminAuthMiddleware, adminCsrfMiddleware, adminLocals, adminRoutes);
   app.use("/liff", perfTiming, liffRoutes);
 
   app.get("/", (_req, res) => {

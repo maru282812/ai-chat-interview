@@ -583,3 +583,37 @@ test("人が付けた名前が1つでもあれば案件ごと対象外にする"
     "custom_codes"
   );
 });
+
+// ─────────────────────────────────────────────────────────────
+// 並べ替えの結果が画面に反映されること
+//
+// 実機で発覚: 保存しても「ロウデータ列」「Code」「Next」が古いままだった。
+// これらはサーバーが並び順から計算して描いているのに、保存後に画面を
+// 読み直していなかったため。Order だけは JS が手元で振り直すので、
+// 「Order は変わったのに他の列が直らない」という見え方になっていた。
+// 加えて管理画面の HTML に Cache-Control が無く ETag だけ付いていたため、
+// 読み直しても古いものが返りうる状態だった。
+// ─────────────────────────────────────────────────────────────
+
+test("並び順を保存したら画面を読み直す", () => {
+  const start = indexDesignerSrc.indexOf("reorderSaveBtn').addEventListener");
+  assert.ok(start >= 0, "保存ボタンのハンドラが見つかりません");
+  const end = indexDesignerSrc.indexOf("\n  });\n", start);
+  const body = indexDesignerSrc.slice(start, end > start ? end : start + 2000);
+  assert.ok(
+    /location\.reload\(\)/.test(body),
+    "保存後に読み直していません（ロウデータ列・Code・Next が古いまま残ります）"
+  );
+});
+
+test("管理画面の HTML はキャッシュさせない", () => {
+  const appSrc = readSrc("src/app.ts");
+  const i = appSrc.indexOf('app.use("/admin"');
+  assert.ok(i >= 0, "/admin のマウントが見つかりません");
+  // マウント行の手前にあるミドルウェア定義ごと見る
+  const around = appSrc.slice(Math.max(0, i - 600), i + 300);
+  assert.ok(
+    /no-store/.test(around),
+    "Cache-Control: no-store が無い（並べ替え後の読み直しで古い画面が返りうる）"
+  );
+});

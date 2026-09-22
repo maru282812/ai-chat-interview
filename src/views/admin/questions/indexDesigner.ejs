@@ -243,7 +243,12 @@
       }
       savedOrder = ordered;
       syncBar();
-      setStatus('並び順を保存しました。', 'ok');
+      // ロウデータ列・Code・Next はサーバーが並び順から計算して描いている。
+      // 保存しただけでは画面が古いまま（Order だけ JS が振り直すので、
+      // 「並べ替えたのに列が直っていない」ように見える）。読み直して揃える。
+      setStatus('並び順を保存しました。表示を更新しています…', 'ok');
+      window.location.reload();
+      return;
     } catch (err) {
       setStatus('並び順の保存でエラーが発生しました: ' + err.message, 'error');
     } finally {
