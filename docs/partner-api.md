@@ -58,28 +58,28 @@
 
 ---
 
-## 3. 設問タイプ（7種）
+## 3. 設問タイプ（8種）
 
-ポータルが扱えるのは以下の7つ。文字列値は**完全一致**で送ること。
+ポータルが扱えるのは以下の8つ。文字列値は**完全一致**で送ること。
 
 | `question_type` | 意味 | `answer_options` | 内部保存 |
 |---|---|---|---|
 | `"single_choice"` | 単一選択（SA） | 必須（2件以上） | `question_type='single_choice'` |
 | `"multi_choice"` | 複数選択（MA） | 必須（2件以上） | `question_type='multi_choice'` |
 | `"scale"` | スケール（段階評価） | 必須（2件以上） | `question_type='single_choice'` ＋ `question_config.presentation.scale=true` |
-| `"matrix_single"` | マトリクス（行ごとに1つ） | **行**として必須（2件以上）＋ `matrix_cols` 必須 | `question_type='matrix_single'` |
+| `"matrix_single"` | マトリクス（行ごとに1つ） | **行**として必須（**1件以上**）＋ `matrix_cols` 必須 | `question_type='matrix_single'` |
 | `"matrix_multi"` | マトリクス（行ごとに複数） | 同上 | `question_type='matrix_multi'` |
 | `"sd"` | SD法（対になる言葉の間で評価する**単一スケール**） | 必須（2件以上＝目盛り） | `question_type='sd'` |
-
-⚠ **`sd` はマトリクスではない**。回答UI（`survey.ejs:1436`）は `options` を目盛りとして1本のスケールで描くので、`matrix_cols` を送ると 400。
 | `"numeric"` | フリー数値 | **禁止**（`null` か省略） | `question_type='numeric'` |
 | `"free_text"` | 自由記述（大） | **禁止**（`null` か省略） | `question_type='free_text_long'` |
+
+⚠ **`sd` はマトリクスではない**。回答UI（`survey.ejs:1436`）は `options` を目盛りとして1本のスケールで描くので、`matrix_cols` を送ると 400。
 
 ### 種別ごとの追加フィールド
 
 | フィールド | 対象種別 | 内容 |
 |---|---|---|
-| `matrix_cols` | `matrix_single` / `matrix_multi` | **列**。1〜30件・`value` は一意。⚠ **行は `answer_options` 側**（内部表現が「行=options / 列=matrix_cols」なので取り違えると回答UIが崩れる） |
+| `matrix_cols` | `matrix_single` / `matrix_multi` | **列**。1〜30件・`value` は一意。行も**1件以上**でよい（管理画面が1件でも保存できるため。2件必須にすると、運営が割り当てた案件を店舗が1文字直しただけで 400 になる）。⚠ **行は `answer_options` 側**（内部表現が「行=options / 列=matrix_cols」なので取り違えると回答UIが崩れる） |
 | `min` / `max` / `unit` | `numeric` | 入力範囲と単位（例: `歳`）。`min > max` は **400** |
 
 **マトリクス以外に `matrix_cols` を送ると 400**（黙って捨てると「設定したのに反映されない」になるため）。

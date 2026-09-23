@@ -269,7 +269,7 @@ test("展示用の平坦化: 表現できる設問はそのまま、できない
   assert.equal(mapped.note, null);
   assert.deepEqual(mapped.answer_options, [{ value: "a", label: "A" }]);
 
-  // マトリクスは設問形式の拡張（4種→9種）で表現できるようになったので、
+  // マトリクスは設問形式の拡張（4種→8種）で表現できるようになったので、
   // note 送りにせず種別そのままで展示する。
   const matrix = flattenTemplateQuestion(
     question({ question_type: "matrix_single", question_config: null }),
@@ -277,6 +277,48 @@ test("展示用の平坦化: 表現できる設問はそのまま、できない
   );
   assert.equal(matrix.question_type, "matrix_single");
   assert.equal(matrix.role, "followup");
+
+  // 行と列の両方を返す。列が無いと受け取った側が表を描けず、
+  // 注記付きの単一選択に落とすしかなくなる。
+  const matrixWithCols = flattenTemplateQuestion(
+    question({
+      question_type: "matrix_single",
+      question_config: {
+        options: [{ value: "r1", label: "接客" }],
+        matrix_cols: [
+          { value: "1", label: "満足" },
+          { value: "2", label: "不満" }
+        ]
+      }
+    }),
+    "followup"
+  );
+  assert.deepEqual(matrixWithCols.answer_options, [{ value: "r1", label: "接客" }], "行");
+  assert.deepEqual(
+    matrixWithCols.matrix_cols,
+    [
+      { value: "1", label: "満足" },
+      { value: "2", label: "不満" }
+    ],
+    "列"
+  );
+
+  // マトリクス以外に列は付けない（付けると受け取った側が誤解する）。
+  assert.equal(mapped.matrix_cols, null, "単一選択に列は付かない");
+
+  // ⚠ sd は行×列ではない。列を付けると回答UIが壊れるので null のまま。
+  const sd = flattenTemplateQuestion(
+    question({
+      question_type: "sd",
+      question_config: {
+        options: [{ value: "1", label: "落ち着かない" }],
+        matrix_cols: [{ value: "x", label: "付いてはいけない" }]
+      }
+    }),
+    "followup"
+  );
+  assert.equal(sd.question_type, "sd");
+  assert.equal(sd.matrix_cols, null, "SD法はマトリクスではない");
 
   // 一対比較など、今も表現できない種別は従来どおり note を付けて残す
   // （黙って消すと展示が実物より痩せる）。
@@ -286,6 +328,7 @@ test("展示用の平坦化: 表現できる設問はそのまま、できない
   );
   assert.equal(unmapped.question_type, "single_choice");
   assert.equal(unmapped.answer_options, null, "実物と違う選択肢を見せてはいけない");
+  assert.equal(unmapped.matrix_cols, null);
   assert.match(unmapped.note ?? "", /pairwise/);
 });
 

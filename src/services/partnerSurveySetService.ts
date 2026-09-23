@@ -2,8 +2,11 @@ import { HttpError } from "../lib/http";
 import { logger } from "../lib/logger";
 import { isDemographicQuestion } from "../lib/partnerDemographics";
 import {
+  isPartnerMatrixType,
+  type PartnerAnswerOption,
   type PartnerQuestionType,
   partnerTypeRequiresOptions,
+  toPartnerOptions,
   toPartnerQuestionType
 } from "../lib/partnerQuestions";
 import { cycleGroupRepository } from "../repositories/cycleRepository";
@@ -83,14 +86,24 @@ export interface IndustryTemplateView {
  *
  * ⚠ これは hibi のパッケージ紹介ページに「どんなことを聞くか」を見せるためだけのもの。
  * 実際に回るのは ACI 側の原本そのもので、ここでの写像の粗さは回答画面に影響しない
- * （だから4種に落ちない設問も `note` を付けて残す。黙って消すと展示が実物より痩せる）。
+ * （だからパートナー種別に落ちない設問も `note` を付けて残す。黙って消すと展示が
+ * 実物より痩せる）。
  */
 export interface FlattenedTemplateQuestion {
   role: CycleStepRole;
   question_text: string;
   /** パートナーが表現できる種別（`PARTNER_QUESTION_TYPES`）。 */
   question_type: PartnerQuestionType;
-  answer_options: { value: string; label: string }[] | null;
+  /** 選択肢。マトリクス系ではここが「行」。 */
+  answer_options: PartnerAnswerOption[] | null;
+  /**
+   * マトリクス系の「列」。それ以外の種別では null。
+   *
+   * これが無いと、受け取った側（hibi の紹介ページ）はマトリクスを表として
+   * 描けず「実際には『マトリクスシングル』の形式でお聞きします」という
+   * 注記付きの単一選択に落とすしかなかった。展示でも実物と同じ表を見せる。
+   */
+  matrix_cols: PartnerAnswerOption[] | null;
   sort_order: number;
   /** パートナー種別にそのまま落ちなかった設問への注記。落ちたものは null。 */
   note: string | null;
@@ -116,30 +129,34 @@ export interface AssignableSetSummary {
 // ------------------------------------------------------------------
 
 /**
- * 原本の設問をパートナー4種へ「展示用に」落とす。
+ * 原本の設問をパートナー種別へ「展示用に」落とす。
  *
- * `toPartnerQuestionType()` が null を返す設問（マトリクス等）は捨てずに
- * `single_choice` 相当の見出しとして残し、選択肢は省いて note を付ける。
- * 展示なので、実物より設問数が少なく見えるほうが害が大きい。
+ * `toPartnerQuestionType()` が null を返す設問（`ranking_top_n` 等、まだパートナーに
+ * 出していない種別）は捨てずに `single_choice` 相当の見出しとして残し、選択肢は
+ * 省いて note を付ける。展示なので、実物より設問数が少なく見えるほうが害が大きい。
+ *
+ * マトリクス系は**行（answer_options）と列（matrix_cols）の両方**を返す。
+ * 列を返さないと受け取った側が表を描けず、注記付きの単一選択に落とすしかない。
  */
 export function flattenTemplateQuestion(
   question: Question,
   role: CycleStepRole
 ): FlattenedTemplateQuestion {
   const mapped = toPartnerQuestionType(question);
-  const options = (question.question_config?.options ?? null) as
-    | { value: string; label: string }[]
-    | null;
+  const options = question.question_config?.options ?? null;
 
   if (mapped) {
     return {
       role,
       question_text: question.question_text,
       question_type: mapped,
-      answer_options:
-        !options || !partnerTypeRequiresOptions(mapped)
-          ? null
-          : options.map((option) => ({ value: option.value, label: option.label })),
+      answer_options: partnerTypeRequiresOptions(mapped) ? toPartnerOptions(options) : null,
+      // 列はマトリクス系だけ。ほかの種別に付けると
+      // 「マトリクスでないのに列がある」形になり、受け取った側が誤解する。
+      // ⚠ sd は行×列ではないのでここには入らない（`isPartnerMatrixType` が false）。
+      matrix_cols: isPartnerMatrixType(mapped)
+        ? toPartnerOptions(question.question_config?.matrix_cols ?? null)
+        : null,
       sort_order: question.sort_order,
       note: null,
     };
@@ -150,6 +167,7 @@ export function flattenTemplateQuestion(
     question_text: question.question_text,
     question_type: "single_choice",
     answer_options: null,
+    matrix_cols: null,
     sort_order: question.sort_order,
     note: `この設問は実際には「${question.question_type}」形式で出題されます（展示用の簡略表示）`,
   };
