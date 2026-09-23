@@ -414,3 +414,104 @@ test("回答UIが未実装の種別は受け付けない（保存できるが回
     assert.equal(parsed.success, false, `${type} が通ってしまった`);
   }
 });
+
+// ------------------------------------------------------------------
+// 選択肢の画像（image_url）
+//
+// 回答画面は元から画像付き選択肢を描ける（survey.ejs の choice-img）。
+// ここで守るのは「パートナーAPI を通っても画像が落ちない」ことと、
+// 「設問文画像と同じ許可ホスト検証が効く」ことの2点。
+// ------------------------------------------------------------------
+
+test("選択肢に image_url を付けられる（許可ホスト）", () => {
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      answer_options: [
+        { value: "1", label: "Aプラン", image_url: OK_URL },
+        { value: "2", label: "Bプラン", image_url: OK_URL_2 }
+      ]
+    })
+  );
+  assert.equal(parsed.success, true);
+});
+
+test("★image_url は内部表現の imageUrl（camelCase）に詰め替わる", () => {
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      answer_options: [
+        { value: "1", label: "Aプラン", image_url: OK_URL },
+        { value: "2", label: "Bプラン" }
+      ]
+    })
+  );
+  assert.equal(parsed.success, true);
+  if (!parsed.success) return;
+  const options = toQuestionInput(parsed.data).answer_options;
+  // 回答画面が読むのは imageUrl。ここが image_url のままだと画像が出ない。
+  assert.equal(options?.[0]?.imageUrl, OK_URL);
+  assert.equal("image_url" in (options?.[0] ?? {}), false);
+  // 画像が無い選択肢には imageUrl を付けない（既存の挙動を変えない）
+  assert.equal("imageUrl" in (options?.[1] ?? {}), false);
+});
+
+test("★選択肢の画像も許可ホスト外は 400（設問文だけ守っても意味がない）", () => {
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      answer_options: [
+        { value: "1", label: "Aプラン", image_url: "https://evil.example.com/a.png" },
+        { value: "2", label: "Bプラン" }
+      ]
+    })
+  );
+  assert.equal(parsed.success, false);
+  if (parsed.success) return;
+  assert.equal(parsed.error.issues[0]?.path.join("."), "answer_options");
+});
+
+test("★選択肢の画像も http: は 400（https 必須）", () => {
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      answer_options: [
+        { value: "1", label: "Aプラン", image_url: "http://portal.example.com/a.png" },
+        { value: "2", label: "Bプラン" }
+      ]
+    })
+  );
+  assert.equal(parsed.success, false);
+});
+
+test("★マトリクスの列（matrix_cols）の画像も検証される", () => {
+  const ng = questionSchema.safeParse(
+    baseQuestion({
+      question_type: "matrix_single",
+      answer_options: [{ value: "r1", label: "接客" }],
+      matrix_cols: [{ value: "c1", label: "満足", image_url: "https://evil.example.com/a.png" }]
+    })
+  );
+  assert.equal(ng.success, false);
+  if (ng.success) return;
+  assert.equal(ng.error.issues[0]?.path.join("."), "matrix_cols");
+
+  const ok = questionSchema.safeParse(
+    baseQuestion({
+      question_type: "matrix_single",
+      answer_options: [{ value: "r1", label: "接客", image_url: OK_URL }],
+      matrix_cols: [{ value: "c1", label: "満足", image_url: OK_URL_2 }]
+    })
+  );
+  assert.equal(ok.success, true);
+  if (!ok.success) return;
+  const input = toQuestionInput(ok.data);
+  assert.equal(input.answer_options?.[0]?.imageUrl, OK_URL);
+  assert.equal(input.matrix_cols?.[0]?.imageUrl, OK_URL_2);
+});
+
+test("image_url 無しの従来形式は一切変わらない（後方互換）", () => {
+  const parsed = questionSchema.safeParse(baseQuestion());
+  assert.equal(parsed.success, true);
+  if (!parsed.success) return;
+  assert.deepEqual(toQuestionInput(parsed.data).answer_options, [
+    { value: "1", label: "満足" },
+    { value: "2", label: "不満" }
+  ]);
+});

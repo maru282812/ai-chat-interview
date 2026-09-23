@@ -6,6 +6,7 @@ import { RESERVED_QUESTION_CODES } from "../lib/partnerDemographics";
 import {
   PARTNER_QUESTION_TYPES,
   collectDisallowedImageUrls,
+  isAllowedImageUrl,
   isPartnerMatrixType,
   parseImageUrlAllowedHosts,
   partnerTypeRequiresOptions
@@ -14,6 +15,7 @@ import { partnerAuthMiddleware, requirePartner } from "../middleware/partnerAuth
 import { partnerLegalService } from "../services/partnerLegalService";
 import { type PartnerQuestionInput, partnerSurveyService } from "../services/partnerSurveyService";
 import { partnerSurveySetService } from "../services/partnerSurveySetService";
+import type { QuestionOption } from "../types/domain";
 
 /**
  * partnerRoutes.ts
@@ -39,7 +41,17 @@ const answerOptionSchema = z.object({
   value: z.string().min(1).max(200),
   label: z.string().min(1).max(500),
   allow_free_text: z.boolean().optional(),
-  exclusive: z.boolean().optional()
+  exclusive: z.boolean().optional(),
+  /**
+   * 選択肢に添える画像（任意・1枚）。商品・メニュー・内装の「どれが良いか」を
+   * 写真で聞くための欄で、回答画面は既に画像付き選択肢を描ける
+   * （`views/liff/survey.ejs` の `choice-img` / `QuestionOption.imageUrl`）。
+   *
+   * ⚠ 設問文画像と**同じ許可ホスト検証**を通す（下の superRefine）。
+   *   回答画面に差し込まれる <img> の向き先なので、任意の外部URLを通すと
+   *   トラッキング・回答者IPの収集・不適切画像の差し込みに使われる。
+   */
+  image_url: z.string().url().max(2000).nullable().optional()
 });
 
 /**
@@ -101,6 +113,30 @@ const questionSchema = z
 
     const options = value.answer_options ?? null;
     const cols = value.matrix_cols ?? null;
+
+    /**
+     * 選択肢画像も**設問文画像と同じ許可ホスト検証**を通す。
+     * ここを抜くと、選択肢経由で任意の外部URLを回答画面へ差し込めてしまう
+     * （設問文だけ守っても意味がない）。行・列の両方を見る。
+     */
+    const allowedHosts = parseImageUrlAllowedHosts(env.PARTNER_IMAGE_URL_ALLOWED_HOSTS);
+    for (const [path, items] of [
+      ["answer_options", options],
+      ["matrix_cols", cols]
+    ] as const) {
+      if (!items) continue;
+      const bad = items.filter(
+        (item) => item.image_url && !isAllowedImageUrl(item.image_url, allowedHosts)
+      );
+      if (bad.length > 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: [path],
+          message:
+            "option image url must be https and its host must be listed in PARTNER_IMAGE_URL_ALLOWED_HOSTS"
+        });
+      }
+    }
 
     /** value の重複を弾く（同じ value が2つあると回答が一意に定まらない）。 */
     const assertUniqueValues = (
@@ -333,13 +369,32 @@ function parseSurveyId(raw: string | string[] | undefined): string {
  * 検証済みの設問ボディ → サービス層の入力。
  * POST / PUT で同じ写像を使う（片方だけ画像を落とす事故を防ぐ）。
  */
+/**
+ * 選択肢のパートナー表現 → 内部表現。
+ *
+ * ⚠ **API は snake_case（`image_url`）、内部の `QuestionOption` は camelCase（`imageUrl`）**。
+ *   回答画面（`views/liff/survey.ejs`）が読むのは `imageUrl` なので、
+ *   ここで詰め替えないと**画像を送っても選択肢に出ない**（無言で消える）。
+ *   `image_url` が無い・null のときは `imageUrl` を**付けない**
+ *   （`undefined` を入れると既存の画像を消す挙動と紛らわしいため）。
+ */
+function toOptionInputs(
+  options: z.infer<typeof answerOptionSchema>[] | null | undefined
+): QuestionOption[] | null {
+  if (!options) return null;
+  return options.map((option) => {
+    const { image_url: imageUrl, ...rest } = option;
+    return imageUrl ? { ...rest, imageUrl } : rest;
+  });
+}
+
 function toQuestionInput(question: z.infer<typeof questionSchema>): PartnerQuestionInput {
   const image = question.question_text_image;
   return {
     question_text: question.question_text,
     question_type: question.question_type,
-    answer_options: question.answer_options ?? null,
-    matrix_cols: question.matrix_cols ?? null,
+    answer_options: toOptionInputs(question.answer_options),
+    matrix_cols: toOptionInputs(question.matrix_cols),
     min: question.min ?? null,
     max: question.max ?? null,
     unit: question.unit ?? null,

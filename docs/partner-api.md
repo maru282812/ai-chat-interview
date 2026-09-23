@@ -103,9 +103,21 @@
   "value": "5",              // 必須・1〜200文字・同一設問内で一意
   "label": "とても満足",      // 必須・1〜500文字
   "allow_free_text": false,  // 任意。「その他」で自由記述欄を出す
-  "exclusive": false         // 任意。選ぶと他の選択肢を全解除する
+  "exclusive": false,        // 任意。選ぶと他の選択肢を全解除する
+  "image_url": "https://…"   // 任意。選択肢に添える画像（1枚）
 }
 ```
+
+`image_url` は**選択肢そのものに添える写真**（商品・メニュー・内装の「どれが良いか」を
+写真で聞く用途）。`answer_options`（マトリクスでは行）にも `matrix_cols`（列）にも付けられる。
+
+- **設問文画像と同じ許可ホスト検証**を通す。`https:` 必須・ホストは
+  `PARTNER_IMAGE_URL_ALLOWED_HOSTS` と完全一致。env 未設定なら一切通らない（fail-closed）。
+  違反は 400（`path` は `answer_options` / `matrix_cols`）。
+- GET でも `image_url`（snake_case）で返る。**内部表現は `imageUrl`（camelCase）**だが、
+  API 境界で相互変換している（`toPartnerOptions` / `toOptionInputs`）。
+  受け取った形のまま送り返せば往復しても画像は失われない。
+- 省略・null なら画像なし。既存の選択肢は無改修のまま動く。
 
 制約: 設問は 1〜50 件、`question_text` は 1〜2000 文字、`sort_order` は 0〜1000 の整数。
 `sort_order` の重複・欠番は許容（昇順に並べ直してサーバーが採番する）。
@@ -1078,18 +1090,28 @@ A-Q11（来店頻度 → C の送付日を決める）の分岐が壊れる。�
     "questions": [
       { "role": "entry", "question_text": "…", "question_type": "single_choice",
         "answer_options": [{ "value": "…", "label": "…" }], "sort_order": 1, "note": null },
+      { "role": "followup", "question_text": "…", "question_type": "matrix_single",
+        "answer_options": [{ "value": "cut", "label": "カットの仕上がり" }],
+        "matrix_cols": [{ "value": "1", "label": "満足" }],
+        "sort_order": 12, "note": null },
       { "role": "followup", "question_text": "…", "question_type": "single_choice",
-        "answer_options": null, "sort_order": 12,
-        "note": "この設問は実際には「matrix_single」形式で出題されます（展示用の簡略表示）" }
+        "answer_options": null, "matrix_cols": null, "sort_order": 13,
+        "note": "この設問は実際には「ranking_top_n」形式で出題されます（展示用の簡略表示）" }
     ]
   }]
 }
 ```
 
+各設問は `answer_options`（マトリクス系では**行**）と `matrix_cols`（**列**）を持つ。
+`matrix_cols` はマトリクス系以外では常に `null`（`sd` は行×列ではないので**付かない**）。
+
 ⚠ `questions` は**展示専用**。実際に回るのは ACI 側の原本そのもので、この写像の粗さは
-回答画面に影響しない。4種に落ちない設問（`matrix_single` / `numeric` など）は
+回答画面に影響しない。パートナー種別（§3 の8種）に落ちない設問（`ranking_top_n` など）は
 **黙って落とさず** `single_choice` の見出しとして残し `note` を付ける
 （消すと展示が実物より痩せて見えるため）。選択肢は実物と違うものを見せないよう null にする。
+
+マトリクス・数値・SD法は §3 の8種に入ったので、**もう `note` には落ちない**。
+マトリクスは行と列の両方が返るので、受け取った側は実物と同じ表として展示できる。
 
 ### 9.8 `GET /api/partner-admin/assignable-survey-sets`
 

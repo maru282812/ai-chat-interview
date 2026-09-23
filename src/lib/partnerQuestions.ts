@@ -166,6 +166,43 @@ export function toPartnerQuestionTextImage(
   };
 }
 
+/** パートナー表現の選択肢。内部の `QuestionOption` と違い **snake_case**。 */
+export interface PartnerAnswerOption {
+  value: string;
+  label: string;
+  allow_free_text?: boolean;
+  exclusive?: boolean;
+  /** 選択肢に添えた画像。無ければ付けない。 */
+  image_url?: string;
+}
+
+/**
+ * 内部 `QuestionOption`（camelCase）→ パートナー表現（snake_case）。
+ *
+ * ⚠ **`imageUrl` を `image_url` に直す**。ここを通さず内部表現のまま返すと、
+ *   パートナーは受け取った `imageUrl` をそのまま送り返すことになり、
+ *   API のスキーマ（`image_url`）と食い違って**画像が無言で落ちる**
+ *   （GET → 編集 → PUT の往復で消える形になり、原因が追いにくい）。
+ *
+ * 内部には `imageUrls`（複数）・`title`・`description` などもあるが、
+ * パートナーAPI では**1枚だけ**を公開する（増やすときはスキーマ側も揃えること）。
+ */
+export function toPartnerOptions(
+  options: QuestionOption[] | null | undefined
+): PartnerAnswerOption[] | null {
+  if (!options) {
+    return null;
+  }
+  return options.map((option) => {
+    const mapped: PartnerAnswerOption = { value: option.value, label: option.label };
+    if (option.allow_free_text) mapped.allow_free_text = true;
+    if (option.exclusive) mapped.exclusive = true;
+    const image = option.imageUrl || option.imageUrls?.[0];
+    if (image) mapped.image_url = image;
+    return mapped;
+  });
+}
+
 /**
  * 選択肢の持ち越し（carry-forward）。
  *
@@ -338,10 +375,10 @@ export interface PartnerQuestionView {
   question_code: string;
   question_text: string;
   question_type: PartnerQuestionType;
-  /** 選択肢。マトリクス系ではここが「行」。 */
-  answer_options: QuestionOption[] | null;
+  /** 選択肢。マトリクス系ではここが「行」。**snake_case**（`image_url`）で返す。 */
+  answer_options: PartnerAnswerOption[] | null;
   /** マトリクス系の「列」。それ以外は null。 */
-  matrix_cols: QuestionOption[] | null;
+  matrix_cols: PartnerAnswerOption[] | null;
   /** numeric の範囲と単位。それ以外は null。 */
   min: number | null;
   max: number | null;

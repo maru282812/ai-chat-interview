@@ -21,6 +21,7 @@ import {
   buildPartnerQuestionConfig,
   toInternalQuestionType,
   toPartnerCarryForward,
+  toPartnerOptions,
   toPartnerQuestionTextImage,
   toPartnerQuestionType
 } from "../lib/partnerQuestions";
@@ -383,9 +384,9 @@ export async function loadPartnerQuestionViews(projectId: string): Promise<Partn
       question_code: question.question_code,
       question_text: question.question_text,
       question_type: partnerType,
-      answer_options: question.question_config?.options ?? null,
+      answer_options: toPartnerOptions(question.question_config?.options),
       // マトリクス系は「行 = options / 列 = matrix_cols」。列は別フィールドで返す。
-      matrix_cols: question.question_config?.matrix_cols ?? null,
+      matrix_cols: toPartnerOptions(question.question_config?.matrix_cols),
       min: question.question_config?.min ?? null,
       max: question.question_config?.max ?? null,
       unit: question.question_config?.unit ?? null,
