@@ -143,7 +143,12 @@ export function flattenTemplateQuestion(
   role: CycleStepRole
 ): FlattenedTemplateQuestion {
   const mapped = toPartnerQuestionType(question);
-  const options = question.question_config?.options ?? null;
+  // ⚠ マトリクスの行は `matrix_rows` に入っていることも `options` に入っていることもある。
+  //   回答UI（survey.ejs:1476）が `matrix_rows || options` の順で読むので、ここも同じ順で読む。
+  //   `options` だけを見ていたため、行が `matrix_rows` の設問は行が null で返っていた
+  //   （＝受け取った側が表を描けなかった）。
+  const options =
+    question.question_config?.matrix_rows ?? question.question_config?.options ?? null;
 
   if (mapped) {
     return {

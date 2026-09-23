@@ -303,6 +303,26 @@ test("展示用の平坦化: 表現できる設問はそのまま、できない
     "列"
   );
 
+  // ⚠ 行が `matrix_rows` に入っている設問でも行を取りこぼさない。
+  //   回答UI（survey.ejs:1476）は `matrix_rows || options` で読むので同じ順にする。
+  //   ここを options だけで読んでいたため、実際の業種テンプレで行が null になっていた。
+  const matrixRows = flattenTemplateQuestion(
+    question({
+      question_type: "matrix_single",
+      question_config: {
+        matrix_rows: [{ value: "r1", label: "カットの仕上がり" }],
+        matrix_cols: [{ value: "1", label: "満足" }]
+      }
+    }),
+    "followup"
+  );
+  assert.deepEqual(
+    matrixRows.answer_options,
+    [{ value: "r1", label: "カットの仕上がり" }],
+    "matrix_rows を行として読む"
+  );
+  assert.deepEqual(matrixRows.matrix_cols, [{ value: "1", label: "満足" }]);
+
   // マトリクス以外に列は付けない（付けると受け取った側が誤解する）。
   assert.equal(mapped.matrix_cols, null, "単一選択に列は付かない");
 

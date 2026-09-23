@@ -617,6 +617,15 @@ export interface HeatmapConfig {
 
 export interface QuestionConfig {
   options?: QuestionOption[];
+  /**
+   * マトリクスの「行」。
+   *
+   * ⚠ 回答UI（survey.ejs:1476）は **`matrix_rows || options`** の順で行を読む。
+   *   つまり行は `matrix_rows` に入っていることも `options` に入っていることもあり、
+   *   どちらか一方だけを見ると行を取りこぼす。
+   *   （型に無かったため、業種テンプレの展示が行を null で返していた）
+   */
+  matrix_rows?: QuestionOption[];
   matrix_cols?: QuestionOption[];
   placeholder?: string;
   max_length?: number;
