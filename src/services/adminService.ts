@@ -142,9 +142,16 @@ export const adminService = {
       });
     }
 
+    // 設問は案件ごとに引かず一括取得する。案件ごとに引くと fetch が案件数だけ出て、
+    // Cloudflare Workers のサブリクエスト上限（50件）を案件57件で超え、
+    // 一覧画面が丸ごと 500 になっていた（2026-09-24）。
+    const questionsByProject = await questionRepository.listByProjectIds(
+      projects.map((project) => project.id)
+    );
+
     const rows = await Promise.all(
       projects.map(async (project) => {
-        const questions = await questionRepository.listByProject(project.id);
+        const questions = questionsByProject.get(project.id) ?? [];
         const branchCount = questions.reduce((total, question) => {
           return total + describeBranchRule(question.branch_rule).branchCount;
         }, 0);

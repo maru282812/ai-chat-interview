@@ -8,6 +8,9 @@ import type {
 } from "../types/domain";
 import { requireData, throwIfError } from "./baseRepository";
 
+/** .in() の URL 長制限（PostgREST は GET クエリに ID を並べる）を超えないための分割単位。 */
+const PROJECT_ID_IN_CHUNK_SIZE = 100;
+
 export interface ProjectAssignmentRecord extends ProjectAssignment {
   respondent?: Respondent & { current_rank?: Rank | null };
 }
@@ -274,5 +277,38 @@ export const projectAssignmentRepository = {
       .eq("status", "completed");
     throwIfError(error);
     return count ?? 0;
+  },
+
+  /**
+   * 複数案件の完了数をまとめて数える（countCompletedByProject の一括版）。
+   *
+   * 一覧画面で案件ごとに数えると fetch が案件数だけ出て、Cloudflare Workers の
+   * サブリクエスト上限（50件）に当たる。件数に依存しないよう1クエリに畳む。
+   *
+   * count+head はプロジェクト単位に割れないため project_id だけを引いて JS 側で数える。
+   * 完了 assignment は回答者数と同オーダー（本番で数十件規模）なので転送量は問題にならない。
+   * 完了0件の案件はキーごと存在しないため、呼び出し側は `?? 0` で受けること。
+   */
+  async countCompletedByProjectIds(projectIds: string[]): Promise<Map<string, number>> {
+    const counts = new Map<string, number>();
+    const uniqueIds = [...new Set(projectIds)];
+    if (uniqueIds.length === 0) {
+      return counts;
+    }
+
+    for (let i = 0; i < uniqueIds.length; i += PROJECT_ID_IN_CHUNK_SIZE) {
+      const chunk = uniqueIds.slice(i, i + PROJECT_ID_IN_CHUNK_SIZE);
+      const { data, error } = await supabase
+        .from("project_assignments")
+        .select("project_id")
+        .in("project_id", chunk)
+        .eq("status", "completed");
+      throwIfError(error);
+      for (const row of (data ?? []) as { project_id: string }[]) {
+        counts.set(row.project_id, (counts.get(row.project_id) ?? 0) + 1);
+      }
+    }
+
+    return counts;
   }
 };

@@ -9529,15 +9529,18 @@ export const adminController = {
 
     const clientNameById = new Map(clients.map((c) => [c.id, c.name]));
 
-    const rows = await Promise.all(
-      storeProjects.map(async (p) => ({
-        project: p,
-        clientName: p.client_id ? clientNameById.get(p.client_id) ?? null : null,
-        entryUrl: buildStoreEntryUrl(p.entry_code),
-        // 「回答数」は完了数（URLを開いただけの流入は含めない）
-        responseCount: await projectAssignmentRepository.countCompletedByProject(p.id)
-      }))
+    // 回答数は案件ごとに数えず一括取得する（案件ごとだと Workers のサブリクエスト上限に当たる）。
+    const completedCountByProject = await projectAssignmentRepository.countCompletedByProjectIds(
+      storeProjects.map((p) => p.id)
     );
+
+    const rows = storeProjects.map((p) => ({
+      project: p,
+      clientName: p.client_id ? clientNameById.get(p.client_id) ?? null : null,
+      entryUrl: buildStoreEntryUrl(p.entry_code),
+      // 「回答数」は完了数（URLを開いただけの流入は含めない）
+      responseCount: completedCountByProject.get(p.id) ?? 0
+    }));
 
     // 「店舗専用にする」候補（まだ店舗専用化されていない案件）
     const convertibleProjects = allProjects.filter((p) => p.visibility_type !== "private_store");
@@ -9565,6 +9568,24 @@ export const adminController = {
     const now = new Date();
     const groups = await cycleGroupRepository.list();
 
+    // ステップ名に使う案件は全件を1回引いて引き当てる。
+    // ステップごとに getById すると fetch がステップ数だけ出て、店舗が増えるほど
+    // Cloudflare Workers のサブリクエスト上限（50件）に近づく。
+    const projectNameById = new Map(
+      (await projectRepository.list()).map((project) => [
+        project.id,
+        project.user_display_title || project.name
+      ])
+    );
+
+    // 頻度設問（各グループの起点案件）も一括で引く。
+    const questionsByEntryProject = await questionRepository
+      .listByProjectIds(groups.map((group) => group.entry_project_id))
+      .catch((error) => {
+        logger.warn("cycleFunnel: 頻度設問の読み込みに失敗", { error: String(error) });
+        return new Map<string, Awaited<ReturnType<typeof questionRepository.listByProject>>>();
+      });
+
     const rows = await Promise.all(
       groups.map(async (group) => {
         const [cycles, steps] = await Promise.all([
@@ -9572,38 +9593,26 @@ export const adminController = {
           cycleGroupRepository.listSteps(group.id),
         ]);
 
-        // ステップ名を出すために案件名を引く（数件なので個別取得で十分）。
-        const stepRows = await Promise.all(
-          steps.map(async (step) => {
-            let name = step.project_id;
-            try {
-              const project = await projectRepository.getById(step.project_id);
-              name = project.user_display_title || project.name;
-            } catch {
-              // 案件が消えていてもファネル表示は続ける
-            }
-            return { ...step, projectName: name };
-          })
-        );
+        // 案件が消えていてもファネル表示は続ける（ID をそのまま名前に出す）。
+        const stepRows = steps.map((step) => ({
+          ...step,
+          projectName: projectNameById.get(step.project_id) ?? step.project_id
+        }));
 
         // 頻度設問の選択肢と日数対応表の突き合わせ（Migration 095）。
         // ズレると「エラーも出ないまま C が送られない」ので画面で気づけるようにする。
         let frequencyOptions: { value: string; label: string }[] = [];
         let frequencyQuestionFound = false;
-        try {
-          const questions = await questionRepository.listByProject(group.entry_project_id);
-          const target = questions.find(
-            (q) =>
-              q.question_code?.toLowerCase() ===
-              (group.frequency_question_code || "Q11").toLowerCase()
-          );
-          if (target) {
-            frequencyQuestionFound = true;
-            const config = target.question_config as { options?: { value: string; label: string }[] } | null;
-            frequencyOptions = config?.options ?? [];
-          }
-        } catch (error) {
-          logger.warn("cycleFunnel: 頻度設問の読み込みに失敗", { groupId: group.id, error: String(error) });
+        const questions = questionsByEntryProject.get(group.entry_project_id) ?? [];
+        const target = questions.find(
+          (q) =>
+            q.question_code?.toLowerCase() ===
+            (group.frequency_question_code || "Q11").toLowerCase()
+        );
+        if (target) {
+          frequencyQuestionFound = true;
+          const config = target.question_config as { options?: { value: string; label: string }[] } | null;
+          frequencyOptions = config?.options ?? [];
         }
 
         return {
@@ -9852,17 +9861,21 @@ export const adminController = {
     // client 配下の案件を created_at 昇順で（将来の wave 列を差し込める自然順・★予約③）
     const projects = await projectRepository.listByClient(clientId);
 
-    // 各案件の件数系(A)＋設問（横断指標の可視化用）を並行取得
-    const rows = await Promise.all(
-      projects.map(async (project) => {
-        const [respondentCount, completedCount, questions] = await Promise.all([
-          respondentRepository.countByProject(project.id),
-          projectAssignmentRepository.countCompletedByProject(project.id),
-          questionRepository.listByProject(project.id, { includeHidden: false })
-        ]);
-        return { project, respondentCount, completedCount, questions };
-      })
-    );
+    // 各案件の件数系(A)＋設問（横断指標の可視化用）を一括取得する。
+    // 案件ごとに3回引くと Workers のサブリクエスト上限（50件）を案件17件で超える。
+    const projectIds = projects.map((project) => project.id);
+    const [respondentCounts, completedCounts, questionsByProject] = await Promise.all([
+      respondentRepository.countByProjectIds(projectIds),
+      projectAssignmentRepository.countCompletedByProjectIds(projectIds),
+      questionRepository.listByProjectIds(projectIds, { includeHidden: false })
+    ]);
+
+    const rows = projects.map((project) => ({
+      project,
+      respondentCount: respondentCounts.get(project.id) ?? 0,
+      completedCount: completedCounts.get(project.id) ?? 0,
+      questions: questionsByProject.get(project.id) ?? []
+    }));
 
     // 件数系の単純合算(A)
     const totals = rows.reduce(
