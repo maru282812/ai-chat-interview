@@ -117,6 +117,22 @@ export const userPointService = {
     return data as UserPoints;
   },
 
+  /**
+   * 複数ユーザーの残高をまとめて引く（管理画面の一覧用）。
+   * 行が無いユーザーは Map に現れない（呼び出し側でフォールバックする）。
+   */
+  async listBalancesByLineUserIds(lineUserIds: string[]): Promise<Map<string, UserPoints>> {
+    if (lineUserIds.length === 0) {
+      return new Map();
+    }
+    const { data, error } = await supabase
+      .from("user_points")
+      .select("*")
+      .in("line_user_id", lineUserIds);
+    throwIfError(error);
+    return new Map((data ?? []).map((row) => [(row as UserPoints).line_user_id, row as UserPoints]));
+  },
+
   async getHistory(lineUserId: string, limit = 50): Promise<PointHistory[]> {
     const { data, error } = await supabase
       .from("point_histories")
@@ -260,12 +276,20 @@ export const userPointService = {
     };
   },
 
+  /**
+   * 残高行が無ければ 0 で作る。既にあれば何もしない。
+   *
+   * ⚠ ignoreDuplicates を外してはいけない。upsert は競合時に「指定した列で上書き」する
+   * ため、0 を並べたこの行を既存ユーザーに当てると available/lifetime がまるごと 0 に
+   * 潰れる。呼び出し元（ついでスワイプ・デイリー）は付与の直前にこれを呼ぶので、
+   * 実際に「スワイプに答えるたび残高が消えて付与分だけになる」事故が起きていた。
+   */
   async ensureRow(lineUserId: string): Promise<void> {
     const { error } = await supabase
       .from("user_points")
       .upsert(
         { line_user_id: lineUserId, total_points: 0, available_points: 0, lifetime_points: 0 },
-        { onConflict: "line_user_id" }
+        { onConflict: "line_user_id", ignoreDuplicates: true }
       );
     throwIfError(error);
   }

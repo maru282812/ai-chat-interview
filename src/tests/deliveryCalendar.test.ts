@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  isCampaignReservationStale,
   isoToJstParts,
   nextDailyRunJstFromTime,
   nextRunJst,
@@ -120,4 +121,16 @@ test("isoToJstParts: UTC の ISO 日時を JST の日付キーと時刻に分解
     time: "00:30"
   });
   assert.equal(isoToJstParts("not-a-date"), null);
+});
+
+test("isCampaignReservationStale: five minute catch-up window protects old reservations", () => {
+  assert.equal(
+    isCampaignReservationStale("2026-07-22T02:56:00Z", new Date("2026-07-22T03:00:00Z")),
+    false
+  );
+  assert.equal(
+    isCampaignReservationStale("2026-07-22T02:55:00Z", new Date("2026-07-22T03:00:00Z")),
+    true
+  );
+  assert.equal(isCampaignReservationStale("not-a-date", NOW), false);
 });

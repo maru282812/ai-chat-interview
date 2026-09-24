@@ -345,6 +345,13 @@ export interface Project {
   research_hypothesis_json?: ResearchHypothesis | null;
   screening_config: ScreeningConfig | null;
   screening_last_question_order: number | null;
+  /**
+   * 送信完了画面に出すお礼文 (Migration 108)。
+   * NULL なら汎用文（ご協力ありがとうございます。）にフォールバックする。
+   * ⚠ お礼を設問の comment_bottom に書かないこと。comment_bottom は設問の下＝
+   *    「送信前」に出るため、回答者には「お礼が出たのにまだ送信していない」状態に見える。
+   */
+  completion_message?: string | null;
   /** AIプロンプト方針設定 */
   ai_prompt_policy_json: AIPromptPolicy | null;
   /** ベースプロンプトテンプレート上書き設定 */
@@ -386,6 +393,13 @@ export interface Project {
    * /api/partner/* の :id 系は必ずこの値の一致を検証する（他店舗の案件を触れない）。
    */
   partner_store_id?: string | null;
+  /**
+   * 会員ポータルの店舗に「閲覧専用」で紐づいた案件か (Migration 103)。
+   * true のとき partner_store_id は入るが、店舗からの書き込み（PUT / publish / close）は 409。
+   * 運営API の unassign（entry_code を落とす）も当てられず、解除は unwatch だけ。
+   * 稼働中の QR（entry_code）を誤って殺さないための分離。
+   */
+  partner_readonly?: boolean;
   /**
    * 「探す」一覧に出すか（管理画面の「一覧に出す」チェック）。
    * listDiscoverable / getDiscoverableById の抽出条件であり、
@@ -603,6 +617,15 @@ export interface HeatmapConfig {
 
 export interface QuestionConfig {
   options?: QuestionOption[];
+  /**
+   * マトリクスの「行」。
+   *
+   * ⚠ 回答UI（survey.ejs:1476）は **`matrix_rows || options`** の順で行を読む。
+   *   つまり行は `matrix_rows` に入っていることも `options` に入っていることもあり、
+   *   どちらか一方だけを見ると行を取りこぼす。
+   *   （型に無かったため、業種テンプレの展示が行を null で返していた）
+   */
+  matrix_rows?: QuestionOption[];
   matrix_cols?: QuestionOption[];
   placeholder?: string;
   max_length?: number;
@@ -717,6 +740,17 @@ export interface QuestionMeta {
   metric_code?: string;
   /** 指標の集計方向。ランキング/ビフォーアフターでの良し悪し判定に使う。任意。 */
   metric_direction?: "higher_is_better" | "lower_is_better" | "neutral";
+  /**
+   * 「店舗等への伝達を目的として設けた設問」の開示設定（利用規約 第9条3項・migration 102）。
+   * 未設定＝共有しない。判定は lib/questionShare.ts の resolveShareDecision に一本化する。
+   * notice（回答画面に出した告知文）が無いものは、enabled でも共有されない。
+   */
+  share_with_store?: {
+    enabled?: boolean;
+    mode?: "verbatim" | "aggregate";
+    timing?: "immediate" | "on_close";
+    notice?: string;
+  };
 }
 
 export interface Question {
@@ -900,6 +934,11 @@ export interface Store {
   industry_template_id: UUID | null;
   name: string;
   code_slug: string;
+  /**
+   * hibi-portal（会員ポータル・別DB）の stores.id (Migration 104)。
+   * ポータル注文で生成された店舗のみ非NULL。UNIQUE＝ポータル店舗1件につき ACI 店舗1件。
+   */
+  partner_store_id: string | null;
   /** 店舗ごとの謝礼。NULL はテンプレ案件の値を使う（謝礼なしの店舗もある）。 */
   reward_points_override: number | null;
   is_active: boolean;

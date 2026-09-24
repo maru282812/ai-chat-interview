@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <%- include('../partials/liff-auth') %>
+    <style>
+      /* 招待ランディング（U-1・Stat-Led）。未登録の人が最初に見る唯一の画面。
+         規律: 参加人数・全体ゲージ・ランキングは出さない（D-1）。
+         出すのは「〇〇さんから招待されました」という1対1の事実と、もらえるものだけ。 */
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: "Hiragino Maru Gothic ProN", -apple-system, BlinkMacSystemFont, "Noto Sans JP", sans-serif;
+        background: #FBF5E2; min-height: 100vh; color: #222; font-weight: 700;
+      }
+      .shell { max-width: 480px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+      .from {
+        display: flex; align-items: center; gap: 10px;
+        padding: 16px; background: #FFFDF6; border-bottom: 1px solid #F0E6C8;
+      }
+      .from .ava {
+        width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%;
+        background: #FAF0D2; border: 1.5px solid #F0E6C8;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 16px; font-weight: 800; color: #A97814;
+      }
+      .from .who { font-size: 14px; line-height: 1.5; }
+      .from .who b { font-weight: 800; }
+      .from .who span { color: #777; font-size: 12px; display: block; font-weight: 500; }
+      .stat { padding: 34px 18px 22px; }
+      .fig { display: flex; align-items: baseline; gap: 6px;
+        font-size: clamp(46px, 15vw, 64px); font-weight: 900; line-height: .95;
+        color: #0E6B5A; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+      .fig .u { font-size: .42em; font-weight: 800; }
+      .qual { margin-top: 14px; font-size: 19px; font-weight: 800; line-height: 1.5; overflow-wrap: anywhere; }
+      .qual .hl { color: #0E6B5A; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+      .sub { margin-top: 8px; font-size: 14px; color: #777; line-height: 1.7; font-weight: 500; }
+      dl.facts { margin: 0 18px; border-top: 1px solid #F0E6C8; }
+      dl.facts div { display: flex; justify-content: space-between; gap: 16px;
+        padding: 12px 0; border-bottom: 1px solid #F0E6C8; font-size: 14px; }
+      dl.facts dt { color: #777; font-weight: 500; }
+      dl.facts dd { font-weight: 800; }
+      .cta { padding: 26px 18px 18px; margin-top: auto; }
+      .btn {
+        display: flex; align-items: center; justify-content: center;
+        width: 100%; min-height: 54px; padding: 15px 18px; border-radius: 9999px;
+        font-family: inherit; font-size: 17px; font-weight: 900; cursor: pointer;
+        background: #FFD836; color: #2B1A00;
+        border: 2px solid #C79A00; box-shadow: 0 3px 0 0 #C79A00;
+      }
+      .btn:active { transform: translateY(3px); box-shadow: 0 0 0 0 #C79A00; }
+      .btn:focus-visible { outline: 3px solid #0A5245; outline-offset: 3px; }
+      .btn[disabled] { background: #EFF3F1; border-color: #9FB0AA; color: #5A6862;
+        box-shadow: 0 3px 0 0 #9FB0AA; cursor: not-allowed; }
+      .btn.ghost { background: #fff; color: #0E6B5A; border-color: #0E6B5A; box-shadow: 0 3px 0 0 #0A5245; }
+      .fine { margin-top: 10px; text-align: center; font-size: 11.5px; color: #777; line-height: 1.6; font-weight: 500; }
+      .err { margin: 12px 18px 0; padding: 12px 14px; border-radius: 12px;
+        background: #FDEEEE; color: #8f2c2c; font-size: 13px; line-height: 1.7; font-weight: 700; display: none; }
+      @media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <% const landing = initialData.landing; %>
+      <div class="from">
+        <div class="ava"><%= (landing.inviterName || "友")[0] %></div>
+        <div class="who">
+          <% if (landing.inviterName) { %><b><%= landing.inviterName %>さん</b> から招待されました
+          <% } else { %><b>お友だち</b> から招待されました<% } %>
+          <span>Hibi・アンケートで謝礼がもらえます</span>
+        </div>
+      </div>
+
+      <% if (landing.status === "ok") { %>
+        <div class="stat">
+          <div class="fig"><%= landing.rewardOnRegister %><span class="u">pt</span></div>
+          <p class="qual">はじめると <span class="hl">すぐ受け取れます</span>。</p>
+          <p class="sub">登録して、ふたりでペアアンケートに答えると答え合わせが見られます。</p>
+        </div>
+        <dl class="facts">
+          <div><dt>所要時間</dt><dd>約3分</dd></div>
+          <div><dt>設問の形式</dt><dd>選ぶだけ</dd></div>
+          <div><dt>回答の公開</dt><dd>ありません</dd></div>
+        </dl>
+        <p class="err" id="err"></p>
+        <div class="cta">
+          <button class="btn" id="go">はじめる</button>
+          <p class="fine">LINEでそのまま登録できます</p>
+        </div>
+      <% } else { %>
+        <div class="stat">
+          <div class="fig" style="color:#9FB0AA">—</div>
+          <% if (landing.status === "self_invite") { %>
+            <p class="qual">自分の招待リンクは <span class="hl">使えません</span>。</p>
+          <% } else if (landing.status === "already_used") { %>
+            <p class="qual">この招待は <span class="hl">使用ずみ</span> です。</p>
+            <p class="sub">招待した方に新しいリンクを送ってもらってください。</p>
+          <% } else { %>
+            <p class="qual">この招待リンクは <span class="hl">期限切れ</span> です。</p>
+            <p class="sub">招待した方にもう一度リンクを送ってもらってください。<br>Hibi は招待なしでも登録できます。</p>
+          <% } %>
+        </div>
+        <div class="cta">
+          <button class="btn ghost" onclick="location.href='/liff/projects'">Hibi について見る</button>
+          <p class="fine">受け取れる謝礼は招待経由と異なります</p>
+        </div>
+      <% } %>
+    </div>
+
+    <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+    <script>
+    (function () {
+      const initialData = JSON.parse(document.getElementById("initial-data").dataset.json || "{}");
+      const go = document.getElementById("go");
+      if (!go) return;
+      const errEl = document.getElementById("err");
+      function fail(message) {
+        errEl.textContent = message;
+        errEl.style.display = "block";
+        go.disabled = false;
+        go.textContent = "はじめる";
+      }
+      go.addEventListener("click", async () => {
+        go.disabled = true;
+        go.textContent = "確認しています…";
+        try {
+          // ここで初めて LINE ログインへ。LP の閲覧自体は未ログインで完結している
+          const idToken = await LiffAuth.initLiffOrWebAuth(initialData.liffId);
+          if (!idToken) return;
+          const res = await fetch(`/liff/invite/${encodeURIComponent(initialData.token)}/accept`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { fail(data.message || "この招待は使えませんでした。"); return; }
+          go.textContent = "登録できました";
+          location.href = `/liff/pair/${encodeURIComponent(data.pairId)}/answer`;
+        } catch (err) {
+          fail((err && err.message) || "読み込みに失敗しました。もう一度お試しください。");
+        }
+      });
+    })();
+    </script>
+  </body>
+</html>

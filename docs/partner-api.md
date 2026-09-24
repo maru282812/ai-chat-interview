@@ -58,16 +58,43 @@
 
 ---
 
-## 3. 設問タイプ（4種）
+## 3. 設問タイプ（8種）
 
-ポータルが扱えるのは以下の4つだけ。文字列値は**完全一致**で送ること。
+ポータルが扱えるのは以下の8つ。文字列値は**完全一致**で送ること。
 
 | `question_type` | 意味 | `answer_options` | 内部保存 |
 |---|---|---|---|
-| `"single_choice"` | 単一選択 | 必須（2件以上） | `question_type='single_choice'` |
-| `"multi_choice"` | 複数選択 | 必須（2件以上） | `question_type='multi_choice'` |
-| `"free_text"` | 自由記述 | **禁止**（`null` か省略） | `question_type='free_text_long'` |
+| `"single_choice"` | 単一選択（SA） | 必須（2件以上） | `question_type='single_choice'` |
+| `"multi_choice"` | 複数選択（MA） | 必須（2件以上） | `question_type='multi_choice'` |
 | `"scale"` | スケール（段階評価） | 必須（2件以上） | `question_type='single_choice'` ＋ `question_config.presentation.scale=true` |
+| `"matrix_single"` | マトリクス（行ごとに1つ） | **行**として必須（**1件以上**）＋ `matrix_cols` 必須 | `question_type='matrix_single'` |
+| `"matrix_multi"` | マトリクス（行ごとに複数） | 同上 | `question_type='matrix_multi'` |
+| `"sd"` | SD法（対になる言葉の間で評価する**単一スケール**） | 必須（2件以上＝目盛り） | `question_type='sd'` |
+| `"numeric"` | フリー数値 | **禁止**（`null` か省略） | `question_type='numeric'` |
+| `"free_text"` | 自由記述（大） | **禁止**（`null` か省略） | `question_type='free_text_long'` |
+
+⚠ **`sd` はマトリクスではない**。回答UI（`survey.ejs:1436`）は `options` を目盛りとして1本のスケールで描くので、`matrix_cols` を送ると 400。
+
+### 種別ごとの追加フィールド
+
+| フィールド | 対象種別 | 内容 |
+|---|---|---|
+| `matrix_cols` | `matrix_single` / `matrix_multi` | **列**。1〜30件・`value` は一意。行も**1件以上**でよい（管理画面が1件でも保存できるため。2件必須にすると、運営が割り当てた案件を店舗が1文字直しただけで 400 になる）。⚠ **行は `answer_options` 側**（内部表現が「行=options / 列=matrix_cols」なので取り違えると回答UIが崩れる） |
+| `min` / `max` / `unit` | `numeric` | 入力範囲と単位（例: `歳`）。`min > max` は **400** |
+
+**マトリクス以外に `matrix_cols` を送ると 400**（黙って捨てると「設定したのに反映されない」になるため）。
+
+⚠ 次の種別は**パートナーには出さない**。GET レスポンスからも除外される
+（表現できない設問を別種別に化けさせない）:
+
+- `ranking_top_n` … **回答UIが未実装**（`answerPresentation` は `podium` を返すが
+  `survey.ejs` / `answer-ui.ejs` に描画が無く、プレーンな textarea に落ちる）。
+  描画を実装してから開放すること。
+- `matrix_mixed` / `pairwise` / `point_allocation` / `image_heatmap` /
+  `image_upload` / `text_with_image` / `hidden_*` … 運営専用。
+- `free_text_short` … **内部型としては存在するが `"free_text"` に寄せて返す**。
+  別種別として返すと既存アンケートの版文字列が変わり、誰も編集していないのに
+  409（偽の競合）になるため（版の材料に `question_type` が入る）。
 
 `answer_options` の要素:
 
@@ -76,9 +103,21 @@
   "value": "5",              // 必須・1〜200文字・同一設問内で一意
   "label": "とても満足",      // 必須・1〜500文字
   "allow_free_text": false,  // 任意。「その他」で自由記述欄を出す
-  "exclusive": false         // 任意。選ぶと他の選択肢を全解除する
+  "exclusive": false,        // 任意。選ぶと他の選択肢を全解除する
+  "image_url": "https://…"   // 任意。選択肢に添える画像（1枚）
 }
 ```
+
+`image_url` は**選択肢そのものに添える写真**（商品・メニュー・内装の「どれが良いか」を
+写真で聞く用途）。`answer_options`（マトリクスでは行）にも `matrix_cols`（列）にも付けられる。
+
+- **設問文画像と同じ許可ホスト検証**を通す。`https:` 必須・ホストは
+  `PARTNER_IMAGE_URL_ALLOWED_HOSTS` と完全一致。env 未設定なら一切通らない（fail-closed）。
+  違反は 400（`path` は `answer_options` / `matrix_cols`）。
+- GET でも `image_url`（snake_case）で返る。**内部表現は `imageUrl`（camelCase）**だが、
+  API 境界で相互変換している（`toPartnerOptions` / `toOptionInputs`）。
+  受け取った形のまま送り返せば往復しても画像は失われない。
+- 省略・null なら画像なし。既存の選択肢は無改修のまま動く。
 
 制約: 設問は 1〜50 件、`question_text` は 1〜2000 文字、`sort_order` は 0〜1000 の整数。
 `sort_order` の重複・欠番は許容（昇順に並べ直してサーバーが採番する）。
@@ -87,8 +126,8 @@
 
 ## 3.5 設問文の画像（`question_text_image`）
 
-**設問タイプは上の4種のまま増えない。`text_with_image` のような専用タイプは存在しない。
-代わりに、4種すべての設問に画像を添えられる**（「画像付きの単一選択」も作れる）。
+**画像は上の7種すべてに添えられる。`text_with_image` のような専用タイプは存在しない**
+（「画像付きの単一選択」も作れる）。
 
 ### リクエスト（`POST /surveys` / `PUT /surveys/:id` の各設問に付ける）
 
@@ -189,6 +228,97 @@
 
 ---
 
+## 3.6 選択肢の持ち越し（`carry_forward`）
+
+**「前の設問で選んだものだけを、この設問の選択肢にする」指定。** 任意フィールド。
+
+調査票でよくある次の形を実現する:
+
+> pq5「今日、重視していることは何ですか？（**いくつでも**）」
+> → pq6「今日、**特に**重視していることは何ですか？（**ひとつだけ**）」
+>   ← pq5 で選んだものだけを出す
+
+### リクエスト
+
+```jsonc
+{
+  "question_text": "今日、特に重視していることは何ですか？（ひとつだけ）",
+  "question_type": "single_choice",
+  "answer_options": [
+    { "value": "finish",   "label": "仕上がり" },
+    { "value": "proposal", "label": "自分に合った提案" },
+    { "value": "price",    "label": "価格への納得感" }
+  ],
+  "sort_order": 15,
+  "carry_forward": {
+    "from_sort_order": 14,
+    "mode": "selected"
+  }
+}
+```
+
+| フィールド | 型 | 制約 |
+|---|---|---|
+| `from_sort_order` | `number` | **参照元設問の `sort_order`**。同一リクエスト内に存在すること |
+| `mode` | `"selected" \| "unselected"` | 既定 `"selected"`。`unselected` は「選ば**なかった**もの」を残す |
+
+- `carry_forward` 自体が**任意**（省略・`null` いずれも可）。**後方互換**のため、
+  このフィールドを送らない従来のリクエストはこれまでと完全に同じ挙動になる。
+
+### なぜ `question_code` ではなく `sort_order` で参照するのか
+
+`question_code`（`pq1`, `pq2`, …）は**サーバーが採番する**。
+ポータル側は保存するまで自分の設問がどのコードになるか知らないため、
+**自分が送った `sort_order`** でしか前問を指せない。
+サーバーが保存時に `sort_order → question_code` を解決して内部表現に変換する。
+
+> 例: `sort_order` が `14, 15` の2問を送ると、採番は入力の昇順で `pq1, pq2` になる。
+> `from_sort_order: 14` は `pq1` へ解決される（`pq14` ではない）。
+
+### 選択肢の `value` をそろえること（必須）
+
+持ち越しは **`value` の一致**で絞り込む。参照元と参照先で `value` が共有されていないと
+**選択肢が0件**になり回答不能になるため、サーバーが 400 で弾く。
+ラベルは違っていてよいが、`value` は必ずそろえること。
+
+### 400 になる条件（まとめ）
+
+| 条件 | メッセージ |
+|---|---|
+| 参照先が存在しない | `carry_forward.from_sort_order=99 does not match any question` |
+| 自分自身を参照した | `carry_forward.from_sort_order must not reference itself` |
+| 参照先が後ろにある（まだ回答されていない） | `carry_forward source must come before this question` |
+| 参照先が `free_text` / `scale` | `carry_forward source must be single_choice or multi_choice` |
+| `value` が一つも共有されていない | `carry_forward requires answer_options values shared with the source question` |
+| 参照先の `sort_order` が重複していて一意に定まらない | `carry_forward.from_sort_order=5 is ambiguous (duplicated sort_order)` |
+
+### レスポンス
+
+`SurveyView` の各設問に `carry_forward` が**必ず含まれる**（設定が無ければ `null`）。
+形はリクエストと同じ `sort_order` 参照に戻して返す。
+
+```jsonc
+{
+  "question_code": "pq6",
+  "question_text": "今日、特に重視していることは何ですか？（ひとつだけ）",
+  "sort_order": 15,
+  "carry_forward": { "from_sort_order": 14, "mode": "selected" }
+}
+```
+
+### 全置換であることの注意
+
+画像と同じく、`PUT /surveys/:id` に `questions` を送ると**毎回ゼロから組み直される**。
+したがって **`carry_forward` を送らなかった設問の持ち越し設定は消える**。
+ポータル側は毎回そろえて送ること。
+
+### 版（`version`）への影響
+
+`carry_forward` を**設定している設問だけ**が版の材料に含まれる。
+使っていない既存アンケートの版は変わらない（＝このフィールド追加で既存が 409 になることはない）。
+
+---
+
 ## 4. 性年代設問（サーバー固定・パートナーは編集不可）
 
 パートナー経由で作成したアンケートには、**作成時にサーバーが必ず2問を自動付与**する。
@@ -278,7 +408,8 @@ draft を作成する。
       "sort_order": 1,
       "is_required": true,
       "is_fixed": true,
-      "question_text_image": null       // 画像が無ければ null（3.5 参照）
+      "question_text_image": null,      // 画像が無ければ null（3.5 参照）
+      "carry_forward": null             // 持ち越しが無ければ null（3.6 参照）
     },
     { "question_code": "__partner_age__",  "…": "…", "sort_order": 2,  "is_fixed": true },
     { "question_code": "pq1", "…": "…", "sort_order": 10, "is_fixed": false },
@@ -425,6 +556,211 @@ draft を更新する。`title` と `questions` は**どちらか一方だけで
 
 ---
 
+### 5.6.1 `GET /api/partner/surveys/:id/results`
+
+**店舗への申し送り設問**の結果。設問ごとに「集計のみ」か「原文」を返す。
+
+回答者向け利用規約 **第9条3項**（migration 102）に基づく開示。
+運営が管理画面で**明示的に開示ONにした設問だけ**が返る（既定は返らない）。
+
+**レスポンス 200**
+
+```jsonc
+{
+  "survey_id": "0f2b...-uuid",
+  "status": "published",
+  "total_count": 42,
+  "questions": [
+    {
+      "question_code": "Q12",
+      "question_text": "今日は施術中に話しかけてもよいですか？（ひとつだけ）",
+      "notice": "この設問のみ担当者が施術前に確認いたします。会話の量はいつでも変えていただけます。",
+      "mode": "aggregate",
+      "choices": [
+        { "value": "welcome", "label": "ぜひ話しかけてほしい", "count": 12 },
+        { "value": "quiet",   "label": "できれば静かに過ごしたい", "count": 7 },
+        { "value": "either",  "label": "どちらでもよい", "count": 3 }
+      ],
+      "entries": null,
+      "answered_count": 22
+    },
+    {
+      "question_code": "Q13",
+      "question_text": "今日の施術について、気になっていることやスタッフに伝えたいことはありますか？",
+      "notice": "この設問のみ担当者が施術前に確認いたします。",
+      "mode": "verbatim",
+      "choices": null,
+      "entries": [
+        { "answered_at": "2026-09-09T02:11:00.000Z", "text": "髪のパサつきが気になっています。" }
+      ],
+      "answered_count": 1
+    }
+  ]
+}
+```
+
+| フィールド | 内容 |
+|---|---|
+| `notice` | 回答画面に出した告知文。**何を約束して集めたか**を店舗側にも示すため必ず返る |
+| `mode` | `aggregate`=選択肢別の件数のみ / `verbatim`=原文一覧 |
+| `choices` | `mode=aggregate` のときのみ。定義済み選択肢を**0埋めで全件**返す。それ以外は `null` |
+| `entries` | `mode=verbatim` のときのみ。**新しい順**。空文字の回答は除く。それ以外は `null` |
+| `answered_count` | 開示対象に絞ったあとの回答件数。`total_count` とは一致しない |
+
+**返らないもの（設計上の保証・変更しないこと）**
+
+- 回答者の識別子は一切返さない。`respondent_id` / `line_user_id` / 氏名はもちろん、
+  **`session_id` も返さない**（個票を横に並べると回答者の名寄せに使えてしまうため）。
+- 開示ONでない設問は、`questions` に**一切現れない**（ホワイトリスト方式）。
+- 告知文（`notice`）が未設定の設問は、開示ONでも返らない（規約上の根拠が無いため）。
+- `timing=on_close` の設問は、案件が `closed` になるまで返らない。
+- **規約 v2.0 に同意した日時より前の回答は返らない**（利用目的の追加は遡及しないため）。
+  そのため改定前に集めた回答は、フラグを立てても件数に入らない。
+
+`questions` が空配列で返ることは正常（開示設定した設問がまだ無い状態）。
+
+---
+
+### 5.6.2 `GET /api/partner/surveys/:id/gt`
+
+**GT集計表**（設問 × 属性のクロス集計）。`n` 行と `%` 行の2段で返す。
+
+開示対象の判定は `results` と同じ2段構え（ホワイトリスト＋同意日時）。
+`mode=verbatim` の設問は集計表にしないので含まれない。
+
+**レスポンス 200**
+
+```jsonc
+{
+  "survey_id": "0f2b...-uuid",
+  "status": "published",
+  "total_count": 42,
+  "small_n_threshold": 10,
+  "breaks": [
+    { "code": "__partner_gender__", "label": "性別" },
+    { "code": "__partner_age__",    "label": "年代" }
+  ],
+  "questions": [
+    {
+      "question_id": "aaaa...-uuid",
+      "question_code": "pq3",
+      "question_text": "来店のきっかけを教えてください（いくつでも）",
+      "question_type": "multi_choice",
+      "ratio_allowed": true,
+      "options": [
+        { "value": "sns",     "label": "SNSで見た" },
+        { "value": "friend",  "label": "知人の紹介" }
+      ],
+      "rows": [
+        {
+          "axis": "total", "code": null, "break_code": null, "label": "総数",
+          "n": 40, "suppressed": false,
+          "cells": [ { "count": 18, "percent": 45 }, { "count": 12, "percent": 30 } ]
+        },
+        {
+          "axis": "answer", "code": "__partner_gender__:female",
+          "break_code": "__partner_gender__:female", "label": "性別: 女性",
+          "n": 28, "suppressed": false,
+          "cells": [ { "count": 14, "percent": 50 }, { "count": 8, "percent": 28.6 } ]
+        },
+        {
+          "axis": "answer", "code": "__partner_gender__:male",
+          "break_code": "__partner_gender__:male", "label": "性別: 男性",
+          "n": 8, "suppressed": true,
+          "cells": [ { "count": 4, "percent": null }, { "count": 4, "percent": null } ]
+        }
+      ],
+      "notice": null
+    }
+  ]
+}
+```
+
+| フィールド | 内容 |
+|---|---|
+| `small_n_threshold` | この値未満の `n` の行は `%` をマスクする。UIに注記を出すために返す |
+| `breaks` | 属性ブレークの軸。性別・年代の**設問**から作る（プロフィールではない） |
+| `ratio_allowed` | `false`（選択肢を持たない設問）なら全セルの `percent` が `null` |
+| `rows[].n` | その行の有効回答数。**`%` の分母はこれ**（選択肢件数の合計ではない） |
+| `rows[].suppressed` | 小N抑制が効いて `%` を出していない行 |
+| `rows[].break_code` | `"<questionCode>:<value>"`。セルから抽出条件を復元するのに使う |
+
+**設計上の保証（変更しないこと）**
+
+- **`%` の分母は `n`**。複数選択では 1人が複数選ぶため件数の合計は `n` を超える。
+  合計を分母にすると「その選択肢を選んだ人が全体の何%か」を表さなくなる。
+- **`n < small_n_threshold` の行は `%` を出さない**（件数は出す）。母数の小さい比率を顧客に見せない。
+- **選択肢を持たない設問に `%` を出さない**（自由記述を比率で語らせない）。
+- 識別子は返さない（`results` と同じ保証）。
+
+---
+
+### 5.6.3 `POST /api/partner/surveys/:id/interviews`
+
+GT表のセル（＝**特定の設問で特定の選択肢を選んだ人**）を母集団として、
+追加の **AI深掘りインタビュー**を配信する。
+
+回答者向け利用規約 **v2.2 第9条3項**（migration 112）に基づく。
+
+**リクエスト**
+
+```jsonc
+{
+  "question_id": "aaaa...-uuid",
+  "option_value": "sns",
+  "break_axis": "__partner_gender__",   // 任意。break_code と対で指定する
+  "break_code": "__partner_gender__:female",
+  "question_text": "SNSのどの投稿が来店の決め手になりましたか？",  // dry_run=false のとき必須
+  "dry_run": true                        // 既定 true（人数だけ返す）
+}
+```
+
+**レスポンス 200（`dry_run: true`）**
+
+```jsonc
+{ "matched": 492, "reachable": 50 }
+```
+
+**レスポンス 200（`dry_run: false`）**
+
+```jsonc
+{ "request_id": "bbbb...-uuid", "matched": 492, "reachable": 50, "sent": 50, "failed": 0 }
+```
+
+| フィールド | 内容 |
+|---|---|
+| `matched` | セル条件に該当した人数。**GT表のセルの件数と一致する** |
+| `reachable` | うち、今インタビューを依頼できる人数 |
+
+`reachable` の除外条件（この定義は固定する。顧客に見せる数字のため）:
+
+1. 規約 v2.2 に未同意、または**同意日時より前の回答**（利用目的の追加は遡及しない）
+2. 通知拒否 / ブロック / 通知停止
+3. 直近14日に追加インタビューを受けている（配信頻度制御）
+4. 属性ブレーク指定時、その属性が未回答
+
+**設計上の保証（変更しないこと）**
+
+- **返すのは人数だけ**。誰が該当したかは返さない
+  （規約 v2.2: 選定に用いた回答内容と当該ユーザーの対応関係はクライアント企業へ提供しない）。
+- **人数は変動する**。`dry_run` の数字は目安で、実行時にサーバーが再計算する。
+  画面に出した数字と `sent` が違うのは異常ではない。
+- **二重配信しない**。`unique(request_id, line_user_id)` と送信前クレーム方式で担保する。
+- 謝礼は通常案件の**固定倍率（全員定額）**。抽選型にすると景品表示法の懸賞規制に入る。
+- `break_axis` と `break_code` は**対で指定**する。片方だけは 400（条件を再現できないため）。
+
+**エラー**
+
+| 状況 | ステータス |
+|---|---|
+| `break_axis` / `break_code` の片方だけ指定 | 400 |
+| `dry_run: false` で `question_text` 未指定 | 400 |
+| 選択肢を持たない設問を指定（自由記述から抽出できない） | 400 |
+| `option_value` が設問に存在しない | 400 |
+| 他店舗の案件・存在しない案件 | 404 |
+
+---
+
 ### 5.7 `POST /api/partner/surveys/:id/close`
 
 締め切る。ボディ不要。**冪等**（締切済みに再度呼んでも 200）。
@@ -444,6 +780,42 @@ draft を更新する。`title` と `questions` は**どちらか一方だけで
 （`statExportService` / `rawdataExport`）は管理画面から明示的にダウンロードする
 **同期生成**の仕組みで、非同期のジョブキュー（生成をキックして後で取りに行く仕組み）が
 存在しないため。締切後の納品物の生成は、運営が管理画面から行う運用とする。
+
+---
+
+### 5.8 `GET /api/partner/legal/store-terms`（会員利用規約・店舗向け）
+
+**migration 105**。会員ポータルの店舗が同意する利用規約の**現在版**を返す。
+本文の正は ACI の `documents`（固定 id `d1000000-0000-0000-0000-000000000001`）で、
+運営は ACI 管理画面「書類」で新版を作るだけでよい。**同意の記録はポータル側**（`legal_consents`）。
+
+店舗スコープの検証はしない（全店舗に同じ文書）。認証ヘッダは他のエンドポイントと同じ。
+
+**レスポンス 200**
+
+```jsonc
+{
+  "document_id": "d1000000-0000-0000-0000-000000000001",
+  "title": "会員利用規約（店舗向け・アンケでYOTTO）",
+  "version_no": "1.0-draft",
+  "content": "# アンケでYOTTO 会員利用規約（店舗向け）\n\n…",   // Markdown
+  "change_reason": "初版（弁護士確認前の案）",
+  "effective_from": "2026-09-11T00:00:00.000Z",
+  "versions": [                                              // 新しい順・最大20件・本文なし
+    { "version_no": "1.0-draft", "effective_from": "2026-09-11T00:00:00.000Z", "change_reason": "初版（弁護士確認前の案）" }
+  ]
+}
+```
+
+**版番号の規約（ポータル側の判定と対になる）**
+
+- `X.Y[-suffix]`。`-draft` は弁護士確認前。
+- **メジャー X を上げる** = 権利義務の実質変更。ポータルは店舗に**再同意**を求め、同意までは
+  申し送り閲覧・QR発行・納品依頼を止める。
+- **マイナー Y を上げる** = 表現の修正・誤記訂正等。ポータルは告知バナーだけ出す（再同意なし）。
+- 施行日は `effective_from`（管理画面で新版を作った時刻）。予告期間を置きたい場合は先にお知らせで告知してから公開する。
+
+- 文書が無効化されている / 版が無い → **404** `{"error":"store terms not found"}`
 
 ---
 
@@ -665,3 +1037,254 @@ QR を発行する前に回答が集まると、店舗が意図しないまま�
 - `:id` が UUID でない / 存在しない → **404**
 
 **レスポンス 200** … `SurveyView`。`store_id` は空文字、`entry_code` / `answer_url` は `null`。
+
+- **閲覧専用の紐づけ（`partner_readonly=true`・8.8〜8.10）には当てられない → 409**
+  `"read-only survey (use unwatch)"`。unassign は `entry_code` を落とすため、
+  稼働中の案件に当てると QR が死ぬ。閲覧専用の解除は必ず 8.10 の `unwatch` を使う。
+
+### 8.8 `GET /api/partner-admin/watchable-surveys`（閲覧専用の紐づけ候補）
+
+**migration 103**。運営が ACI 管理画面で作って回している案件（美容室ABCサイクルの A/B/C 等）を、
+店舗のポータルに「見るだけ」で出すための別経路。assign と違い **稼働中・締切済み・回答あり・
+4種に写像できない設問を含む案件でもよい**。
+
+抽出条件（`listWatchableForPartner`）: `partner_store_id is null` ∧ `client_id is null` ∧ `status <> 'archived'`。
+設問本文は含まない。
+
+**レスポンス 200**
+
+```jsonc
+{
+  "surveys": [
+    {
+      "survey_id": "0f2b...-uuid",
+      "title": "美容室 A（ご来店時）",
+      "status": "published",
+      "entry_code": "yotto-salon-a",       // 運営が見分けるための材料
+      "completed_count": 42,               // 完了セッション数
+      "shareable_question_count": 2,       // 店舗開示ON（notice あり）の設問数。0 なら申し送りは出ない
+      "created_at": "2026-08-01T00:00:00.000Z",
+      "watchable": true,
+      "blocked_reason": null               // "already assigned to a store" / "project belongs to a client" / "archived survey cannot be watched"
+    }
+  ]
+}
+```
+
+### 8.9 `POST /api/partner-admin/surveys/:id/watch`（閲覧専用で紐づける）
+
+**リクエスト** … `{ "store_id": "<ポータル stores.id>" }`（8.6 と同じ）
+
+**ガード（409）**: `partner_store_id is null` / `client_id is null` / `status <> 'archived'` のみ。
+回答の有無・設問型・is_discoverable は問わない。条件付きUPDATE（`where partner_store_id is null`）で
+同時実行の後勝ちを防ぐ。
+
+**更新内容（これ以外は一切触らない）**
+
+| 列 | 値 |
+|---|---|
+| `partner_store_id` | リクエストの `store_id` |
+| `partner_readonly` | `true` |
+
+`visibility_type` / `entry_code` / `is_discoverable` / `status` は変えない。
+`ensureDemographicQuestions()` も呼ばない（稼働中の設問構成を変えない）。
+
+紐づけた案件に対して店舗向け API は次のように振る舞う:
+
+| エンドポイント | 挙動 |
+|---|---|
+| `GET /surveys/:id` / `GET /stats` / `GET /results` | 通常どおり返す |
+| `PUT /surveys/:id` / `POST /publish` / `POST /close` | **409 `"read-only survey"`** |
+
+**レスポンス 200** … `SurveyView`。`status` / `entry_code` は紐づけ前のまま。
+
+### 8.10 `POST /api/partner-admin/surveys/:id/unwatch`（閲覧専用の紐づけを外す）
+
+ボディ不要。**冪等**（既に未紐づけなら UPDATE を投げずに 200）。
+更新するのは `partner_store_id = null` / `partner_readonly = false` だけで、**`entry_code` には触らない**。
+
+- `partner_readonly = false` の割り当て案件に当てると 409 `"survey is not read-only (use unassign)"`
+- `:id` が UUID でない / 存在しない → 404
+
+**レスポンス 200** … `SurveyView`。`store_id` は空文字。`entry_code` は残る。
+
+---
+
+## 9. セットAPI（A/B/C のサイクル調査）
+
+**セット = サイクル定義（`cycle_groups`）1件 ＝ A/B/C の3案件をひとまとまりにしたもの。**
+美容室ABCサイクルのような「1回の来店で終わらない繰り返し調査」を、会員ポータルの
+注文1回で丸ごと立ち上げるための API。単発アンケート（§5 の `/surveys`）とは別系統。
+
+### 9.1 単発アンケートとの違い
+
+| | 単発（`/surveys`） | セット（`/survey-sets`） |
+|---|---|---|
+| 設問 | 店舗が作る（4種） | 運営の原本を複製。**店舗は編集できない**（`partner_readonly=true`） |
+| 案件数 | 1件 | 3件（A=entry / B=followup / C=verify） |
+| 回答導線 | QR（A のみ） | QR は A だけ。**B/C はサイクルの LINE 配信で届く** |
+| 公開 | `POST /surveys/:id/publish` | `POST /survey-sets/:id/publish`（**セット全体を一括**） |
+
+設問を編集させない理由: パートナー設問の更新は4種への**全置換**なので、B のマトリクス設問や
+A-Q11（来店頻度 → C の送付日を決める）の分岐が壊れる。設問変更の要望は
+ポータルの要望欄（change_requests）で受け、運営が ACI 側で直す。
+
+### 9.2 公開の入口は1つだけ（重要）
+
+セットは**必ず `draft` で作られる**。`published` になるのは
+`POST /api/partner/survey-sets/:id/publish`（＝ポータルが QR 発行でチケットを消費した
+直後に呼ぶ）だけ。
+
+- `draft` のままなら回答画面（`/liff/store?entry_code=...`）が
+  「公開中でないため回答できません」で止まる＝**チケットを払わずに調査が回ることはない**。
+- ACI **管理画面からも公開できない**。`partner_store_id` が付いた未公開案件を
+  `published` にしようとすると 400 で拒否される（`adminController` のガード）。
+  店舗専用アンケート一覧には「会員店舗のQR発行で公開」バッジが出る。
+
+このガードを外すと「無料で調査が回る」事故がそのまま復活するので、触らないこと。
+
+### 9.3 所有者スコープ
+
+`cycle_groups.store_id → stores.partner_store_id` が `X-Partner-Store-Id` と一致すること。
+**不一致・不在はどちらも 404**（他店のセットの存在を漏らさない）。
+
+`stores.partner_store_id` は migration 104 で追加した「hibi-portal の店舗ID」で、
+`projects.partner_store_id`（案件の所有者スコープ）と同じ値が入るが役割は別。
+
+### 9.4 `POST /api/partner/survey-sets`
+
+業種テンプレから A/B/C を **draft** で生成する。
+
+**リクエスト**
+
+```json
+{
+  "industry_template_id": "5a10c000-0000-4000-8000-00000000e001",
+  "package_id": "salon_abc_cycle",
+  "store": { "name": "テスト美容室", "member_no": "123" }
+}
+```
+
+- `industry_template_id` … 必須・UUID。無効化されたテンプレは 409。存在しなければ 404
+- `package_id` … 任意。A 案件の `objective` に `package:<id>` として残る（ポータルの消費枚数解決用）
+- `store.member_no` … 任意。店舗コード slug は `m<会員番号>`、無ければ店舗IDの先頭8桁から `m<8桁>`。
+  entry_code は `m123-a` / `m123-b` / `m123-c` になる
+
+**冪等**: 同じ `X-Partner-Store-Id` からの再注文は**新しいセットを作らず既存セットを返す**
+（`stores.partner_store_id` で既存店舗に合流する）。ポータルは失敗時にそのまま再試行してよい。
+
+**レスポンス 201** … `SurveySetView`
+
+```json
+{
+  "set_id": "…",
+  "title": "テスト美容室 美容室ABCサイクル",
+  "store_id": "<hibi の店舗ID>",
+  "store_name": "テスト美容室",
+  "package_id": "salon_abc_cycle",
+  "published": false,
+  "answer_url": null,
+  "surveys": [
+    { "role": "entry",    "survey_id": "…", "title": "…", "status": "draft", "entry_code": "m123-a", "answer_url": null, "completed_count": 0 },
+    { "role": "followup", "survey_id": "…", "title": "…", "status": "draft", "entry_code": "m123-b", "answer_url": null, "completed_count": 0 },
+    { "role": "verify",   "survey_id": "…", "title": "…", "status": "draft", "entry_code": "m123-c", "answer_url": null, "completed_count": 0 }
+  ],
+  "created_at": "…"
+}
+```
+
+- `surveys` は必ず **entry → followup → verify** の順
+- `published` は**全ステップが published のときだけ** true。1本でも draft なら false
+  （A だけ公開されて B/C が届かない状態を「公開済み」と見せない）
+- `answer_url` は entry が公開済みのときだけ入る。B/C は QR を出さないので常に null
+- 店舗コードが**別の会員店舗**に使われていると 409
+
+### 9.5 `GET /api/partner/survey-sets/:id`
+
+`SurveySetView`。各ステップの `completed_count`（完了セッション数）付き。
+他店のセット・非 UUID はどちらも 404。
+
+### 9.6 `POST /api/partner/survey-sets/:id/publish`
+
+セット全体を公開して A の回答URLを返す。ボディ不要。
+
+- **冪等**: 既に公開済みのステップには書き込まない。二度押ししても結果は同じ
+- `partner_readonly` でも通る（単発の publish が readonly を 409 にするのとは逆。
+  セットは設問を編集できない代わりに、公開できないと QR が出せないため）
+- どれか1つでも `closed` / `archived` なら 409（終わった調査を勝手に再開しない）
+- 他店からは 404（公開の横取りを防ぐ）
+
+**レスポンス 200** … `SurveySetView`（`published: true`・`answer_url` が入る）
+
+### 9.7 `GET /api/partner-admin/industry-templates`
+
+業種テンプレ一覧＋**展示用に平坦化した設問**。ポータルのパッケージ編集で
+「どのテンプレから作るか」を選び、紹介ページの設問例を原本から取り込むために使う。
+`is_enabled=false` のテンプレは返さない。
+
+```json
+{
+  "templates": [{
+    "industry_template_id": "…", "name": "美容室ABCサイクル", "industry_code": "salon",
+    "description": "…",
+    "questions": [
+      { "role": "entry", "question_text": "…", "question_type": "single_choice",
+        "answer_options": [{ "value": "…", "label": "…" }], "sort_order": 1, "note": null },
+      { "role": "followup", "question_text": "…", "question_type": "matrix_single",
+        "answer_options": [{ "value": "cut", "label": "カットの仕上がり" }],
+        "matrix_cols": [{ "value": "1", "label": "満足" }],
+        "sort_order": 12, "note": null },
+      { "role": "followup", "question_text": "…", "question_type": "single_choice",
+        "answer_options": null, "matrix_cols": null, "sort_order": 13,
+        "note": "この設問は実際には「ranking_top_n」形式で出題されます（展示用の簡略表示）" }
+    ]
+  }]
+}
+```
+
+各設問は `answer_options`（マトリクス系では**行**）と `matrix_cols`（**列**）を持つ。
+`matrix_cols` はマトリクス系以外では常に `null`（`sd` は行×列ではないので**付かない**）。
+
+⚠ `questions` は**展示専用**。実際に回るのは ACI 側の原本そのもので、この写像の粗さは
+回答画面に影響しない。パートナー種別（§3 の8種）に落ちない設問（`ranking_top_n` など）は
+**黙って落とさず** `single_choice` の見出しとして残し `note` を付ける
+（消すと展示が実物より痩せて見えるため）。選択肢は実物と違うものを見せないよう null にする。
+
+マトリクス・数値・SD法は §3 の8種に入ったので、**もう `note` には落ちない**。
+マトリクスは行と列の両方が返るので、受け取った側は実物と同じ表として展示できる。
+
+### 9.8 `GET /api/partner-admin/assignable-survey-sets`
+
+会員店舗へ割り当てられるセットの候補（運営が ACI 店舗マスタで先に作ったもの）。
+**設問本文は含まない**。
+
+```json
+{ "sets": [{ "set_id": "…", "title": "…", "store_id": "<ACI stores.id>", "store_name": "…",
+             "step_count": 3, "completed_count": 0, "created_at": "…",
+             "assignable": true, "blocked_reason": null }] }
+```
+
+`blocked_reason` は `already linked to a portal store` / `set already has N completed session(s)`。
+
+### 9.9 `POST /api/partner-admin/survey-sets/:id/assign`
+
+相談経路（requests → 成約）の合流点。`{ "store_id": "<hibi の店舗ID・UUID>" }`。
+
+店舗マスタ行（`stores.partner_store_id`）と A/B/C の3案件（`partner_store_id` +
+`partner_readonly=true`）に同じ会員店舗IDを書く。**`published` にはしない**（公開は QR 発行だけ）。
+
+- 既に会員店舗に紐づいたセット → 409 `already linked to a portal store`
+- 回答が1件でもある → 409（他店で集めた回答者データを見せない）
+- その会員店舗が既に別セットを持っている → 409 `portal store already has a survey set`
+- 3案件のうち一部しか紐づけられなかった → **店舗行の紐づけごと巻き戻して** 409
+  （片側だけ書けた状態を残さない）
+
+**レスポンス 200** … `SurveySetView`（`published: false`）
+
+### 9.10 `POST /api/partner-admin/survey-sets/:id/unassign`
+
+割り当てを取り消す（ポータル側の書き込み失敗時の巻き戻しにも使う）。ボディ不要。
+
+- **冪等**: 既に外れていれば何もせず 200
+- 回答が1件でもあれば 409（回答を集め始めたセットは外させない）
+- `entry_code` には触らない（QR を殺さない）

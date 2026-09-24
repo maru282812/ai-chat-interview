@@ -43,6 +43,29 @@ interface VersionedQuestion {
   type: string;
   required: boolean;
   options: { value: string; label: string }[];
+  /**
+   * 選択肢の持ち越し設定。**持ち越しが無い設問ではキー自体を生やさない**。
+   *
+   * 生やすと JSON.stringify の出力が変わり、carry_forward を使っていない
+   * 既存アンケートまで版が変わる＝誰も編集していないのに 409 になる。
+   * 持ち越しは「どの設問を参照するか」で中身が変わるので、
+   * 設定がある設問だけ版の材料に含める。
+   *
+   * 参照は sort_order の実値ではなく**並び順の位置**で表す（options と同じ理由で、
+   * sort_order はサーバーが振り直すため実値が安定しない）。
+   */
+  carry?: { fromIndex: number; mode: string };
+  /**
+   * マトリクスの列・数値の範囲。
+   *
+   * carry と同じ理由で、**値があるときだけキーを生やす**。常に生やすと
+   * JSON.stringify の出力が変わり、マトリクスを使っていない既存アンケートの
+   * 版まで動いて「誰も編集していないのに 409」になる。
+   */
+  cols?: { value: string; label: string }[];
+  min?: number;
+  max?: number;
+  unit?: string;
 }
 
 /**
@@ -59,10 +82,19 @@ function normalizeText(value: string | null | undefined): string {
  * （サーバーが 10, 11, 12... と振り直すため、実値は安定しない）。
  */
 function toVersionedQuestions(questions: PartnerQuestionView[]): VersionedQuestion[] {
-  return questions
+  const ordered = questions
     .filter((question) => !question.is_fixed)
-    .sort((left, right) => left.sort_order - right.sort_order)
-    .map((question) => ({
+    .sort((left, right) => left.sort_order - right.sort_order);
+  // 持ち越しの参照先を「並び順の位置」で表すための逆引き。
+  const indexBySortOrder = new Map<number, number>();
+  ordered.forEach((question, index) => {
+    if (!indexBySortOrder.has(question.sort_order)) {
+      indexBySortOrder.set(question.sort_order, index);
+    }
+  });
+
+  return ordered.map((question) => {
+    const material: VersionedQuestion = {
       text: normalizeText(question.question_text),
       type: normalizeText(question.question_type),
       required: question.is_required,
@@ -71,7 +103,26 @@ function toVersionedQuestions(questions: PartnerQuestionView[]): VersionedQuesti
         value: normalizeText(option.value),
         label: normalizeText(option.label)
       }))
-    }));
+    };
+    // マトリクスの列・数値の範囲も版の材料に含める。
+    // 含めないと「列だけ直した」編集が版に出ず、楽観ロックが変更を取りこぼす。
+    // 既定値と未設定の揺れを版に出さないため、値があるときだけ足す。
+    if (question.matrix_cols && question.matrix_cols.length > 0) {
+      material.cols = question.matrix_cols.map((col) => ({
+        value: normalizeText(col.value),
+        label: normalizeText(col.label)
+      }));
+    }
+    if (typeof question.min === "number") material.min = question.min;
+    if (typeof question.max === "number") material.max = question.max;
+    if (question.unit) material.unit = normalizeText(question.unit);
+    const carry = question.carry_forward;
+    const fromIndex = carry ? indexBySortOrder.get(carry.from_sort_order) : undefined;
+    if (carry && fromIndex !== undefined) {
+      material.carry = { fromIndex, mode: carry.mode ?? "selected" };
+    }
+    return material;
+  });
 }
 
 /**

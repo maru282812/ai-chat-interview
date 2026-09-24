@@ -44,9 +44,64 @@ test("casual: single_choice(3件以上) は carousel", () => {
   assert.equal(p.pattern, "carousel");
 });
 
-test("casual: multi_choice は sort_swipe", () => {
+test("casual: multi_choice は既定では sort_swipe にしない（1枚1画面で操作量が膨らむため・明示指定のみ）", () => {
   const p = resolveAnswerPresentation(q("multi_choice", { config: optionsN(5) }), "casual");
+  assert.equal(p.pattern, "chip_select");
+  assert.equal(p.fallback_applied, false);
+});
+
+test("casual: multi_choice(8件) も既定は chip_select", () => {
+  const p = resolveAnswerPresentation(q("multi_choice", { config: optionsN(8) }), "casual", 8);
+  assert.equal(p.pattern, "chip_select");
+});
+
+test("sort_swipe は明示指定すれば casual で採用される", () => {
+  const cfg = { ...optionsN(5), presentation: { pattern: "sort_swipe" } };
+  const p = resolveAnswerPresentation(q("multi_choice", { config: cfg }), "casual", 5);
   assert.equal(p.pattern, "sort_swipe");
+  assert.equal(p.fallback_applied, false);
+});
+
+test("明示指定の sort_swipe でもデッキ9枚以上なら chip_select へ降格", () => {
+  const cfg = { ...optionsN(9), presentation: { pattern: "sort_swipe" } };
+  const p = resolveAnswerPresentation(q("multi_choice", { config: cfg }), "casual", 9);
+  assert.equal(p.pattern, "chip_select");
+  assert.equal(p.fallback_applied, true);
+});
+
+test("sort_swipe の枚数判定は排他・自由記述を除いたデッキ枚数で行う（10件でも実デッキ8枚なら維持）", () => {
+  // 「特になし」(exclusive) と「その他」(allow_free_text) はカードにならず専用行へ出るため、
+  // 件数に数えると実際より多く見えて不当に降格する。answer-ui.ejs の buildSortSwipeHtml と揃える。
+  const base = optionsN(8).options ?? [];
+  const cfg = {
+    options: [
+      ...base,
+      { value: "other", label: "その他", allow_free_text: true },
+      { value: "none", label: "特になし", exclusive: true },
+    ],
+    presentation: { pattern: "sort_swipe" },
+  };
+  const p = resolveAnswerPresentation(q("multi_choice", { config: cfg }), "casual", 10);
+  assert.equal(p.pattern, "sort_swipe");
+  assert.equal(p.fallback_applied, false);
+});
+
+test("allow_free_text がDB未保存の「その他」もデッキ枚数から除く（本番 C-Q2 の実データ形）", () => {
+  // シード/Partner API 経由で作られた「その他」は allow_free_text を持たず、描画直前に
+  // applyAutoFreeText がラベルから付与する（otherOption.ts）。生の options だけを見ると
+  // 9枚と数えて降格してしまい、実機では8枚で収まる設問が sort_swipe を失う。
+  const base = optionsN(8).options ?? [];
+  const cfg = {
+    options: [
+      ...base,
+      { value: "other", label: "その他" }, // ← allow_free_text なし（本番の実データ）
+      { value: "none", label: "特になし", exclusive: true },
+    ],
+    presentation: { pattern: "sort_swipe" },
+  };
+  const p = resolveAnswerPresentation(q("multi_choice", { config: cfg }), "casual", 10);
+  assert.equal(p.pattern, "sort_swipe");
+  assert.equal(p.fallback_applied, false);
 });
 
 test("standard: multi_choice は chip_select", () => {
@@ -137,9 +192,9 @@ test("numeric: carry-forward 後の実選択肢数で判定する（optionCount 
 // scale / slider 指定
 // ------------------------------------------------------------------
 
-test("scale指定: casual=face_scale / standard=big_slider / formal=radio_list", () => {
+test("scale指定: casual/standard=big_slider / formal=radio_list（絵文字フェイスは既定にしない）", () => {
   const cfg = { ...optionsN(5), presentation: { scale: true } };
-  assert.equal(resolveAnswerPresentation(q("single_choice", { config: cfg }), "casual").pattern, "face_scale");
+  assert.equal(resolveAnswerPresentation(q("single_choice", { config: cfg }), "casual").pattern, "big_slider");
   assert.equal(resolveAnswerPresentation(q("single_choice", { config: cfg }), "standard").pattern, "big_slider");
   assert.equal(resolveAnswerPresentation(q("single_choice", { config: cfg }), "formal").pattern, "radio_list");
 });
@@ -177,8 +232,15 @@ test("carousel: 選択肢9件で tap_cards に降格", () => {
   assert.equal(p.fallback_applied, true);
 });
 
+test("face_scale は設問単位の明示指定なら casual でも使える", () => {
+  const cfg = { ...optionsN(5), presentation: { pattern: "face_scale" } };
+  const p = resolveAnswerPresentation(q("single_choice", { config: cfg }), "casual", 5);
+  assert.equal(p.pattern, "face_scale");
+  assert.equal(p.fallback_applied, false);
+});
+
 test("face_scale: 選択肢6件以上で tap_cards に降格", () => {
-  const cfg = { ...optionsN(6), presentation: { scale: true } };
+  const cfg = { ...optionsN(6), presentation: { pattern: "face_scale" } };
   const p = resolveAnswerPresentation(q("single_choice", { config: cfg }), "casual", 6);
   assert.equal(p.pattern, "tap_cards");
   assert.equal(p.fallback_applied, true);

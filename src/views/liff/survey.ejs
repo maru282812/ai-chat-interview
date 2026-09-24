@@ -52,10 +52,72 @@
       width: 100%; height: 90px; object-fit: cover;
       border-radius: 6px; display: block;
     }
-    .choice-label { font-size: 14px; line-height: 1.4; }
+    .choice-label { font-size: 14px; line-height: 1.4; min-width: 0; }
     .choice-item.has-img .choice-label { text-align: center; font-size: 13px; }
     .choice-item.selected { background: #e8f7f0; border-color: #2ca87a; }
     .choice-item input    { accent-color: #2ca87a; flex-shrink: 0; }
+    /* 自由記述つき選択肢（「その他（　）」等）は、ラベル行の下に入力欄を敷く。
+       .choice-item は既定が横並び(row)なので、そのままだと width:100% の入力欄が
+       ラベルと同じ行に入り、カードの右枠を飛び出したうえにラベルが1文字ずつ
+       折り返される（「そ/の/他」）。縦積みにして入力欄へ一行まるごと渡す。
+       partials/answer-ui.ejs の .answer-freetext-rows .chip-item と同じ考え方。 */
+    .choice-item.has-freetext {
+      flex-wrap: wrap;
+      row-gap: 6px;
+    }
+    .choice-item.has-freetext .other-text-input { flex: 1 0 100%; }
+    /* 入力欄は必ずカード内に収める（inline の width:100% だけだと gap/padding 分あふれる）。
+       他の選択肢は「触って終わり」だが、ここだけは文字を打つ。同じ高さの1行ボックスだと
+       選択肢の一部にしか見えず、書ける場所だと気付かれない（＝その他が空のまま確定される）。
+       2行ぶんの高さ＋沈んだ下地＋破線で「書く欄」だと形で分かるようにする（文言は足さない）。
+       partials/answer-ui.ejs の .other-text-input と同じ見た目に揃えること。 */
+    .other-text-input {
+      display: block; width: 100%;
+      max-width: 100%; min-width: 0; box-sizing: border-box;
+      /* 2行分: line-height 1.5 × 14px × 2 = 42px + 上下 padding 9px×2 + 枠 2px = 62px */
+      min-height: 62px;
+      margin-top: 8px;
+      padding: 9px 11px; border: 1px dashed #78918c; border-radius: 10px;
+      font-size: 14px; line-height: 1.5; background-color: #f6faf8; color: #1a2f2a;
+      font-family: inherit;
+      transition: border-color 0.15s cubic-bezier(0, 0, 0.2, 1),
+                  background-color 0.15s cubic-bezier(0, 0, 0.2, 1);
+    }
+    .other-text-input::placeholder { color: #5a736e; }
+    /* ⚠ :not(.answer-ui-compact ...) で必ずダーク側を除外する。
+       このページは partials/answer-ui.ejs の style ブロックも同時に読み込まれ、こちらが後勝ちになる。
+       除外しないと compact の「入力済み＝白地に濃緑文字」指定を background だけ剥がしてしまい、
+       濃緑の下地に濃緑の文字（＝入力内容が見えない）になる。 */
+    .other-text-input:hover { border-color: #4f6b65; }
+    .other-text-input:focus,
+    .other-text-input:focus-visible {
+      outline: 2px solid #2ca87a; outline-offset: 1px;
+      border-style: solid; border-color: #2ca87a; background-color: #fff;
+    }
+    .other-text-input:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* 何か書かれたら「下書きの欄」から「確定した回答」の見た目へ（破線→実線）。 */
+    .other-text-input:not(:placeholder-shown) {
+      border-style: solid; border-color: #2ca87a; background-color: #fff;
+    }
+    /* ダーク側の復元。
+       このページは answer-ui(include) → この style ブロックの順に読まれるため、素の
+       `.other-text-input:not(:placeholder-shown)` がダーク用指定を後勝ちで潰す。
+       :where() で詳細度を上げずに、ダーク側だけ確実に復元する。 */
+    .answer-ui.answer-ui-compact .other-text-input {
+      background-color: rgba(255,255,255,0.10); color: #fff; border-color: rgba(255,255,255,0.75);
+    }
+    .answer-ui.answer-ui-compact .other-text-input::placeholder { color: rgba(255,255,255,0.88); }
+    .answer-ui.answer-ui-compact .other-text-input:hover { border-color: rgba(255,255,255,0.9); }
+    .answer-ui.answer-ui-compact .other-text-input:focus,
+    .answer-ui.answer-ui-compact .other-text-input:focus-visible,
+    .answer-ui.answer-ui-compact .other-text-input:not(:placeholder-shown) {
+      background-color: #fff; color: #14493a; border-color: #2ca87a; outline-color: #fff;
+    }
+    .answer-ui.answer-ui-compact .other-text-input:focus::placeholder,
+    .answer-ui.answer-ui-compact .other-text-input:not(:placeholder-shown)::placeholder { color: #5a736e; }
+    @media (prefers-reduced-motion: reduce) {
+      .other-text-input { transition-duration: 0.01ms; }
+    }
     .free-text-input {
       width: 100%; padding: 10px; border: 1px solid #d8e3e0;
       border-radius: 10px; font-size: 15px; resize: vertical; line-height: 1.5;
@@ -290,6 +352,17 @@
     .complete-icon   { font-size: 40px; margin-bottom: 12px; }
     .complete-title  { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
     .complete-sub    { font-size: 14px; color: #60726f; }
+    /* 案件ごとのお礼文 (Migration 108)。
+       .complete-sub は「ご協力ありがとうございます。」1行用の控えめな字。
+       案件のお礼は複数行の"読ませる文章"なので、キャプションに見えないよう
+       本文の字送りを与え、カードに載せて完了アイコン群と分ける。 */
+    .complete-message {
+      margin: 18px auto 0; max-width: 34em;
+      padding: 14px 16px;
+      background: #f6faf8; border: 1px solid #dceae5; border-radius: 12px;
+      font-size: 14px; line-height: 1.85; color: #33443f;
+      text-align: left; white-space: pre-wrap; overflow-wrap: anywhere;
+    }
     /* 店舗アンケートでは主役をポイ活CTAに譲り、LINEに戻るは最下部の控えめリンクにする */
     .complete-return-link {
       background: none; border: none; box-shadow: none; padding: 8px;
@@ -495,13 +568,21 @@
 
     <div id="completeScreen" class="complete-screen" style="display:none">
       <div class="complete-icon">✅</div>
-      <p class="complete-title">回答が完了しました</p>
-      <p class="complete-sub">ご協力ありがとうございます。</p>
+      <p class="complete-title">アンケートを送信しました</p>
+      <p class="complete-sub" id="completeSub">ご協力ありがとうございます。</p>
+      <!-- 案件ごとのお礼文 (Migration 108)。未設定なら出さない（上の汎用文だけ残る）。 -->
+      <p class="complete-message" id="completeMessage" style="display:none"></p>
       <div id="completeActions" style="margin-top:20px;display:none">
         <!-- 通常アンケートは完了後に案件一覧へ戻れるようにする（店舗専用は非会員のため出さない） -->
         <button id="btnBackToProjects" class="btn-next" style="min-width:160px;display:none;">案件一覧に戻る</button>
         <button id="btnCloseLiff" class="btn-next" style="min-width:160px;">LINEに戻る</button>
         <p id="completeCloseTip" style="display:none;font-size:13px;color:#60726f;margin-top:8px;">アンケートは完了しました。この画面を閉じてください。</p>
+      </div>
+      <!-- プレビュー専用。なぜここで終わったのかと、別の選択肢を試す導線を出す（管理者にしか出ない） -->
+      <div id="previewCompleteNote" style="display:none;margin-top:18px;padding:12px 14px;border:1px dashed #cfe3de;border-radius:10px;background:#f7fbfa;text-align:left;">
+        <p style="margin:0 0 8px;font-size:13px;color:#0b5a55;font-weight:600;">プレビューはここで終了です</p>
+        <p id="previewCompleteReason" style="margin:0 0 10px;font-size:12px;color:#5d726f;line-height:1.6;"></p>
+        <button type="button" id="btnPreviewRestart" class="btn-next" style="min-width:150px;font-size:13px;">最初からやり直す</button>
       </div>
       <!-- 店舗専用アンケート完了後の Hibi 参加 CTA。中身は buildStoreJoinCtaHtml() で描画する -->
       <div id="storeSurveyCta" style="margin-top:24px;display:none;"></div>
@@ -529,9 +610,15 @@
   const LIFF_AUTH_AVAIL = <%- JSON.stringify(locals.liffAuthAvailable === true) %>;
   // ALLOW_LIFF_AUTH_SKIP=false のとき本人確認失敗・スキップを禁止する
   const SKIP_ALLOWED    = <%- JSON.stringify(locals.skipAllowed !== false) %>;
+  // 管理画面の設問プレビュー（/admin/questions/:id/preview）。true のときは
+  // 回答・完了の書込み系APIを一切叩かず、画面遷移だけをローカルで進める。
+  // ＝プレビューでも「実際に出る画面」そのものを描くためのフラグで、描画側は一切分岐させない。
+  const PREVIEW_MODE    = <%- JSON.stringify(locals.previewMode === true) %>;
   // 'screening' | 'main'
   const SURVEY_PHASE           = <%- JSON.stringify(locals.surveyPhase || 'main') %>;
   const SCREENING_FAIL_MESSAGE = <%- JSON.stringify(locals.screeningFailMessage || '今回はご参加いただけませんでした。またの機会にご協力をお願いします。') %>;
+  // 送信完了画面に出す案件ごとのお礼文 (Migration 108)。未設定は null。
+  const COMPLETION_MESSAGE = <%- JSON.stringify(locals.completionMessage || null) %>;
   // 店舗専用アンケート完了後に通常案件へ誘導する（希望者のみ）
   const IS_STORE_SURVEY = <%- JSON.stringify(locals.isStoreSurvey === true) %>;
   const PROJECTS_URL    = <%- JSON.stringify(locals.projectsUrl || '/liff/projects') %>;
@@ -1249,12 +1336,13 @@
     }
 
     function choiceListItem(inputEl, c) {
-      return `<label class="choice-item${c.imageUrl ? ' has-img' : ''}">
+      // has-freetext: 自由記述欄を持つ選択肢は縦積みにする（CSS 側で入力欄を次の行へ送る）。
+      return `<label class="choice-item${c.imageUrl ? ' has-img' : ''}${c.allow_free_text ? ' has-freetext' : ''}">
         ${inputEl}
         ${choiceImg(c)}
         <span class="choice-label">${esc(c.label)}</span>
         ${c.description ? `<span class="choice-desc">${esc(c.description)}</span>` : ''}
-        ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" style="margin-top:6px;width:100%;box-sizing:border-box;" onclick="event.stopPropagation();" />` : ''}
+        ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="ご自由にご記入ください" onclick="event.stopPropagation();" />` : ''}
         ${choiceAdditionalImgs(c)}
       </label>`;
     }
@@ -1284,7 +1372,7 @@
               ${imgSrc ? `<img class="card-item-img" src="${esc(imgSrc)}" alt="" loading="lazy" onerror="this.style.display='none'" />` : ''}
               <span class="card-item-title">${esc(c.title || c.label)}</span>
               ${c.description ? `<span class="card-item-desc">${esc(c.description)}</span>` : ''}
-              ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" onclick="event.stopPropagation();" style="margin-top:6px;width:100%;box-sizing:border-box;" />` : ''}
+              ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="ご自由にご記入ください" onclick="event.stopPropagation();" />` : ''}
               ${additionals.length ? `<div class="card-extra-imgs">${additionals.map(u => `<img class="card-extra-img" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.display='none'" />`).join('')}</div>` : ''}
             </label>`;
           }).join('') + `</div>`;
@@ -1330,7 +1418,7 @@
               ${imgSrc ? `<img class="card-item-img" src="${esc(imgSrc)}" alt="" loading="lazy" onerror="this.style.display='none'" />` : ''}
               <span class="card-item-title">${esc(c.title || c.label)}</span>
               ${c.description ? `<span class="card-item-desc">${esc(c.description)}</span>` : ''}
-              ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="自由記述" onclick="event.stopPropagation();" style="margin-top:6px;width:100%;box-sizing:border-box;" />` : ''}
+              ${c.allow_free_text ? `<input type="text" class="other-text-input" data-code="${esc(q.question_code)}" data-val="${esc(c.value)}" placeholder="ご自由にご記入ください" onclick="event.stopPropagation();" />` : ''}
               ${additionals.length ? `<div class="card-extra-imgs">${additionals.map(u => `<img class="card-extra-img" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.display='none'" />`).join('')}</div>` : ''}
             </label>`;
           }).join('') + `</div>`;
@@ -1592,6 +1680,8 @@
 
   // ---- image_upload ヘルパー ----
   async function uploadImageToServer(file, questionCode) {
+    // プレビューは Storage へ上げない。ローカルの object URL を返してサムネイル表示だけ再現する。
+    if (PREVIEW_MODE) return URL.createObjectURL(file);
     const base64 = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result.split(',')[1]);
@@ -1669,6 +1759,12 @@
   async function submitAnswer(questionCode, answerValue, opts) {
     const answerRole = (opts && opts.answerRole === 'probe') ? 'probe' : 'primary';
     const isProbe = answerRole === 'probe';
+    // プレビューは保存しない。answerCtx には入れる（分岐・表示条件の確認はできる）が、
+    // サーバーへは一切送らず成功扱いで返して画面遷移だけ進める。
+    if (PREVIEW_MODE) {
+      if (!isProbe) answerCtx.answers[questionCode.toLowerCase()] = answerValue;
+      return { ok: true, status: 200, message: '' };
+    }
     console.log('SUBMIT_START', { questionCode, answerRole });
     console.log('INPUT_VALUE', answerValue);
     if (!isProbe) {
@@ -1748,6 +1844,33 @@
     const btnBack = document.getElementById('btnBack');
     const progressBar = document.getElementById('progressBar');
     const completeScreen = document.getElementById('completeScreen');
+
+    // プレビューで完了画面に来た理由を出し、やり直せるようにする。
+    // 設問が1件しか渡っていない（表示範囲＝この設問）ときは、分岐先が存在しないので必ずここに来る。
+    function showPreviewCompleteNote() {
+      const note = document.getElementById('previewCompleteNote');
+      const reason = document.getElementById('previewCompleteReason');
+      if (!note || !reason) return;
+      reason.textContent = QUESTIONS.length <= 1
+        ? '表示範囲が「この設問」のため、次の設問が読み込まれていません。分岐先まで確認するには、上の表示範囲を「通しで」に変えてください。'
+        : 'この回答では、これ以上進む設問がありませんでした（分岐の遷移先かデフォルト遷移先が終了になっています）。';
+      note.style.display = 'block';
+
+      // 状態（cursor / answerCtx）は各所に散っているため、確実に初期状態へ戻すには描き直しが要る。
+      // ライブプレビューは親が form を POST して描いており、iframe 内で reload すると
+      // 再送信の確認ダイアログになる。そこで親に描き直しを頼み、単独で開いている場合だけ reload する。
+      const restartBtn = document.getElementById('btnPreviewRestart');
+      if (restartBtn && !restartBtn.dataset.wired) {
+        restartBtn.dataset.wired = '1';
+        restartBtn.addEventListener('click', function () {
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage({ type: 'hibi:preview-restart' }, window.location.origin);
+            return;
+          }
+          window.location.reload();
+        });
+      }
+    }
     const answerErrorEl = document.getElementById('answerError');
 
     // 送信失敗の表示制御（Phase 2）。表示中はカーソルを進めていないので、
@@ -1885,17 +2008,23 @@
 
       // ---- 回答UI共通レンダラの配線（partials/answer-ui.ejs・migration 075 / Phase 3）----
       // onChange = 値の更新（未確定）／onCommit = 確定操作（タップ・スワイプ・カルーセルCTA・振り分け完了）。
-      // survey では確定＝「次へ」の自動発火。btnNext.click() を再利用するので検証・保存・probe・分岐は
-      // 既存経路をそのまま通る。回答UIプリセットは「1問1画面」の survey_question 専用なので、
-      // survey_page では自動遷移しない（値の格納だけ）。
+      // 自動で次へ進むのは onCommit の advance=true、つまりカードを倒す/振り分ける
+      // ジェスチャー系（swipe_card / split_swipe / sort_swipe）だけ。操作そのものが
+      // 「送る」動作なので、そこで止めるとかえって不自然になる。
+      // 一覧から1つタップして選ぶ系（tap_cards / big_split / face_scale / carousel）は
+      // advance=false で、遷移はユーザーが「次へ」を押したときだけ起きる。
+      // ＝「1つ選ぶ設問だけ勝手に進み、いくつでも選ぶ設問は止まる」挙動差をなくす。
+      // btnNext.click() を再利用するので検証・保存・probe・分岐は既存経路をそのまま通る。
+      // 回答UIプリセットは「1問1画面」の survey_question 専用なので survey_page では進めない。
       (function wireAnswerUi() {
         const qCode = q.question_code;
         const onChange = (value) => {
           answerCtx.answers[qCode.toLowerCase()] = value;
           checkNextEnabled();
         };
-        const onCommit = (value) => {
+        const onCommit = (value, advance) => {
           onChange(value);
+          if (!advance) return;
           if (DISPLAY_MODE !== 'survey_question') return;
           if (!isQuestionAnswered(q) || btnNext.disabled) return;
           setTimeout(() => { if (!btnNext.disabled) btnNext.click(); }, 220);
@@ -2158,6 +2287,8 @@
 
     async function checkAndShowProbe(q, val, nextCursor) {
       if (!q.ai_probe_enabled) return false;
+      // プレビューは AI 深掘り（実LLM）を呼ばない。深掘り無しとして次の設問へ進む。
+      if (PREVIEW_MODE) return false;
       try {
         // 他の書込み系APIと同じ apiHeaders()（Authorization: Bearer <id_token>）を付ける。
         // サーバー側は session から assignment を引いて所有者検証するので assignment_id は必須ではないが、
@@ -2273,6 +2404,28 @@
       }
     });
 
+    /**
+     * 案件ごとのお礼文を送信完了画面に出す (Migration 108)。
+     *
+     * 従来この文言は「最後の設問の comment_bottom」に置かれていた。comment_bottom は
+     * 設問の下＝まだ送信前の画面に出るため、回答者から見ると「お礼が出たのに
+     * まだ送信していない」状態だった。お礼は送信が終わったこの画面で出す。
+     *
+     * textContent で入れる（案件文言は管理画面から編集され得るため HTML として解釈させない）。
+     * 改行は CSS の white-space:pre-wrap がそのまま反映する。
+     */
+    function renderCompletionMessage() {
+      var el = document.getElementById('completeMessage');
+      if (!el) return;
+      var msg = (COMPLETION_MESSAGE || '').trim();
+      if (!msg) return;              // 未設定の案件は汎用文だけ（従来どおり）
+      el.textContent = msg;
+      el.style.display = 'block';
+      // 案件のお礼が出る場合、汎用の「ご協力ありがとうございます。」は二重になるので下げる。
+      var sub = document.getElementById('completeSub');
+      if (sub) sub.style.display = 'none';
+    }
+
     async function showComplete() {
       // スクリーニングフェーズ: 判定API → 境界画面を表示
       if (SURVEY_PHASE === 'screening') {
@@ -2323,6 +2476,16 @@
       document.querySelector('.nav-btns').style.display = 'none';
       completeScreen.style.display = 'block';
       progressBar.style.width = '100%';
+      renderCompletionMessage();
+
+      // プレビューは完了確定APIを叩かない（ポイント付与・ステータス更新を起こさない）。
+      // 完了画面の見た目まで確認できるよう、画面自体は通常どおり出したまま止める。
+      // ただし「分岐を追いたいのに完了に来た」ときに理由が分からないと行き止まりになるので、
+      // なぜ終わったのかと、別の選択肢をもう一度試す導線を出す。
+      if (PREVIEW_MODE) {
+        showPreviewCompleteNote();
+        return;
+      }
 
       const completeActions = document.getElementById('completeActions');
       const completeError = document.getElementById('completeError');
@@ -2787,7 +2950,12 @@
           return;
         }
 
-        addBubble('ご回答ありがとうございました。アンケートが完了しました。', 'ai');
+        addBubble('アンケートを送信しました。', 'ai');
+        // 案件ごとのお礼文 (Migration 108)。survey_question 側の renderCompletionMessage() と対。
+        // 完了系は2経路あるため片方だけ直すと必ず不揃いになる（過去の事故パターン）。
+        if (COMPLETION_MESSAGE && COMPLETION_MESSAGE.trim()) {
+          addBubble(COMPLETION_MESSAGE.trim(), 'ai');
+        }
         chatAnswerArea.style.display = 'none';
         chatAnswerArea.innerHTML = '';
         chatTextRow.style.display = 'none';
@@ -2822,7 +2990,8 @@
       addBubble(displayText, 'user');
       const typingWrap = showTypingIndicator();
 
-      if (q.ai_probe_enabled) {
+      // プレビューは AI 深掘り（実LLM・課金と保存が走る）を呼ばず、そのまま次の設問へ進む。
+      if (q.ai_probe_enabled && !PREVIEW_MODE) {
         try {
           const res = await fetch('/liff/chat', {
             method: 'POST',
@@ -2925,6 +3094,8 @@
     // /complete を叩き、店舗専用アンケートなら「Hibiに参加する（会員登録）」CTA を出す。
     // IDトークン失効(401)は一度だけ再ログインし survey_complete_resume で戻り先を完了確定に直行させる。
     async function finalizeChatCompletion() {
+      // プレビューは完了確定APIを叩かない（完了メッセージは呼び出し側で既に出ている）。
+      if (PREVIEW_MODE) return;
       try {
         const resp = await fetch('/liff/survey/' + ASSIGNMENT_ID + '/complete', {
           method: 'POST',

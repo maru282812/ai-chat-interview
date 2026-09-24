@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <%- include('../partials/liff-auth') %>
+    <style>
+      /* 答え合わせ（U-4）。一致→不一致の順に1問ずつめくる。
+         ⚠ サーバーは相手の選択肢を返さない（D-10）。この画面が受け取るのは
+         matched / 自分の回答ラベル だけで、原文開示は構造的に起こらない。 */
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: "Hiragino Maru Gothic ProN", -apple-system, BlinkMacSystemFont, "Noto Sans JP", sans-serif;
+        background: #FBF5E2; min-height: 100vh; color: #222; font-weight: 700;
+      }
+      .shell { max-width: 480px; margin: 0 auto; padding-bottom: 32px; }
+      .top { padding: 16px; text-align: center; background: #FFFDF6; border-bottom: 1px solid #F0E6C8; }
+      .top .who { font-size: 14px; }
+      .top .who b { color: #0E6B5A; }
+      .dots { display: flex; justify-content: center; gap: 6px; margin-top: 10px; }
+      .dots i { width: 8px; height: 8px; border-radius: 50%; background: #F0E6C8; }
+      .dots i.same { background: #0E6B5A; }
+      .dots i.diff { background: #DFA02F; }
+      .card { margin: 16px; padding: 28px 18px; background: #FFFDF6;
+        border: 1px solid #F0E6C8; border-radius: 15px; text-align: center; }
+      .verdict { font-size: 21px; font-weight: 900; line-height: 1.4; }
+      .card.same .verdict { color: #0E6B5A; }
+      .card.diff .verdict { color: #A97814; }
+      .q { margin-top: 12px; font-size: 14px; color: #777; line-height: 1.6; font-weight: 500; }
+      .pick { margin-top: 14px; padding: 14px 16px; border-radius: 12px;
+        font-size: 16px; font-weight: 800; }
+      .card.same .pick { background: #E9F3F0; color: #0A5245; }
+      .card.diff .pick { background: #FDF6E3; color: #A97814; }
+      .pick small { display: block; font-size: 11px; font-weight: 700; opacity: .75; margin-bottom: 3px; }
+      .finale { margin: 16px; padding: 28px 18px; border-radius: 15px; text-align: center;
+        background: linear-gradient(160deg, #0E6B5A, #17977f); color: #fff; }
+      .finale .big { font-size: 26px; font-weight: 900; line-height: 1.35; }
+      .finale .sm { margin-top: 8px; font-size: 14px; color: rgba(255,255,255,.92); line-height: 1.7; font-weight: 500; }
+      .btn {
+        display: flex; align-items: center; justify-content: center; margin: 0 16px 10px;
+        min-height: 54px; padding: 15px 18px; border-radius: 9999px; width: calc(100% - 32px);
+        font-family: inherit; font-size: 17px; font-weight: 900; cursor: pointer;
+        background: #FFD836; color: #2B1A00; border: 2px solid #C79A00; box-shadow: 0 3px 0 0 #C79A00;
+      }
+      .btn:active { transform: translateY(3px); box-shadow: 0 0 0 0 #C79A00; }
+      .btn:focus-visible { outline: 3px solid #0A5245; outline-offset: 3px; }
+      .fine { text-align: center; font-size: 11.5px; color: #777; font-weight: 500; }
+      #loading { padding: 60px 20px; text-align: center; color: #777; font-weight: 500; }
+      .reveal { animation: pop .28s cubic-bezier(.16,1,.3,1) both; }
+      @keyframes pop { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+      @media (prefers-reduced-motion: reduce) { .reveal { animation: none; } .btn { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="top">
+        <p class="who">あなた と <b id="partner">…</b></p>
+        <div class="dots" id="dots"></div>
+      </div>
+      <div id="loading">読み込んでいます…</div>
+      <div id="main" hidden></div>
+    </div>
+
+    <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+    <script>
+    (function () {
+      const initialData = JSON.parse(document.getElementById("initial-data").dataset.json || "{}");
+      const pairId = initialData.pairId;
+      let results = [];
+      let matchedCount = 0;
+      let total = 0;
+      let index = 0;
+
+      const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      const $ = (id) => document.getElementById(id);
+      function show(html) { $("loading").hidden = true; const m = $("main"); m.hidden = false; m.innerHTML = html; }
+
+      function renderDots() {
+        $("dots").innerHTML = results
+          .map((r, i) => i < index ? `<i class="${r.matched ? "same" : "diff"}"></i>` : "<i></i>")
+          .join("");
+      }
+
+      function renderCard() {
+        renderDots();
+        if (index >= results.length) { renderFinale(); return; }
+        const r = results[index];
+        show(`
+          <div class="card reveal ${r.matched ? "same" : "diff"}">
+            <p class="verdict">${r.matched ? "2人とも おなじ！" : "ここは 分かれました"}</p>
+            <p class="q">${esc(r.questionText)}</p>
+            <div class="pick"><small>あなたの回答</small>${esc(r.myChoiceLabel || "—")}</div>
+          </div>
+          <button class="btn" id="next">つぎへ</button>`);
+        $("next").addEventListener("click", () => { index += 1; renderCard(); });
+      }
+
+      function renderFinale() {
+        renderDots();
+        show(`
+          <div class="finale reveal">
+            <p class="big">${total}問中 ${matchedCount}問 おなじ</p>
+            <p class="sm">似ているところと、ちがうところが<br>見つかりました。</p>
+          </div>
+          <button class="btn" id="invite-more">もう1人 誘う</button>
+          <p class="fine">誘うほど、もらえるポイントが増えます</p>`);
+        $("invite-more").addEventListener("click", () => { location.href = "/liff/mypage"; });
+      }
+
+      async function load() {
+        try {
+          const idToken = await LiffAuth.initLiffOrWebAuth(initialData.liffId);
+          if (!idToken) return;
+          const res = await fetch(`/liff/pair/${encodeURIComponent(pairId)}/result-data`, {
+            headers: { Authorization: `Bearer ${idToken}` },
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.status === 409) {
+            show(`<div class="card"><p class="verdict" style="color:#A97814">相手の回答を待っています</p>
+              <p class="q">${esc(data.message || "そろったら、ここで答え合わせが開きます。")}</p></div>`);
+            return;
+          }
+          if (!res.ok) throw new Error(data.message || "読み込みに失敗しました。");
+          results = data.results || [];
+          matchedCount = data.matchedCount || 0;
+          total = data.total || results.length;
+          $("partner").textContent = data.partnerName ? `${data.partnerName}さん` : "おともだち";
+          index = 0;
+          renderCard();
+        } catch (err) {
+          show(`<div class="card"><p class="q">${esc(err.message)}</p></div>`);
+        }
+      }
+
+      void load();
+    })();
+    </script>
+  </body>
+</html>

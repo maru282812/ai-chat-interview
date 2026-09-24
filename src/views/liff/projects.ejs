@@ -6,10 +6,10 @@
     <title><%= title %></title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
-    <link rel="stylesheet" href="/public/hibi.css" />
+    <link rel="stylesheet" href="<%= typeof locals.assetUrl === 'function' ? locals.assetUrl('hibi.css') : '/public/hibi.css' %>" />
     <%# 体験設定（サーバー権威で解決済み・若年層体験パック Phase 0）。演出パーシャルより前に読み込む %>
     <%- include('../partials/experience-inject') %>
-    <script src="/public/rank-icons.js"></script>
+    <script src="<%= typeof locals.assetUrl === 'function' ? locals.assetUrl('rank-icons.js') : '/public/rank-icons.js' %>"></script>
     <%# 昇格演出（共通パーシャル。rank-icons.js の後に読み込む） %>
     <%- include('../partials/rank-celebration') %>
     <%# 今日の1問（共通パーシャル。answer-ui もこの中で読み込まれる） %>
@@ -168,6 +168,16 @@
       let idToken = null;
       let allProjects = [];
       let filter = 'all';
+      // ミッションの「部屋」からの流入（/liff/projects?category=…）。
+      // カテゴリはミッション側と同じ値（projects.category）なので cat: フィルタに直結できる。
+      // 該当チップがあれば点灯し、無いカテゴリでもフィルタ自体は効かせる。
+      const initialCategory = new URLSearchParams(location.search).get('category');
+      if (initialCategory) {
+        filter = `cat:${initialCategory}`;
+        document.querySelectorAll('.hb-chip').forEach(c => c.classList.remove('on'));
+        const chip = document.querySelector(`.hb-chip[data-filter="cat:${CSS.escape(initialCategory)}"]`);
+        if (chip) chip.classList.add('on');
+      }
       let searchText = '';
       // 直近描画したランク状態。回答確定後に旧→新を比べて昇格演出を出すために保持する。
       let lastPointStatus = null;

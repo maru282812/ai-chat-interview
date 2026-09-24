@@ -9,7 +9,7 @@ do $$
 begin
   if exists (
     select 1 from information_schema.table_constraints
-    where table_name = 'projects' and conname = 'projects_research_mode_check'
+    where table_name = 'projects' and constraint_name = 'projects_research_mode_check'
   ) then
     alter table projects drop constraint projects_research_mode_check;
   end if;

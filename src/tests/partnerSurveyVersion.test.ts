@@ -21,10 +21,15 @@ function q(over: Partial<PartnerQuestionView> = {}): PartnerQuestionView {
       { value: "5", label: "満足" },
       { value: "1", label: "不満" }
     ],
+    matrix_cols: null,
+    min: null,
+    max: null,
+    unit: null,
     sort_order: 10,
     is_required: true,
     is_fixed: false,
     question_text_image: null,
+    carry_forward: null,
     ...over
   };
 }

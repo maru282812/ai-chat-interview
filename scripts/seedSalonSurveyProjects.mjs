@@ -10,6 +10,23 @@
  *
  * すべて visibility_type=private_store なので「探す」一覧には出ない。
  *
+ * 【回答UI】案件全体を casual（スワイプ）にしている。設問ごとの指定ではなく
+ * answer_ui_preset=casual の既定（answerPresentation.ts）でスワイプ系に揃うため、
+ * 「最初の1問だけスワイプで以降はタップ」というちぐはぐが起きない。
+ *   2択          → swipe_card（左右スワイプ）
+ *   3件以上の単一 → carousel（カードを横スワイプして選ぶ）
+ *   順序尺度      → big_slider（5段階スライダー・選択肢は悪い→良い順＝左端が最低）
+ *   複数選択      → chip_select（タップで複数選択）
+ *
+ * ただし選択肢が多い設問だけは既定側で自動的にタップ系へ降格する（仕様どおり）。
+ * A-Q6/Q7/Q9・B-Q3/Q4 の10件超をスワイプで1枚ずつ捌かせると長すぎて離脱するため、
+ * chip_select / tap_cards のまま残す。ここは「揃える」より短さを優先している。
+ *
+ * sort_swipe（1枚ずつ◯✕）は casual の既定から外してある（2026-09-08）。選択肢の数だけ
+ * 画面が続くため、複数選択というだけで自動適用すると操作量が膨らむ。C-Q2 だけは
+ * 「後日回答で急いでいない・本音を1項目ずつ確かめたい」という調査票の意図があるので
+ * 明示指定で残している。C-Q3 は C-Q2 と連続するため chip_select に戻した。
+ *
  * 【選択肢の持ち越し（carry-forward）】
  *   同一案件内   : A-Q9 ← A-Q8 / B-Q3 ← B-Q2 / B-Q5 ← B-Q4
  *   別案件から   : C-Q2, C-Q3 ← A-Q5（今日のメニュー） ※Migration 092
@@ -53,7 +70,7 @@ const common = {
   delivery_enabled: false,
   research_mode: "survey",
   display_mode: "survey_question",
-  answer_ui_preset: "standard",
+  answer_ui_preset: "casual",
   ai_prompt_mode: "custom",
   primary_objectives: [],
   secondary_objectives: [],
@@ -71,6 +88,8 @@ const projects = [
     reward_points: 5,
     estimated_minutes: 1,
     entry_code: "yotto-salon-a",
+    // 送信完了画面のお礼 (Migration 108)。この後 B が控えるので「続きは施術後」で繋ぐ。
+    completion_message: "ご協力ありがとうございました。続きは施術後にお答えください。",
     carry_forward_sources: null
   },
   {
@@ -81,6 +100,8 @@ const projects = [
     reward_points: 5,
     estimated_minutes: 2,
     entry_code: "yotto-salon-b",
+    // この後 C（後日）が控えるので、そこへ繋ぐ言い方にする。
+    completion_message: "ご協力ありがとうございました。後日、最後のアンケートをお送りしますので、そちらもどうぞよろしくお願いいたします。",
     carry_forward_sources: null
   },
   {
@@ -91,6 +112,8 @@ const projects = [
     reward_points: 10,
     estimated_minutes: 2,
     entry_code: "yotto-salon-c",
+    // サイクルの最後。次に繋がず締めの挨拶にする。
+    completion_message: "ご協力ありがとうございました。引き続き美容室ぐるとアンケートサイトHibiをどうぞよろしくお願いいたします。",
     // C-Q2 / C-Q3 の選択肢を A-Q5（今日のメニュー）で絞るための宣言（Migration 092）
     carry_forward_sources: [{ namespace: "a", entry_code: "yotto-salon-a" }]
   }
@@ -122,10 +145,21 @@ const q = (projectId, code, text, type, sortOrder, config, extra = {}) => ({
   ...extra
 });
 
+/**
+ * A-Q12 / A-Q13 の告知文。
+ *
+ * 回答画面に出す文言（helpText）と、店舗開示の根拠（share_with_store.notice）を
+ * 必ず同じ文字列にするため定数にしている。利用規約 第9条3項は
+ * 「回答画面上であらかじめ明示したうえで」を開示の条件にしているので、
+ * 画面に出した文言と根拠がズレると説明がつかなくなる。
+ */
+const A_Q12_NOTICE = "この設問のみ担当者が施術前に確認いたします。会話の量はいつでも変えていただけます。";
+const A_Q13_NOTICE = "この設問のみ担当者が施術前に確認いたします。";
+
 /** [value, label] のペア配列から options を作る。 */
 const opts = (...pairs) => pairs.map(([value, label]) => ({ value, label }));
 
-/** 5段階満足度（B-Q1 / B-Q2 の列 / C-Q1 で共通）。 */
+/** 5段階満足度（B-Q2 の列で使用。調査票どおり「とても満足」が先頭）。 */
 const SAT5 = opts(
   ["very_satisfied", "とても満足した"],
   ["satisfied", "やや満足した"],
@@ -133,6 +167,26 @@ const SAT5 = opts(
   ["dissatisfied", "あまり満足しなかった"],
   ["very_dissatisfied", "まったく満足しなかった"]
 );
+
+// ------------------------------------------------------------------
+// 回答UI（設問単位の表示パターン上書き・answerPresentation.ts）
+//   swipe_card = 2択を左右スワイプ / big_slider = 5段階をスライダー（trackタップでも可） /
+//   sort_swipe = 複数選択を1枚ずつ◯✕で振り分け（既定ではなく明示指定でのみ使う）
+// swipe_card / big_slider は案件全体が casual なので既定と同じ結果になるが、この2種は
+// 「調査票の意図としてこの見せ方でなければ困る」設問なので、既定が変わっても動かないよう
+// 明示的に固定しておく。sort_swipe は既定から外したため、指定した設問だけに効く。
+// ------------------------------------------------------------------
+
+const SWIPE = { presentation: { pattern: "swipe_card" } };
+const SLIDER = { presentation: { pattern: "big_slider" } };
+const SORT_SWIPE = { presentation: { pattern: "sort_swipe" } };
+
+/**
+ * スライダーで出す5段階は左端＝最低・右端＝最高になるよう「悪い→良い」の順に並べる
+ * （絵文字の face_scale は「ださい」で不採用。記号 ◎○△× は差し替え候補として温存）。
+ * value は SAT5 と同じなので集計上の意味は変わらない（順序尺度の ordinal が 1=最低 になるだけ）。
+ */
+const scale5 = (...pairs) => opts(...pairs.slice().reverse());
 
 /**
  * 満足度の評価項目11件。A-Q8/A-Q9（重視項目）と B-Q2/B-Q3/B-Q4 で value を共有する。
@@ -172,7 +226,8 @@ const questionsA = [
     "アンケートにご協力いただきありがとうございます。こちらにご協力していただけますか。（ひとつだけ）",
     "single_choice",
     1,
-    { options: opts(["yes", "はい"], ["no", "いいえ"]) },
+    // 最初の1タッチで「スワイプで答えるアンケート」だと体験させる（設問文60字以内＝降格しない）
+    { options: opts(["yes", "はい"], ["no", "いいえ"]), ...SWIPE },
     {
       comment_top:
         `こちらのアンケートは${STORE_NAME}の満足度を調べるためにYOTTOが${STORE_NAME}の委託を受けて実施しております。\n` +
@@ -287,21 +342,58 @@ const questionsA = [
     helpText: "この回答をもとに、後日のアンケート（C）をお送りする時期を決めます。"
   }),
 
+  // A-Q12: 施術中の会話量の希望。Q13（自由記述）の前に置き、担当者が施術前に確認する。
   q(
     P_A,
     "Q12",
-    "今日の施術について、気になっていることやスタッフに伝えたいことはありますか？",
-    "free_text_long",
+    "今日は施術中に話しかけてもよいですか？（ひとつだけ）",
+    "single_choice",
     12,
     {
-      placeholder: "例）話すのが苦手なので施術中は会話は少なめでお願いします。／自分に合った髪型が知りたいです。",
-      helpText: "この設問のみ担当者が施術前に確認いたします。"
-    },
-    {
-      is_required: false,
-      comment_bottom:
-        "ご協力ありがとうございました。続きは施術後にお答えください。"
+      options: opts(
+        ["welcome", "ぜひ話しかけてほしい"],
+        ["quiet", "できれば静かに過ごしたい"],
+        ["either", "どちらでもよい"]
+      ),
+      helpText: A_Q12_NOTICE,
+      // 店舗へ開示する（利用規約 第9条3項）。選択式なので集計のみ。
+      // notice は helpText と同一にする。回答画面に出した文言そのものが
+      // 開示の根拠になるため、ズレると規約上の説明がつかなくなる。
+      meta: {
+        share_with_store: {
+          enabled: true,
+          mode: "aggregate",
+          timing: "immediate",
+          notice: A_Q12_NOTICE
+        }
+      }
     }
+  ),
+
+  q(
+    P_A,
+    "Q13",
+    "今日の施術について、気になっていることやスタッフに伝えたいことはありますか？",
+    "free_text_long",
+    13,
+    {
+      placeholder: "例）自分に合った髪型が知りたいです。／髪のパサつきが気になっています。",
+      helpText: A_Q13_NOTICE,
+      // 店舗へ開示する（利用規約 第9条3項）。施術前に読めないと意味がないので原文・即時。
+      // ⚠ 自由記述なので何が書かれるか制御できない。第三者の名前や要配慮情報が
+      //   混入し得るため、運用側で内容を確認できる状態を保つこと。
+      meta: {
+        share_with_store: {
+          enabled: true,
+          mode: "verbatim",
+          timing: "immediate",
+          notice: A_Q13_NOTICE
+        }
+      }
+    },
+    // お礼は projects.completion_message（送信完了画面）へ移した (Migration 108)。
+    // comment_bottom に書くと設問の下＝送信前に出てしまうため、ここには置かない。
+    { is_required: false }
   )
 ];
 
@@ -332,7 +424,7 @@ const questionsB = [
     "本日のご利用について、総合的にどのくらい満足しましたか？（ひとつだけ）",
     "single_choice",
     1,
-    { options: SAT5 },
+    { options: scale5(...SAT5.map((o) => [o.value, o.label])), ...SLIDER },
     {
       comment_top:
         "本日のご来店ありがとうございました。1〜2分程度のお客様の満足度確認アンケートにご協力ください。\n" +
@@ -390,23 +482,25 @@ const questionsB = [
   ),
 
   q(P_B, "Q6", "来店前に期待していた内容と比べて、今日の体験はいかがでしたか？（ひとつだけ）", "single_choice", 6, {
-    options: opts(
+    options: scale5(
       ["far_above", "期待を大きく上回った"],
       ["above", "期待を少し上回った"],
       ["as_expected", "期待通りだった"],
       ["below", "期待を少し下回った"],
       ["far_below", "期待を大きく下回った"]
-    )
+    ),
+    ...SLIDER
   }),
 
   q(P_B, "Q7", "次回もこの美容室を利用したいと思いますか？（ひとつだけ）", "single_choice", 7, {
-    options: opts(
+    options: scale5(
       ["definitely", "とても利用したい"],
       ["probably", "やや利用したい"],
       ["undecided", "どちらともいえない・未定"],
       ["probably_not", "あまり利用したくない"],
       ["definitely_not", "まったく利用したくない"]
-    )
+    ),
+    ...SLIDER
   }),
 
   q(
@@ -425,7 +519,8 @@ const questionsB = [
     "こちらのサービスにご参加をしていただけますでしょうか。（ひとつだけ）",
     "single_choice",
     9,
-    { options: opts(["yes", "はい"], ["no", "いいえ"]) },
+    // Hibi への転換点。ここまでの顔絵文字/スワイプ体験の延長で「ポイ活も同じ操作」と伝える
+    { options: opts(["yes", "はい"], ["no", "いいえ"]), ...SWIPE },
     {
       comment_top:
         "アンケート調査を行っているYOTTOではこの美容室の満足度アンケートのほかにも、簡単なアンケート（ポイ活）を行っております。\n" +
@@ -451,13 +546,14 @@ const questionsC = [
     "single_choice",
     1,
     {
-      options: opts(
+      options: scale5(
         ["very_satisfied", "とても満足している"],
         ["satisfied", "やや満足している"],
         ["neutral", "どちらともいえない"],
         ["dissatisfied", "あまり満足していない"],
         ["very_dissatisfied", "まったく満足していない"]
-      )
+      ),
+      ...SLIDER
     },
     {
       comment_top:
@@ -488,7 +584,10 @@ const questionsC = [
         ),
         exclusiveNone
       ],
-      helpText: "前回ご利用いただいたメニューに関するものだけ表示しています。"
+      helpText: "前回ご利用いただいたメニューに関するものだけ表示しています。",
+      // 「本音」は1項目ずつ◯✕で判定させたほうが取りこぼしが少ない（後日回答＝急いでいない）。
+      // 排他の「特になし」はデッキから自動で外れ、全部✕＝特になし相当になる。
+      ...SORT_SWIPE
     },
     {
       // A-Q5 でカラー/パーマを選んでいない人には該当選択肢を出さない（Migration 092）
@@ -518,6 +617,9 @@ const questionsC = [
         ),
         exclusiveNone
       ]
+      // C-Q2 と連続で1枚ずつ振り分けさせると操作量が多すぎるため、後半のこちらは
+      // chip_select（casual の複数選択の既定）で受ける。ネガ側の取りこぼしより
+      // 全体の完走を優先する判断（2026-09-08）。
     },
     {
       display_tags_parsed: { disableRules: colorPermDisableRulesNegative() }
@@ -549,7 +651,8 @@ const questionsC = [
     5,
     {
       options: opts(["yes", "はい（この店／別の店）"], ["no", "いいえ"]),
-      helpText: "※どこの美容室かは問いません。"
+      helpText: "※どこの美容室かは問いません。",
+      ...SWIPE
     }
   ),
 
@@ -669,9 +772,8 @@ const questionsC = [
           type: "pipe_expression",
           expression: "q6=other or q6=both or q7=other or q7=undecided"
         }
-      ],
-      comment_bottom:
-        "ご協力ありがとうございました。引き続き美容室ぐるとアンケートサイトHibiをどうぞよろしくお願いいたします。"
+      ]
+      // お礼は projects.completion_message（送信完了画面）へ移した (Migration 108)。
     }
   )
 ];

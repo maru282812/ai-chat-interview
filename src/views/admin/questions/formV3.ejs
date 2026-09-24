@@ -4,6 +4,10 @@
   const branchRows = Array.isArray(safeForm.branch_rows) && safeForm.branch_rows.length > 0
     ? safeForm.branch_rows
     : [{ source: "answer", field_label: "", operator: "equals", value: "", next: "" }];
+  // 分岐を持つ設問は、プレビューを「この設問だけ」で開くと次が無く必ず完了画面に落ちて
+  // 分岐を確認できない。値と遷移先が両方埋まった行が1つでもあれば通しを既定にする。
+  const hasBranchRule = Array.isArray(safeForm.branch_rows)
+    && safeForm.branch_rows.some((r) => r && String(r.value || '').trim() && String(r.next || '').trim());
   const optionLabels = Array.isArray(safeForm.option_labels) && safeForm.option_labels.length > 0
     ? safeForm.option_labels
     : [""];
@@ -83,24 +87,177 @@
   .tag-error-list li.error   { color:#8a0000; }
   .tag-error-list li.warning { color:#8a5b00; }
   .form-3col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+
+  /* ── 編集フォーム + 右カラムのライブプレビュー ───────────────── */
+  /* align-items:start にすると右カラム(aside)が中身の高さまでしか伸びない。
+     sticky は「親の箱の中」しか移動できないので、その高さを超えて
+     スクロールした時点でプレビューが一緒に流れて画面から消えていた。
+     stretch にして aside をフォームと同じ高さまで伸ばす。 */
+  .qedit-layout { display:grid; grid-template-columns:minmax(0,1fr) 420px; gap:18px; align-items:stretch; }
+  /* 右カラムを置く余白が無い画面では 1 カラムに落とし、プレビューはモーダルで見る */
+  @media (max-width:1200px) {
+    .qedit-layout { grid-template-columns:minmax(0,1fr); }
+    .qedit-preview { display:none; }
+  }
+  /* スクロールしても付いてくる。ヘッダー分を少し空ける */
+  /* スクロールしても付いてくる。
+     top:12px のままだとグローバルヘッダー（sticky）の裏に潜って隠れるので、
+     ヘッダーの実測高さ（--admin-header-h）を基準にする。
+     max-height も同じ分だけ差し引かないと、下端が画面の外へ出て
+     プレビューの中身が見切れる。 */
+  .qedit-preview-inner {
+    position:sticky; top:calc(var(--admin-header-h, 0px) + 12px);
+    display:flex; flex-direction:column; gap:8px;
+    border:1px solid #d8e3e0; border-radius:14px; background:#fff; padding:12px;
+    max-height:calc(100vh - var(--admin-header-h, 0px) - 24px);
+  }
+  .qedit-preview-head { display:flex; align-items:center; gap:8px; }
+  .qedit-preview-state { font-size:11px; color:#60726f; }
+  .qedit-preview-state.is-stale { color:#8a5b00; }
+  .qedit-preview-controls { display:flex; gap:6px; flex-wrap:wrap; }
+  /* 管理画面CSSの select{width:100%} を打ち消さないと3つが縦積みになり、
+     プレビュー本体の高さを奪う（実機で確認済みの罠） */
+  .qedit-preview-controls select {
+    width:auto; flex:0 1 auto;
+    border:1px solid #ccc; border-radius:6px; padding:3px 6px; font-size:11px;
+  }
+  /* 枠が残りの高さを全部使う。
+     min-height は「画面に入る範囲で」効かせる（固定値だけにすると低い画面で
+     下端がはみ出す）。画面が高いときは .qedit-preview-inner の max-height まで
+     伸びるので、余白を残さず使い切る。 */
+  .qedit-preview-stage {
+    flex:1;
+    min-height:min(360px, calc(100vh - var(--admin-header-h, 0px) - 320px));
+    display:flex; justify-content:center;
+    background:#f5f7f6; border:1px solid #e0ede9; border-radius:12px; overflow:hidden;
+  }
+  /* 中身（設問一覧＋プレビュー）が短いときも、枠だけは画面の高さいっぱいまで
+     伸ばす。伸ばさないと高い画面でプレビューの下に余白が残る。 */
+  .qedit-preview-inner { height:calc(100vh - var(--admin-header-h, 0px) - 24px); }
+  /* 実画面はモバイル幅が正。390px 相当で見せる。
+     min-height を固定値のままにすると、画面が低いときに枠の高さを突き破って
+     下端（「次へ」ボタン）が画面の外へはみ出す。入る分だけに抑える。 */
+  /* min-height を固定値で付けると枠より高くなれてしまい、画面が低いときに
+     下端（「次へ」ボタン）が画面の外へはみ出す。高さは枠に合わせる。
+     枠は flex なので height:100% は解決されない。align-self:stretch で伸ばす。 */
+  .qedit-preview-stage iframe {
+    width:100%; max-width:390px;
+    align-self:stretch; min-height:0;
+    border:none; background:#f5f7f6;
+  }
+  .qedit-preview-note { margin:0; font-size:11px; color:#60726f; }
+
+  /* ── 詳細ページ内のヘッダー（保存・プレビュー・行き先） ─────────
+     スクロールしても押せるように、グローバルヘッダーの下端へ貼り付ける。
+     .card の padding を打ち消す負の margin を入れてカード幅いっぱいに敷く。 */
+  .qedit-formhead {
+    position:sticky; top:var(--admin-header-h,0px); z-index:90;
+    background:#fff;
+    margin:-18px -18px 0; padding:12px 18px;
+    border-bottom:1px solid #e0ece8;
+    flex-wrap:wrap; gap:8px;
+  }
+  /* 設問コードの行（← 前の質問 / q_1 / 次の質問 →）もヘッダーの直下に続けて貼る。
+     top はヘッダー自身の高さぶん下げる。 */
+  .qedit-qnav {
+    position:sticky; z-index:89;
+    background:#fff;
+    margin:0 -18px; padding:8px 18px;
+  }
+
+  /* ── AI候補 ───────────────────────────────────────── */
+  .ai-suggest-box {
+    border:1px solid #e0d4f0; border-radius:12px;
+    background:#faf7fe; padding:12px;
+  }
+  .ai-suggest-head {
+    display:flex; align-items:center; gap:10px;
+    font-size:13px; font-weight:600; color:#5b3a8a;
+  }
+  .ai-suggest-result {
+    margin-top:10px; background:#fff;
+    border:1px solid #e4dcf2; border-radius:10px; padding:10px;
+  }
+  .ai-suggest-opt {
+    font-size:13px; padding:2px 0; color:#2c2c3a;
+  }
+  .ai-suggest-reason {
+    margin-top:8px; font-size:11px; color:#60726f; line-height:1.5;
+  }
+  .ai-suggest-warn { margin-top:6px; font-size:11px; color:#8a6000; }
+  .ai-suggest-err  { margin:0; font-size:12px; color:#8a2020; }
+  .ai-suggest-sub  { font-size:11px; color:#5b3a8a; font-weight:600; margin-top:6px; }
+
+  /* ── 右カラムの設問一覧 ─────────────────────────────
+     プレビュー本体の高さを奪わないよう、一覧側に上限を付けて中だけスクロールさせる
+     （ここを可変にすると設問数が多い案件でプレビューが潰れる）。 */
+  .qedit-qlist {
+    border:1px solid #e0ede9; border-radius:10px;
+    background:#fafcfb; flex:0 0 auto;
+  }
+  .qedit-qlist > summary {
+    cursor:pointer; padding:7px 10px;
+    font-size:12px; font-weight:600; color:#2c4a46;
+  }
+  .qedit-qlist-body {
+    max-height:180px; overflow-y:auto;
+    padding:0 6px 6px; display:flex; flex-direction:column; gap:2px;
+  }
+  .qedit-qlist-item {
+    display:flex; align-items:baseline; gap:6px; width:100%;
+    text-align:left; background:none; border:none;
+    border-radius:6px; padding:4px 6px; cursor:pointer;
+    font-size:12px; color:#1a1f1e; font-family:inherit;
+  }
+  .qedit-qlist-item:hover { background:#e8f5f1; }
+  .qedit-qlist-item.is-current {
+    background:#0b7a75; color:#fff; cursor:default;
+  }
+  .qedit-qlist-code {
+    font-family:monospace; font-size:11px; flex:0 0 auto; opacity:0.85;
+  }
+  /* 設問文は1行で省略。折り返すと一覧が縦に伸びてプレビューを押し出す */
+  .qedit-qlist-text {
+    flex:1; min-width:0; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap;
+  }
 </style>
 
 <%- include("../../partials/partner-store-warning", { project }) %>
 
+<%#
+  編集フォーム（左）と実画面プレビュー（右）の2カラム。
+  画面が狭いときは 1 カラムに落として、プレビューは従来どおりモーダルで見る。
+%>
+<div class="qedit-layout">
 <form class="card stack" method="post" action="<%= action %>" id="mainForm">
   <input type="hidden" name="question_code" value="<%= safeForm.question_code || '' %>" />
 
-  <div class="actions-row" style="justify-content:space-between;">
+  <%# 詳細ページ内のヘッダー。スクロールしても保存と行き先に手が届くよう貼り付ける。
+      グローバルヘッダーの下端（--admin-header-h）を基準にする。 %>
+  <div class="actions-row qedit-formhead" style="justify-content:space-between;">
     <p class="muted" style="margin:0;">プロジェクト: <%= project.name %></p>
     <div class="inline-actions">
+      <%# 保存はページ下端まで行かないと押せなかった。ここにも同じ submit を置く。
+          form.submit() ではなく type="submit" にして、必須チェック・タブエラーバッジ・
+          タグ自動生成を通す既存の submit ハンドラにそのまま乗せる。 %>
+      <button type="submit" id="headerSaveBtn" class="button-link primary">
+        <%= question ? '更新する' : '作成する' %>
+      </button>
       <button type="button" id="previewBtn" class="button-link secondary">プレビュー</button>
+      <%# フロー設計へ。未保存のまま素の a タグで飛ぶと入力が消えるので、
+          他の画面内遷移と同じ nav-question-btn の退避経路に乗せる。 %>
+      <button type="button" class="button-link secondary nav-question-btn"
+              data-nav-key="flow"
+              data-href="/admin/projects/<%= project.id %>/questions/flow"
+              style="background:#0b7a75;color:#fff;">🗂 フロー設計</button>
       <a class="button-link secondary" href="/admin/projects/<%= project.id %>/page-groups">🧩 ブロック/ページ</a>
       <a class="button-link secondary" href="/admin/projects/<%= project.id %>/questions">一覧へ戻る</a>
     </div>
   </div>
 
   <% if (question) { %>
-  <div style="display:flex;gap:8px;align-items:center;border-top:1px solid #e0ece8;border-bottom:1px solid #e0ece8;padding:8px 0;">
+  <div class="qedit-qnav" id="qeditQnav" style="display:flex;gap:8px;align-items:center;border-top:1px solid #e0ece8;border-bottom:1px solid #e0ece8;">
     <% if (prevQuestion) { %>
       <button type="button" class="button-link secondary nav-question-btn" data-nav-key="prev" data-href="/admin/questions/<%= prevQuestion.id %>/edit" style="font-size:13px;">
         ← 前の質問 (<%= prevQuestion.question_code %>)
@@ -400,6 +557,70 @@
           }
         })();
       </script>
+
+      <!-- 店舗への申し送り開示（利用規約 第9条3項・migration 102） -->
+      <%
+        const shareEnabled = safeForm.share_with_store_enabled === true;
+        const shareMode = safeForm.share_with_store_mode || 'aggregate';
+        const shareTiming = safeForm.share_with_store_timing || 'on_close';
+        const shareNotice = safeForm.share_with_store_notice || '';
+      %>
+      <fieldset class="authoring-subsection">
+        <legend>店舗への開示（申し送り設問）</legend>
+        <p class="muted" style="margin-top:0">
+          この設問の回答を、顧客ポータル（hibi）で<strong>店舗側に見せる</strong>ための設定です。
+          利用規約 第9条3項に基づき、<strong>回答画面に告知文を出した設問に限り</strong>開示できます。
+          告知文が空のときは、チェックが入っていても開示されません。
+        </p>
+        <label class="inline">
+          <input type="checkbox" name="share_with_store_enabled" id="shareEnabled"
+            <%= shareEnabled ? 'checked' : '' %> onchange="onShareToggle()" />
+          この設問の回答を店舗に開示する
+        </label>
+        <div id="shareDetail" style="<%= shareEnabled ? '' : 'display:none' %>">
+          <label>
+            回答画面に出す告知文（必須）
+            <input type="text" name="share_with_store_notice" id="shareNotice"
+              value="<%= shareNotice %>"
+              placeholder="例: この設問のみ担当者が施術前に確認いたします。" />
+            <small class="muted">回答者への約束そのものです。ここが空だと開示できません。</small>
+          </label>
+          <label>
+            見せ方
+            <select name="share_with_store_mode">
+              <option value="aggregate" <%= shareMode === 'aggregate' ? 'selected' : '' %>>集計のみ（選択肢ごとの件数）</option>
+              <option value="verbatim" <%= shareMode === 'verbatim' ? 'selected' : '' %>>原文（自由記述をそのまま見せる）</option>
+            </select>
+            <small class="muted">原文は回答者が書いた内容がそのまま店舗に見えます。自由記述で使う場合は内容を確認できる運用にしてください。</small>
+          </label>
+          <label>
+            見せるタイミング
+            <select name="share_with_store_timing">
+              <option value="on_close" <%= shareTiming === 'on_close' ? 'selected' : '' %>>締切後</option>
+              <option value="immediate" <%= shareTiming === 'immediate' ? 'selected' : '' %>>即時（回答が入り次第）</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+      <script>
+        function onShareToggle() {
+          var on = document.getElementById('shareEnabled').checked;
+          document.getElementById('shareDetail').style.display = on ? '' : 'none';
+        }
+        // 告知文が空のまま「開示する」で保存しようとしたら止める（サーバ側でも同じ判定をする）。
+        (function () {
+          var cb = document.getElementById('shareEnabled');
+          if (!cb) return;
+          var form = cb.closest('form');
+          if (!form) return;
+          form.addEventListener('submit', function (e) {
+            if (cb.checked && !(document.getElementById('shareNotice').value || '').trim()) {
+              e.preventDefault();
+              alert('店舗に開示するには、回答画面に出す告知文を入力してください。');
+            }
+          });
+        })();
+      </script>
     </section>
   </div>
 
@@ -409,6 +630,23 @@
   <div class="tab-pane" id="tab-answer">
     <section class="authoring-section stack">
       <h2>2. 回答形式設定</h2>
+
+      <%# ── AI候補（フロー設計の右パネルと同じ /suggest-options を叩く） ──────
+          選択肢型だけでなくマトリクス/数値/テキスト/画像にも候補が返るので、
+          #typeChoiceFields の中ではなくここに置く（中に入れると選択肢型以外で
+          hidden になり、対応しているはずの型で押せなくなる）。
+          保存前でも使えるよう、DBの値ではなく入力欄の現在値を送る。
+          新規作成中は設問IDが無く叩けないので出さない。 %>
+      <% if (question) { %>
+      <div class="ai-suggest-box" id="aiSuggestBox">
+        <div class="ai-suggest-head">
+          <span>🤖 AI候補</span>
+          <button type="button" class="button-link secondary" id="aiSuggestBtn"
+                  style="font-size:12px;padding:4px 12px;">候補を取得</button>
+        </div>
+        <div id="aiSuggestArea"></div>
+      </div>
+      <% } %>
 
       <!-- コメント上下 -->
       <label>
@@ -484,6 +722,7 @@
         <div class="inline-actions">
           <button type="button" class="button-link secondary" id="addOptionRow">選択肢を追加</button>
         </div>
+
         <p id="screeningPassOffNote" class="helper-text" style="color:#60726f;display:none;">
           この設問をスクリーニングに使用する場合のみ「スクリーニング通過対象」を設定できます。
         </p>
@@ -555,7 +794,7 @@
           </label>
           <label style="display:block;margin-top:6px;font-size:13px;">
             <input type="checkbox" name="presentation_scale" value="true" <%= safeForm.presentation_scale ? 'checked' : '' %> />
-            順序尺度として扱う（casual=絵文字フェイス / standard=スライダー）
+            順序尺度として扱う（casual / standard=スライダー。絵文字フェイスは上の表示パターンで face_scale を指定）
           </label>
           <label style="display:block;margin-top:4px;font-size:13px;">
             <input type="checkbox" name="presentation_slider" value="true" <%= safeForm.presentation_slider ? 'checked' : '' %> />
@@ -586,12 +825,16 @@
         <div id="exclusivePreviewNote" style="font-size:12px;color:#1a7a57;min-height:16px;"></div>
       </div>
 
-      <!-- スケール設定（未使用） -->
+      <!-- スケール設定（未使用）
+           ⚠ このブロックは syncTypeVisibility() で常に hidden になる。hidden は「送らない」を
+              意味しないため、disabled を付けずに置くと scale_min=1 / scale_max=5 が常時 POST され、
+              型によっては保存済みの min/max をその既定値で上書きしてしまう（年齢設問が 1〜5 に
+              化けた事故の原因）。表示状態と disabled は syncTypeVisibility() で必ず連動させる。 -->
       <div id="typeScaleFields" class="form-grid hidden">
-        <label>最小値 <input type="number" name="scale_min" value="<%= safeForm.scale_min_text || '1' %>" /></label>
-        <label>最小ラベル <input type="text" name="scale_min_label" value="<%= safeForm.scale_min_label || '' %>" /></label>
-        <label>最大値 <input type="number" name="scale_max" value="<%= safeForm.scale_max_text || '5' %>" /></label>
-        <label>最大ラベル <input type="text" name="scale_max_label" value="<%= safeForm.scale_max_label || '' %>" /></label>
+        <label>最小値 <input type="number" name="scale_min" value="<%= safeForm.scale_min_text || '1' %>" disabled /></label>
+        <label>最小ラベル <input type="text" name="scale_min_label" value="<%= safeForm.scale_min_label || '' %>" disabled /></label>
+        <label>最大値 <input type="number" name="scale_max" value="<%= safeForm.scale_max_text || '5' %>" disabled /></label>
+        <label>最大ラベル <input type="text" name="scale_max_label" value="<%= safeForm.scale_max_label || '' %>" disabled /></label>
       </div>
 
       <!-- テキスト入力補助 -->
@@ -1144,25 +1387,129 @@
   </div>
 </form>
 
+<%#
+  ── 右カラム：実画面ライブプレビュー ───────────────────────────────
+  中身は自前モックではなく、回答者が実際に見る画面（liff/survey）の iframe。
+  編集中（未保存）の内容を POST /admin/questions/:id/preview へ送って描くので、
+  保存前でも見た目が確認できる。変換は保存時と同じ buildQuestionConfigFromRequest を通る。
+%>
+<aside class="qedit-preview" id="livePreviewPane">
+  <div class="qedit-preview-inner">
+    <%# ── 同じ案件の設問一覧（クリックでその設問の編集へ） ──────────────
+        プレビューの上の余白に置く。未保存のまま飛ぶと入力が消えるので、
+        遷移は必ず nav-question-btn（＝保存してから遷移）に乗せる。 %>
+    <% if (question && availableQuestions && availableQuestions.length > 1) { %>
+    <details class="qedit-qlist" open>
+      <summary>この案件の設問（<%= availableQuestions.length %>）</summary>
+      <div class="qedit-qlist-body">
+        <% for (const item of availableQuestions) { %>
+          <% const isCurrent = item.id === question.id; %>
+          <% if (isCurrent) { %>
+            <span class="qedit-qlist-item is-current" aria-current="true">
+              <span class="qedit-qlist-code"><%= item.question_code %></span>
+              <span class="qedit-qlist-text"><%= item.question_text %></span>
+            </span>
+          <% } else { %>
+            <button type="button"
+                    class="qedit-qlist-item nav-question-btn"
+                    data-nav-key="jump"
+                    data-href="/admin/questions/<%= item.id %>/edit">
+              <span class="qedit-qlist-code"><%= item.question_code %></span>
+              <span class="qedit-qlist-text"><%= item.question_text %></span>
+            </button>
+          <% } %>
+        <% } %>
+      </div>
+    </details>
+    <% } %>
+
+    <div class="qedit-preview-head">
+      <strong style="font-size:14px;">プレビュー</strong>
+      <span class="qedit-preview-state" id="livePreviewState">最新</span>
+      <button type="button" id="livePreviewReload" class="button-link secondary"
+              style="font-size:11px;padding:3px 8px;margin-left:auto;">↻</button>
+    </div>
+
+    <%# 管理画面CSSの select は既定で width:100% なので、ここで幅を戻さないと縦積みになる %>
+    <div class="qedit-preview-controls">
+      <select id="livePreviewMode">
+        <option value="survey_question">1問ずつ</option>
+        <option value="survey_page">ページ</option>
+        <option value="interview_chat">チャット</option>
+      </select>
+      <select id="livePreviewPreset" title="回答UIプリセット">
+        <option value="">案件の設定</option>
+        <option value="casual">casual</option>
+        <option value="standard">standard</option>
+        <option value="formal">formal</option>
+      </select>
+      <select id="livePreviewScope" title="表示範囲">
+        <option value="one" <%= hasBranchRule ? '' : 'selected' %>>この設問</option>
+        <option value="all" <%= hasBranchRule ? 'selected' : '' %>>通しで</option>
+      </select>
+    </div>
+
+    <div class="qedit-preview-stage">
+      <iframe id="livePreviewFrame" title="回答画面ライブプレビュー" name="livePreviewFrame"></iframe>
+    </div>
+
+    <p class="qedit-preview-note">
+      編集中の内容をそのまま表示しています（回答は保存されません）。
+    </p>
+  </div>
+</aside>
+</div><%# /.qedit-layout %>
+
 <!-- ============================================================ -->
 <!-- プレビューモーダル                                             -->
 <!-- ============================================================ -->
+<%#
+  プレビューモーダル
+
+  中身は管理画面の自前モックではなく、回答者が実際に見る画面（/admin/questions/:id/preview →
+  liff/survey）を iframe でそのまま表示する。以前はここで簡易HTMLを組み立てていたため、
+  チップ選択・スワイプ・「その他」の自由記述欄・排他制御が本番と食い違っていた。
+  プレビューでは回答は一切保存されない（survey.ejs の PREVIEW_MODE ガード）。
+%>
 <div id="previewModal" style="
   display:none; position:fixed; inset:0; background:rgba(0,0,0,.5);
   z-index:1000; align-items:center; justify-content:center;">
-  <div style="background:#fff;border-radius:16px;padding:24px;max-width:480px;width:90%;max-height:80vh;overflow-y:auto;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-      <h2 style="margin:0;">プレビュー</h2>
-      <div style="display:flex;gap:8px;">
-        <select id="previewMode" style="border:1px solid #ccc;border-radius:6px;padding:4px 8px;">
-          <option value="survey_question">survey_question (1問ずつ)</option>
-          <option value="survey_page">survey_page (ページ)</option>
-          <option value="interview_chat">interview_chat (チャット)</option>
-        </select>
-        <button id="closePreview" style="border:none;background:none;font-size:20px;cursor:pointer;">✕</button>
-      </div>
+  <div style="background:#fff;border-radius:16px;padding:16px;max-width:560px;width:94%;height:92vh;display:flex;flex-direction:column;gap:10px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <h2 style="margin:0;font-size:18px;">プレビュー<span style="font-size:12px;font-weight:normal;color:#60726f;margin-left:8px;">実際の回答画面（保存されません）</span></h2>
+      <button type="button" id="closePreview" title="閉じる（Esc）" style="border:none;background:none;font-size:20px;cursor:pointer;line-height:1;">✕</button>
     </div>
-    <div id="previewContent"></div>
+
+    <%# 管理画面CSSの select は既定で width:100% のため、ここで幅を戻さないと
+        3つが縦積みになりプレビュー本体の高さを奪う（実機で確認） %>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;">
+      <select id="previewMode" style="width:auto;flex:0 1 auto;border:1px solid #ccc;border-radius:6px;padding:4px 8px;font-size:12px;">
+        <option value="survey_question">1問ずつ (survey_question)</option>
+        <option value="survey_page">ページ (survey_page)</option>
+        <option value="interview_chat">チャット (interview_chat)</option>
+      </select>
+      <select id="previewPreset" title="回答UIプリセット" style="width:auto;flex:0 1 auto;border:1px solid #ccc;border-radius:6px;padding:4px 8px;font-size:12px;">
+        <option value="">案件の設定のまま</option>
+        <option value="casual">casual（スワイプ/チップ）</option>
+        <option value="standard">standard（タップ）</option>
+        <option value="formal">formal（従来のラジオ）</option>
+      </select>
+      <select id="previewScope" title="表示範囲" style="width:auto;flex:0 1 auto;border:1px solid #ccc;border-radius:6px;padding:4px 8px;font-size:12px;">
+        <option value="one" <%= hasBranchRule ? '' : 'selected' %>>この設問だけ</option>
+        <option value="all" <%= hasBranchRule ? 'selected' : '' %>>案件の設問を通しで</option>
+      </select>
+      <button type="button" id="previewReload" class="button-link secondary" style="font-size:12px;padding:4px 10px;">↻ 再読込</button>
+    </div>
+
+    <%# 実画面はモバイル幅が正。iframe を 390px 相当の枠で見せる %>
+    <div style="flex:1;min-height:0;background:#f5f7f6;border:1px solid #e0ede9;border-radius:12px;overflow:hidden;display:flex;justify-content:center;">
+      <iframe id="previewFrame" title="回答画面プレビュー"
+              style="width:100%;max-width:390px;height:100%;min-height:420px;border:none;background:#f5f7f6;"></iframe>
+    </div>
+
+    <p style="margin:0;font-size:11px;color:#60726f;">
+      ※ 保存前の編集内容は反映されません。変更を確認するには先に「更新する」で保存してください。
+    </p>
   </div>
 </div>
 
@@ -1194,7 +1541,12 @@
       !CHOICE_TYPES.includes(type));
     document.getElementById('typeMultiFields').classList.toggle('hidden',
       type !== 'multi_choice');
-    document.getElementById('typeScaleFields').classList.toggle('hidden', true);
+    // スケール設定は現状どの型でも出さない。hidden のままでも中の input は POST されるため、
+    // 表示状態と disabled を必ず連動させる（隠しフィールドが既定値 1/5 を注入する事故の再発防止）。
+    const scaleFields = document.getElementById('typeScaleFields');
+    const scaleHidden = true;
+    scaleFields.classList.toggle('hidden', scaleHidden);
+    scaleFields.querySelectorAll('input, select, textarea').forEach((el) => { el.disabled = scaleHidden; });
     document.getElementById('typeMatrixFields').classList.toggle('hidden',
       !MATRIX_TYPES.includes(type));
     document.getElementById('typeImageUploadFields').classList.toggle('hidden',
@@ -2013,85 +2365,169 @@
   // プレビュー
   // ----------------------------------------------------------------
   const previewModal = document.getElementById('previewModal');
-  document.getElementById('previewBtn').onclick = () => {
-    const qText = document.querySelector('[name="question_text"]').value;
-    const qType = document.getElementById('questionType').value;
-    const mode  = document.getElementById('previewMode').value;
-    const opts  = Array.from(document.querySelectorAll('[name="option_labels"]')).map(el => el.value).filter(Boolean);
-    const commentTop    = document.querySelector('[name="comment_top"]')?.value || '';
-    const commentBottom = document.querySelector('[name="comment_bottom"]')?.value || '';
-    const matrixRows    = (document.querySelector('[name="matrix_rows"]')?.value || '').split('\n').filter(Boolean);
-    const matrixCols    = (document.querySelector('[name="matrix_cols"]')?.value || '').split('\n').filter(Boolean);
+  const previewFrame = document.getElementById('previewFrame');
+  // 新規作成中の設問はまだ id が無く、サーバーが実画面を組み立てられない。
+  const PREVIEW_QUESTION_ID = <%- JSON.stringify(question ? question.id : null) %>;
+  const PREVIEW_PROJECT_MODE = <%- JSON.stringify(project.display_mode || 'survey_question') %>;
 
-    let html = buildPreviewHtml(qText, qType, mode, opts, commentTop, commentBottom, matrixRows, matrixCols);
-    document.getElementById('previewContent').innerHTML = html;
-    previewModal.style.display = 'flex';
-  };
-  document.getElementById('closePreview').onclick  = () => { previewModal.style.display = 'none'; };
-  document.getElementById('previewMode').onchange  = () => document.getElementById('previewBtn').click();
-
-  function buildPreviewHtml(qText, qType, mode, opts, commentTop, commentBottom, matrixRows, matrixCols) {
-    const wrapStyle = mode === 'interview_chat'
-      ? 'font-family:sans-serif;background:#f0f0f0;padding:16px;border-radius:12px;'
-      : 'font-family:sans-serif;padding:8px;';
-    let inner = '';
-
-    if (commentTop) inner += `<p style="font-size:12px;color:#60726f;margin:0 0 6px">${escHtml(commentTop)}</p>`;
-
-    const bubble = mode === 'interview_chat'
-      ? `<div style="background:#fff;border-radius:12px;padding:12px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.1);">${escHtml(qText)}</div>`
-      : `<p style="font-weight:600;margin:0 0 10px">${escHtml(qText)}</p>`;
-    inner += bubble;
-
-    if (commentBottom) inner += `<p style="font-size:12px;color:#60726f;margin:0 0 8px">${escHtml(commentBottom)}</p>`;
-
-    if (['single_choice','text_with_image'].includes(qType) && opts.length > 0) {
-      inner += opts.map(o => `<label style="display:block;margin:4px 0;"><input type="radio" /> ${escHtml(o)}</label>`).join('');
-    } else if (qType === 'multi_choice' && opts.length > 0) {
-      inner += opts.map(o => `<label style="display:block;margin:4px 0;"><input type="checkbox" /> ${escHtml(o)}</label>`).join('');
-    } else if (['text','free_text_short','numeric'].includes(qType)) {
-      inner += `<input type="text" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;" placeholder="回答を入力..." />`;
-    } else if (['free_text_long'].includes(qType)) {
-      inner += `<textarea rows="4" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;" placeholder="回答を入力..."></textarea>`;
-    } else if (['scale'].includes(qType)) {
-      inner += `<input type="range" min="1" max="5" style="width:100%" />`;
-    } else if (['matrix_single','matrix_multi','matrix_mixed'].includes(qType)) {
-      if (matrixRows.length > 0 && matrixCols.length > 0) {
-        const isMulti = qType === 'matrix_multi';
-        inner += `<table style="width:100%;border-collapse:collapse;font-size:13px;">
-          <tr><th style="padding:6px;border-bottom:1px solid #eee;text-align:left;"></th>`;
-        for (const col of matrixCols) {
-          inner += `<th style="padding:6px;border-bottom:1px solid #eee;text-align:center;">${escHtml(col)}</th>`;
-        }
-        inner += `</tr>`;
-        for (const row of matrixRows) {
-          inner += `<tr><td style="padding:6px;border-bottom:1px solid #eee;">${escHtml(row)}</td>`;
-          for (let ci = 0; ci < matrixCols.length; ci++) {
-            inner += `<td style="padding:6px;border-bottom:1px solid #eee;text-align:center;">
-              <input type="${isMulti ? 'checkbox' : 'radio'}" name="prev_row_${escHtml(row)}" />
-            </td>`;
-          }
-          inner += `</tr>`;
-        }
-        inner += `</table>`;
-      } else {
-        inner += `<p style="font-size:12px;color:#888;">[マトリクス - 行・列を「2. 回答形式」タブで設定してください]</p>`;
-      }
-    }
-
-    if (mode === 'interview_chat') {
-      inner += `<div style="margin-top:8px;">
-        <input type="text" placeholder="返信する..." style="width:calc(100% - 60px);padding:8px;border:1px solid #ccc;border-radius:20px;" />
-        <button style="padding:8px 12px;background:#2ca87a;color:#fff;border:none;border-radius:20px;margin-left:4px;">送信</button>
-      </div>`;
-    } else {
-      inner += `<div style="margin-top:16px;text-align:right;">
-        <button style="padding:8px 24px;background:#2ca87a;color:#fff;border:none;border-radius:8px;">次へ</button>
-      </div>`;
-    }
-
-    return `<div style="${wrapStyle}">${inner}</div>`;
+  function previewUrl() {
+    const params = new URLSearchParams();
+    params.set('mode', document.getElementById('previewMode').value);
+    const preset = document.getElementById('previewPreset').value;
+    if (preset) params.set('preset', preset);
+    params.set('scope', document.getElementById('previewScope').value);
+    // 同じ URL でも必ず再読込させる（select 変更時に iframe が古い画面のまま残らないように）
+    params.set('_t', String(Date.now()));
+    return '/admin/questions/' + encodeURIComponent(PREVIEW_QUESTION_ID) + '/preview?' + params.toString();
   }
+
+  function loadPreview() {
+    if (!PREVIEW_QUESTION_ID) return;
+    previewFrame.src = previewUrl();
+  }
+
+  function openPreview() {
+    if (!PREVIEW_QUESTION_ID) {
+      alert('プレビューは保存後に確認できます。先に「作成する」で保存してください。');
+      return;
+    }
+    // 案件の表示モードを初期値にする（＝回答者が実際に見る条件から始める）
+    document.getElementById('previewMode').value = PREVIEW_PROJECT_MODE;
+    previewModal.style.display = 'flex';
+    loadPreview();
+  }
+
+  function closePreview() {
+    previewModal.style.display = 'none';
+    // 中の画面を止める（iframe を残すと裏でタイマー等が動き続ける）
+    previewFrame.src = 'about:blank';
+  }
+
+  // ----------------------------------------------------------------
+  // 右カラムのライブプレビュー
+  //
+  // 編集中のフォームを丸ごと POST して、サーバー側で保存時と同じ変換
+  // （buildQuestionConfigFromRequest）を通してから実画面を描かせる。
+  // ＝ここで question_config を組み立て直さない。組み立てるとプレビュー専用の
+  //   変換がもう1つ生まれ、本番とズレる（以前のモックが壊れた原因そのもの）。
+  //
+  // 送信方法は「フォームを複製して iframe を target にした POST」。
+  // fetch + srcdoc だと相対URLの解決基準が変わって画面内の fetch が壊れるため、
+  // 実際に iframe へ POST してナビゲートさせる。
+  // ----------------------------------------------------------------
+  // mainForm は下の方で const 宣言されるため、ここでは自前に取り直す（TDZ回避）
+  const liveForm  = document.getElementById('mainForm');
+  const livePane  = document.getElementById('livePreviewPane');
+  const liveFrame = document.getElementById('livePreviewFrame');
+  const liveState = document.getElementById('livePreviewState');
+
+  function livePreviewUrl() {
+    const params = new URLSearchParams();
+    params.set('mode', document.getElementById('livePreviewMode').value);
+    const preset = document.getElementById('livePreviewPreset').value;
+    if (preset) params.set('preset', preset);
+    params.set('scope', document.getElementById('livePreviewScope').value);
+    return '/admin/questions/' + encodeURIComponent(PREVIEW_QUESTION_ID) + '/preview?' + params.toString();
+  }
+
+  let liveTimer   = null;
+  let liveBusy    = false;
+  let livePending = false;
+
+  function renderLivePreview() {
+    if (!PREVIEW_QUESTION_ID || !livePane) return;
+    // 画面が狭くて右カラムを畳んでいるときは描かない（無駄なリクエストを出さない）
+    if (livePane.offsetParent === null) return;
+    // 描画中の要求は捨てずに覚えておき、終わってから1回だけ描き直す。
+    // 捨てると「プリセットを変えたのに反映されない」等の取りこぼしになる。
+    if (liveBusy) { livePending = true; return; }
+
+    liveBusy = true;
+    liveState.textContent = '更新中…';
+    liveState.classList.remove('is-stale');
+
+    // 複製した form を画面外に置いて POST する。元フォームの action/method は触らない。
+    const ghost = liveForm.cloneNode(true);
+    ghost.setAttribute('action', livePreviewUrl());
+    ghost.setAttribute('method', 'post');
+    ghost.setAttribute('target', 'livePreviewFrame');
+    ghost.removeAttribute('id');
+    ghost.style.display = 'none';
+    // 複製した中の id は元の要素と衝突するので落とす（getElementById の先勝ちを避ける）
+    ghost.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+    // ファイル入力は複製しても中身が運べない。送っても意味が無いので外す。
+    ghost.querySelectorAll('input[type="file"]').forEach((el) => el.remove());
+
+    document.body.appendChild(ghost);
+    ghost.submit();
+    document.body.removeChild(ghost);
+
+    // onload を待ってから次の更新を許可する（連打で積み上がらないように）
+    const done = () => {
+      liveBusy = false;
+      liveFrame.removeEventListener('load', done);
+      if (livePending) { livePending = false; renderLivePreview(); return; }
+      liveState.textContent = '最新';
+    };
+    liveFrame.addEventListener('load', done);
+    // 何らかの理由で load が来なくても固まらないようにする
+    setTimeout(() => { if (liveBusy) done(); }, 8000);
+  }
+
+  function scheduleLivePreview(delay) {
+    if (!PREVIEW_QUESTION_ID || !livePane) return;
+    liveState.textContent = '未反映';
+    liveState.classList.add('is-stale');
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(renderLivePreview, delay);
+  }
+
+  if (livePane && PREVIEW_QUESTION_ID) {
+    document.getElementById('livePreviewMode').value = PREVIEW_PROJECT_MODE;
+
+    // 打鍵中は落ち着くまで待ち、選択の変更は即反映する
+    liveForm.addEventListener('input',  () => scheduleLivePreview(600));
+    liveForm.addEventListener('change', () => scheduleLivePreview(120));
+    // 選択肢の追加/削除など、JS でDOMを組み替える操作も拾う
+    new MutationObserver(() => scheduleLivePreview(400))
+      .observe(liveForm, { childList: true, subtree: true });
+
+    // プレビュー内の「最初からやり直す」からの依頼。iframe 内で reload すると POST の
+    // 再送信ダイアログになるため、親から描き直す。origin を検査して他所からの指示は無視する。
+    window.addEventListener('message', (ev) => {
+      if (ev.origin !== window.location.origin) return;
+      if (!ev.data || ev.data.type !== 'hibi:preview-restart') return;
+      renderLivePreview();
+    });
+
+    document.getElementById('livePreviewReload').onclick = renderLivePreview;
+    document.getElementById('livePreviewMode').onchange   = renderLivePreview;
+    document.getElementById('livePreviewPreset').onchange = renderLivePreview;
+    document.getElementById('livePreviewScope').onchange  = renderLivePreview;
+
+    renderLivePreview();
+  } else if (livePane) {
+    // 新規作成中は id が無く、サーバーが案件の文脈を組み立てられない
+    livePane.querySelector('.qedit-preview-stage').innerHTML =
+      '<p class="qedit-preview-note" style="padding:16px;text-align:center;">' +
+      '保存するとここに実際の回答画面が表示されます。</p>';
+  }
+
+  document.getElementById('previewBtn').onclick = openPreview;
+  document.getElementById('closePreview').onclick = closePreview;
+  document.getElementById('previewReload').onclick = loadPreview;
+  document.getElementById('previewMode').onchange = loadPreview;
+  document.getElementById('previewPreset').onchange = loadPreview;
+  document.getElementById('previewScope').onchange = loadPreview;
+
+  // 背景クリックで閉じる（オーバーレイ自身を押したときだけ＝中身のクリックでは閉じない）
+  previewModal.addEventListener('click', (e) => {
+    if (e.target === previewModal) closePreview();
+  });
+  // Esc で閉じる
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && previewModal.style.display === 'flex') closePreview();
+  });
 
   // ----------------------------------------------------------------
   // util
@@ -2120,17 +2556,236 @@
     e.returnValue = '';
   });
 
+  // 設問を渡り歩くたびに「保存」を押させないための自動保存。
+  // 未保存なら確認を出す代わりに保存してから移動する。保存できない（必須未入力等）
+  // ときだけ引き止め、どこが悪いかをタブバッジ＋標準バブルで見せる。
   function navigateTo(href) {
-    if (isDirty) {
-      if (!confirm('未保存の変更があります。保存せずに移動しますか？')) return;
-      isDirty = false;
+    if (!isDirty) { window.location.href = href; return; }
+
+    if (!mainForm.checkValidity()) {
+      updateTabErrorBadges();
+      const firstInvalid = mainForm.querySelector(':invalid');
+      const pane = firstInvalid && firstInvalid.closest('.tab-pane');
+      if (pane) activateTab(pane.id.replace('tab-', ''));
+      mainForm.reportValidity();
+      return;
     }
-    window.location.href = href;
+
+    // 保存後の遷移先をサーバへ伝える（未指定なら従来どおり編集画面に留まる）
+    let redirectInput = mainForm.querySelector('input[name="_redirect_to"]');
+    if (!redirectInput) {
+      redirectInput = document.createElement('input');
+      redirectInput.type = 'hidden';
+      redirectInput.name = '_redirect_to';
+      mainForm.appendChild(redirectInput);
+    }
+    redirectInput.value = href;
+    mainForm.requestSubmit();
   }
 
   document.querySelectorAll('.nav-question-btn').forEach(btn => {
     btn.addEventListener('click', () => navigateTo(btn.dataset.href));
   });
+
+  // ----------------------------------------------------------------
+  // AI候補（回答形式）
+  // フロー設計の右パネルと同じ /admin/api/questions/:id/suggest-options を叩く。
+  // 保存前の入力欄の値を送るので、書きかけの設問文でも候補が取れる。
+  // ----------------------------------------------------------------
+  (function wireAiSuggest() {
+    const btn  = document.getElementById('aiSuggestBtn');
+    const area = document.getElementById('aiSuggestArea');
+    if (!btn || !area) return;   // 新規作成中は出していない
+
+    const MATRIX = ['matrix_single','matrix_multi','matrix_mixed'];
+    const CHOICE = ['single_choice','multi_choice','hidden_single','hidden_multi','text_with_image','sd'];
+
+    let lastSuggestions = null;
+
+    function currentType() {
+      return document.getElementById('questionType')?.value || '';
+    }
+    function showError(msg) {
+      area.innerHTML = '<p class="ai-suggest-err">' + escHtml(msg) + '</p>';
+    }
+
+    btn.addEventListener('click', async () => {
+      const textEl = document.querySelector('[name="question_text"]');
+      const questionText = textEl ? textEl.value.trim() : '';
+      if (questionText.length < 3) {
+        showError('設問文を入力してからAI候補を取得してください。');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = '取得中…';
+      area.innerHTML = '<p class="ai-suggest-reason">AIが候補を考えています…</p>';
+
+      try {
+        const resp = await fetch('/admin/api/questions/<%= question ? question.id : "" %>/suggest-options', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ questionText, currentQuestionType: currentType() }),
+        });
+        const data = await resp.json();
+
+        if (!resp.ok) { showError('AI候補の取得に失敗しました: ' + (data.error || resp.statusText)); return; }
+        // サーバ側は answer_options_locked が ON だと ok:false / locked:true を返す。
+        // この画面には固定フラグの入力欄が無いので、解除の場所を文言で示す。
+        if (data.locked) { showError(data.message || '回答項目が固定されています。フロー設計で固定を解除してください。'); return; }
+
+        lastSuggestions = data.suggestions || {};
+        renderSuggestion(lastSuggestions);
+      } catch (err) {
+        showError('AI候補の取得でエラーが発生しました: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '候補を取得';
+      }
+    });
+
+    function listHtml(items) {
+      return (items || []).map(v => '<div class="ai-suggest-opt">• ' + escHtml(String(v)) + '</div>').join('');
+    }
+
+    function renderSuggestion(s) {
+      const t = currentType();
+      let body = '';
+
+      if (MATRIX.includes(t)) {
+        if (Array.isArray(s.suggestedRows)) body += '<div class="ai-suggest-sub">行</div>' + listHtml(s.suggestedRows);
+        if (Array.isArray(s.suggestedCols)) body += '<div class="ai-suggest-sub">列</div>' + listHtml(s.suggestedCols);
+      } else if (t === 'numeric') {
+        const rows = [];
+        if (s.suggestedMin  != null) rows.push('最小値: ' + s.suggestedMin);
+        if (s.suggestedMax  != null) rows.push('最大値: ' + s.suggestedMax);
+        if (s.suggestedUnit)         rows.push('単位: '   + s.suggestedUnit);
+        body += listHtml(rows);
+      } else if (t === 'free_text_short' || t === 'free_text_long') {
+        const rows = [];
+        if (s.suggestedPlaceholder) rows.push('入力補助テキスト: ' + s.suggestedPlaceholder);
+        body += listHtml(rows);
+      } else {
+        if (s.suggestedQuestionType) {
+          body += '<div class="ai-suggest-sub">推奨形式: ' + escHtml(String(s.suggestedQuestionType)) + '</div>';
+        }
+        body += listHtml(s.suggestedOptions);
+      }
+
+      if (!body) {
+        showError('この回答形式に対する候補は返りませんでした。');
+        return;
+      }
+
+      const warn = Array.isArray(s.warnings) && s.warnings.length
+        ? '<p class="ai-suggest-warn">⚠ ' + escHtml(s.warnings.join(' / ')) + '</p>' : '';
+
+      area.innerHTML =
+        '<div class="ai-suggest-result">' + body +
+          (s.reason ? '<div class="ai-suggest-reason">' + escHtml(String(s.reason)) + '</div>' : '') +
+          warn +
+          '<div class="inline-actions" style="margin-top:10px;">' +
+            '<button type="button" class="button-link primary" id="aiSuggestApply" style="font-size:12px;">この候補を反映</button>' +
+          '</div>' +
+        '</div>';
+
+      document.getElementById('aiSuggestApply')?.addEventListener('click', applySuggestion);
+    }
+
+    // 入力欄へ値を入れる。.value の代入は change/input を発火しないので、
+    // 自分で dispatch しないと「未保存あり」の判定も下書き保存も走らない。
+    function setValue(el, value) {
+      if (!el) return;
+      el.value = value;
+      el.dispatchEvent(new Event('input',  { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function applySuggestion() {
+      const s = lastSuggestions;
+      if (!s) return;
+      const t = currentType();
+
+      if (MATRIX.includes(t)) {
+        applyMatrix(s);
+      } else if (t === 'numeric') {
+        setValue(document.querySelector('[name="min_value"]'), s.suggestedMin ?? '');
+        setValue(document.querySelector('[name="max_value"]'), s.suggestedMax ?? '');
+        setValue(document.querySelector('[name="unit"]'),      s.suggestedUnit ?? '');
+      } else if (t === 'free_text_short' || t === 'free_text_long') {
+        if (s.suggestedPlaceholder) setValue(document.querySelector('[name="placeholder"]'), s.suggestedPlaceholder);
+      } else {
+        applyOptions(s);
+      }
+
+      area.innerHTML = '<p class="ai-suggest-reason">✓ 反映しました。内容を確認してから保存してください。</p>';
+    }
+
+    // 選択肢を差し替える。既存の行は「選択肢を追加」と同じ makeOptionRow で
+    // 作り直す（自前で innerHTML を組むと画像・スクリーニング通過対象の
+    // 配線が抜けて、保存時に列がずれる）。
+    function applyOptions(s) {
+      const opts = Array.isArray(s.suggestedOptions) ? s.suggestedOptions.filter(Boolean) : [];
+      if (opts.length === 0) return;
+
+      // 推奨形式が返っていて今と違うなら、先に型を切り替えて表示を揃える
+      const typeEl = document.getElementById('questionType');
+      if (s.suggestedQuestionType && typeEl && CHOICE.includes(s.suggestedQuestionType)
+          && s.suggestedQuestionType !== typeEl.value) {
+        setValue(typeEl, s.suggestedQuestionType);
+      }
+
+      const container = document.getElementById('optionRows');
+      if (!container) return;
+      container.innerHTML = '';
+      opts.forEach(label => container.appendChild(makeOptionRow(String(label))));
+      isDirty = true;
+      refreshTabErrorBadges();
+    }
+
+    function applyMatrix(s) {
+      const rows = Array.isArray(s.suggestedRows) ? s.suggestedRows.filter(Boolean) : [];
+      const cols = Array.isArray(s.suggestedCols) ? s.suggestedCols.filter(Boolean) : [];
+
+      if (rows.length) {
+        const c = document.getElementById('matrixRowCards');
+        if (c) {
+          c.innerHTML = '';
+          rows.forEach(l => c.appendChild(makeMatrixRowCard(String(l))));
+          syncMatrixRowsHidden();
+        }
+      }
+      if (cols.length) {
+        const c = document.getElementById('matrixColCards');
+        if (c) {
+          c.innerHTML = '';
+          cols.forEach(l => c.appendChild(makeMatrixColCard(String(l))));
+          syncMatrixColsHidden();
+        }
+      }
+      isDirty = true;
+      refreshTabErrorBadges();
+    }
+  })();
+
+  // 詳細ページ内ヘッダーの下に、設問コードの行を続けて貼り付ける。
+  // ヘッダーはボタンが折り返して高さが変わるので、実測して top を決める。
+  (function syncFormHeadSticky() {
+    const head = document.querySelector('.qedit-formhead');
+    const qnav = document.getElementById('qeditQnav');
+    if (!head) return;
+
+    function apply() {
+      const rootTop = getComputedStyle(document.documentElement)
+        .getPropertyValue('--admin-header-h').trim() || '0px';
+      if (!qnav) return;
+      qnav.style.top = 'calc(' + rootTop + ' + ' + Math.round(head.getBoundingClientRect().height) + 'px)';
+    }
+
+    apply();
+    window.addEventListener('resize', apply);
+    if (typeof ResizeObserver === 'function') new ResizeObserver(apply).observe(head);
+  })();
 
   // キーボードナビゲーション（←→キー、テキスト入力中は無効）
   document.addEventListener('keydown', (e) => {

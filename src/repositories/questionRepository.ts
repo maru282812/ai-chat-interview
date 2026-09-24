@@ -4,6 +4,9 @@ import { requireData, throwIfError } from "./baseRepository";
 
 export const FREE_COMMENT_QUESTION_CODE = "__free_comment__";
 
+/** .in() の URL 長制限（PostgREST は GET クエリに ID を並べる）を超えないための分割単位。 */
+const PROJECT_ID_IN_CHUNK_SIZE = 100;
+
 interface ListByProjectOptions {
   includeHidden?: boolean;
 }
@@ -82,6 +85,52 @@ export const questionRepository = {
     const { data, error } = await query;
     throwIfError(error);
     return (data ?? []) as Question[];
+  },
+
+  /**
+   * 複数案件の設問をまとめて取得し、project_id ごとに束ねて返す。
+   *
+   * 一覧画面で案件ごとに listByProject を呼ぶと、案件の件数だけ Supabase への
+   * fetch が出る。Cloudflare Workers は1リクエストあたりのサブリクエストが
+   * 50件（有料1000件）までなので、案件が増えた時点で画面ごと
+   * "Too many subrequests" で落ちる（2026-09-24 に /admin/projects が57件で発生）。
+   * 件数に依存しないよう、ここで1クエリ（ID多数時のみ分割）に畳む。
+   *
+   * 設問が0件の案件はキーごと存在しないため、呼び出し側は `?? []` で受けること。
+   */
+  async listByProjectIds(
+    projectIds: string[],
+    options: ListByProjectOptions = {}
+  ): Promise<Map<string, Question[]>> {
+    const grouped = new Map<string, Question[]>();
+    const uniqueIds = [...new Set(projectIds)];
+    if (uniqueIds.length === 0) {
+      return grouped;
+    }
+
+    for (let i = 0; i < uniqueIds.length; i += PROJECT_ID_IN_CHUNK_SIZE) {
+      const chunk = uniqueIds.slice(i, i + PROJECT_ID_IN_CHUNK_SIZE);
+      let query = supabase
+        .from("questions")
+        .select("*")
+        .in("project_id", chunk)
+        .order("sort_order", { ascending: true });
+      if (!options.includeHidden) {
+        query = query.eq("is_hidden", false);
+      }
+      const { data, error } = await query;
+      throwIfError(error);
+      for (const question of (data ?? []) as Question[]) {
+        const list = grouped.get(question.project_id);
+        if (list) {
+          list.push(question);
+        } else {
+          grouped.set(question.project_id, [question]);
+        }
+      }
+    }
+
+    return grouped;
   },
 
   async getById(id: string): Promise<Question> {
@@ -204,6 +253,23 @@ export const questionRepository = {
       .single();
     throwIfError(error);
     return data as Question;
+  },
+
+  // 並べ替え用: 複数設問の sort_order をまとめて書き換える。
+  // sort_order に UNIQUE は無いので、一時退避せずそのまま目的の値を書いてよい。
+  // 呼び出し側（controller）が「渡された id が全部この案件のものか」を検証済みである
+  // ことが前提。ここでも project_id で絞って、取り違えた id が他案件を書き換えるのを防ぐ。
+  async reorderByIds(projectId: string, orderedIds: string[]): Promise<void> {
+    // トランザクションは張れない（PostgREST）。途中で失敗しても各行は
+    // 独立した整数を持つだけで整合は壊れないため、素直に順に当てる。
+    for (let i = 0; i < orderedIds.length; i++) {
+      const { error } = await supabase
+        .from("questions")
+        .update({ sort_order: i + 1 })
+        .eq("id", orderedIds[i])
+        .eq("project_id", projectId);
+      throwIfError(error);
+    }
   },
 
   // ブロック割当用: page_group_id を直接更新する（null で割当解除も可能）。

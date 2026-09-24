@@ -36,6 +36,7 @@ import {
 import { getProjectResearchSettings, parseLineSeparatedList } from "../lib/projectResearch";
 import { jstDateString, previewQueueAssignments, slotKey } from "../lib/dailyQueue";
 import {
+  isCampaignReservationStale,
   isoToJstParts,
   nextDailyRunJstFromTime,
   nextRunJst,
@@ -110,6 +111,10 @@ import type {
 import { parseDisplayTags, generateTagsFromParsed } from "../lib/tagParser";
 import { validateDisplayTags } from "../lib/tagValidator";
 import { questionPageGroupRepository } from "../repositories/questionPageGroupRepository";
+// 設問プレビュー（previewQuestion）を回答者の実画面と同じ経路で描くために使う。
+// どちらも「描画直前の前処理」なので、これを省くとプレビューだけ別物になる。
+import { resolveAnswerPresentation } from "../lib/answerPresentation";
+import { applyAutoFreeText } from "../lib/otherOption";
 import { segmentRepository } from "../repositories/segmentRepository";
 import { userAttributeRepository } from "../repositories/userAttributeRepository";
 import { deliveryCampaignRepository } from "../repositories/deliveryCampaignRepository";
@@ -493,6 +498,10 @@ function resolveNoticeMessage(value: unknown): string | null {
       return "プロジェクトを削除しました。";
     case "project_archived":
       return "回答履歴があるため、プロジェクトを archived に変更しました。";
+    case "question_created":
+      return "設問を作成しました。続けてこの画面で編集できます。";
+    case "question_updated":
+      return "設問を更新しました。";
     case "prompt_package_unset":
       return "プロジェクトを作成しました。プロンプトパッケージが未選択のため、公開済みパッケージ・バージョンを選択してください（未選択のままだと既定プロンプトで動作します）。";
     default:
@@ -505,6 +514,165 @@ function buildProjectEditRedirectPath(
   notice: "project_created" | "project_updated" | "project_copied"
 ): string {
   return `/admin/projects/${projectId}/edit?notice=${notice}`;
+}
+
+/**
+ * フォームから渡された保存後の遷移先を検証する。
+ *
+ * 画面側が任意の URL を送れるため、そのまま res.redirect に渡すと
+ * オープンリダイレクトになる。管理画面内の相対パスだけを許可し、
+ * それ以外（絶対 URL・プロトコル相対 //evil.com・/admin 以外）は null を返す。
+ */
+/**
+ * 並べ替えの結果に合わせて question_code を q_1..q_n に振り直す。
+ *
+ * question_code は表示用のラベルではなく、ロウデータ(wide/long/codebook)の列の
+ * 意味・分岐(branch_rule)の行き先・表示条件の式が指す「識別子」でもある。
+ * 振り直すと過去データとの突合が壊れるため、**壊れようのない案件に限って**行う。
+ *
+ * 実行する条件（ひとつでも欠けたらやらない）:
+ *   1. 回答が1件も無い（answers は question_id で繋がるので消えはしないが、
+ *      収集済みの回答と列の意味の対応が壊れる）
+ *   2. 「調査票を確定」していない（スナップショットがあると列が凍結される）
+ *   3. 案件が公開されていない（配信済みなら外部に出た番号と食い違う）
+ *   4. 自動採番の形（q_数字）の設問しかない。人が付けた名前（health_q1 など）が
+ *      1つでもあれば、その意図を消さないよう案件ごと対象外にする
+ *
+ * 振り直すときは branch_rule と表示条件の中のコードも一緒に書き換える。
+ * ここを漏らすと、分岐だけが存在しない設問を指す（過去に実際に起きた事故）。
+ */
+async function renumberQuestionCodesIfSafe(
+  projectId: string,
+  orderedIds: string[]
+): Promise<{ applied: number; skippedReason: string | null }> {
+  const questions = await questionRepository.listByProject(projectId, { includeHidden: true });
+
+  // 条件4: 自動採番の形以外が混ざっていたら触らない
+  const AUTO_CODE = /^q_\d+$/;
+  const renamable = questions.filter((q) => !q.is_system && !q.is_hidden);
+  if (renamable.length === 0) return { applied: 0, skippedReason: null };
+  if (!renamable.every((q) => AUTO_CODE.test(q.question_code))) {
+    return { applied: 0, skippedReason: "custom_codes" };
+  }
+
+  // 条件2・3
+  const [project, snapshot] = await Promise.all([
+    projectRepository.getById(projectId).catch(() => null),
+    snapshotService.getActive(projectId).catch(() => null)
+  ]);
+  if (snapshot) return { applied: 0, skippedReason: "snapshot_confirmed" };
+  if (project && project.status !== "draft") {
+    return { applied: 0, skippedReason: "project_not_draft" };
+  }
+
+  // 条件1: 1件でも回答があれば触らない
+  const counts = await Promise.all(
+    questions.map((q) => answerRepository.countByQuestion(q.id).catch(() => null))
+  );
+  if (counts.some((c) => c === null)) return { applied: 0, skippedReason: "count_failed" };
+  if (counts.some((c) => (c ?? 0) > 0)) return { applied: 0, skippedReason: "has_answers" };
+
+  // 新しい番号を決める（並び順そのまま q_1..q_n）
+  const byId = new Map(questions.map((q) => [q.id, q]));
+  const mapping: Record<string, string> = {};
+  let n = 0;
+  for (const id of orderedIds) {
+    const q = byId.get(id);
+    if (!q || q.is_system || q.is_hidden) continue;
+    n += 1;
+    const next = `q_${n}`;
+    if (q.question_code !== next) mapping[q.question_code] = next;
+  }
+  if (Object.keys(mapping).length === 0) return { applied: 0, skippedReason: null };
+
+  const rename = (code: string | null | undefined): string | null =>
+    code == null || code === "END" ? (code ?? null) : (mapping[code] ?? code);
+
+  // unique(project_id, question_code) があるので、直接 q_13→q_11 と書くと
+  // まだ残っている q_11 と衝突する。一度ぶつからない名前へ逃がしてから入れ直す。
+  // id → 新コード を先に確定させる。逃がした後は DB 上の code が temp に
+  // なっており、元の code から引き直せなくなるため。
+  const targetById = new Map<string, string>();
+  for (const q of questions) {
+    const target = mapping[q.question_code];
+    if (target) targetById.set(q.id, target);
+  }
+  for (const id of targetById.keys()) {
+    await questionRepository.update(id, { question_code: `__reorder_${id.slice(0, 8)}` });
+  }
+  for (const [id, target] of targetById) {
+    await questionRepository.update(id, { question_code: target });
+  }
+
+  // 分岐・合流・表示条件の中に書かれたコードも一緒に直す。
+  // 漏らすと分岐だけが存在しない設問を指す。
+  for (const q of questions) {
+    const updates: Record<string, unknown> = {};
+
+    const rule = q.branch_rule;
+    if (rule && !Array.isArray(rule)) {
+      const newRule: Record<string, unknown> = { ...rule };
+      let touched = false;
+      if (rule.default_next) {
+        const v = rename(rule.default_next);
+        if (v !== rule.default_next) { newRule.default_next = v; touched = true; }
+      }
+      if (rule.merge_question_code) {
+        const v = rename(rule.merge_question_code);
+        if (v !== rule.merge_question_code) { newRule.merge_question_code = v; touched = true; }
+      }
+      if (Array.isArray(rule.branches)) {
+        const branches = rule.branches.map((b) => {
+          const nb = b as unknown as Record<string, unknown>;
+          const v = rename(nb.next as string | null | undefined);
+          if (v !== nb.next) { touched = true; return { ...nb, next: v }; }
+          return nb;
+        });
+        if (touched) newRule.branches = branches;
+      }
+      if (touched) updates.branch_rule = newRule;
+    }
+
+    // 表示条件は "q5=yes" のように式の中にコードが入る。
+    // 語として一致するものだけを置き換える（q_1 が q_10 に食い込まないよう \b で区切る）。
+    const conds = q.visibility_conditions;
+    if (Array.isArray(conds) && conds.length > 0) {
+      let touched = false;
+      const newConds = conds.map((c) => {
+        const cond = c as unknown as Record<string, unknown>;
+        if (typeof cond.expression !== "string") return cond;
+        // 置換は1回の走査で済ませる。順番に replace を重ねると、入れ替え
+        // （q_3→q_1 と q_1→q_3 が同時にある）のときに二度置換されて元へ戻る。
+        const codes = Object.keys(mapping)
+          .sort((a, b) => b.length - a.length)   // q_1 が q_10 に食い込まないよう長い方から
+          .map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+        if (codes.length === 0) return cond;
+        const re = new RegExp(`\\b(${codes.join("|")})\\b`, "g");
+        const expr = cond.expression.replace(re, (m) => mapping[m] ?? m);
+        if (expr !== cond.expression) touched = true;
+        return expr === cond.expression ? cond : { ...cond, expression: expr };
+      });
+      if (touched) updates.visibility_conditions = newConds;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await questionRepository.update(q.id, updates as Parameters<typeof questionRepository.update>[1]);
+    }
+  }
+
+  return { applied: Object.keys(mapping).length, skippedReason: null };
+}
+
+export function sanitizeAdminRedirect(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const value = raw.trim();
+  if (!value) return null;
+  // "//evil.com" はブラウザがプロトコル相対 URL として外部へ飛ばす
+  if (!value.startsWith("/") || value.startsWith("//")) return null;
+  if (value.includes("\\")) return null;
+  const path = value.split("?")[0] ?? "";
+  if (path !== "/admin" && !path.startsWith("/admin/")) return null;
+  return value;
 }
 
 function renderProjectsIndex(
@@ -797,6 +965,8 @@ type ProjectDisplayStyle = "survey" | "interview";
 type ProjectFormOverrides = Partial<{
   name: string;
   user_display_title: string;
+  /** 送信完了画面のお礼文 (Migration 108)。空文字なら汎用文。 */
+  completion_message: string;
   client_name: string;
   objective: string;
   status: string;
@@ -884,6 +1054,7 @@ function buildProjectForm(project: Project | null, overrides: ProjectFormOverrid
   return {
     name,
     user_display_title: overrides.user_display_title ?? project?.user_display_title ?? "",
+    completion_message: overrides.completion_message ?? project?.completion_message ?? "",
     client_name: overrides.client_name ?? project?.client_name ?? "",
     objective,
     status: overrides.status ?? project?.status ?? "draft",
@@ -912,6 +1083,7 @@ function buildProjectFormOverridesFromRequest(req: Request): ProjectFormOverride
   return {
     name: bodyString(req.body.name),
     user_display_title: bodyString(req.body.user_display_title),
+    completion_message: bodyString(req.body.completion_message),
     client_name: bodyString(req.body.client_name),
     objective: bodyString(req.body.objective),
     status: bodyString(req.body.status) || "draft",
@@ -990,6 +1162,29 @@ function getProjectRenderErrorMessage(error: unknown, fallbackMessage: string): 
 
 function getProjectRenderStatusCode(error: unknown): number {
   return error instanceof HttpError ? error.statusCode : 500;
+}
+
+/**
+ * 会員ポータルの店舗に紐づいた案件を、管理画面から公開させない（Migration 104）。
+ *
+ * ポータル注文の A/B/C は draft で作られ、**店舗が QR を発行してチケットを消費した
+ * ときだけ** published になる（partnerSurveySetService.publishSet）。
+ * ここを開けておくと、運営が管理画面で何気なく「公開」にした瞬間に
+ * 課金されないまま調査が回る。公開の入口を1つに保つための防御線。
+ *
+ * 非公開方向（published → draft/paused/closed）は止めない。運営が止めるのは常に安全側。
+ */
+export function assertPortalStoreProjectNotPublishedByAdmin(
+  existing: { partner_store_id?: string | null; status?: string } | null,
+  nextStatus: string
+): void {
+  if (!existing?.partner_store_id) return;
+  if (nextStatus !== "published") return;
+  if (existing.status === "published") return; // 既に公開済み＝状態は変わらない
+  throw new HttpError(
+    400,
+    "この案件は会員店舗に紐づいています。公開は店舗側のQR発行（チケット消費）で行われるため、管理画面からは公開できません"
+  );
 }
 
 function parseAIPromptPolicyFromRequest(req: Request): AIPromptPolicy | null {
@@ -1494,6 +1689,10 @@ interface QuestionFormValues {
   question_goal: string;
   metric_code: string;
   metric_direction: string;
+  share_with_store_enabled: boolean;
+  share_with_store_mode: string;
+  share_with_store_timing: string;
+  share_with_store_notice: string;
   max_probes: string;
   placeholder: string;
   option_labels: string[];
@@ -1679,6 +1878,14 @@ function buildQuestionFormValues(
     question_goal: overrides.question_goal ?? meta.question_goal ?? "",
     metric_code: overrides.metric_code ?? meta.metric_code ?? "",
     metric_direction: overrides.metric_direction ?? meta.metric_direction ?? "",
+    share_with_store_enabled:
+      overrides.share_with_store_enabled ?? meta.share_with_store?.enabled === true,
+    share_with_store_mode:
+      overrides.share_with_store_mode ?? meta.share_with_store?.mode ?? "aggregate",
+    share_with_store_timing:
+      overrides.share_with_store_timing ?? meta.share_with_store?.timing ?? "on_close",
+    share_with_store_notice:
+      overrides.share_with_store_notice ?? meta.share_with_store?.notice ?? "",
     max_probes:
       overrides.max_probes ??
       String(typeof meta.probe_config?.max_probes === "number" ? meta.probe_config.max_probes : 1),
@@ -1852,6 +2059,10 @@ function buildQuestionFormValuesFromRequest(req: Request): QuestionFormValues {
     question_goal: bodyString(req.body.question_goal),
     metric_code: bodyString(req.body.metric_code),
     metric_direction: bodyString(req.body.metric_direction),
+    share_with_store_enabled: req.body.share_with_store_enabled === "on",
+    share_with_store_mode: bodyString(req.body.share_with_store_mode),
+    share_with_store_timing: bodyString(req.body.share_with_store_timing),
+    share_with_store_notice: bodyString(req.body.share_with_store_notice),
     max_probes: bodyString(req.body.max_probes) || "1",
     placeholder: bodyString(req.body.placeholder),
     option_labels: normalizeTextList(bodyStringArray(req.body.option_labels)),
@@ -2065,7 +2276,7 @@ const MULTI_CHOICE_TYPES: QuestionType[] = ["multi_choice"];
 const EXCLUSIVE_AUTO_LABEL_RE = /特になし|わからない|分からない|該当なし|その他/;
 const SCREENING_CHOICE_QUESTION_TYPES: QuestionType[] = ["single_choice", "multi_choice"];
 
-function buildQuestionConfigFromRequest(
+export function buildQuestionConfigFromRequest(
   req: Request,
   questionType: QuestionType,
   existing: Question["question_config"] | null
@@ -2234,6 +2445,22 @@ function buildQuestionConfigFromRequest(
         questionConfig.min_label = bodyString(req.body.scale_min_label).trim() || undefined;
         questionConfig.max_label = bodyString(req.body.scale_max_label).trim() || undefined;
         break;
+      case "numeric": {
+        // numeric の min/max は専用の編集UIを持たない。normalizeQuestionConfig が
+        // MANAGED_CONFIG_KEYS として一旦落とすので、ここで保存済みの値へ復元する。
+        //
+        // ⚠ scale_min / scale_max は読まない。あの入力は常時 hidden な「スケール設定（未使用）」
+        //   ブロックのもので、hidden でも POST され、空なら 1 / 5 に化ける。これを採用すると
+        //   年齢(10〜100=91件)が 1〜5 の5件に潰れ、表示パターンが number_wheel から
+        //   legacy(丸ボタン) へ落ちる＝プレビューだけ実機と違う画面になる。
+        if (typeof existing?.min === "number") { questionConfig.min = existing.min; } else { delete questionConfig.min; }
+        if (typeof existing?.max === "number") { questionConfig.max = existing.max; } else { delete questionConfig.max; }
+        const numericMinLabel = typeof existing?.min_label === "string" ? existing.min_label.trim() : "";
+        const numericMaxLabel = typeof existing?.max_label === "string" ? existing.max_label.trim() : "";
+        if (numericMinLabel) { questionConfig.min_label = numericMinLabel; } else { delete questionConfig.min_label; }
+        if (numericMaxLabel) { questionConfig.max_label = numericMaxLabel; } else { delete questionConfig.max_label; }
+        break;
+      }
       case "image_upload": {
         const maxCount = parseOptionalInteger(req.body.image_upload_max_count);
         const allowedTypesRaw = bodyString(req.body.image_upload_allowed_types).trim();
@@ -2302,6 +2529,22 @@ function buildQuestionConfigFromRequest(
       : null
   });
   questionConfig.meta = meta;
+
+  // 店舗への申し送り開示（利用規約 第9条3項・migration 102）。
+  // ⚠ 告知文が空なら「共有しない」に倒す。回答画面で明示していない設問を
+  //   店舗へ出すことは規約上できないため、UI 側の入力漏れを保存時にも塞ぐ。
+  const shareEnabled = req.body.share_with_store_enabled === "on";
+  const shareNotice = bodyString(req.body.share_with_store_notice).trim();
+  if (shareEnabled && shareNotice) {
+    questionConfig.meta.share_with_store = {
+      enabled: true,
+      mode: bodyString(req.body.share_with_store_mode) === "verbatim" ? "verbatim" : "aggregate",
+      timing: bodyString(req.body.share_with_store_timing) === "immediate" ? "immediate" : "on_close",
+      notice: shareNotice
+    };
+  } else {
+    delete questionConfig.meta.share_with_store;
+  }
 
   if (extractionEnabled && extractionItems.length > 0) {
     questionConfig.extraction = {
@@ -2380,6 +2623,50 @@ function resolveExpectedSlotKeyByLabel(
     throw new HttpError(400, `分岐項目が見つかりません: ${normalizedLabel}`);
   }
   return matched.key;
+}
+
+/**
+ * ラベル配列だけを送ってくる画面（フロー設計）の保存で、既存の選択肢 value を守る。
+ *
+ * value は表示条件（"q5=yes"）や分岐条件（branch_rule.when）が指す識別子で、
+ * ラベル文字列で作り直すと条件が一致しなくなり、分岐と出し分けが黙って全滅する。
+ * 実際に美容室ABCの Q5-Q7 がこれで壊れた（seed は value:"yes" を入れていたのに
+ * フロー設計画面で保存した時点で value がラベルへ置き換わっていた）。
+ *
+ * 引き継ぎ方針: ラベル一致を最優先。一致が無ければ同じ位置の選択肢の value を使う
+ * （＝ラベルの誤字修正）。どちらも無ければ新規選択肢なのでラベルを value にする。
+ */
+export function mergeOptionLabelsPreservingValues(
+  labels: string[],
+  previousOptions: Array<{ label?: string; value?: string }>
+): Array<{ label: string; value: string }> {
+  const usedValues = new Set<string>();
+  const consumedIndexes = new Set<number>();
+
+  return labels
+    .filter((l) => typeof l === "string" && l.trim())
+    .map((rawLabel) => ({ label: rawLabel.trim() }))
+    .map(({ label }, index) => {
+      const byLabelIdx = previousOptions.findIndex(
+        (o, i) => !consumedIndexes.has(i) && typeof o?.label === "string" && o.label.trim() === label
+      );
+      let carried: string | undefined;
+      if (byLabelIdx >= 0) {
+        consumedIndexes.add(byLabelIdx);
+        carried = previousOptions[byLabelIdx]?.value;
+      } else if (!consumedIndexes.has(index)) {
+        // ラベルが変わった場合でも、同じ位置の選択肢なら同一の選択肢とみなして value を保つ
+        const sameSlot = previousOptions[index];
+        if (sameSlot) {
+          consumedIndexes.add(index);
+          carried = sameSlot.value;
+        }
+      }
+      const value =
+        typeof carried === "string" && carried.trim() && !usedValues.has(carried) ? carried : label;
+      usedValues.add(value);
+      return { label, value };
+    });
 }
 
 function buildBranchRuleFromRequest(
@@ -2804,6 +3091,11 @@ export async function deliverCampaign(
   resolved: ResolvedCampaignTargets
 ): Promise<{ sentCount: number; failedCount: number }> {
   if (resolved.targetLineUserIds.length === 0) {
+    await deliveryCampaignRepository.update(resolved.campaign.id, {
+      status: "sent",
+      sent_at: new Date().toISOString(),
+      sent_count: 0,
+    });
     return { sentCount: 0, failedCount: 0 };
   }
 
@@ -3000,6 +3292,7 @@ export const adminController = {
       const created = await projectRepository.create({
         name,
         user_display_title: bodyString(req.body.user_display_title) || null,
+        completion_message: bodyString(req.body.completion_message).trim() || null,
         client_name: bodyString(req.body.client_name) || null,
         objective,
         status: bodyString(req.body.status || "draft") as import("../types/domain").ProjectStatus,
@@ -3127,6 +3420,11 @@ export const adminController = {
       const { versionId: packageVersionId, errorMessage: pkgError } =
         await resolvePackageVersionIdFromRequest(req, aiPromptMode);
       if (pkgError) throw new HttpError(400, pkgError);
+      // 会員店舗に紐づいた案件は管理画面から公開できない（公開はQR発行のみ）。
+      assertPortalStoreProjectNotPublishedByAdmin(
+        existing,
+        bodyString(req.body.status || "draft")
+      );
       const aiStateJson = buildProjectAiStateFromRequest({
         req,
         fallbackProject: {
@@ -3143,6 +3441,7 @@ export const adminController = {
       await projectRepository.update(projectId, {
         name,
         user_display_title: bodyString(req.body.user_display_title) || null,
+        completion_message: bodyString(req.body.completion_message).trim() || null,
         client_name: bodyString(req.body.client_name) || null,
         objective,
         status: bodyString(req.body.status || "draft") as import("../types/domain").ProjectStatus,
@@ -3328,7 +3627,7 @@ export const adminController = {
       }
       const createMaxProbeCount = parseOptionalInteger(bodyString(req.body.max_probe_count));
       const createTagFields = buildTagFieldsFromRequest(req);
-      await questionRepository.create({
+      const createdQuestion = await questionRepository.create({
         project_id: projectId,
         question_code: questionCode,
         question_text: bodyString(req.body.question_text),
@@ -3346,7 +3645,12 @@ export const adminController = {
         ...createTagFields,
       });
 
-      res.redirect(`/admin/projects/${projectId}/questions`);
+      // 「一覧へ戻る」「フロー設計」など、保存してから移動したい場合はその行き先へ送る。
+      // ここで _redirect_to を見ないと、新規作成中だけ画面内の移動が全部
+      // 編集画面へ引き戻されて「戻れない」状態になる（更新側は対応済みだった）。
+      // 指定が無ければ従来どおり作成した設問の編集画面に留まる。
+      const createdRedirect = sanitizeAdminRedirect(req.body._redirect_to);
+      res.redirect(createdRedirect ?? `/admin/questions/${createdQuestion.id}/edit?notice=question_created`);
     } catch (error) {
       renderQuestionForm(res, {
         title: "質問作成",
@@ -3394,6 +3698,134 @@ export const adminController = {
       rawdataInfo: rawdataEntry
         ? { ...rawdataEntry, snapshotConfirmed: rawdataIndex?.snapshotConfirmed ?? false }
         : null,
+    });
+  },
+
+  /**
+   * GET  /admin/questions/:questionId/preview … 保存済みの内容でプレビュー
+   * POST /admin/questions/:questionId/preview … 編集中（未保存）のフォーム内容でプレビュー
+   *
+   * 設問プレビュー。管理画面の自前モックではなく、回答者が実際に見る liff/survey を
+   * そのまま描画する（＝プレビューと本番の見た目が構造的にズレない）。
+   *
+   * 本番と同じ経路を通すために、surveyPage と同一の前処理を必ず通す:
+   *   - applyAutoFreeText … 「その他」の自由記述欄は DB 未保存で描画直前に付与される
+   *   - resolveAnswerPresentation … chip_select / swipe_card 等の表示パターンをサーバーで解決
+   * この2つを省くと「素のcheckboxで、その他に入力欄が無い」という実画面と違う絵になる。
+   *
+   * POST は編集フォームをそのまま受け取り、**保存時とまったく同じ**
+   * buildQuestionConfigFromRequest に通してから描く（＝プレビュー専用の変換を書かない）。
+   * DB は読むだけで、書込みは GET / POST どちらも一切しない。
+   * session/assignment を作らず previewMode をビューへ渡し、survey.ejs 側が
+   * 回答・完了・深掘り・画像アップロードのAPIを叩かないようにする。
+   */
+  async previewQuestion(req: Request, res: Response): Promise<void> {
+    const saved = await questionRepository.getById(routeParam(req, "questionId"));
+    const project = await projectRepository.getById(saved.project_id);
+
+    // POST は編集中のフォーム値で上書きする。未保存のまま見た目を確かめるための経路。
+    // 入力途中は選択肢ゼロなど不正な状態を通るのが普通なので、変換に失敗したら
+    // 例外を投げずに保存済みの内容へ黙って落とす（プレビューが赤画面で止まらないように）。
+    let question = saved;
+    if (req.method === "POST") {
+      try {
+        const questionType = parseQuestionType(bodyString(req.body.question_type || saved.question_type));
+        const questionConfig = buildQuestionConfigFromRequest(req, questionType, saved.question_config);
+        // branch_rule は question_config とは別カラムなので、ここで明示的に組み直さないと
+        // 「分岐を編集 → 未保存のままプレビュー」が保存済みの古い分岐で動いてしまう。
+        // 分岐行が1つも無いフォーム（＝null）のときは保存済みを残さず null にする。
+        const branchRule = buildBranchRuleFromRequest(req, questionConfig.meta?.expected_slots ?? []);
+        question = {
+          ...saved,
+          question_text: bodyString(req.body.question_text) || saved.question_text,
+          question_type: questionType,
+          is_required: req.body.is_required === "on",
+          ai_probe_enabled: req.body.ai_probe_enabled === "on",
+          question_config: questionConfig,
+          branch_rule: branchRule,
+        };
+      } catch {
+        question = saved;
+      }
+    }
+
+    // scope=all は同じ案件の設問を通しで確認する。scope=one はこの設問だけ。
+    // 分岐を持つ設問は「この設問だけ」だと次が1件も無く必ず完了画面に落ちて分岐を確認できないため、
+    // 明示指定が無いときは通しを既定にする（分岐が無ければ従来どおりこの設問だけ）。
+    const branchRuleForScope = question.branch_rule;
+    const hasBranches = Boolean(
+      branchRuleForScope &&
+      !Array.isArray(branchRuleForScope) &&
+      ((branchRuleForScope.branches?.length ?? 0) > 0 || branchRuleForScope.default_next)
+    );
+    const scope = typeof req.query.scope === "string" && req.query.scope
+      ? req.query.scope
+      : (hasBranches ? "all" : "one");
+    const all = await questionRepository.listByProject(question.project_id);
+    // 通しで見るときも、編集中の設問だけは差し替える（他はDBのまま）
+    const visible = all.filter((q) => !q.is_hidden).map((q) => (q.id === question.id ? question : q));
+    const targets = scope === "all"
+      ? (visible.length > 0 ? visible : [question])
+      : [question];
+
+    // プリセットと表示モードはクエリで上書きできる（管理者が casual/standard/formal を見比べるため）。
+    // 未指定なら案件の設定＝回答者が実際に見る条件。
+    const presetParam = typeof req.query.preset === "string" ? req.query.preset : "";
+    const answerUiPreset = (["casual", "standard", "formal"].includes(presetParam)
+      ? presetParam
+      : project.answer_ui_preset ?? "standard") as import("../types/domain").AnswerUiPreset;
+    const modeParam = typeof req.query.mode === "string" ? req.query.mode : "";
+    const displayMode = (["survey_question", "survey_page", "interview_chat"].includes(modeParam)
+      ? modeParam
+      : project.display_mode ?? "survey_question") as import("../types/domain").DisplayMode;
+
+    const questionsForClient = targets.map((q) => {
+      const question_config = q.question_config
+        ? { ...q.question_config, options: applyAutoFreeText(q.question_config.options) }
+        : q.question_config;
+      return {
+        ...q,
+        question_config,
+        presentation: resolveAnswerPresentation(
+          { question_type: q.question_type, question_text: q.question_text, question_config },
+          answerUiPreset,
+        ),
+      };
+    });
+
+    const pageGroups = displayMode === "survey_page"
+      ? await questionPageGroupRepository.listByProject(question.project_id).catch(() => [])
+      : [];
+
+    res.render("liff/survey", {
+      title: `プレビュー: ${project.user_display_title || project.name}`,
+      project,
+      projectData: {
+        id: project.id,
+        name: project.user_display_title || project.name,
+        display_mode: displayMode,
+      },
+      questions: questionsForClient,
+      answerUiPreset,
+      pageGroups,
+      // session / assignment は作らない（プレビューは何も保存しない）
+      sessionId: null,
+      assignmentId: null,
+      displayMode,
+      // 判定APIを呼ばせないため常にメインフェーズ扱いにする
+      surveyPhase: "main",
+      screeningFailMessage: "",
+      // LIFF は読み込ませない。authRequired=false かつ skipAllowed=true で
+      // survey.ejs の既存「認証不要パス」に乗り、そのまま startSurvey() が走る。
+      liffId: null,
+      liffAuthAvailable: false,
+      authRequired: false,
+      skipAllowed: true,
+      previewMode: true,
+      isStoreSurvey: false,
+      experience: await experienceService.resolveForProjectConfig(project.experience_config),
+      projectsUrl: "/liff/projects",
+      memberJoinUrl: "/liff/consent?mode=initial&redirect=/liff/mypage",
     });
   },
 
@@ -3500,7 +3932,10 @@ export const adminController = {
         ...updateTagFields,
       });
 
-      res.redirect(`/admin/projects/${existing.project_id}/questions`);
+      // 前後の設問へ移動する場合は、保存してからその設問へ送る（保存ボタンを押させないため）。
+      // 指定が無ければ従来どおり同じ編集画面に留まる（一覧へは「一覧へ戻る」で明示的に戻る）。
+      const requestedRedirect = sanitizeAdminRedirect(req.body._redirect_to);
+      res.redirect(requestedRedirect ?? `/admin/questions/${questionId}/edit?notice=question_updated`);
     } catch (error) {
       renderQuestionForm(res, {
         title: "質問編集",
@@ -4562,16 +4997,23 @@ export const adminController = {
     const questionText = String(body.question_text ?? "").trim();
     const existingConfig = (existing.question_config ?? {}) as Record<string, unknown>;
     const existingMeta = (existingConfig.meta ?? {}) as Record<string, unknown>;
-    // body に question_goal が含まれていない場合は既存の research_goal を引き継ぐ
-    const questionGoal = String(body.question_goal ?? existingMeta.research_goal ?? "").trim();
+    // body に question_goal が無い／空の場合は既存の research_goal を引き継ぐ。
+    // フロー画面は常にこのキーを送るため、?? だけだと「空欄のまま別ノードへ移った」
+    // 自動保存が、既に入っていた値を空で上書きしてしまう。
+    const questionGoal =
+      String(body.question_goal ?? "").trim() || String(existingMeta.research_goal ?? "").trim();
     const sortOrder    = Number(body.sort_order)    || existing.sort_order;
 
     if (!questionText) {
       res.status(400).json({ error: "question_text は必須です" });
       return;
     }
-    if (!questionGoal) {
-      res.status(400).json({ error: "question_goal は必須です" });
+    // 「この質問で知りたいこと」は AI 深掘りの材料。深掘りを使わない設問にまで必須にすると、
+    // 既存設問（8割が未入力）を編集するたびに保存が 400 で弾かれ、自動保存が事実上効かなくなる。
+    // 詳細編集画面も同じ条件（syncProbeOptions）で必須を出し分けている。
+    const aiProbeEnabled = Boolean(body.ai_probe_enabled);
+    if (aiProbeEnabled && !questionGoal) {
+      res.status(400).json({ error: "AI深掘りを使う設問では question_goal が必須です" });
       return;
     }
 
@@ -4579,10 +5021,19 @@ export const adminController = {
     const newConfig: Record<string, unknown> = { ...existingConfig };
 
     // 選択肢（選択型）
+    //
+    // フロー設計画面はラベル文字列の配列しか送ってこないが、value をラベルで作り直しては
+    // **いけない**。value は表示条件（"q5=yes"）や分岐条件が指す識別子で、ラベルに
+    // 置き換わると条件が一致しなくなり、分岐と出し分けが黙って全滅する（実際に
+    // 美容室ABCで発生した）。ラベルが一致する既存選択肢の value を引き継ぎ、
+    // 新規追加された選択肢にだけラベル由来の value を与える。
     if (CHOICE_QUESTION_TYPES.includes(questionType) && Array.isArray(body.options)) {
-      newConfig.options = (body.options as string[])
-        .filter((l) => l && l.trim())
-        .map((label) => ({ label: label.trim(), value: label.trim() }));
+      newConfig.options = mergeOptionLabelsPreservingValues(
+        body.options as string[],
+        Array.isArray(existingConfig.options)
+          ? (existingConfig.options as Array<{ label?: string; value?: string }>)
+          : []
+      );
     }
 
     // マトリクス設定
@@ -4852,6 +5303,87 @@ export const adminController = {
    * POST /admin/api/questions/:questionId/delete
    * フローデザイナーから質問を削除する
    */
+  /**
+   * POST /admin/api/projects/:projectId/questions/reorder
+   * 設問の並び順（sort_order）をまとめて更新する。
+   * 一覧のドラッグ&ドロップとフロー設計のノード移動の両方がここを叩く。
+   */
+  async apiReorderQuestions(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+
+    const rawIds = req.body?.orderedIds;
+    if (!Array.isArray(rawIds) || rawIds.length === 0) {
+      res.status(400).json({ error: "orderedIds（並び順の設問ID配列）が必要です。" });
+      return;
+    }
+    const orderedIds = rawIds.map((v: unknown) => String(v));
+
+    // 同じ id が二重に来ると、片方の設問が並びから落ちて順序が壊れる
+    if (new Set(orderedIds).size !== orderedIds.length) {
+      res.status(400).json({ error: "orderedIds に同じ設問IDが重複しています。" });
+      return;
+    }
+
+    // 「この案件の設問か」を必ずサーバ側で検証する。
+    // 他案件の設問IDを混ぜられると、案件をまたいで並び順を書き換えられてしまう。
+    const existing = await questionRepository.listByProject(projectId, { includeHidden: true });
+    const existingIds = new Set(existing.map((q) => q.id));
+    const unknown = orderedIds.filter((id) => !existingIds.has(id));
+    if (unknown.length > 0) {
+      res.status(400).json({ error: "この案件に存在しない設問IDが含まれています。" });
+      return;
+    }
+
+    // 画面には出ないシステム設問（自由記述など）は並べ替えの対象外。
+    // 受け取った並びの後ろへ、元の順序を保ったまま連結して番号を振り直す。
+    // こうしないと、画面に無い設問の sort_order が欠番のまま残り、
+    // sort_order で次を決めるサーバ側の遷移（determineNextQuestion）がずれる。
+    const tail = existing
+      .filter((q) => !orderedIds.includes(q.id))
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((q) => q.id);
+
+    const finalOrder = [...orderedIds, ...tail];
+    await questionRepository.reorderByIds(projectId, finalOrder);
+
+    // 並べ替えただけなのに「次の設問」が前のままだと、Order と Next が食い違う。
+    //
+    // 線を引いていない設問の Next は sort_order から導くので自動で追従するが、
+    // default_next を持つ設問（フロー設計で線を引いた／並べ替え前は隣だったので
+    // 保存された）は昔の相手を指したまま残り、並びを飛び越す矢印になる。
+    //
+    const rewrites: Promise<unknown>[] = [];
+    for (const q of existing) {
+      const rule = q.branch_rule;
+      // 配列形式のレガシー branch_rule は触らない
+      if (!rule || Array.isArray(rule)) continue;
+      // 分岐（選択肢ごとの分かれ道）は設計意図そのものなので必ず残す
+      if ((rule.branches?.length ?? 0) > 0) continue;
+      if (!rule.default_next) continue;
+
+      // 「それ以外の次はここ」という単純な線だけを外す。
+      // 外した後は sort_order 順に流れる（determineNextQuestion の既定）ので、
+      // 画面の Order と実際の遷移が必ず一致する。
+      const { default_next: _dropped, ...rest } = rule;
+      rewrites.push(
+        questionRepository.update(q.id, {
+          branch_rule: Object.keys(rest).length > 0 ? rest : null
+        })
+      );
+    }
+    await Promise.all(rewrites);
+
+    const renumbered = await renumberQuestionCodesIfSafe(projectId, finalOrder);
+
+    res.json({
+      ok: true,
+      count: orderedIds.length,
+      unlinked: rewrites.length,
+      renumbered: renumbered.applied,
+      renumberSkippedReason: renumbered.skippedReason
+    });
+  },
+
   async apiDeleteQuestion(req: Request, res: Response): Promise<void> {
     const questionId = routeParam(req, "questionId");
     // Verify question exists (throws HttpError 404 if not)
@@ -5889,6 +6421,7 @@ export const adminController = {
       name,
       project_id: projectId,
       segment_id: segmentId,
+      status: scheduledAt ? "scheduled" : "draft",
       delivery_channel: deliveryChannel,
       scheduled_at: scheduledAt,
     });
@@ -6231,9 +6764,10 @@ export const adminController = {
    * 配信カレンダー。配信テンプレート・デイリーアンケート（確定＋キュー見込み）・
    * キャンペーン予約の「次にいつ何が飛ぶか」を1画面へ集約する。
    * ここに出るのは設定から計算した「予定」であり、実際に自動発火するかは
-   * スケジューラ / cron の構成に依存する（キャンペーン予約は自動実行が未実装）。
+   * スケジューラ / cron の構成に依存する。
    */
   async deliveryCalendar(req: Request, res: Response): Promise<void> {
+    const now = new Date();
     const today = jstDateString();
     const month = queryString(req.query.month).trim() || today.slice(0, 7); // YYYY-MM
     const [y, m] = month.split("-").map(Number);
@@ -6394,14 +6928,16 @@ export const adminController = {
       if (!c.scheduled_at) continue;
       if (c.status !== "draft" && c.status !== "scheduled") continue;
       const parts = isoToJstParts(c.scheduled_at);
+      const warning = isCampaignReservationStale(c.scheduled_at, now)
+        ? "予約日時を過ぎています。自動実行の5分猶予を過ぎたため、配信オペレーションから手動実行するか、予約日時を変更してください。"
+        : null;
       upcoming.push({
         category: "キャンペーン",
         name: c.name,
         schedule: "予約日時",
         nextRun: parts ? `${parts.date} ${parts.time}` : null,
         enabled: true,
-        warning:
-          "予約の自動実行は未実装です。設定時刻になっても自動では飛ばないため、配信オペレーションから手動実行してください。",
+        warning,
         href: `/admin/segments/campaigns/${c.id}/edit`
       });
     }
@@ -8993,15 +9529,18 @@ export const adminController = {
 
     const clientNameById = new Map(clients.map((c) => [c.id, c.name]));
 
-    const rows = await Promise.all(
-      storeProjects.map(async (p) => ({
-        project: p,
-        clientName: p.client_id ? clientNameById.get(p.client_id) ?? null : null,
-        entryUrl: buildStoreEntryUrl(p.entry_code),
-        // 「回答数」は完了数（URLを開いただけの流入は含めない）
-        responseCount: await projectAssignmentRepository.countCompletedByProject(p.id)
-      }))
+    // 回答数は案件ごとに数えず一括取得する（案件ごとだと Workers のサブリクエスト上限に当たる）。
+    const completedCountByProject = await projectAssignmentRepository.countCompletedByProjectIds(
+      storeProjects.map((p) => p.id)
     );
+
+    const rows = storeProjects.map((p) => ({
+      project: p,
+      clientName: p.client_id ? clientNameById.get(p.client_id) ?? null : null,
+      entryUrl: buildStoreEntryUrl(p.entry_code),
+      // 「回答数」は完了数（URLを開いただけの流入は含めない）
+      responseCount: completedCountByProject.get(p.id) ?? 0
+    }));
 
     // 「店舗専用にする」候補（まだ店舗専用化されていない案件）
     const convertibleProjects = allProjects.filter((p) => p.visibility_type !== "private_store");
@@ -9029,6 +9568,24 @@ export const adminController = {
     const now = new Date();
     const groups = await cycleGroupRepository.list();
 
+    // ステップ名に使う案件は全件を1回引いて引き当てる。
+    // ステップごとに getById すると fetch がステップ数だけ出て、店舗が増えるほど
+    // Cloudflare Workers のサブリクエスト上限（50件）に近づく。
+    const projectNameById = new Map(
+      (await projectRepository.list()).map((project) => [
+        project.id,
+        project.user_display_title || project.name
+      ])
+    );
+
+    // 頻度設問（各グループの起点案件）も一括で引く。
+    const questionsByEntryProject = await questionRepository
+      .listByProjectIds(groups.map((group) => group.entry_project_id))
+      .catch((error) => {
+        logger.warn("cycleFunnel: 頻度設問の読み込みに失敗", { error: String(error) });
+        return new Map<string, Awaited<ReturnType<typeof questionRepository.listByProject>>>();
+      });
+
     const rows = await Promise.all(
       groups.map(async (group) => {
         const [cycles, steps] = await Promise.all([
@@ -9036,38 +9593,26 @@ export const adminController = {
           cycleGroupRepository.listSteps(group.id),
         ]);
 
-        // ステップ名を出すために案件名を引く（数件なので個別取得で十分）。
-        const stepRows = await Promise.all(
-          steps.map(async (step) => {
-            let name = step.project_id;
-            try {
-              const project = await projectRepository.getById(step.project_id);
-              name = project.user_display_title || project.name;
-            } catch {
-              // 案件が消えていてもファネル表示は続ける
-            }
-            return { ...step, projectName: name };
-          })
-        );
+        // 案件が消えていてもファネル表示は続ける（ID をそのまま名前に出す）。
+        const stepRows = steps.map((step) => ({
+          ...step,
+          projectName: projectNameById.get(step.project_id) ?? step.project_id
+        }));
 
         // 頻度設問の選択肢と日数対応表の突き合わせ（Migration 095）。
         // ズレると「エラーも出ないまま C が送られない」ので画面で気づけるようにする。
         let frequencyOptions: { value: string; label: string }[] = [];
         let frequencyQuestionFound = false;
-        try {
-          const questions = await questionRepository.listByProject(group.entry_project_id);
-          const target = questions.find(
-            (q) =>
-              q.question_code?.toLowerCase() ===
-              (group.frequency_question_code || "Q11").toLowerCase()
-          );
-          if (target) {
-            frequencyQuestionFound = true;
-            const config = target.question_config as { options?: { value: string; label: string }[] } | null;
-            frequencyOptions = config?.options ?? [];
-          }
-        } catch (error) {
-          logger.warn("cycleFunnel: 頻度設問の読み込みに失敗", { groupId: group.id, error: String(error) });
+        const questions = questionsByEntryProject.get(group.entry_project_id) ?? [];
+        const target = questions.find(
+          (q) =>
+            q.question_code?.toLowerCase() ===
+            (group.frequency_question_code || "Q11").toLowerCase()
+        );
+        if (target) {
+          frequencyQuestionFound = true;
+          const config = target.question_config as { options?: { value: string; label: string }[] } | null;
+          frequencyOptions = config?.options ?? [];
         }
 
         return {
@@ -9316,17 +9861,21 @@ export const adminController = {
     // client 配下の案件を created_at 昇順で（将来の wave 列を差し込める自然順・★予約③）
     const projects = await projectRepository.listByClient(clientId);
 
-    // 各案件の件数系(A)＋設問（横断指標の可視化用）を並行取得
-    const rows = await Promise.all(
-      projects.map(async (project) => {
-        const [respondentCount, completedCount, questions] = await Promise.all([
-          respondentRepository.countByProject(project.id),
-          projectAssignmentRepository.countCompletedByProject(project.id),
-          questionRepository.listByProject(project.id, { includeHidden: false })
-        ]);
-        return { project, respondentCount, completedCount, questions };
-      })
-    );
+    // 各案件の件数系(A)＋設問（横断指標の可視化用）を一括取得する。
+    // 案件ごとに3回引くと Workers のサブリクエスト上限（50件）を案件17件で超える。
+    const projectIds = projects.map((project) => project.id);
+    const [respondentCounts, completedCounts, questionsByProject] = await Promise.all([
+      respondentRepository.countByProjectIds(projectIds),
+      projectAssignmentRepository.countCompletedByProjectIds(projectIds),
+      questionRepository.listByProjectIds(projectIds, { includeHidden: false })
+    ]);
+
+    const rows = projects.map((project) => ({
+      project,
+      respondentCount: respondentCounts.get(project.id) ?? 0,
+      completedCount: completedCounts.get(project.id) ?? 0,
+      questions: questionsByProject.get(project.id) ?? []
+    }));
 
     // 件数系の単純合算(A)
     const totals = rows.reduce(
@@ -9391,6 +9940,10 @@ export const adminController = {
   // ---- 店舗QRコード（サーバ側生成） ----
   // 以前は api.qrserver.com へ entry_code 込みの限定URLをクエリで送って生成しており、
   // 限定URLが第三者サービスに渡る＋サービス停止でQRが表示されなくなる問題があった。
+  //
+  // 形式は SVG。PNG（QRCode.toBuffer）は Workers バンドルで qrcode がブラウザ版に解決されて
+  // `toBuffer is not a function` になり本番で 500 になった（Node では再現しない）。
+  // toString(svg) は Node/ブラウザ両ビルドにあり zlib も要らない。<img> でも印刷でもそのまま使える。
 
   async storeSurveyQr(req: Request, res: Response): Promise<void> {
     const projectId = routeParam(req, "projectId");
@@ -9400,10 +9953,10 @@ export const adminController = {
 
     const sizeRaw = Number.parseInt(String(req.query.size ?? "180"), 10);
     const width = Number.isFinite(sizeRaw) ? Math.min(Math.max(sizeRaw, 120), 1200) : 180;
-    const png = await QRCode.toBuffer(entryUrl, { type: "png", width, margin: 2 });
-    res.setHeader("Content-Type", "image/png");
+    const svg = await QRCode.toString(entryUrl, { type: "svg", width, margin: 2 });
+    res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
     res.setHeader("Cache-Control", "private, max-age=300");
-    res.send(png);
+    res.send(svg);
   },
 
   // ---- 店舗マスタ（clients）CRUD ----
@@ -9486,6 +10039,18 @@ export const adminController = {
     const statusInput = bodyString(req.body.status).trim();
     const allowedStatuses = ["draft", "published", "paused", "closed"];
     const clientId = bodyString(req.body.client_id).trim() || null;
+
+    // 会員店舗に紐づいた案件は管理画面から公開できない（公開はQR発行のみ・Migration 104）。
+    const target = await projectRepository.getById(projectId).catch(() => null);
+    try {
+      assertPortalStoreProjectNotPublishedByAdmin(target, statusInput);
+    } catch (error) {
+      res.redirect(
+        "/admin/store-surveys?err=" +
+          encodeURIComponent(getProjectRenderErrorMessage(error, "公開できません"))
+      );
+      return;
+    }
 
     await projectRepository.update(projectId, {
       entry_code: validation.code,

@@ -1,0 +1,112 @@
+/* Hallmark · genre: playful · macrostructure: Stat-Led (U-1) + Narrative Workflow (U-2)
+ * theme: Hibi (preserved — cream paper / gold / teal, from src/public/hibi.css)
+ * tone: 祝祭 playful, restrained · anchor hue: teal 168°
+ * principles: present-bias, goal-gradient, zeigarnik, peak-end, von-restorff, fitts, recognition
+ * enrichment: none (typography + CSS only) · nav/footer: n/a (in-app LIFF, existing bottom nav)
+ * contrast: pass · states: 8/8 on interactive elements
+ *
+ * 招待・ペアアンケート・段階報酬キャンペーンの3画面用トークン。
+ * 既存 hibi.css の :root を壊さないよう --cp-* 名前空間で足す。
+ * 色は hibi.css の値をそのまま引き継ぐ（新しい色を発明しない）。
+ */
+
+:root {
+  /* ---- 地・インク（hibi.css から継承） ---- */
+  --cp-paper:        #FBF5E2;  /* ページ地 */
+  --cp-paper-2:      #FFFDF6;  /* カード地・アプリバー */
+  --cp-cream:        #FAF0D2;
+  --cp-ink:          #222;
+  --cp-sub:          #777;
+  --cp-line:         #F0E6C8;
+
+  /* ---- アクセント（hibi.css から継承） ---- */
+  --cp-teal:         #0E6B5A;  /* CTA・強調数字。1画面1強調の担当 */
+  --cp-teal-deep:    #0A5245;
+  --cp-teal-weak:    #E9F3F0;
+  --cp-teal-lift:    #17977f;  /* 完了面のグラデ上端（hibi.css .hb-pick 由来） */
+  --cp-teal-line:    #CFE4DD;  /* 達成段の罫 */
+  --cp-gold:         #C9911F;
+  --cp-gold-strong:  #DFA02F;
+  --cp-gold-text:    #A97814;
+  --cp-gold-weak:    #FDF6E3;
+  --cp-gold-line:    #F2E4C0;
+
+  /* ---- 抽選段（最上段だけの特別色。多用しない） ---- */
+  --cp-lot:          #7A3E9D;  /* 抽選の紫。段3のみ */
+  --cp-lot-weak:     #F4EDF9;
+  --cp-lot-line:     #E3D2EF;
+
+  /* ---- 案件指定型の目標ゲージ（scope=project） ---- */
+  --cp-goal-track:   #E4EFEB;  /* 未達部分 */
+  --cp-goal-fill:    #17977f;  /* 到達部分 */
+
+  /* ---- 特別ステージ（ボス層）。深緑地＋金。通常段と質を変える ---- */
+  --cp-boss-bg:      #0B3A31;  /* 深い緑。通常の面より一段沈める */
+  --cp-boss-bg-2:    #124A3E;
+  --cp-boss-line:    #1E6354;
+  --cp-boss-gold:    #E8C56A;  /* ボス層の金 */
+  --cp-boss-gold-dim:#A98E45;
+  --cp-on-boss:      #F3EFE2;  /* 深緑面の文字 */
+  --cp-on-boss-sub:  #9DB5AC;
+  --cp-boss-well:    rgba(0,0,0,.18);        /* ボス面のくぼみ */
+  --cp-boss-track:   rgba(255,255,255,.12);  /* ボス面のバー地 */
+
+  /* ---- 「なりたい自分」レイヤー ---- */
+  --cp-ideal:        #B06A8F;  /* くすんだ薔薇。金と喧嘩しない */
+  --cp-ideal-weak:   #F7EFF3;
+  --cp-ideal-line:   #E9D6E0;
+
+  /* ---- 状態色 ---- */
+  --cp-danger:       #E5484D;
+  --cp-danger-weak:  #FDEEEE;
+  --cp-muted:        #B9AE92;  /* 未達の段・グレーアウト */
+  --cp-muted-weak:   #F3EEDF;
+  --cp-mock-ink:     #5b5344;  /* モック台紙の見出し（本番ページでは使わない） */
+  --cp-mock-sub:     #6f6757;
+  --cp-mock-shadow:  rgba(60,50,20,.5);
+
+  /* ---- フォーカスリング（a11y・3:1以上・アニメーションさせない） ---- */
+  --cp-focus:        #0A5245;
+
+  /* ---- 反転面・アイコン（gate 48: 生の色を書かないため名前を与える） ---- */
+  --cp-on-teal:      #fff;   /* ティール面の文字 */
+  --cp-on-teal-dim:  rgba(255,255,255,.4);
+  --cp-on-teal-soft: rgba(255,255,255,.92);
+  --cp-gold-on-teal: #FFE9A8; /* ティール面での数字 */
+  --cp-icon:         #444;
+
+  /* ---- タイポ（既存のシステムフォント。webfont を足さない） ---- */
+  --cp-font: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  --cp-text-figure:  clamp(44px, 15vw, 64px); /* Stat-Led の主役数字 */
+  --cp-text-2xl:     22px;
+  --cp-text-xl:      18px;
+  --cp-text-lg:      16px;
+  --cp-text-md:      14px;
+  --cp-text-sm:      12.5px;
+  --cp-text-xs:      11px;
+
+  /* ---- 余白（4pt スケール） ---- */
+  --cp-space-2xs: 4px;
+  --cp-space-xs:  8px;
+  --cp-space-sm:  12px;
+  --cp-space-md:  16px;
+  --cp-space-lg:  24px;
+  --cp-space-xl:  32px;
+  --cp-space-2xl: 48px;
+
+  /* ---- 角丸（playful の上限 12px を守る。ピルのみ 999px） ---- */
+  --cp-radius-sm:  8px;
+  --cp-radius-md:  12px;
+  --cp-radius-pill: 999px;
+
+  /* ---- 罫 ---- */
+  --cp-rule: 1px solid var(--cp-line);
+
+  /* ---- モーション（transform / opacity のみ・3種） ---- */
+  --cp-ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --cp-ease-in:     cubic-bezier(0.7, 0, 0.84, 0);
+  --cp-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --cp-dur-micro: 130ms;
+  --cp-dur-minor: 240ms;
+  --cp-dur-major: 420ms;
+}

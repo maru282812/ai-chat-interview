@@ -1,0 +1,517 @@
+<title>ミッション管理画面 設計案</title>
+<style>
+/* 管理画面モック。既存 admin の見た目（partials/header + .card + .form-group）に合わせる。
+   本番では EJS になるので、ここでは構造と項目の確認が目的。 */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{overflow-x:clip}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+  background:#F4F6F8;color:#2C3A36;line-height:1.6;
+}
+.wrap{max-width:1000px;margin:0 auto;padding:22px 16px 60px}
+h2{font-size:20px;font-weight:800;margin-bottom:4px}
+.sub{font-size:13px;color:#68767180;color:#6B7A75;margin-bottom:18px}
+.note{
+  background:#FFF8E4;border:1px solid #EDD9A3;border-radius:6px;
+  padding:11px 13px;font-size:12.5px;line-height:1.8;margin:14px 0;color:#5A4A20;
+}
+.note b{color:#3D3211}
+.warn{background:#FDECEC;border-color:#F0C0C0;color:#7A2C2C}
+.warn b{color:#5A1C1C}
+.ok{background:#EAF6F0;border-color:#B8DDCB;color:#1E5744}
+.ok b{color:#10422F}
+.card{
+  background:#fff;border:1px solid #DDE3E1;border-radius:8px;
+  padding:16px 18px;margin-bottom:16px;
+}
+.card h3{font-size:15px;font-weight:800;margin-bottom:12px;
+  padding-bottom:9px;border-bottom:1px solid #EDF1EF}
+.form-group{margin-bottom:13px}
+label{display:block;font-size:12.5px;font-weight:700;margin-bottom:4px;color:#41514C}
+label .req{color:#C0392B}
+label .hint{font-weight:400;color:#7A8985;font-size:11.5px}
+input[type=text],input[type=number],input[type=date],select,textarea{
+  width:100%;padding:7px 9px;border:1px solid #CBD5D1;border-radius:4px;
+  font-family:inherit;font-size:13px;background:#fff;color:inherit;
+}
+textarea{min-height:56px;resize:vertical}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media(max-width:640px){.two,.three{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{text-align:left;padding:8px 9px;border-bottom:1px solid #EDF1EF;vertical-align:top}
+th{font-weight:800;color:#41514C;background:#F7F9F8;font-size:11.5px}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;font-size:10.5px;font-weight:800;padding:2px 8px;
+  border-radius:99px;white-space:nowrap}
+.t-on{background:#E4F3EC;color:#1E7A5A}
+.t-off{background:#EDF1EF;color:#6B7A75}
+.t-warn{background:#FDECEC;color:#C0392B}
+.t-lock{background:#F4EDF9;color:#7A3E9D}
+.stage-row{
+  display:grid;grid-template-columns:44px 1fr 1fr 1fr 90px;gap:9px;
+  align-items:end;padding:11px 0;border-bottom:1px solid #EDF1EF;
+}
+.stage-row .n{
+  width:30px;height:30px;border-radius:99px;background:#0E6B5A;color:#fff;
+  display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;
+  margin-bottom:5px;
+}
+@media(max-width:640px){.stage-row{grid-template-columns:1fr;gap:8px}}
+.btn{display:inline-block;padding:8px 15px;border-radius:5px;border:1px solid #0E6B5A;
+  background:#0E6B5A;color:#fff;font-weight:800;font-size:13px;font-family:inherit;cursor:pointer}
+.btn.sec{background:#fff;color:#0E6B5A}
+.btn.sm{padding:4px 10px;font-size:11.5px}
+.calc{background:#F7F9F8;border:1px dashed #CBD5D1;border-radius:6px;
+  padding:11px 13px;font-size:12.5px;margin-top:10px}
+.calc .big{font-size:17px;font-weight:800;color:#0E6B5A;font-variant-numeric:tabular-nums}
+code{background:#EDF1EF;padding:1px 5px;border-radius:3px;font-size:11.5px}
+.flow{font-size:12.5px;line-height:2;color:#41514C}
+.flow b{color:#0E6B5A}
+
+.swap{display:grid;grid-template-columns:repeat(auto-fill,minmax(126px,1fr));gap:10px;margin-top:4px}
+.sw{position:relative;cursor:pointer;display:block}
+.sw input{position:absolute;opacity:0;width:0;height:0}
+.sw .chip{
+  display:block;border-radius:8px;overflow:hidden;border:3px solid transparent;
+  transition:transform .12s ease;
+}
+.sw:hover .chip{transform:translateY(-2px)}
+.sw input:focus-visible + .chip{outline:3px solid #0E6B5A;outline-offset:2px}
+.sw.on .chip{border-color:#0E6B5A}
+.sw .band{height:40px;display:flex;align-items:center;justify-content:center;position:relative}
+.sw .band .dot{width:13px;height:13px;border-radius:99px;position:absolute;right:7px;bottom:6px;
+  border:2px solid rgba(255,255,255,.5)}
+.sw .band em{font-style:normal;font-size:10px;font-weight:900;color:#fff;
+  text-shadow:0 1px 2px rgba(0,0,0,.45)}
+.sw .nm{display:block;font-size:11px;font-weight:800;padding:5px 2px 0;color:#41514C;text-align:center}
+.sw .cur{position:absolute;top:5px;left:5px;font-size:9px;font-weight:900;
+  background:#0E6B5A;color:#fff;padding:2px 6px;border-radius:99px}
+.diffbox{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+@media(max-width:640px){.diffbox{grid-template-columns:1fr}}
+.diffbox > div{border:1px solid #DDE3E1;border-radius:7px;overflow:hidden;background:#fff}
+.diffbox h4{font-size:11px;font-weight:900;padding:6px 9px;background:#F7F9F8;
+  border-bottom:1px solid #EDF1EF;color:#41514C}
+.diffbox .body{padding:10px 11px;font-size:12px;line-height:1.75}
+.diffbox .body b{display:block;font-size:13px}
+
+</style>
+
+<div class="wrap">
+
+<h2>ミッション管理画面 — 設計案</h2>
+<p class="sub">既存 <code>/admin/reward-campaigns</code> を拡張する形。画面の並びと入力項目の確認用モック。</p>
+
+<div class="note ok">
+  <b>既存資産で足りるもの:</b> <code>reward_campaigns</code>（032・器はある）／
+  <code>projects.category</code>（040・部屋の分類に流用）／
+  <code>projects.max_respondents</code> <code>recruit_deadline</code>（040/072・残り人数の分母）／
+  <code>awardPoints</code> の冪等キー／品質係数／当落のLINE通知（applications）。<br>
+  <b>新規で要るもの:</b> ステージ定義／部屋定義／隠し部屋の開き方／参加者の進捗記録。
+</div>
+
+<!-- ============ 0 ============ -->
+<div class="card">
+  <h3>⓪ ミッション一覧 — 複数を同時に走らせる</h3>
+  <table>
+    <tr><th>ミッション名</th><th>テーマ</th><th>対象範囲</th><th>期間</th><th>参加</th><th>状態</th><th></th></tr>
+    <tr>
+      <td><b>こたえて、ひらこう。</b></td>
+      <td><span class="tag" style="background:#FFF1DC;color:#7A4318">あき</span></td>
+      <td>横断型</td><td>9/1 – 9/30</td><td class="num">128人</td>
+      <td><span class="tag t-on">公開中</span></td>
+      <td><button class="btn sec sm">編集</button></td>
+    </tr>
+    <tr>
+      <td><b>カフェの朝 50人ミッション</b></td>
+      <td><span class="tag" style="background:#E7F3F6;color:#0A5E6B">うみ</span></td>
+      <td>案件指定型</td><td>9/1 – 9/8</td><td class="num">12人</td>
+      <td><span class="tag t-on">公開中</span></td>
+      <td><button class="btn sec sm">編集</button></td>
+    </tr>
+    <tr>
+      <td><b>おしょうがつミッション</b></td>
+      <td><span class="tag" style="background:#FBE9E7;color:#8C1F2A">おしょうがつ</span></td>
+      <td>横断型</td><td>12/28 – 1/8</td><td class="num">—</td>
+      <td><span class="tag t-off">下書き</span></td>
+      <td><button class="btn sec sm">編集</button></td>
+    </tr>
+  </table>
+  <p style="margin-top:12px"><button class="btn">＋ ミッションを作る</button></p>
+  <div class="note">
+    <b>ページは何枚でも作れる。</b>同時に複数公開してよい——横断型と案件指定型は目的が違うので競合しない。<br>
+    ⚠ ただし<b>同じ人に横断型を2つ以上見せない</b>。どちらを進めればいいか分からなくなり、
+    どちらも進まなくなる（Hickの法則）。案件指定型は案件ごとなので併走してよい。<br>
+    ⚠ 期間が重なる下書きは<b>公開前に警告を出す</b>。年末に3本走っていた、が起きやすい。
+  </div>
+</div>
+
+<!-- ============ 1 ============ -->
+<div class="card">
+  <h3>① ミッション（キャンペーン）の基本設定</h3>
+  <div class="form-group">
+    <label>ミッション名 <span class="req">*</span></label>
+    <input type="text" value="こたえて、ひらこう。（9月）">
+  </div>
+  <div class="two">
+    <div class="form-group">
+      <label>対象範囲 <span class="req">*</span> <span class="hint">— ここが設計の要</span></label>
+      <select>
+        <option>横断型（platform）— どの案件に答えてもカウント</option>
+        <option>案件指定型（project）— この案件だけ／回収率を上げる</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>対象案件 <span class="hint">— 案件指定型のときだけ</span></label>
+      <select><option>— （横断型のため選択不可）</option></select>
+    </div>
+  </div>
+  <div class="two">
+    <div class="form-group"><label>開始</label><input type="date" value="2026-09-01"></div>
+    <div class="form-group"><label>終了</label><input type="date" value="2026-09-30"></div>
+  </div>
+  <div class="two">
+    <div class="form-group">
+      <label>テーマ（見た目） <span class="req">*</span> <span class="hint">— 15種。あとから何度でも変えられる</span></label>
+      <p style="font-size:12px;color:#6B7A75;margin-bottom:6px">
+        いまは <b style="color:#7A4318">あき</b>。中身はそのままで見た目だけ差し替えられる。</p>
+      <p style="font-size:11.5px"><a href="#swap" style="color:#0E6B5A;font-weight:800">→ テーマだけ差し替える（⑧へ）</a></p>
+    </div>
+    <div class="form-group">
+      <label>有効</label>
+      <select><option>有効にする</option><option>下書き</option></select>
+    </div>
+  </div>
+  <div class="note">
+    <b>「対象範囲」1列で二層を切り替える。</b>横断型＝プラットフォーム全体の活性（原資はHibi持ち出し）。
+    案件指定型＝この調査の回収率（<b>クライアント予算に乗せられる＝売り物になる</b>）。
+    テーブルも画面も1つで済む。
+  </div>
+</div>
+
+<!-- ============ 2 ============ -->
+<div class="card">
+  <h3>② ステージの割り振り</h3>
+  <div class="stage-row" style="border-bottom:2px solid #DDE3E1;padding-bottom:6px">
+    <div style="font-size:11.5px;font-weight:800;color:#41514C">段</div>
+    <div style="font-size:11.5px;font-weight:800;color:#41514C">条件A：回答数</div>
+    <div style="font-size:11.5px;font-weight:800;color:#41514C">条件B：招待数</div>
+    <div style="font-size:11.5px;font-weight:800;color:#41514C">報酬</div>
+    <div style="font-size:11.5px;font-weight:800;color:#41514C">表示</div>
+  </div>
+  <div class="stage-row">
+    <div class="n">1</div>
+    <div><input type="number" value="3"></div>
+    <div><input type="number" value="1"></div>
+    <div><input type="number" value="150"></div>
+    <div><select><option>公開</option><option>??? で隠す</option></select></div>
+  </div>
+  <div class="stage-row">
+    <div class="n">2</div>
+    <div><input type="number" value="10"></div>
+    <div><input type="number" value="3"></div>
+    <div><input type="number" value="300"></div>
+    <div><select><option>??? で隠す</option><option>公開</option></select></div>
+  </div>
+  <div class="stage-row">
+    <div class="n">3</div>
+    <div><input type="number" value="20"></div>
+    <div><input type="number" value="5"></div>
+    <div><input type="number" value="550"></div>
+    <div><select><option>??? で隠す</option><option>公開</option></select></div>
+  </div>
+  <p style="margin-top:11px"><button class="btn sec sm">＋ 段を追加</button></p>
+  <div class="note">
+    <b>条件AとBは OR。</b>どちらか達成で段が上がる＝<b>身内がいない人でも詰まらない</b>。
+    招待は「唯一の道」ではなく<b>近道</b>。<br>
+    <b>「??? で隠す」</b>は実装コストほぼゼロで最も効く演出。未解放の報酬額を伏せると「解放」の概念が生まれる。
+    ただし<b>1段目は公開</b>にしないと、何が起きるか分からず最初の一歩が出ない。
+  </div>
+</div>
+
+<!-- ============ 3 ============ -->
+<div class="card">
+  <h3>③ 部屋（テーマ別）の割り振り</h3>
+  <table>
+    <tr><th>部屋名</th><th>カテゴリ</th><th>案件の割り当て</th><th>状態</th><th></th></tr>
+    <tr><td><b>たべもの</b></td><td><code>food</code></td><td>該当カテゴリの公開案件を自動で表示（5件）</td>
+        <td><span class="tag t-on">公開</span></td><td><button class="btn sec sm">編集</button></td></tr>
+    <tr><td><b>くらし</b></td><td><code>life</code></td><td>同上（8件）</td>
+        <td><span class="tag t-on">公開</span></td><td><button class="btn sec sm">編集</button></td></tr>
+    <tr><td><b>しごと</b></td><td><code>work</code></td><td>同上（3件）</td>
+        <td><span class="tag t-on">公開</span></td><td><button class="btn sec sm">編集</button></td></tr>
+    <tr><td><b>???</b></td><td><code>fun</code></td><td>同上（4件）</td>
+        <td><span class="tag t-lock">隠し部屋</span></td><td><button class="btn sec sm">編集</button></td></tr>
+  </table>
+  <div class="note">
+    <b><code>projects.category</code>（040で既存）をそのまま流用</b>するので新規カラム不要。
+    部屋に案件を手で紐づけるのではなく、<b>カテゴリで自動的に集まる</b>形にすると運用が軽い。<br>
+    ⚠ 案件が0件の部屋は<b>表示しない</b>（空の部屋を見せると過疎に見える）。
+  </div>
+</div>
+
+<!-- ============ 4 ============ -->
+<div class="card">
+  <h3>④ 隠し部屋の「開き方」</h3>
+  <div class="form-group">
+    <label>開き方 <span class="req">*</span></label>
+    <select>
+      <option>① 条件達成でひらく（2部屋クリア など）</option>
+      <option>② 時間限定でひらく（毎週 金曜 20時 など）</option>
+      <option>③ 先着N名でひらく</option>
+      <option>④ ランダムに出現する</option>
+    </select>
+  </div>
+  <div class="three">
+    <div class="form-group"><label>報酬の配り方</label>
+      <select><option>参加者で山分け</option><option>全員に一律</option></select></div>
+    <div class="form-group"><label>原資の総額</label><input type="number" value="50000"></div>
+    <div class="form-group"><label>1人あたり上限 <span class="req">*</span></label>
+      <input type="number" value="2000"></div>
+  </div>
+  <div class="calc">
+    参加が10人なら 1人 <span class="big">2,000</span> pt（上限で頭打ち）／
+    100人なら 1人 <span class="big">500</span> pt<br>
+    <span style="color:#6B7A75">※ 上限が無ければ10人で5,000pt/人となり、下記の理由で違反になる</span>
+  </div>
+  <div class="note warn">
+    <b>⚠ 1人あたり上限は必須（景表法）。</b>懸賞制限告示は「景品類の<b>価額を定める</b>こと」も懸賞に含み、
+    運用基準1(4)「価額に差等があり判別できない方法」＝山分けと構造が同じ。
+    仮に懸賞と評価されると上限は<b>2,000円</b>（取引価額100円×20倍）。<br>
+    <b>⚠ ④ランダムは「いつ出るか」だけをランダムにする。</b>「何がもらえるか」は全員同じにする。
+    開けてハズレがある設計＝相手方も価額も偶然で決まる＝<b>懸賞になる</b>。<br>
+    <b>⚠ 「回答が多いほど当たりやすい」は採らない</b>（消費者庁Q19）。「参加できる」なら安全側。<br>
+    ③先着は運用基準3に「<b>先着順は懸賞に該当しない</b>」と明文があり最も安全。<br>
+    詳細 → <code>requirements/legal-premium-act.md</code>
+  </div>
+</div>
+
+<!-- ============ 5 ============ -->
+<div class="card">
+  <h3>⑤ 案件指定型のとき — 残り人数の出し方</h3>
+  <table>
+    <tr><th>案件</th><th>目標</th><th>締切</th><th>いま</th><th>ゲージ表示</th></tr>
+    <tr><td>カフェの朝の使い方</td><td class="num">50人</td><td>2026-09-08</td><td class="num">12人</td>
+        <td><span class="tag t-on">出す</span></td></tr>
+    <tr><td>通勤の実態調査</td><td class="num">—</td><td>—</td><td class="num">7人</td>
+        <td><span class="tag t-off">出さない</span></td></tr>
+  </table>
+  <div class="note">
+    <b>ゲージは目標（<code>max_respondents</code>）と締切（<code>recruit_deadline</code>）が
+    実データで入っている案件だけ出す。</b>未設定なら帯ごと出さない——分母が無いのに出すと捏造になる。
+    管理画面では<b>設定されていない案件が一目で分かる</b>ようにして、運用側が埋められるようにする。<br>
+    「12人が参加中」は出さないが「<b>50人中12人・あと38人</b>」は出す。差は分母の有無。
+  </div>
+</div>
+
+<!-- ============ 6 ============ -->
+<div class="card">
+  <h3>⑥ 進捗と付与の確認（不正の目視）</h3>
+  <table>
+    <tr><th>ユーザー</th><th>回答</th><th>招待</th><th>到達段</th><th>付与済</th><th>状態</th><th></th></tr>
+    <tr><td>U…a91</td><td class="num">21</td><td class="num">0</td><td>3</td><td class="num">1,000pt</td>
+        <td><span class="tag t-on">正常</span></td><td></td></tr>
+    <tr><td>U…c33</td><td class="num">4</td><td class="num">9</td><td>3</td><td class="num">1,000pt</td>
+        <td><span class="tag t-warn">要確認</span></td><td><button class="btn sec sm">取消</button></td></tr>
+    <tr><td>U…f07</td><td class="num">12</td><td class="num">1</td><td>2</td><td class="num">450pt</td>
+        <td><span class="tag t-on">正常</span></td><td></td></tr>
+  </table>
+  <div class="note warn">
+    <b>「要確認」の出し方が肝。</b>招待9件に対し自分の回答が4件＝<b>招待偏重</b>は自作自演の典型。
+    同一端末（migration 086 で UA/IP が取れる）・短時間の連続登録も material になる。<br>
+    ⚠ <b>検出しても払った後の回収は現実的に不可能</b>。だから
+    <b>招待報酬は少額を即時／本命は相手が回答してから</b>という順序で設計する。<br>
+    取消は <code>manual_adjustment</code> で減算＝既存の台帳で表現できる。監査ログは必須。
+  </div>
+</div>
+
+<!-- ============ 7 ============ -->
+<div class="card">
+  <h3>⑦ 割り振りの全体像（データの流れ）</h3>
+  <p class="flow">
+    <b>回答が入る</b> → 品質判定（qualityScore）を通す → ミッションの対象か判定<br>
+    　└ 横断型なら無条件にカウント／案件指定型ならその案件のみ<br>
+    <b>進捗を更新</b> → 段の条件（回答数 <b>OR</b> 招待数）を満たしたか判定<br>
+    <b>段を達成</b> → <code>awardPoints</code>（冪等キー <code>campaign:{id}:{user}:stage{n}</code>）<br>
+    　└ 二重付与は既存の 23505 ハンドリングで防げる<br>
+    <b>最終段を達成</b> → 隠し部屋を解放 → 山分けは<b>締切後に確定</b>（上限キャップを適用）<br>
+    　└ 参加者数が確定しないと1人あたりが決まらないため
+  </p>
+  <div class="note">
+    <b>判定はすべてサーバー権威。</b>クライアントの進捗表示は信じない。<br>
+    <b>山分けの確定は締切後のバッチ</b>になる（既存 <code>cronDispatchService</code>／Workers Cron に乗る）。
+    ここだけ即時付与できない点は、画面上も「<b>結果は◯日にお知らせします</b>」と伝える必要がある。
+  </div>
+</div>
+
+
+<!-- ============ 8 ============ -->
+<div class="card" id="swap">
+  <h3>⑧ テーマだけ差し替える</h3>
+  <p style="font-size:12.5px;color:#6B7A75;margin-bottom:10px">
+    <b style="color:#2C3A36">ミッションの中身（ステージ・条件・報酬・進捗）はそのままで、見た目だけ替える。</b>
+    同じ企画を季節に合わせて着せ替える、反応が悪いテーマを差し替える、といった使い方。
+  </p>
+  <div class="swap">
+    <label class="sw">
+      <input type="radio" name="swap" >
+      <span class="chip">
+        <span class="band" style="background:#0E6B5A"><em>定番</em>
+          <span class="dot" style="background:#FFD836"></span></span>
+      </span>
+      <span class="nm">定番</span>
+    </label>
+    <label class="sw">
+      <input type="radio" name="swap" >
+      <span class="chip">
+        <span class="band" style="background:#8E3B5A"><em>さくら</em>
+          <span class="dot" style="background:#FFD9E4"></span></span>
+      </span>
+      <span class="nm">さくら</span>
+    </label>
+    <label class="sw">
+      <input type="radio" name="swap" >
+      <span class="chip">
+        <span class="band" style="background:#2A6B36"><em>新緑</em>
+          <span class="dot" style="background:#FFE86B"></span></span>
+      </span>
+      <span class="nm">新緑</span>
+    </label>
+    <label class="sw">
+      <input type="radio" name="swap" >
+      <span class="chip">
+        <span class="band" style="background:#34527A"><em>つゆ</em>
+          <span class="dot" style="background:#8FE3D8"></span></span>
+      </span>
+      <span class="nm">つゆ</span>
+    </label>
+    <label class="sw">
+      <input type="radio" name="swap" >
+      <span class="chip">
+        <span class="band" style="background:#0E5E8A"><em>なつ</em>
+          <span class="dot" style="background:#FFD836"></span></span>
+      </span>
+      <span class="nm">なつ</span>
+    </label>
+    <label class="sw">
+      <input type="radio" name="swap" >
+      <span class="chip">
+        <span class="band" style="background:#5B2140"><em>なつまつり</em>
+          <span class="dot" style="background:#FF8A3D"></span></span>
+      </span>
+      <span class="nm">なつまつり</span>
+    </label>
+    <label class="sw on">
+      <input type="radio" name="swap" checked>
+      <span class="chip">
+        <span class="band" style="background:#7A4318"><span class="cur">いま</span><em>あき</em>
+          <span class="dot" style="background:#FFC24D"></span></span>
+      </span>
+      <span class="nm">あき</span>
+    </label>
+    <label class="sw">
+      <input type="radio" name="swap" >
+      <span class="chip">
+        <span class="band" style="background:#5E4A1C"><em>みのり</em>
+          <span class="dot" style="background:#F0925E"></span></span>
+      </span>
+      <span class="nm">みのり</span>
+    </label>
+    <label class="sw">
+      <input type="radio" name="swap" >
+      <span class="chip">
+        <span class="band" style="background:#2A3F6B"><em>ふゆ</em>
+          <span class="dot" style="background:#9FE0FF"></span></span>
+      </span>
+      <span class="nm">ふゆ</span>
+    </label>
+    <label class="sw">
+      <input type="radio" name="swap" >
+      <span class="chip">
+        <span class="band" style="background:#8C1F2A"><em>おしょうがつ</em>
+          <span class="dot" style="background:#F2D06B"></span></span>
+      </span>
+      <span class="nm">おしょうがつ</span>
+    </label>
+    <label class="sw">
+      <input type="radio" name="swap" >
+      <span class="chip">
+        <span class="band" style="background:#1B1030"><em>よる</em>
+          <span class="dot" style="background:#FFD836"></span></span>
+      </span>
+      <span class="nm">よる</span>
+    </label>
+    <label class="sw">
+      <input type="radio" name="swap" >
+      <span class="chip">
+        <span class="band" style="background:#0A5E6B"><em>うみ</em>
+          <span class="dot" style="background:#FFCF5C"></span></span>
+      </span>
+      <span class="nm">うみ</span>
+    </label>
+    <label class="sw">
+      <input type="radio" name="swap" >
+      <span class="chip">
+        <span class="band" style="background:#63348A"><em>キャンディ</em>
+          <span class="dot" style="background:#FF9CC2"></span></span>
+      </span>
+      <span class="nm">キャンディ</span>
+    </label>
+    <label class="sw">
+      <input type="radio" name="swap" >
+      <span class="chip">
+        <span class="band" style="background:#2E3330"><em>モノトーン</em>
+          <span class="dot" style="background:#E8E2D2"></span></span>
+      </span>
+      <span class="nm">モノトーン</span>
+    </label>
+    <label class="sw">
+      <input type="radio" name="swap" >
+      <span class="chip">
+        <span class="band" style="background:#9E3225"><em>おうえん</em>
+          <span class="dot" style="background:#FFD836"></span></span>
+      </span>
+      <span class="nm">おうえん</span>
+    </label>
+  </div>
+
+  <div class="diffbox">
+    <div>
+      <h4>変わるもの</h4>
+      <div class="body">
+        <b>見た目だけ</b>
+        地の色・イラストの情景・見出しの言葉・CTAの色。<br>
+        <span style="color:#6B7A75">例: あき（紅葉）→ なつまつり（提灯と屋台）</span>
+      </div>
+    </div>
+    <div>
+      <h4>変わらないもの</h4>
+      <div class="body">
+        <b>中身は全部そのまま</b>
+        ステージの条件・報酬額・部屋の割り当て・<b>参加者の進捗</b>・付与済みポイント・隠し部屋の開き方。
+      </div>
+    </div>
+  </div>
+
+  <div class="note ok">
+    <b>実装は <code>theme_key</code> を1列 UPDATE するだけ。</b>
+    進捗も付与履歴も別テーブルなので、テーマを何度替えても<b>参加者のデータは一切動かない</b>。
+    だから公開中でも安全に差し替えられる。
+  </div>
+  <div class="note">
+    ⚠ <b>公開中の差し替えは「見た目が急に変わる」ことを意味する。</b>
+    参加者から見ると昨日と別のページに見えるので、
+    ミッション名まで同時に変えると<b>別の企画だと誤解される</b>。名前は据え置くのが安全。<br>
+    ⚠ <b>変更履歴を残す。</b>「反応が落ちたのはテーマを替えたせいか、報酬を変えたせいか」を
+    後から切り分けられないと、次の判断ができない。いつ・誰が・何から何へ替えたかを記録する。<br>
+    ⚠ 終了済みミッションのテーマは<b>替えない</b>（結果の振り返りと食い違う）。
+  </div>
+
+  <table style="margin-top:14px">
+    <tr><th>日時</th><th>変更</th><th>操作者</th><th>そのときの参加</th></tr>
+    <tr><td>9/4 10:22</td><td>なつ → <b>あき</b></td><td>admin</td><td class="num">128人</td></tr>
+    <tr><td>8/1 09:10</td><td>定番 → <b>なつ</b></td><td>admin</td><td class="num">64人</td></tr>
+  </table>
+</div>
+
+</div>

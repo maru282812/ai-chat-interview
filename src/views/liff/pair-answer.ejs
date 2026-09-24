@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <%- include('../partials/liff-auth') %>
+    <style>
+      /* ペア設問の回答（U-3）。選択式のみ（D-11・スキーマでも強制）。 */
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: "Hiragino Maru Gothic ProN", -apple-system, BlinkMacSystemFont, "Noto Sans JP", sans-serif;
+        background: #FBF5E2; min-height: 100vh; color: #222; font-weight: 700;
+      }
+      .shell { max-width: 480px; margin: 0 auto; padding-bottom: 32px; }
+      .top { padding: 16px; text-align: center; background: #FFFDF6; border-bottom: 1px solid #F0E6C8; }
+      .top .who { font-size: 14px; font-weight: 700; }
+      .top .who b { color: #0E6B5A; }
+      .dots { display: flex; justify-content: center; gap: 6px; margin-top: 10px; }
+      .dots i { width: 8px; height: 8px; border-radius: 50%; background: #F0E6C8; }
+      .dots i.on { background: #0E6B5A; }
+      .card { margin: 16px; padding: 24px 18px; background: #FFFDF6;
+        border: 1px solid #F0E6C8; border-radius: 15px; text-align: center; }
+      .q { font-size: 19px; font-weight: 900; line-height: 1.5; overflow-wrap: anywhere; }
+      .choices { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+      .choice {
+        display: block; width: 100%; min-height: 52px; padding: 14px 16px;
+        font-family: inherit; font-size: 16px; font-weight: 800; cursor: pointer;
+        background: #fff; color: #0E6B5A; border: 2px solid #0E6B5A;
+        border-radius: 9999px; box-shadow: 0 3px 0 0 #0A5245;
+      }
+      .choice:active { transform: translateY(3px); box-shadow: 0 0 0 0 #0A5245; }
+      .choice:focus-visible { outline: 3px solid #0A5245; outline-offset: 3px; }
+      .choice.picked { background: #FFD836; color: #2B1A00; border-color: #C79A00; box-shadow: 0 3px 0 0 #C79A00; }
+      .state { margin: 24px 18px; text-align: center; font-size: 14px; color: #777; line-height: 1.8; font-weight: 500; }
+      .state b { color: #0E6B5A; font-weight: 900; }
+      .btn {
+        display: flex; align-items: center; justify-content: center; margin: 0 16px;
+        min-height: 52px; padding: 14px 18px; border-radius: 9999px; width: calc(100% - 32px);
+        font-family: inherit; font-size: 16px; font-weight: 900; cursor: pointer;
+        background: #fff; color: #0E6B5A; border: 2px solid #0E6B5A; box-shadow: 0 3px 0 0 #0A5245;
+      }
+      #loading { padding: 60px 20px; text-align: center; color: #777; font-weight: 500; }
+      @media (prefers-reduced-motion: reduce) { .choice { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="top">
+        <p class="who">あなた と <b id="partner">…</b></p>
+        <div class="dots" id="dots"></div>
+      </div>
+      <div id="loading">読み込んでいます…</div>
+      <div id="main" hidden></div>
+    </div>
+
+    <div id="initial-data" hidden data-json='<%= JSON.stringify(initialData) %>'></div>
+    <script>
+    (function () {
+      const initialData = JSON.parse(document.getElementById("initial-data").dataset.json || "{}");
+      const pairId = initialData.pairId;
+      let idToken = null;
+      let questions = [];
+      let myAnswers = {};
+      let index = 0;
+
+      const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      const $ = (id) => document.getElementById(id);
+      function show(html) { $("loading").hidden = true; const m = $("main"); m.hidden = false; m.innerHTML = html; }
+
+      function renderDots() {
+        $("dots").innerHTML = questions
+          .map((q, i) => `<i class="${myAnswers[q.id] ? "on" : ""}" data-i="${i}"></i>`)
+          .join("");
+      }
+
+      function nextUnanswered() {
+        const i = questions.findIndex((q) => !myAnswers[q.id]);
+        return i === -1 ? null : i;
+      }
+
+      function renderQuestion() {
+        const i = nextUnanswered();
+        renderDots();
+        if (i === null) { renderWaiting(); return; }
+        index = i;
+        const q = questions[i];
+        show(`
+          <div class="card">
+            <p class="q">${esc(q.question_text)}</p>
+            <div class="choices">
+              ${q.choices.map((c) =>
+                `<button class="choice" data-code="${esc(c.code)}">${esc(c.label)}</button>`).join("")}
+            </div>
+          </div>`);
+        for (const el of document.querySelectorAll(".choice")) {
+          el.addEventListener("click", () => submit(q.id, el.dataset.code, el));
+        }
+      }
+
+      function renderWaiting() {
+        show(`
+          <div class="state">
+            <p><b>あなたの回答はおわりました。</b><br>相手が答えると、答え合わせが開きます。</p>
+          </div>
+          <button class="btn" id="reload">最新の状態を確認する</button>`);
+        $("reload").addEventListener("click", load);
+      }
+
+      async function submit(questionId, choiceCode, el) {
+        el.classList.add("picked");
+        try {
+          const res = await fetch(`/liff/pair/${encodeURIComponent(pairId)}/answer`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+            body: JSON.stringify({ question_id: questionId, choice_code: choiceCode }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.message || "送信に失敗しました。");
+          myAnswers[questionId] = choiceCode;
+          if (data.completed) {
+            location.href = `/liff/pair/${encodeURIComponent(pairId)}/result`;
+            return;
+          }
+          renderQuestion();
+        } catch (err) {
+          el.classList.remove("picked");
+          show(`<div class="state"><p>${esc(err.message)}</p></div>
+            <button class="btn" id="reload">もう一度ためす</button>`);
+          $("reload").addEventListener("click", renderQuestion);
+        }
+      }
+
+      async function load() {
+        try {
+          if (!idToken) {
+            idToken = await LiffAuth.initLiffOrWebAuth(initialData.liffId);
+            if (!idToken) return;
+          }
+          const res = await fetch(`/liff/pair/${encodeURIComponent(pairId)}/data`, {
+            headers: { Authorization: `Bearer ${idToken}` },
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.message || "読み込みに失敗しました。");
+          questions = data.questions || [];
+          myAnswers = data.myAnswers || {};
+          $("partner").textContent = data.partnerName ? `${data.partnerName}さん` : "おともだち";
+          if (data.completed) { location.href = `/liff/pair/${encodeURIComponent(pairId)}/result`; return; }
+          if (data.expired) {
+            show(`<div class="state"><p>このペアは期限切れになりました。<br>新しい招待からやり直せます。</p></div>`);
+            renderDots();
+            return;
+          }
+          if (questions.length === 0) {
+            show(`<div class="state"><p>ただいま準備中です。<br>少し時間をおいて開いてください。</p></div>`);
+            return;
+          }
+          renderQuestion();
+        } catch (err) {
+          show(`<div class="state"><p>${esc(err.message)}</p></div>
+            <button class="btn" id="reload">もう一度ためす</button>`);
+          $("reload").addEventListener("click", load);
+        }
+      }
+
+      void load();
+    })();
+    </script>
+  </body>
+</html>

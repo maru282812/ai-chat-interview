@@ -11,6 +11,7 @@
  */
 
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import ejs from "ejs";
@@ -26,9 +27,16 @@ import {
 } from "../lib/adminView";
 import { redirectWithFlash, readFlashFromQuery } from "../lib/adminFlash";
 import { getPortalOpsUrl, portalOpsHref, portalOpsNavLinks } from "../lib/portalOpsLinks";
-import { buildNavGroups, resolveScreenByPath } from "../lib/adminScreenCatalog";
+import {
+  buildNavGroups,
+  buildPinnedNavItems,
+  buildScreenDirectory,
+  resolveScreenByPath
+} from "../lib/adminScreenCatalog";
+import { assetUrl } from "../lib/compiledAssets";
 
 const VIEWS_ROOT = path.join(process.cwd(), "src", "views");
+const PUBLIC_ROOT = path.join(process.cwd(), "src", "public");
 
 // ---------------------------------------------------------------------------
 // 日時ヘルパ
@@ -142,6 +150,8 @@ function baseLocals(overrides: Record<string, unknown> = {}) {
     adminFlash: null,
     currentPath,
     navGroups: buildNavGroups(),
+    pinnedNavItems: buildPinnedNavItems(),
+    screenDirectory: buildScreenDirectory(),
     currentScreen: resolveScreenByPath(currentPath),
     adminUser: "admin",
     ...overrides
@@ -178,12 +188,155 @@ test("header: ナビが現在地を点灯させ、全ページへのリンクを
   ]) {
     assert.ok(html.includes(`href="${href}"`), `${href} へのリンクが無い`);
   }
-  // グループ見出し（カタログの group）と強調・バッジが現行どおり出ていること
+  // グループはドロップダウンの開閉ボタンになった。見出しの文字は残っていること。
   for (const group of ["調査", "店舗", "回答者", "報酬", "配信", "投稿・分析", "設定"]) {
-    assert.ok(html.includes(`>${group}</span>`), `グループ「${group}」の見出しが無い`);
+    assert.ok(
+      html.includes(`data-nav-toggle
+              >${group}<`) || html.includes(`>${group}<span class="nav-group-caret"`),
+      `グループ「${group}」の開閉ボタンが無い`
+    );
   }
   assert.ok(html.includes(" is-primary"), "配信オペレーションの強調が消えている");
   assert.ok(html.includes('id="nav-exchange-badge"'), "交換申請バッジが消えている");
+  // バッジ id はページ内で一意（重複すると getElementById が片方を黙って無視する）
+  assert.equal(html.split('id="nav-exchange-badge"').length - 1, 1, "バッジ id が重複している");
+});
+
+/**
+ * ⚠ 実ブラウザで踏んだ罠の回帰テスト。
+ * 著者スタイルの `display` は UA の `[hidden] { display: none }` に勝つため、
+ * `.nav-group-items { display: flex }` と無条件に書くと hidden 属性が効かず、
+ * サーバーが閉じて返してもメニューが全部開いたまま描画される
+ * （＝畳んだつもりが39項目そのまま出る）。CSS 側で必ず `:not([hidden])` を付ける。
+ */
+test("styles: ナビのドロップダウンは display 指定で hidden 属性を打ち消さない", () => {
+  const css = fs.readFileSync(path.join(PUBLIC_ROOT, "styles.css"), "utf8");
+  // `.nav-group-items` に対する display 宣言を持つセレクタを全部拾う
+  const blocks = css.match(/[^{}]*\.nav-group-items[^{}]*\{[^}]*\}/g) ?? [];
+  assert.ok(blocks.length > 0, ".nav-group-items の規則が見つからない");
+  for (const block of blocks) {
+    const [selector, body] = [block.slice(0, block.indexOf("{")), block.slice(block.indexOf("{"))];
+    if (!/display\s*:/.test(body)) continue;
+    assert.ok(
+      selector.includes(":not([hidden])") || selector.includes("[hidden]"),
+      `display を指定する規則が hidden を考慮していない: ${selector.trim()}`
+    );
+  }
+});
+
+/**
+ * ⚠ 本番で踏んだ事故の回帰テスト。
+ * /public/* は `Cache-Control: public, max-age=3600` で配信されるが HTML はされない。
+ * ビューが `/public/styles.css` を直書きしていると、デプロイ直後の1時間は
+ * 「新しい HTML ＋ ブラウザにキャッシュされた古い CSS」の組み合わせになり、
+ * 新しいマークアップが古い CSS で描かれてレイアウトが崩れる
+ * （ヘッダー改修時、畳んだはずのメニューが全部開いた状態で本番に出た）。
+ * URL にビルドごとの指紋を載せて、新ビルドが古いキャッシュに当たらないようにする。
+ */
+test("views: /public/* の参照は必ずビルド指紋つきURL（assetUrl）で書く", () => {
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".ejs")) {
+        const src = fs.readFileSync(full, "utf8");
+        // href="/public/x" / src="/public/x" の直書きを禁止する
+        for (const m of src.matchAll(/(?:href|src)="\/public\/[^"]*"/g)) {
+          offenders.push(`${path.relative(VIEWS_ROOT, full)}: ${m[0]}`);
+        }
+      }
+    }
+  };
+  walk(VIEWS_ROOT);
+  assert.deepEqual(offenders, [], "assetUrl() を使わず /public/ を直書きしている箇所がある");
+});
+
+test("assetUrl: 内容由来の指紋を付け、ファイルごとに異なる", () => {
+  const css = assetUrl("styles.css");
+  assert.ok(css.startsWith("/public/styles.css?v="), css);
+  assert.notEqual(assetUrl("styles.css"), assetUrl("hibi.css"));
+  // 同じ内容なら同じ URL（毎回変わるとキャッシュが一切効かなくなる）
+  assert.equal(assetUrl("styles.css"), css);
+});
+
+test("header: よく使う（ピン留め）が1段目に外出しされ、グループにも残っている", async () => {
+  const html = await render("partials/header.ejs", {
+    ...baseLocals({ currentPath: "/admin/respondents" }),
+    title: "回答者"
+  });
+
+  const pinnedBlock = html.slice(html.indexOf('class="nav-pinned"'), html.indexOf('class="nav-groups"'));
+  for (const href of [
+    "/admin/projects",
+    "/admin/daily-surveys",
+    "/admin/respondents",
+    "/admin/exchange-requests",
+    "/admin/delivery-operations",
+    "/admin/delivery-calendar"
+  ]) {
+    assert.ok(pinnedBlock.includes(`href="${href}"`), `ピン留めに ${href} が無い`);
+    // グループ側にも残す（同じ画面が複数箇所に出るのは意図どおり）。
+    // ピン留め・グループ・「すべての画面」パネルの3箇所に出る。
+    const groupsBlock = html.slice(html.indexOf('class="nav-groups"'), html.indexOf('id="screen-directory-overlay"'));
+    assert.ok(groupsBlock.includes(`href="${href}"`), `${href} がグループ側から消えている`);
+  }
+});
+
+test("header: すべての画面パネルは既定で閉じており、全画面と説明を持つ", async () => {
+  const html = await render("partials/header.ejs", {
+    ...baseLocals({ currentPath: "/admin/daily-surveys" }),
+    title: "デイリーアンケート"
+  });
+
+  // 既定は閉じている（開いたまま配信するとページを覆ってしまう）
+  const panelTag = html.slice(html.indexOf('id="screen-directory"'));
+  assert.ok(panelTag.slice(0, panelTag.indexOf(">")).includes("hidden"), "パネルが hidden で出ていない");
+  const overlayTag = html.slice(html.indexOf('id="screen-directory-overlay"'));
+  assert.ok(overlayTag.slice(0, overlayTag.indexOf(">")).includes("hidden"), "オーバーレイが hidden で出ていない");
+  const btnTag = html.slice(html.indexOf('id="screen-directory-open"'));
+  assert.ok(
+    btnTag.slice(0, btnTag.indexOf(">")).includes('aria-expanded="false"'),
+    "開くボタンが aria-expanded=false で出ていない"
+  );
+
+  // 台帳の全画面（親＋子）へのリンクと説明文が載っていること
+  const dir = buildScreenDirectory();
+  for (const group of dir) {
+    assert.ok(html.includes(`>${group.label}</h2>`), `グループ「${group.label}」が無い`);
+    for (const entry of group.entries) {
+      assert.ok(html.includes(`href="${entry.href}"`), `${entry.href} が無い`);
+      for (const child of entry.children) {
+        assert.ok(html.includes(`href="${child.href}"`), `${child.href} が無い`);
+      }
+    }
+  }
+  // 説明文はこのパネルの主役なので、必ず描画されていること
+  assert.ok(html.includes("directory-link-desc"), "説明文の要素が無い");
+  // 現在地はパネル内でも点灯する
+  assert.ok(html.includes('class="directory-link is-active"'), "パネル内の現在地点灯が無い");
+});
+
+test("header: グループのメニューは既定で閉じている（サーバー側で hidden を付ける）", async () => {
+  const html = await render("partials/header.ejs", {
+    ...baseLocals({ currentPath: "/admin/respondents" }),
+    title: "回答者"
+  });
+
+  // 外部リンク群「アンケでYOTTO」も同じループで描かれるので、DOM 上のグループ数で数える。
+  // （PORTAL_OPS_URL の有無でカタログのグループ数と1ずれる）
+  const domGroupCount = html.split('<div class="nav-group" data-nav-group>').length - 1;
+  assert.ok(domGroupCount >= buildNavGroups().length, "グループが描画されていない");
+  // 全グループが hidden で閉じており、開いているものが1つも無いこと
+  assert.equal(html.split("data-nav-menu hidden").length - 1, domGroupCount);
+  // aria-expanded は「すべての画面」パネルの開くボタンにも付くので、
+  // ナビの開閉ボタン（data-nav-toggle）に絞って数える。
+  // JS 内のセレクタ文字列 "[data-nav-toggle]" も含まれるため、マークアップ側だけを数える。
+  const navToggles = (html.match(/<button\b[^>]*\bdata-nav-toggle\b/g) ?? []).length;
+  assert.equal(navToggles, domGroupCount, "ナビの開閉ボタン数がグループ数と合わない");
+  assert.ok(!html.includes('aria-expanded="true"'), "既定で開いているものがある");
+  // 畳んでいても現在地のグループのボタンは点灯している
+  assert.ok(html.includes('class="nav-group-toggle is-active"'), "現在地グループの点灯が無い");
 });
 
 // ---------------------------------------------------------------------------

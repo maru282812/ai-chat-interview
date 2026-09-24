@@ -3,6 +3,8 @@
 //   - 適用済みは _app_migrations テーブルで管理（再実行で二重適用しない）
 //   - 初回実行時、BASELINE 以下の番号は「適用済み」として記録のみ（実行しない）
 //     （既存DBは 001〜066 を手動/統合スキーマで適用済みのため）
+//     ただし空のDB（テーブルが1つも無い＝新規プロジェクト）ではこのスキップをしない。
+//     スキップすると 001〜066 が未適用のまま「適用済み」と記録され、DBが壊れる。
 //   - 接続は .env の SUPABASE_ACCESS_TOKEN（Management API）＋ SUPABASE_URL のサブドメイン=ref
 //     DBパスワード不要。ダッシュボードSQLエディタと同じ /database/query を使う。
 //
@@ -64,9 +66,18 @@ async function main() {
   );
   const existing = await runSql("select filename from _app_migrations");
   const applied = new Set((existing ?? []).map((row) => row.filename));
-  const firstRun = applied.size === 0;
-  if (firstRun) {
-    console.log("(初回実行: ベースライン記録を行います)");
+  // 空DB（新規プロジェクト）判定: public にテーブルが _app_migrations しか無い状態。
+  const userTables = await runSql(
+    "select count(*)::int as c from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE' and table_name <> '_app_migrations'"
+  );
+  const isEmptyDatabase = Number(userTables?.[0]?.c ?? 0) === 0;
+  const firstRun = applied.size === 0 && !isEmptyDatabase;
+  if (applied.size === 0) {
+    console.log(
+      isEmptyDatabase
+        ? "(空のDB: ベースラインをスキップせず 001 から全て適用します)"
+        : "(初回実行: ベースライン記録を行います)"
+    );
   }
 
   for (const file of files) {

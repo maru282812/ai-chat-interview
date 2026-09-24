@@ -89,7 +89,7 @@ export function toPresentationInput(question: DailySurveyQuestion): {
   const config: QuestionConfig = {
     options: choices.map((c) => ({ value: c.value, label: c.label })),
   };
-  // scale は「順序尺度」として扱う（casual → face_scale / standard → big_slider）。
+  // scale は「順序尺度」として扱う（casual / standard → big_slider、formal → radio_list）。
   if (question.question_type === "scale") {
     config.presentation = { scale: true };
   }

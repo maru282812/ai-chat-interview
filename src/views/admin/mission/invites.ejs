@@ -1,0 +1,69 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>招待実績</h2>
+</div>
+
+<%
+const statusLabel = {
+  issued: "未使用",
+  registered: "登録ずみ",
+  answered: "ペア完了",
+  expired: "期限切れ",
+  revoked: "取消ずみ",
+};
+const statusColor = {
+  issued: "#6B7A75",
+  registered: "#1E7A5A",
+  answered: "#0E6B5A",
+  expired: "#9FB0AA",
+  revoked: "#C0392B",
+};
+const fmt = (v) => (v ? new Date(v).toLocaleString("ja-JP") : "—");
+%>
+
+<div class="card">
+  <p style="font-size:12.5px;color:#6B7A75;margin-bottom:12px">
+    「要確認」＝登録済み招待が多い招待者（招待偏重は自作自演の典型）。
+    取消は <code>manual_adjustment</code> での減算とあわせて行うこと（付与済みポイントは自動では戻らない）。
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>招待者</th><th>被招待者</th><th>状態</th>
+        <th>登録</th><th>ペア完了</th><th>端末</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <% for (const inv of invites) { %>
+        <tr<% if (inv.flagged) { %> style="background:#FDF3F3"<% } %>>
+          <td style="font-family:monospace;font-size:11px"><%= inv.inviter_id.slice(0, 12) %>…
+            <% if (inv.flagged) { %><span style="color:#C0392B;font-weight:700;font-size:11px">要確認</span><% } %>
+          </td>
+          <td style="font-family:monospace;font-size:11px">
+            <%= inv.invitee_id ? inv.invitee_id.slice(0, 12) + "…" : "—" %>
+          </td>
+          <td><span style="color:<%= statusColor[inv.status] || '#333' %>;font-weight:700">
+            <%= statusLabel[inv.status] || inv.status %></span></td>
+          <td style="font-size:12px"><%= fmt(inv.registered_at) %></td>
+          <td style="font-size:12px"><%= fmt(inv.answered_at) %></td>
+          <td style="font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            <%= inv.signup_ua || "—" %></td>
+          <td>
+            <% if (inv.status !== "revoked") { %>
+              <form method="POST" action="/admin/mission/invites/<%= inv.id %>/revoke"
+                    onsubmit="return confirm('この招待を取り消しますか？（付与済みポイントは自動では戻りません）')">
+                <button class="btn btn-secondary" style="font-size:11px;padding:.2rem .5rem">取消</button>
+              </form>
+            <% } %>
+          </td>
+        </tr>
+      <% } %>
+      <% if (invites.length === 0) { %>
+        <tr><td colspan="7" style="text-align:center;color:#999;padding:2rem">招待はまだありません</td></tr>
+      <% } %>
+    </tbody>
+  </table>
+</div>
+
+<%- include("../../partials/footer") %>

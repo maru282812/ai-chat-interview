@@ -1,4 +1,10 @@
 import { HttpError } from "../lib/http";
+import { countByOption } from "../lib/answerOptionMatch";
+import {
+  type GtQuestionTable,
+  SMALL_N_THRESHOLD,
+  buildGtQuestionTableByAnswerBreaks
+} from "../lib/gtTable";
 import { logger } from "../lib/logger";
 import {
   AGE_OPTIONS,
@@ -13,19 +19,26 @@ import {
   summarizeDemographics
 } from "../lib/partnerDemographics";
 import {
+  type PartnerCarryForward,
   type PartnerQuestionTextImage,
   type PartnerQuestionType,
   type PartnerQuestionView,
+  buildCarryForwardTags,
   buildPartnerQuestionConfig,
   toInternalQuestionType,
+  toPartnerCarryForward,
+  toPartnerOptions,
   toPartnerQuestionTextImage,
   toPartnerQuestionType
 } from "../lib/partnerQuestions";
 import { computeSurveyVersion } from "../lib/partnerSurveyVersion";
+import { isCoveredByConsent, selectShareableQuestions } from "../lib/questionShare";
 import { answerRepository } from "../repositories/answerRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { questionRepository } from "../repositories/questionRepository";
+import { respondentRepository } from "../repositories/respondentRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
+import { userConsentRecordRepository } from "../repositories/userConsentRecordRepository";
 import type { Project, Question, QuestionOption } from "../types/domain";
 import { buildStoreEntryLiffUrl } from "./liffService";
 
@@ -50,11 +63,23 @@ import { buildStoreEntryLiffUrl } from "./liffService";
 export interface PartnerQuestionInput {
   question_text: string;
   question_type: PartnerQuestionType;
+  /** 選択肢。マトリクス系ではここが「行」になる。 */
   answer_options: QuestionOption[] | null;
+  /** マトリクス系の「列」。matrix_* / matrix_sd のときだけ使う。 */
+  matrix_cols?: QuestionOption[] | null;
+  /** numeric: 最小値・最大値・単位。 */
+  min?: number | null;
+  max?: number | null;
+  unit?: string | null;
   sort_order: number;
   is_required?: boolean;
   /** 設問文に添える画像（任意）。省略・null なら画像なしで保存される。 */
   question_text_image?: PartnerQuestionTextImage | null;
+  /**
+   * 選択肢の持ち越し（任意）。参照は sort_order。
+   * 参照先の存在・種別・前後関係・value 共有は partnerRoutes の zod が検証済み。
+   */
+  carry_forward?: PartnerCarryForward | null;
 }
 
 export interface CreateSurveyInput {
@@ -117,12 +142,56 @@ export interface PartnerStatsView {
   demographics: DemographicSummary;
 }
 
+/** 店舗へ開示する設問1件ぶんの結果。 */
+export interface PartnerResultQuestionView {
+  question_code: string;
+  question_text: string;
+  /** 回答画面に出した告知文。店舗側にも「何を約束して集めたか」を見せる。 */
+  notice: string;
+  /** aggregate=選択肢別の件数のみ / verbatim=原文一覧。 */
+  mode: "aggregate" | "verbatim";
+  /** mode=aggregate のとき。選択肢ごとの件数（0埋め）。 */
+  choices: Array<{ value: string; label: string; count: number }> | null;
+  /** mode=verbatim のとき。原文の一覧（新しい順）。 */
+  entries: Array<{ answered_at: string; text: string }> | null;
+  /** この設問に回答した件数（開示対象に絞ったあとの数）。 */
+  answered_count: number;
+}
+
+/** GT集計表のレスポンス。⚠ 集計と人数のみ。識別子は含まない。 */
+export interface PartnerGtView {
+  survey_id: string;
+  status: Project["status"];
+  /** 完了セッション数。 */
+  total_count: number;
+  /** この値未満の n の行は % をマスクしている（UIに注記を出すため返す）。 */
+  small_n_threshold: number;
+  /** 属性ブレークの軸一覧（行見出しの凡例用）。 */
+  breaks: Array<{ code: string; label: string }>;
+  questions: GtQuestionTable[];
+}
+
+export interface PartnerResultsView {
+  survey_id: string;
+  status: Project["status"];
+  /** 完了セッション数（stats と同じ定義）。 */
+  total_count: number;
+  questions: PartnerResultQuestionView[];
+}
+
 // ------------------------------------------------------------------
 // 内部ヘルパー
 // ------------------------------------------------------------------
 
 /** パートナー設問の sort_order の開始値。1,2 は性年代設問が占有する。 */
 const PARTNER_QUESTION_SORT_OFFSET = 10;
+
+/**
+ * 店舗開示の根拠となる書類（回答者向け利用規約）の document_id。
+ * 第9条3項を追加した v2.0 は migration 102 で作成した。
+ * ⚠ この書類への同意日時より前の回答は開示しない（利用目的の追加は遡及しないため）。
+ */
+const STORE_DISCLOSURE_DOCUMENT_ID = "d0000000-0000-0000-0000-000000000001";
 
 /** パートナー設問の question_code。sort_order 由来ではなく通し番号で安定させる。 */
 function partnerQuestionCode(index: number): string {
@@ -137,6 +206,20 @@ async function loadOwnedProject(surveyId: string, partnerStoreId: string): Promi
   const project = await projectRepository.getPartnerProject(surveyId, partnerStoreId);
   if (!project) {
     throw new HttpError(404, "survey not found");
+  }
+  return project;
+}
+
+/**
+ * 書き込み系（PUT / publish / close）の入口で呼ぶ。
+ * 閲覧専用で紐づいた案件（migration 103・partner_readonly=true）は、運営が ACI 管理画面で
+ * 回している稼働中の案件なので、店舗側から設問・公開状態・締切を変えさせない。
+ * 読み取り（GET / stats / results）は通す。
+ */
+async function loadOwnedWritableProject(surveyId: string, partnerStoreId: string): Promise<Project> {
+  const project = await loadOwnedProject(surveyId, partnerStoreId);
+  if (project.partner_readonly) {
+    throw new HttpError(409, "read-only survey");
   }
   return project;
 }
@@ -229,6 +312,15 @@ async function replacePartnerQuestions(
   // 入力の sort_order 昇順で採番し直す（欠番・重複を含む入力でも決定的な並びにする）。
   const ordered = [...questions].sort((left, right) => left.sort_order - right.sort_order);
 
+  // carry_forward は sort_order で参照される。採番は入力順で決まるので、
+  // 先に「sort_order → 採番後の question_code」の対応表を作ってから本体を書く。
+  const questionCodeBySortOrder = new Map<number, string>();
+  ordered.forEach((input, index) => {
+    if (!questionCodeBySortOrder.has(input.sort_order)) {
+      questionCodeBySortOrder.set(input.sort_order, partnerQuestionCode(index));
+    }
+  });
+
   for (const [index, input] of ordered.entries()) {
     const questionCode = partnerQuestionCode(index);
     const internalType = toInternalQuestionType(input.question_type);
@@ -237,8 +329,19 @@ async function replacePartnerQuestions(
     const config = buildPartnerQuestionConfig(
       input.question_type,
       input.answer_options,
-      input.question_text_image ?? null
+      input.question_text_image ?? null,
+      {
+        matrix_cols: input.matrix_cols ?? null,
+        min: input.min ?? null,
+        max: input.max ?? null,
+        unit: input.unit ?? null
+      }
     );
+    // 参照先が解決できなければ持ち越し無しとして保存する（壊れた参照は書かない）。
+    // zod が弾いているので通常は必ず解決するが、サービスを直接呼ぶ経路への防御。
+    const carrySourceCode = input.carry_forward
+      ? questionCodeBySortOrder.get(input.carry_forward.from_sort_order)
+      : undefined;
     const payload = {
       question_text: input.question_text,
       question_role: "main" as const,
@@ -246,6 +349,10 @@ async function replacePartnerQuestions(
       is_required: input.is_required ?? true,
       sort_order: PARTNER_QUESTION_SORT_OFFSET + index,
       question_config: config,
+      // 全置換なので、送られてこなければ持ち越し設定も消える（画像と同じ扱い）。
+      display_tags_parsed: carrySourceCode
+        ? buildCarryForwardTags(input.carry_forward, carrySourceCode)
+        : null,
       ai_probe_enabled: false,
       is_system: false,
       is_hidden: false
@@ -279,6 +386,11 @@ async function replacePartnerQuestions(
 /** パートナーに見せる設問一覧（性年代設問を先頭・固定として含む）。 */
 export async function loadPartnerQuestionViews(projectId: string): Promise<PartnerQuestionView[]> {
   const questions = await questionRepository.listByProject(projectId, { includeHidden: false });
+  // carry_forward は sort_order で返す（リクエストと同じ表現）。
+  // 内部は question_code 参照なので、ここで逆引き表を作る。
+  const sortOrderByQuestionCode = new Map<string, number>(
+    questions.map((question) => [question.question_code.toLowerCase(), question.sort_order])
+  );
   const views: PartnerQuestionView[] = [];
   for (const question of questions) {
     // free_comment 等のシステム設問（is_hidden=true）は listByProject で既に除外される。
@@ -291,11 +403,17 @@ export async function loadPartnerQuestionViews(projectId: string): Promise<Partn
       question_code: question.question_code,
       question_text: question.question_text,
       question_type: partnerType,
-      answer_options: question.question_config?.options ?? null,
+      answer_options: toPartnerOptions(question.question_config?.options),
+      // マトリクス系は「行 = options / 列 = matrix_cols」。列は別フィールドで返す。
+      matrix_cols: toPartnerOptions(question.question_config?.matrix_cols),
+      min: question.question_config?.min ?? null,
+      max: question.question_config?.max ?? null,
+      unit: question.question_config?.unit ?? null,
       sort_order: question.sort_order,
       is_required: question.is_required,
       is_fixed: isDemographicQuestion(question),
-      question_text_image: toPartnerQuestionTextImage(question.question_config?.question_text_image)
+      question_text_image: toPartnerQuestionTextImage(question.question_config?.question_text_image),
+      carry_forward: toPartnerCarryForward(question.display_tags_parsed, sortOrderByQuestionCode)
     });
   }
   return views.sort((left, right) => left.sort_order - right.sort_order);
@@ -389,7 +507,7 @@ export const partnerSurveyService = {
    * 性年代設問はここでも必ず再構築するため、パートナーからは消せない/変更できない。
    */
   async updateSurvey(input: UpdateSurveyInput): Promise<PartnerSurveyView> {
-    const project = await loadOwnedProject(input.surveyId, input.partnerStoreId);
+    const project = await loadOwnedWritableProject(input.surveyId, input.partnerStoreId);
     if (project.status === "closed" || project.status === "archived") {
       throw new HttpError(409, "closed survey cannot be updated");
     }
@@ -434,7 +552,7 @@ export const partnerSurveyService = {
     partnerStoreId: string,
     surveyId: string
   ): Promise<{ survey_id: string; status: Project["status"]; answer_url: string; entry_code: string }> {
-    const project = await loadOwnedProject(surveyId, partnerStoreId);
+    const project = await loadOwnedWritableProject(surveyId, partnerStoreId);
     if (project.status === "closed" || project.status === "archived") {
       throw new HttpError(409, "closed survey cannot be published");
     }
@@ -515,6 +633,156 @@ export const partnerSurveyService = {
   },
 
   /**
+   * 「店舗等への伝達を目的として設けた設問」の回答を、当該店舗へ開示する。
+   *
+   * 利用規約 第9条3項（migration 102）に基づく開示。条文の限定をここで全て強制する:
+   *
+   *   1. ホワイトリスト方式
+   *      question_config.meta.share_with_store が有効な設問「だけ」を返す
+   *      （lib/questionShare.ts）。既定は共有しないので、新しく足した設問が
+   *      黙って流れ出ることはない。
+   *   2. 事前明示（notice）が無い設問は、フラグが立っていても返さない。
+   *   3. 所有者スコープ
+   *      loadOwnedProject で partner_store_id 一致を検証する。他店舗は 404。
+   *   4. 直接識別子を返さない
+   *      ⚠ respondents へは「同意日時の突き合わせ」のためだけに読みに行き、
+   *        line_user_id / display_name / respondent_id はレスポンスに一切載せない。
+   *        answers → sessions で止め、session_id すら返さない（申し送りは
+   *        個票の並びとして見せる必要が無く、回答者の名寄せに使われ得るため）。
+   *   5. 遡及しない
+   *      利用目的の追加は遡及しないため、規約へ同意した日時より前の回答は返さない
+   *      （isCoveredByConsent）。同意記録が無い回答者ぶんは落ちる。
+   *
+   * total_count の定義は getStats と同じ（完了セッション数）。
+   */
+  async getResults(partnerStoreId: string, surveyId: string): Promise<PartnerResultsView> {
+    const project = await loadOwnedProject(surveyId, partnerStoreId);
+
+    const [sessions, questions] = await Promise.all([
+      sessionRepository.listByProject(project.id),
+      questionRepository.listByProject(project.id, { includeHidden: true })
+    ]);
+    const completedSessions = sessions.filter((session) => session.status === "completed");
+
+    // 共有対象の設問だけを選ぶ（ホワイトリスト）。0件なら以降の回答読み出しごと省く。
+    const shareable = selectShareableQuestions(questions, project.status);
+    if (shareable.length === 0) {
+      return {
+        survey_id: project.id,
+        status: project.status,
+        total_count: completedSessions.length,
+        questions: []
+      };
+    }
+
+    // 同意の突き合わせ。respondent_id → line_user_id → 同意日時。
+    // ここで得た識別子はレスポンスに載せない（突き合わせにのみ使う）。
+    const respondents = await respondentRepository.listByProject(project.id);
+    const lineUserIdByRespondent = new Map(respondents.map((r) => [r.id, r.line_user_id]));
+    const consentRecords = await userConsentRecordRepository.listActiveByLineUserIds(
+      respondents.map((r) => r.line_user_id)
+    );
+
+    // 対象書類（回答者向け利用規約）について、最も古い同意日時を採用する。
+    // 同一書類の版を跨いで再同意していても、開示根拠が生じた最初の時点を基準にする。
+    const consentedAtByLineUser = new Map<string, string>();
+    for (const record of consentRecords) {
+      if (record.document_id !== STORE_DISCLOSURE_DOCUMENT_ID) {
+        continue;
+      }
+      const current = consentedAtByLineUser.get(record.line_user_id);
+      if (!current || record.consented_at < current) {
+        consentedAtByLineUser.set(record.line_user_id, record.consented_at);
+      }
+    }
+
+    const sessionById = new Map(completedSessions.map((s) => [s.id, s]));
+    const answers = await answerRepository.listBySessions(completedSessions.map((s) => s.id));
+
+    const views: PartnerResultQuestionView[] = [];
+    for (const { question, mode, notice } of shareable) {
+      const target = answers.filter(
+        (answer) =>
+          answer.question_id === question.id &&
+          answer.answer_role === "primary" &&
+          sessionById.has(answer.session_id)
+      );
+
+      // 同意より後の回答だけに絞る（遡及しない）。
+      const covered = target.filter((answer) => {
+        const session = sessionById.get(answer.session_id);
+        if (!session) {
+          return false;
+        }
+        const lineUserId = lineUserIdByRespondent.get(session.respondent_id);
+        if (!lineUserId) {
+          return false;
+        }
+        return isCoveredByConsent(consentedAtByLineUser.get(lineUserId), answer.created_at);
+      });
+
+      if (mode === "verbatim") {
+        const entries = covered
+          .map((answer) => ({
+            answered_at: answer.created_at,
+            // 自由記述は free_text_answer に入る場合と answer_text に入る場合がある。
+            // 片方だけ見ると取りこぼす（migration 019 で後から足した列のため）。
+            text: (answer.free_text_answer ?? answer.answer_text ?? "").trim()
+          }))
+          .filter((entry) => entry.text.length > 0)
+          .sort((a, b) => b.answered_at.localeCompare(a.answered_at));
+
+        views.push({
+          question_code: question.question_code,
+          question_text: question.question_text,
+          notice,
+          mode,
+          choices: null,
+          entries,
+          answered_count: entries.length
+        });
+        continue;
+      }
+
+      // aggregate: 選択肢ごとの件数。定義済みの選択肢は 0 埋めで必ず返す。
+      //
+      // ⚠ 突合は lib/answerOptionMatch.ts に一本化している。ここに独自実装を戻さないこと。
+      //   GT集計表（lib/gtTable.ts）とセルからの回答者抽出（cellInterviewService）も同じ関数を使う。
+      //   別実装にすると「表のセルは492人なのに抽出は480人」というズレが出て、
+      //   顧客に見せた人数で配信できなくなる。
+      const options = (question.question_config?.options ?? []) as QuestionOption[];
+      const counts = countByOption(covered, options);
+
+      views.push({
+        question_code: question.question_code,
+        question_text: question.question_text,
+        notice,
+        mode,
+        choices: options.map((option) => ({
+          value: option.value,
+          label: option.label,
+          count: counts.get(option.value) ?? 0
+        })),
+        entries: null,
+        answered_count: covered.length
+      });
+    }
+
+    logger.info("partnerSurvey.results", {
+      surveyId: project.id,
+      storeId: partnerStoreId,
+      questionCount: views.length
+    });
+
+    return {
+      survey_id: project.id,
+      status: project.status,
+      total_count: completedSessions.length,
+      questions: views
+    };
+  },
+
+  /**
    * 締め切る。
    *
    * データセット生成のキックは行わない。ai-chat-interview の統計エクスポート
@@ -526,7 +794,7 @@ export const partnerSurveyService = {
     partnerStoreId: string,
     surveyId: string
   ): Promise<{ survey_id: string; status: Project["status"]; closed_at: string; total_count: number }> {
-    const project = await loadOwnedProject(surveyId, partnerStoreId);
+    const project = await loadOwnedWritableProject(surveyId, partnerStoreId);
     const closed =
       project.status === "closed"
         ? project
@@ -546,6 +814,158 @@ export const partnerSurveyService = {
       status: closed.status,
       closed_at: closed.updated_at,
       total_count: totalCount
+    };
+  },
+
+  /**
+   * 所有者スコープの検証だけを行う（存在しない・他店舗のものは 404）。
+   * セル条件を受け取るエンドポイントが、抽出に入る前に弾くために使う。
+   */
+  async assertOwnedSurvey(partnerStoreId: string, surveyId: string): Promise<void> {
+    await loadOwnedProject(surveyId, partnerStoreId);
+  },
+
+  /**
+   * GT集計表（設問 × 属性のクロス集計）。
+   *
+   * ⚠ 返すのは集計だけ。識別子（line_user_id / respondent_id / session_id）は返さない。
+   *   開示対象の判定は getResults と同じ2段構え:
+   *     1. selectShareableQuestions のホワイトリスト（既定は非開示）
+   *     2. isCoveredByConsent（同意日時より後の回答だけ）
+   *   ⚠ 新設問が黙って顧客に流れないよう、必ずホワイトリストを通す。
+   *
+   * 属性ブレークは性別・年代の**設問**（__partner_gender__ / __partner_age__）から作る。
+   * パートナー調査は属性をプロフィールではなく設問で聞くため。
+   */
+  async getGtTable(partnerStoreId: string, surveyId: string): Promise<PartnerGtView> {
+    const project = await loadOwnedProject(surveyId, partnerStoreId);
+
+    const [sessions, questions] = await Promise.all([
+      sessionRepository.listByProject(project.id),
+      questionRepository.listByProject(project.id, { includeHidden: true })
+    ]);
+    const completedSessions = sessions.filter((session) => session.status === "completed");
+
+    const shareable = selectShareableQuestions(questions, project.status);
+    if (shareable.length === 0 || completedSessions.length === 0) {
+      return {
+        survey_id: project.id,
+        status: project.status,
+        total_count: completedSessions.length,
+        small_n_threshold: SMALL_N_THRESHOLD,
+        breaks: [],
+        questions: []
+      };
+    }
+
+    // 同意の突き合わせ。ここで得た識別子はレスポンスに載せない。
+    const respondents = await respondentRepository.listByProject(project.id);
+    const lineUserIdByRespondent = new Map(respondents.map((r) => [r.id, r.line_user_id]));
+    const consentRecords = await userConsentRecordRepository.listActiveByLineUserIds(
+      respondents.map((r) => r.line_user_id)
+    );
+    const consentedAtByLineUser = new Map<string, string>();
+    for (const record of consentRecords) {
+      if (record.document_id !== STORE_DISCLOSURE_DOCUMENT_ID) {
+        continue;
+      }
+      const current = consentedAtByLineUser.get(record.line_user_id);
+      if (!current || record.consented_at < current) {
+        consentedAtByLineUser.set(record.line_user_id, record.consented_at);
+      }
+    }
+
+    const sessionById = new Map(completedSessions.map((s) => [s.id, s]));
+    const answers = await answerRepository.listBySessions(completedSessions.map((s) => s.id));
+    const primaryAnswers = answers.filter((answer) => answer.answer_role === "primary");
+
+    /** 同意でカバーされた回答だけを残す（遡及しない）。 */
+    const isCovered = (answer: (typeof primaryAnswers)[number]): boolean => {
+      const session = sessionById.get(answer.session_id);
+      if (!session) {
+        return false;
+      }
+      const lineUserId = lineUserIdByRespondent.get(session.respondent_id);
+      if (!lineUserId) {
+        return false;
+      }
+      return isCoveredByConsent(consentedAtByLineUser.get(lineUserId), answer.created_at);
+    };
+
+    // 属性ブレークは性年代の設問の回答から作る。
+    const genderQuestion = questions.find((q) => q.question_code === DEMOGRAPHIC_GENDER_CODE);
+    const ageQuestion = questions.find((q) => q.question_code === DEMOGRAPHIC_AGE_CODE);
+
+    const breakValuesBySession = new Map<string, Record<string, string | null>>();
+    for (const session of completedSessions) {
+      breakValuesBySession.set(session.id, {
+        [DEMOGRAPHIC_GENDER_CODE]: null,
+        [DEMOGRAPHIC_AGE_CODE]: null
+      });
+    }
+    for (const answer of primaryAnswers) {
+      const entry = breakValuesBySession.get(answer.session_id);
+      if (!entry) {
+        continue;
+      }
+      if (genderQuestion && answer.question_id === genderQuestion.id) {
+        entry[DEMOGRAPHIC_GENDER_CODE] = demographicAnswerToken(answer) || null;
+      } else if (ageQuestion && answer.question_id === ageQuestion.id) {
+        entry[DEMOGRAPHIC_AGE_CODE] = demographicAnswerToken(answer) || null;
+      }
+    }
+
+    const breaks: Array<{
+      code: string;
+      label: string;
+      options: readonly { value: string; label: string }[];
+    }> = [];
+    if (genderQuestion) {
+      breaks.push({ code: DEMOGRAPHIC_GENDER_CODE, label: "性別", options: GENDER_OPTIONS });
+    }
+    if (ageQuestion) {
+      breaks.push({ code: DEMOGRAPHIC_AGE_CODE, label: "年代", options: AGE_OPTIONS });
+    }
+
+    const tables: GtQuestionTable[] = [];
+    for (const { question, mode } of shareable) {
+      // verbatim（原文開示）の設問は集計表にしない。GT表は選択式のための表現。
+      if (mode === "verbatim") {
+        continue;
+      }
+      const covered = primaryAnswers.filter(
+        (answer) => answer.question_id === question.id && isCovered(answer)
+      );
+      if (covered.length === 0) {
+        continue;
+      }
+
+      const bySession = new Map(covered.map((answer) => [answer.session_id, answer]));
+      tables.push(
+        buildGtQuestionTableByAnswerBreaks(
+          question,
+          completedSessions.map((session) => ({
+            answer: bySession.get(session.id) ?? null,
+            breakValues: breakValuesBySession.get(session.id) ?? {}
+          })),
+          breaks
+        )
+      );
+    }
+
+    logger.info("partnerSurvey.gt", {
+      surveyId: project.id,
+      storeId: partnerStoreId,
+      questionCount: tables.length
+    });
+
+    return {
+      survey_id: project.id,
+      status: project.status,
+      total_count: completedSessions.length,
+      small_n_threshold: SMALL_N_THRESHOLD,
+      breaks: breaks.map((item) => ({ code: item.code, label: item.label })),
+      questions: tables
     };
   }
 };

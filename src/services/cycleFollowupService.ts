@@ -35,6 +35,15 @@ export interface CycleFollowupResult {
 /** 1回の実行で処理する上限。毎分実行なので小さめに抑え、関数のタイムアウトを避ける。 */
 const BATCH_LIMIT = 50;
 
+/**
+ * B の予約がこの時間より古ければ送らない（時間切れ）。
+ *
+ * 停止や不具合で溜まった予約が復旧時に一斉送信されると、受け取る側には
+ * 何日も前の施術について「本日はご来店ありがとうございました」が届く。
+ * 未送信のまま放置される方がまだ実害が小さいのでこちらを選ぶ。
+ */
+const B_STALE_AFTER_HOURS = 24;
+
 export const cycleFollowupService = {
   /**
    * 送付期限を過ぎたサイクルに C を送る。cron から毎分呼ばれる。
@@ -147,7 +156,12 @@ export const cycleFollowupService = {
   async runFollowupBDispatch(now: Date = new Date()): Promise<CycleFollowupResult> {
     const result: CycleFollowupResult = { checked: 0, sent: 0, failed: 0, skipped: 0 };
 
-    const due = await surveyCycleRepository.listFollowupBDue(now.toISOString(), BATCH_LIMIT);
+    const staleAfter = new Date(now.getTime() - B_STALE_AFTER_HOURS * 3600_000);
+    const due = await surveyCycleRepository.listFollowupBDue(
+      now.toISOString(),
+      BATCH_LIMIT,
+      staleAfter.toISOString()
+    );
     result.checked = due.length;
     if (due.length === 0) return result;
 

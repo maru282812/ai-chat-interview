@@ -1,0 +1,103 @@
+/* ===============================================================
+   ミッションページのテーマ 15種
+   -------------------------------------------------------------
+   テーマは「コード」ではなく「データ」。ページは1つで、
+   ルートに data-theme="<key>" を付けるだけで世界が変わる。
+   → 15テーマ作っても保守するページは1枚のまま。
+
+   各テーマが持つのは6値だけ:
+     --t-bg / --t-bg2 / --t-ink / --t-sub / --t-accent / --t-edge
+   CTA上の文字色 --t-on-accent は明度から決め打ちで持たせる
+   （コントラストを実測して選定済み）。
+   =============================================================== */
+
+/* 定番（フォレスト） — 通年・既定 */
+[data-theme="forest"]{
+  --t-bg:#0E6B5A; --t-bg2:#0A5245;
+  --t-ink:#FFFFFF; --t-sub:#BFE0D6;
+  --t-accent:#FFD836; --t-edge:#C79A00; --t-on-accent:#2B1A00;
+}
+/* さくら — 3-4月・新生活 */
+[data-theme="sakura"]{
+  --t-bg:#8E3B5A; --t-bg2:#6E2A44;
+  --t-ink:#FFF4F8; --t-sub:#F3C3D6;
+  --t-accent:#FFD9E4; --t-edge:#C98BA4; --t-on-accent:#2B1A00;
+}
+/* 新緑 — 5-6月 */
+[data-theme="freshgreen"]{
+  --t-bg:#2A6B36; --t-bg2:#1E5228;
+  --t-ink:#F4FBF2; --t-sub:#CDECCF;
+  --t-accent:#FFE86B; --t-edge:#C0A72E; --t-on-accent:#2B1A00;
+}
+/* つゆ — 6月・梅雨 */
+[data-theme="tsuyu"]{
+  --t-bg:#34527A; --t-bg2:#243E5C;
+  --t-ink:#F2F7FC; --t-sub:#C6D8EC;
+  --t-accent:#8FE3D8; --t-edge:#3E958A; --t-on-accent:#2B1A00;
+}
+/* なつ — 7-8月 */
+[data-theme="summer"]{
+  --t-bg:#0E5E8A; --t-bg2:#0A4668;
+  --t-ink:#F0FAFF; --t-sub:#B4DCEF;
+  --t-accent:#FFD836; --t-edge:#C79A00; --t-on-accent:#2B1A00;
+}
+/* なつまつり — 8月・お祭り */
+[data-theme="festival"]{
+  --t-bg:#5B2140; --t-bg2:#40162D;
+  --t-ink:#FFF2E8; --t-sub:#E8B49C;
+  --t-accent:#FF8A3D; --t-edge:#C25A1C; --t-on-accent:#2B1A00;
+}
+/* あき — 9-10月 */
+[data-theme="autumn"]{
+  --t-bg:#7A4318; --t-bg2:#5A3010;
+  --t-ink:#FFF6EC; --t-sub:#E2BE96;
+  --t-accent:#FFC24D; --t-edge:#C08A1F; --t-on-accent:#2B1A00;
+}
+/* みのり — 10-11月・収穫 */
+[data-theme="harvest"]{
+  --t-bg:#5E4A1C; --t-bg2:#463612;
+  --t-ink:#FDF7E6; --t-sub:#DFCE9C;
+  --t-accent:#F0925E; --t-edge:#B05A28; --t-on-accent:#2B1A00;
+}
+/* ふゆ — 12-1月 */
+[data-theme="winter"]{
+  --t-bg:#2A3F6B; --t-bg2:#1C2C4E;
+  --t-ink:#F3F7FF; --t-sub:#B4C4E2;
+  --t-accent:#9FE0FF; --t-edge:#3E7FA0; --t-on-accent:#2B1A00;
+}
+/* おしょうがつ — 1月 */
+[data-theme="newyear"]{
+  --t-bg:#8C1F2A; --t-bg2:#6A141D;
+  --t-ink:#FFF4F0; --t-sub:#E8B4B0;
+  --t-accent:#F2D06B; --t-edge:#B0912E; --t-on-accent:#2B1A00;
+}
+/* よる — 特別・ボス部屋 */
+[data-theme="night"]{
+  --t-bg:#1B1030; --t-bg2:#120A22;
+  --t-ink:#EFE8FA; --t-sub:#9C8FBC;
+  --t-accent:#FFD836; --t-edge:#C79A00; --t-on-accent:#2B1A00;
+}
+/* うみ — 夏の海・旅行 */
+[data-theme="ocean"]{
+  --t-bg:#0A5E6B; --t-bg2:#07454F;
+  --t-ink:#EFFCFD; --t-sub:#A2D6DC;
+  --t-accent:#FFCF5C; --t-edge:#C29524; --t-on-accent:#2B1A00;
+}
+/* キャンディ — 軽い企画・若年層 */
+[data-theme="candy"]{
+  --t-bg:#63348A; --t-bg2:#472565;
+  --t-ink:#FBF2FF; --t-sub:#D8BFEA;
+  --t-accent:#FF9CC2; --t-edge:#C25E85; --t-on-accent:#2B1A00;
+}
+/* モノトーン — 真面目な調査 */
+[data-theme="mono"]{
+  --t-bg:#2E3330; --t-bg2:#1E2220;
+  --t-ink:#F5F7F6; --t-sub:#B4BEB9;
+  --t-accent:#E8E2D2; --t-edge:#A79E88; --t-on-accent:#2B1A00;
+}
+/* おうえん — キャンペーン全般 */
+[data-theme="cheer"]{
+  --t-bg:#9E3225; --t-bg2:#7A241A;
+  --t-ink:#FFF3F0; --t-sub:#F2C8C1;
+  --t-accent:#FFD836; --t-edge:#C79A00; --t-on-accent:#2B1A00;
+}

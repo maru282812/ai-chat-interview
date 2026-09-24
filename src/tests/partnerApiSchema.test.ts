@@ -260,3 +260,258 @@ test("base_version が空文字なら 400", () => {
   const parsed = updateSurveySchema.safeParse({ title: "T", base_version: "" });
   assert.equal(parsed.success, false);
 });
+
+// ---------------------------------------------------------------------------
+// 設問形式の拡張（4種 → 9種）
+//
+// マトリクス／ランキング／数値／自由記述(小) を顧客が使えるようにした分の検証。
+// 「選択肢が0件で回答不能な設問を保存させない」という既存方針を、新種別でも守る。
+// ---------------------------------------------------------------------------
+
+const MATRIX_ROWS = [
+  { value: "r1", label: "接客" },
+  { value: "r2", label: "清潔さ" }
+];
+const MATRIX_COLS = [
+  { value: "c1", label: "満足" },
+  { value: "c2", label: "不満" }
+];
+
+test("matrix_single は行(answer_options)と列(matrix_cols)が揃えば通る", () => {
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      question_type: "matrix_single",
+      answer_options: MATRIX_ROWS,
+      matrix_cols: MATRIX_COLS
+    })
+  );
+  assert.equal(parsed.success, true);
+});
+
+test("マトリクスで列が無いと 400（行だけでは表にならない）", () => {
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      question_type: "matrix_multi",
+      answer_options: MATRIX_ROWS,
+      matrix_cols: null
+    })
+  );
+  assert.equal(parsed.success, false);
+});
+
+test("マトリクスの行・列は1件でも通る（運営画面が1件を許すため）", () => {
+  // 管理画面（adminController.ts:2393-2394）は行・列を1件でも保存できる。
+  // ここで2件必須にすると、運営が作って店舗へ割り当てた案件を店舗が開いたとき、
+  // 文言を1文字直しただけで 400 になり保存できなくなる。
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      question_type: "matrix_single",
+      answer_options: [{ value: "r1", label: "接客" }],
+      matrix_cols: [{ value: "c1", label: "満足" }]
+    })
+  );
+  assert.equal(parsed.success, true);
+});
+
+test("マトリクスで行が0件だと 400（表にならない）", () => {
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      question_type: "matrix_single",
+      answer_options: [],
+      matrix_cols: MATRIX_COLS
+    })
+  );
+  assert.equal(parsed.success, false);
+});
+
+test("sd は単一スケール（目盛りを answer_options で持ち、列は持たない）", () => {
+  // 回答UI（survey.ejs:1436）は sd を options で1本のスケールとして描く。
+  // マトリクス扱いにすると行が目盛りとして描かれて壊れる。
+  const ok = questionSchema.safeParse(
+    baseQuestion({
+      question_type: "sd",
+      answer_options: [
+        { value: "1", label: "そう思わない" },
+        { value: "5", label: "そう思う" }
+      ]
+    })
+  );
+  assert.equal(ok.success, true);
+
+  // 列を送ると 400（マトリクスではないので解釈できない）
+  const ng = questionSchema.safeParse(
+    baseQuestion({
+      question_type: "sd",
+      answer_options: [
+        { value: "1", label: "そう思わない" },
+        { value: "5", label: "そう思う" }
+      ],
+      matrix_cols: MATRIX_COLS
+    })
+  );
+  assert.equal(ng.success, false);
+});
+
+test("マトリクスの列に重複 value があると 400", () => {
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      question_type: "matrix_single",
+      answer_options: MATRIX_ROWS,
+      matrix_cols: [
+        { value: "same", label: "満足" },
+        { value: "same", label: "不満" }
+      ]
+    })
+  );
+  assert.equal(parsed.success, false);
+});
+
+test("マトリクスでない種別に matrix_cols を付けると 400（黙って捨てない）", () => {
+  const parsed = questionSchema.safeParse(
+    baseQuestion({ question_type: "single_choice", matrix_cols: MATRIX_COLS })
+  );
+  assert.equal(parsed.success, false);
+});
+
+test("numeric は選択肢なしで通り、min>max は 400", () => {
+  const ok = questionSchema.safeParse(
+    baseQuestion({
+      question_type: "numeric",
+      answer_options: null,
+      min: 0,
+      max: 120,
+      unit: "歳"
+    })
+  );
+  assert.equal(ok.success, true);
+
+  const ng = questionSchema.safeParse(
+    baseQuestion({ question_type: "numeric", answer_options: null, min: 100, max: 10 })
+  );
+  assert.equal(ng.success, false);
+});
+
+test("toQuestionInput が新フィールドを落とさずに渡す", () => {
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      question_type: "matrix_single",
+      answer_options: MATRIX_ROWS,
+      matrix_cols: MATRIX_COLS
+    })
+  );
+  assert.equal(parsed.success, true);
+  if (!parsed.success) return;
+  const input = toQuestionInput(parsed.data);
+  // ここが落ちると「列を設定したのに反映されない」になる（サイレント欠落の防止）。
+  assert.deepEqual(input.matrix_cols, MATRIX_COLS);
+});
+
+test("回答UIが未実装の種別は受け付けない（保存できるが回答画面が壊れるのを防ぐ）", () => {
+  // ranking_top_n は answerPresentation が "podium" を返すが survey.ejs に描画が無く、
+  // プレーンな textarea に落ちる。描画を実装するまでパートナーには出さない。
+  for (const type of ["ranking", "ranking_top_n", "pairwise", "point_allocation", "image_heatmap"]) {
+    const parsed = questionSchema.safeParse(baseQuestion({ question_type: type }));
+    assert.equal(parsed.success, false, `${type} が通ってしまった`);
+  }
+});
+
+// ------------------------------------------------------------------
+// 選択肢の画像（image_url）
+//
+// 回答画面は元から画像付き選択肢を描ける（survey.ejs の choice-img）。
+// ここで守るのは「パートナーAPI を通っても画像が落ちない」ことと、
+// 「設問文画像と同じ許可ホスト検証が効く」ことの2点。
+// ------------------------------------------------------------------
+
+test("選択肢に image_url を付けられる（許可ホスト）", () => {
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      answer_options: [
+        { value: "1", label: "Aプラン", image_url: OK_URL },
+        { value: "2", label: "Bプラン", image_url: OK_URL_2 }
+      ]
+    })
+  );
+  assert.equal(parsed.success, true);
+});
+
+test("★image_url は内部表現の imageUrl（camelCase）に詰め替わる", () => {
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      answer_options: [
+        { value: "1", label: "Aプラン", image_url: OK_URL },
+        { value: "2", label: "Bプラン" }
+      ]
+    })
+  );
+  assert.equal(parsed.success, true);
+  if (!parsed.success) return;
+  const options = toQuestionInput(parsed.data).answer_options;
+  // 回答画面が読むのは imageUrl。ここが image_url のままだと画像が出ない。
+  assert.equal(options?.[0]?.imageUrl, OK_URL);
+  assert.equal("image_url" in (options?.[0] ?? {}), false);
+  // 画像が無い選択肢には imageUrl を付けない（既存の挙動を変えない）
+  assert.equal("imageUrl" in (options?.[1] ?? {}), false);
+});
+
+test("★選択肢の画像も許可ホスト外は 400（設問文だけ守っても意味がない）", () => {
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      answer_options: [
+        { value: "1", label: "Aプラン", image_url: "https://evil.example.com/a.png" },
+        { value: "2", label: "Bプラン" }
+      ]
+    })
+  );
+  assert.equal(parsed.success, false);
+  if (parsed.success) return;
+  assert.equal(parsed.error.issues[0]?.path.join("."), "answer_options");
+});
+
+test("★選択肢の画像も http: は 400（https 必須）", () => {
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      answer_options: [
+        { value: "1", label: "Aプラン", image_url: "http://portal.example.com/a.png" },
+        { value: "2", label: "Bプラン" }
+      ]
+    })
+  );
+  assert.equal(parsed.success, false);
+});
+
+test("★マトリクスの列（matrix_cols）の画像も検証される", () => {
+  const ng = questionSchema.safeParse(
+    baseQuestion({
+      question_type: "matrix_single",
+      answer_options: [{ value: "r1", label: "接客" }],
+      matrix_cols: [{ value: "c1", label: "満足", image_url: "https://evil.example.com/a.png" }]
+    })
+  );
+  assert.equal(ng.success, false);
+  if (ng.success) return;
+  assert.equal(ng.error.issues[0]?.path.join("."), "matrix_cols");
+
+  const ok = questionSchema.safeParse(
+    baseQuestion({
+      question_type: "matrix_single",
+      answer_options: [{ value: "r1", label: "接客", image_url: OK_URL }],
+      matrix_cols: [{ value: "c1", label: "満足", image_url: OK_URL_2 }]
+    })
+  );
+  assert.equal(ok.success, true);
+  if (!ok.success) return;
+  const input = toQuestionInput(ok.data);
+  assert.equal(input.answer_options?.[0]?.imageUrl, OK_URL);
+  assert.equal(input.matrix_cols?.[0]?.imageUrl, OK_URL_2);
+});
+
+test("image_url 無しの従来形式は一切変わらない（後方互換）", () => {
+  const parsed = questionSchema.safeParse(baseQuestion());
+  assert.equal(parsed.success, true);
+  if (!parsed.success) return;
+  assert.deepEqual(toQuestionInput(parsed.data).answer_options, [
+    { value: "1", label: "満足" },
+    { value: "2", label: "不満" }
+  ]);
+});

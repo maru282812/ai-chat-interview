@@ -2,6 +2,9 @@ import { supabase } from "../config/supabase";
 import type { Rank, Respondent, RespondentStatus } from "../types/domain";
 import { requireData, throwIfError } from "./baseRepository";
 
+/** .in() の URL 長制限（PostgREST は GET クエリに ID を並べる）を超えないための分割単位。 */
+const PROJECT_ID_IN_CHUNK_SIZE = 100;
+
 export const respondentRepository = {
   async getByLineUserAndProject(lineUserId: string, projectId: string): Promise<Respondent | null> {
     const { data, error } = await supabase
@@ -171,5 +174,37 @@ export const respondentRepository = {
       .eq("project_id", projectId);
     throwIfError(error);
     return count ?? 0;
+  },
+
+  /**
+   * 複数案件の回答者数をまとめて数える（countByProject の一括版）。
+   *
+   * 案件ごとに数えると fetch が案件数だけ出て、Cloudflare Workers の
+   * サブリクエスト上限（50件）に当たる。件数に依存しないよう1クエリに畳む。
+   * 0件の案件はキーごと存在しないため、呼び出し側は `?? 0` で受けること。
+   */
+  async countByProjectIds(projectIds: string[]): Promise<Map<string, number>> {
+    const counts = new Map<string, number>();
+    const uniqueIds = [...new Set(projectIds)];
+    if (uniqueIds.length === 0) {
+      return counts;
+    }
+
+    for (let i = 0; i < uniqueIds.length; i += PROJECT_ID_IN_CHUNK_SIZE) {
+      const chunk = uniqueIds.slice(i, i + PROJECT_ID_IN_CHUNK_SIZE);
+      const { data, error } = await supabase
+        .from("respondents")
+        .select("project_id")
+        .in("project_id", chunk);
+      throwIfError(error);
+      for (const row of (data ?? []) as { project_id: string | null }[]) {
+        if (!row.project_id) {
+          continue;
+        }
+        counts.set(row.project_id, (counts.get(row.project_id) ?? 0) + 1);
+      }
+    }
+
+    return counts;
   }
 };

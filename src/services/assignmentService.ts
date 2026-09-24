@@ -22,6 +22,7 @@ import type {
 } from "../types/domain";
 import { lineMessagingService } from "./lineMessagingService";
 import { buildProjectStartUrl } from "./liffService";
+import { userPointService } from "./userPointService";
 import { buildProjectStartFlex } from "../templates/flex";
 
 export interface AssignmentRuleFilter {
@@ -112,7 +113,7 @@ const TERMINAL_ASSIGNMENT_STATUSES = new Set<ProjectAssignmentStatus>([
   "cancelled"
 ]);
 
-function hasLineUserId(lineUserId: string | null | undefined): boolean {
+function hasLineUserId(lineUserId: string | null | undefined): lineUserId is string {
   return typeof lineUserId === "string" && lineUserId.trim().length > 0;
 }
 
@@ -504,6 +505,12 @@ export const assignmentService = {
     const profiles = await userProfileRepository.listByLineUserIds(lineUserIds);
     const profileByLineUserId = new Map(profiles.map((p) => [p.line_user_id, p]));
 
+    // 保有ポイントは正準台帳 user_points を出す。
+    // respondents.total_points はレガシー（旧集計）で、案件ごとに1行ずつ持つため
+    // 「どの行を見るか」で値が変わり、マイページ（user_points）と食い違っていた。
+    // 行が無い旧データは従来どおり respondents 側へフォールバックする。
+    const balanceByLineUserId = await userPointService.listBalancesByLineUserIds(lineUserIds);
+
     const sessionsByRespondent = await listSessionsByRespondentMap(respondents);
     const assignmentsByRespondent = new Map(assignments.map((item) => [item.respondent_id, item]));
 
@@ -560,9 +567,21 @@ export const assignmentService = {
           source_respondent_id: targetRespondent?.id ?? pointLeader.id,
           target_respondent_id: targetRespondent?.id ?? null,
           line_user_id: hasLineUserId(pointLeader.line_user_id) ? pointLeader.line_user_id : null,
-          display_name: latestRespondent.display_name ?? pointLeader.display_name ?? null,
+          // 表示名は「本人がマイページで登録したニックネーム」を最優先にする。
+          // respondents.display_name には LINE の表示名が入るが、これを書き込む経路は
+          // 投稿 / LINEトーク会話 / 店舗QR に限られ、マイページを開くだけでは埋まらない。
+          // そのため実ユーザーほど null のまま残り、一覧が「-」だらけになっていた。
+          // user_profiles は既に上で引いているので、ここで拾えば取りこぼしが消える。
+          display_name:
+            profile?.nickname ??
+            latestRespondent.display_name ??
+            pointLeader.display_name ??
+            null,
           has_line_user_id: hasLineUserId(pointLeader.line_user_id),
-          total_points: pointLeader.total_points,
+          total_points:
+            (hasLineUserId(pointLeader.line_user_id)
+              ? balanceByLineUserId.get(pointLeader.line_user_id)?.available_points
+              : undefined) ?? pointLeader.total_points,
           rank_name: pointLeader.current_rank?.rank_name ?? null,
           rank_code: pointLeader.current_rank?.rank_code ?? null,
           last_participated_at: lastParticipatedAt,
@@ -588,10 +607,24 @@ export const assignmentService = {
           !TERMINAL_ASSIGNMENT_STATUSES.has(assignment.status) &&
           String(effectiveDeadline) < new Date().toISOString());
 
+      // 候補一覧と同じ理由で、配信済み一覧の表示名もニックネームを優先する
+      // （respondents.display_name は実ユーザーではしばしば null になる）。
+      const assignmentLineUserId = assignment.respondent?.line_user_id ?? null;
+      const assignmentProfile = hasLineUserId(assignmentLineUserId)
+        ? profileByLineUserId.get(assignmentLineUserId) ?? null
+        : null;
+
       return {
         assignment: {
           ...assignment,
-          deadline: effectiveDeadline
+          deadline: effectiveDeadline,
+          respondent: assignment.respondent
+            ? {
+                ...assignment.respondent,
+                display_name:
+                  assignmentProfile?.nickname ?? assignment.respondent.display_name ?? null
+              }
+            : assignment.respondent
         },
         isExpired,
         canSend: hasLineUserId(assignment.respondent?.line_user_id),

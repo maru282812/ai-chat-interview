@@ -94,6 +94,10 @@ const envSchema = z.object({
   // 未設定の場合 /api/partner-admin/* は全て 503 を返す（起動は妨げない）。
   // 値は十分にランダムな文字列にすること（例: openssl rand -hex 32）。
   PARTNER_ADMIN_API_KEY: z.string().min(16).optional(),
+  // 調査票プレビュー（GET /api/partner/surveys/:id/preview）を iframe 埋め込みできる元。
+  // CSP の frame-ancestors にそのまま入れる（例: "https://hibi.yottollc.com"）。
+  // **未設定なら 'self' ＝ ポータルから埋め込めない**（fail-closed）。
+  PARTNER_PREVIEW_FRAME_ANCESTORS: z.string().optional(),
   // パートナーAPI で受け付ける設問文画像URLのホスト許可リスト（カンマ区切り・ホスト名のみ）。
   // 例: PARTNER_IMAGE_URL_ALLOWED_HOSTS=portal.example.com,portal-staging.example.com
   //

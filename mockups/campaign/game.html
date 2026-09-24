@@ -1,0 +1,749 @@
+<title>Hibi ミッション 案B</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700;900&display=swap">
+<link rel="stylesheet" href="game-tokens.css">
+<style>
+/* Hallmark · genre: playful · macrostructure: Narrative Workflow
+ * theme: Hibi Festival · DNA source: looop happysummer2026（実CSS/SVG実測）
+ * principles: goal-gradient, zeigarnik, curiosity-gap, peak-end, fitts
+ * 本家の流儀に従う: keyframes 0 / グラデーション 0 / 影はベタ1種 / 賑やかさは絵に置く
+ */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{overflow-x:clip}
+body{
+  font-family:var(--g-font);
+  font-weight:var(--g-fw-med);
+  background:var(--g-locked-bg);
+  color:var(--g-green-deep);
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1100px;margin:0 auto;padding:20px 12px 48px}
+.lead{max-width:64ch;font-size:13px;line-height:1.85;color:#4A5B55;margin-bottom:18px}
+.lead b{color:var(--g-green-deep)}
+.lead code{background:var(--g-white);padding:1px 5px;border-radius:4px;font-size:12px}
+.row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
+.ph{
+  width:360px;flex:0 0 360px;background:var(--g-paper);
+  border-radius:var(--g-radius);border:2px solid var(--g-line);
+  overflow:hidden;
+}
+.cap{
+  font-size:11px;font-weight:var(--g-fw-bold);color:#5A6B65;
+  padding:7px 12px;background:var(--g-white);border-bottom:2px solid var(--g-line);
+}
+@media(max-width:780px){.ph{width:100%;flex:1 1 100%}}
+
+/* ===== ヒーロー＋すごろくを「ひとつの緑の世界」にする =====
+   修正2(2026-09-03): 帯→絵→白カード→帯 と分断されて「繋がり」が消えていた。
+   原因は、緑の面が白いカードで一度切れてまた緑に戻っていたこと。
+   直し方: 緑を .stage で一枚に通し、白カードはその中に**浮かべる**。
+   本家も「ヒーローは一枚絵、白い紙がそこへ食い込む」構造で、緑は分断していない。 */
+.stage{background:var(--g-green);position:relative;padding-bottom:18px}
+/* 緑の面の中を、うっすらした地模様でつなぐ（面が広くても単調にしない） */
+.stage::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:radial-gradient(var(--g-green-mid) 1.5px, transparent 1.6px);
+  background-size:22px 22px;opacity:.5;
+}
+.stage > *{position:relative;z-index:1}
+
+.hero{position:relative;padding:0;display:flex;flex-direction:column}
+.hero svg{display:block;width:100%;height:auto;order:2;margin-bottom:-1px}
+.hero .copy{
+  order:1;position:static;text-align:center;color:var(--g-white);
+  padding:16px 16px 10px;
+}
+.hero .copy .k{
+  display:inline-block;font-size:11px;font-weight:var(--g-fw-bold);
+  letter-spacing:.12em;background:rgba(255,255,255,.16);
+  padding:4px 12px;border-radius:var(--g-radius-pill);
+}
+.hero .copy h1{
+  margin-top:9px;font-size:26px;font-weight:900;line-height:1.35;
+  text-wrap:balance;overflow-wrap:anywhere;
+}
+/* 強調は黄色。深緑の帯の上なので、絵柄の黄色と衝突しない */
+.hero .copy h1 em{font-style:normal;color:var(--g-yellow)}
+
+/* ===== CTA：緑の中に浮かぶ白いカード（切らない・食い込ませる） ===== */
+.slab{
+  position:relative;z-index:9;margin:-26px 12px 0;
+  background:var(--g-white);border-radius:16px;
+  border:2px solid var(--g-green-deep);
+  box-shadow:0 4px 0 0 var(--g-green-deep);
+  padding:16px 15px 15px;
+}
+.slab .now{
+  display:flex;align-items:baseline;gap:5px;justify-content:center;
+  font-weight:900;
+}
+.slab .now .n{font-size:38px;color:var(--g-green);line-height:1;font-variant-numeric:tabular-nums}
+.slab .now .u{font-size:15px;color:var(--g-green)}
+.slab .now .go{margin-left:6px;font-size:13px;color:var(--g-sub);font-weight:var(--g-fw-med)}
+.slab .now .go b{color:var(--g-green)}
+
+/* ボタン：ピル＋黄＋実線ボーダー＋ブラー無しベタ影（本家の主犯） */
+.btn{
+  display:block;width:100%;margin-top:14px;
+  min-height:54px;padding:15px 18px;
+  font-family:inherit;font-size:17px;font-weight:900;
+  color:var(--g-ink);background:var(--g-yellow);
+  border:2px solid var(--g-yellow-edge);border-radius:var(--g-radius-pill);
+  box-shadow:var(--g-shadow);cursor:pointer;
+}
+.btn:hover,.btn.is-hover{background:#FFE05C}
+.btn:focus-visible,.btn.is-focus{outline:3px solid var(--g-green);outline-offset:3px}
+.btn:active,.btn.is-active{transform:translateY(3px);box-shadow:0 0 0 0 var(--g-yellow-edge)}
+.btn:disabled,.btn.is-disabled{
+  background:var(--g-locked-bg);border-color:var(--g-locked);color:var(--g-locked);
+  box-shadow:0 3px 0 0 var(--g-locked);cursor:not-allowed}
+.btn.sub{
+  background:var(--g-white);color:var(--g-green);border-color:var(--g-green);
+  box-shadow:var(--g-shadow-dark);font-size:15px;min-height:48px}
+.btn.sub:hover,.btn.sub.is-hover{background:var(--g-green-pale)}
+
+/* ===== すごろく：ステージ図は「絵」で描く ===== */
+.map{padding:20px 12px 4px}  /* 背景は .stage が持つ。ここで切らない */
+.map .h{text-align:center;color:var(--g-white);margin-bottom:12px}
+.map .h b{display:block;font-size:18px;font-weight:900}
+.map .h span{font-size:12px;color:#BFE0D6;font-weight:var(--g-fw-med)}
+.map svg{display:block;width:100%;height:auto}
+
+/* ===== 賞のカード：??? マスクが主役 ===== */
+.prizes{padding:16px 12px 14px;display:flex;flex-direction:column;gap:0;position:relative}
+/* 賞カードは「すごろくの続き」。番号どうしを縦線でつないで一本の道にする */
+.prizes .pz + .pz{margin-top:9px}
+.prizes .pz{position:relative}
+.prizes .pz:not(:last-child)::after{
+  content:"";position:absolute;left:29px;bottom:-11px;width:4px;height:11px;
+  background:var(--g-line);border-radius:2px;
+}
+.prizes .pz.done:not(:last-child)::after{background:var(--g-green)}
+/* ボタン見本用。道の縦線は引かない */
+.btnstack{padding:14px 12px;display:flex;flex-direction:column;gap:9px}
+.btnstack .btn{margin-top:0}
+.pz{
+  display:flex;align-items:center;gap:11px;
+  background:var(--g-white);border:2px solid var(--g-line);
+  border-radius:12px;padding:11px 12px;
+}
+.pz .no{
+  width:34px;height:34px;flex-shrink:0;border-radius:var(--g-radius-pill);
+  display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:900;
+  background:var(--g-locked-bg);color:var(--g-locked);border:2px solid var(--g-line);
+}
+.pz .t{flex:1;min-width:0}
+.pz .t .c{font-size:14px;font-weight:900;line-height:1.4}
+.pz .t .s{font-size:11.5px;color:var(--g-sub);margin-top:2px;font-weight:var(--g-fw-med)}
+.pz .v{font-size:17px;font-weight:900;color:var(--g-green);flex-shrink:0;font-variant-numeric:tabular-nums}
+/* 未解放：数字を ??? で隠す＝「解放」の概念が生まれる（実装コスト0で最も効く） */
+.pz.lock .v{color:var(--g-locked);letter-spacing:.06em}
+.pz.lock .t .c{color:var(--g-sub)}
+.pz.open{border-color:var(--g-yellow-edge);background:#FFFBEA}
+.pz.open .no{background:var(--g-yellow);color:var(--g-ink);border-color:var(--g-yellow-edge)}
+.pz.done{border-color:var(--g-green);background:var(--g-green-pale)}
+.pz.done .no{background:var(--g-green);color:var(--g-white);border-color:var(--g-green)}
+
+
+/* ===== 部屋えらび（テーマ別）。projects.category が既にあるので新規カラム不要 ===== */
+.rooms{padding:14px 12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.room{
+  position:relative;display:block;width:100%;text-align:left;
+  font-family:inherit;cursor:pointer;
+  background:var(--g-white);border:2px solid var(--g-line);
+  border-radius:12px;padding:12px 11px;box-shadow:0 3px 0 0 var(--g-line);
+}
+.room:hover,.room.is-hover{background:#FFFDF6}
+.room:focus-visible,.room.is-focus{outline:3px solid var(--g-green);outline-offset:3px}
+.room:active,.room.is-active{transform:translateY(3px);box-shadow:0 0 0 0 var(--g-line)}
+.room .ic{
+  width:38px;height:38px;border-radius:10px;display:flex;
+  align-items:center;justify-content:center;margin-bottom:8px;
+}
+.room .ic svg{width:22px;height:22px}
+.room .nm{font-size:14px;font-weight:900;line-height:1.35}
+.room .mt{margin-top:5px;font-size:11px;color:var(--g-sub);font-weight:var(--g-fw-med)}
+.room .dots{display:flex;gap:3px;margin-top:7px}
+.room .dots i{width:8px;height:8px;border-radius:var(--g-radius-pill);background:var(--g-line)}
+.room .dots i.on{background:var(--g-green)}
+.room[data-c="food"] .ic{background:#FCEAE3}
+.room[data-c="life"] .ic{background:#E3F0F9}
+.room[data-c="work"] .ic{background:#EDEAF7}
+.room[data-c="fun"]  .ic{background:#FAE6F0}
+.room.locked{background:var(--g-locked-bg);border-style:dashed;box-shadow:none}
+.room.locked .nm{color:var(--g-locked)}
+.room.locked .ic{background:#DDE5E2}
+
+/* ===== 隠し部屋（ボス）：夜の色。通常の部屋と「面の質」を変える ===== */
+.boss{margin:14px 12px;border-radius:14px;overflow:hidden;
+  background:var(--g-boss);border:2px solid var(--g-boss-edge)}
+.boss .art{display:block;width:100%;height:auto}
+.boss .in{padding:15px 14px 16px}
+.boss .k{font-size:10.5px;font-weight:900;letter-spacing:.16em;color:var(--g-boss-gold)}
+.boss h3{margin-top:7px;font-size:19px;font-weight:900;line-height:1.4;color:var(--g-on-boss);
+  overflow-wrap:anywhere}
+.boss p{margin-top:8px;font-size:12.5px;line-height:1.8;color:var(--g-on-boss-sub);
+  font-weight:var(--g-fw-med)}
+.boss .amt{display:flex;align-items:baseline;gap:5px;margin-top:12px;
+  padding-top:12px;border-top:2px solid var(--g-boss-edge)}
+.boss .amt .n{font-size:30px;font-weight:900;color:var(--g-boss-gold);line-height:1;
+  font-variant-numeric:tabular-nums}
+.boss .amt .u{font-size:13px;font-weight:900;color:var(--g-boss-gold)}
+.boss .amt .cap{margin-left:auto;font-size:10.5px;color:var(--g-on-boss-sub);
+  text-align:right;line-height:1.5;font-weight:var(--g-fw-med)}
+.btn.boss-btn{background:var(--g-boss-gold);border-color:#C79A00;color:#2B1A00;
+  box-shadow:0 3px 0 0 #C79A00}
+.btn.boss-btn:disabled{background:var(--g-boss-2);border-color:var(--g-boss-edge);
+  color:var(--g-on-boss-sub);box-shadow:0 3px 0 0 var(--g-boss-edge)}
+
+/* 開き方のバッジ */
+.how{display:inline-flex;align-items:center;gap:5px;margin-top:10px;
+  font-size:10.5px;font-weight:900;padding:5px 10px;border-radius:var(--g-radius-pill)}
+.how.safe{background:rgba(255,216,54,.16);color:var(--g-boss-gold)}
+.how.time{background:rgba(90,190,255,.16);color:#7FC8F5}
+.how.first{background:rgba(120,230,170,.16);color:#7FE0AD}
+
+/* 残り人数（案件指定型）。分母がある時だけ出す */
+.left{margin:0 12px 12px;background:var(--g-white);border:2px solid var(--g-line);
+  border-radius:12px;padding:13px 13px 14px}
+.left .top{display:flex;align-items:baseline;gap:5px}
+.left .top .n{font-size:30px;font-weight:900;color:var(--g-green);line-height:1;
+  font-variant-numeric:tabular-nums}
+.left .top .of{font-size:13px;color:var(--g-sub);font-weight:900}
+.left .top .dl{margin-left:auto;font-size:11.5px;font-weight:900;color:var(--g-alert)}
+.left .bar{height:11px;border-radius:var(--g-radius-pill);background:var(--g-locked-bg);
+  overflow:hidden;margin-top:10px;border:2px solid var(--g-line)}
+.left .bar i{display:block;height:100%;background:var(--g-green)}
+.left .msg{margin-top:9px;font-size:13px;font-weight:900;line-height:1.5}
+
+
+/* ===== 「戻る」レイヤー（途切れた人にだけ出す） =====
+   積み上げ型と真逆の構造:
+     積み上げ = 時間をかけて別人になる（レベル1→20）
+     戻る     = すでに持っていたものを取り戻す（本来の姿へ）
+   核心は「一度の行為で戻る」＝新たな努力を要求しないこと。
+   だから面倒くささが動機を殺さない。 */
+.back{background:#2E2440;padding:0}
+.back .art{display:block;width:100%;height:auto}
+.back .in{padding:16px 15px 17px}
+.back .k{font-size:10.5px;font-weight:900;letter-spacing:.14em;color:#E7B9D6}
+.back h3{margin-top:8px;font-size:22px;font-weight:900;line-height:1.4;
+  color:#F6EFF6;overflow-wrap:anywhere}
+.back h3 em{font-style:normal;color:#FFD836}
+.back .lost{
+  margin-top:13px;padding:12px 13px;border-radius:12px;
+  background:#241B34;border:2px solid #453760;
+}
+.back .lost .row{display:flex;align-items:center;gap:9px}
+.back .lost .was{flex:1;min-width:0}
+.back .lost .lb{font-size:10.5px;color:#A493C0;font-weight:900}
+.back .lost .vl{font-size:19px;font-weight:900;color:#F6EFF6;margin-top:2px;
+  font-variant-numeric:tabular-nums}
+.back .lost .now-v{font-size:19px;font-weight:900;color:#6E6086;margin-top:2px}
+.back .lost .arw{color:#6E6086;font-weight:900;flex-shrink:0}
+.back .one{
+  margin-top:12px;text-align:center;font-size:13.5px;line-height:1.75;
+  color:#D8CCE6;font-weight:700;
+}
+.back .one b{color:#FFD836;font-weight:900}
+.btn.magic{background:#FFD836;border-color:#C79A00;color:#2B1A00;
+  box-shadow:0 3px 0 0 #C79A00}
+/* 候補比較の小カード */
+.opts{padding:13px 12px;display:flex;flex-direction:column;gap:9px}
+.opt{background:var(--g-white);border:2px solid var(--g-line);border-radius:12px;
+  padding:11px 12px}
+.opt .t{font-size:13px;font-weight:900;line-height:1.4}
+.opt .d{font-size:11.5px;color:var(--g-sub);margin-top:4px;line-height:1.7;font-weight:700}
+.opt.pick{border-color:var(--g-green);background:var(--g-green-pale)}
+.opt .tag{display:inline-block;font-size:10px;font-weight:900;padding:3px 8px;
+  border-radius:var(--g-radius-pill);margin-bottom:6px}
+.opt.pick .tag{background:var(--g-green);color:#fff}
+.opt .tag.warn{background:#FCE4E4;color:#C0392B}
+.opt .tag.ok{background:#E4F3EC;color:#1E7A5A}
+
+/* ===== 文言帯 ===== */
+.say{padding:2px 14px 16px;text-align:center}
+.say p{font-size:13.5px;line-height:1.8;font-weight:var(--g-fw-med);color:#41524C}
+.say p b{color:var(--g-green);font-weight:900}
+.note{padding:12px 14px 18px;font-size:11.5px;line-height:1.75;color:var(--g-sub);font-weight:var(--g-fw-med)}
+.note b{color:var(--g-green-deep)}
+</style>
+
+<div class="wrap">
+
+<p class="lead">
+  <b>案B：Looop の実測DNAを適用。</b>参照ページのゲーム感は CSS ではなく <b>SVG画像の中</b>にあった
+  （<code>@keyframes 0件</code> <code>グラデーション0件</code> <code>box-shadow は ブラー無しのベタ影1個だけ</code>、
+  一方で背景SVGは <b>646パス・46色</b>）。そこで方針を反転した——
+  <b>CSSは禁欲的に、賑やかさは絵に置く。</b>
+  適用した4点: ①丸ゴシック＋ほぼ全部900 ②<b>ピル型・黄・実線枠・ブラー無しベタ影</b>のボタン
+  ③<b>未解放は「???」でマスク</b> ④「みんなで」「〜しよう！」の勧誘形。
+  アニメーションは足していない（本家も0件）。
+</p>
+
+<div class="row">
+
+  <!-- ============ 1. 進行中 ============ -->
+  <div class="ph">
+    <div class="cap">ミッション進行中（7/10）</div>
+    <div class="stage">
+    <div class="hero">
+      <svg viewBox="0 0 360 190" role="img" aria-label="夏の街で人々がアンケートに答えているイラスト">
+        <rect width="360" height="190" fill="#0E6B5A"/>
+        <circle cx="300" cy="34" r="26" fill="#FFD836"/>
+        <path d="M0 150 Q40 120 80 148 T160 146 T240 150 T320 144 T360 152 L360 190 L0 190Z" fill="#0A5245"/>
+        <path d="M0 165 Q60 145 120 168 T240 164 T360 170 L360 190 L0 190Z" fill="#08443A"/>
+        <g fill="#17977f">
+          <rect x="18" y="96" width="34" height="58" rx="3"/><rect x="60" y="112" width="26" height="42" rx="3"/>
+          <rect x="272" y="104" width="30" height="50" rx="3"/><rect x="310" y="120" width="24" height="34" rx="3"/>
+        </g>
+        <g fill="#BFE0D6" opacity=".55">
+          <rect x="24" y="104" width="8" height="8"/><rect x="38" y="104" width="8" height="8"/>
+          <rect x="24" y="120" width="8" height="8"/><rect x="38" y="120" width="8" height="8"/>
+          <rect x="278" y="112" width="8" height="8"/><rect x="290" y="112" width="8" height="8"/>
+        </g>
+        <g>
+          <circle cx="132" cy="140" r="11" fill="#FFD8B0"/><rect x="123" y="152" width="18" height="26" rx="7" fill="#FF6B4A"/>
+          <circle cx="180" cy="134" r="12" fill="#FFE0C4"/><rect x="170" y="147" width="20" height="31" rx="7" fill="#FFD836"/>
+          <circle cx="228" cy="141" r="11" fill="#F3C79B"/><rect x="219" y="153" width="18" height="25" rx="7" fill="#5FC3E4"/>
+        </g>
+        <g fill="#fff" opacity=".92">
+          <rect x="146" y="108" width="26" height="19" rx="5"/><path d="M154 127l-3 7 9-7z"/>
+          <rect x="196" y="100" width="26" height="19" rx="5"/><path d="M204 119l-3 7 9-7z"/>
+        </g>
+      </svg>
+      <div class="copy">
+        <span class="k">MISSION</span>
+        <h1>こたえて、<em>ひらこう</em>。</h1>
+      </div>
+    </div>
+    <div class="slab">
+      <div class="now">
+        <span class="n">7</span><span class="u">問</span>
+        <span class="go">あと <b>3問</b> でステージ2</span>
+      </div>
+      <button class="btn">こたえる</button>
+    </div>
+    <div class="map">
+      <div class="h"><b>みんなで ひらく</b><span>参加した人みんなでステージを解放します</span></div>
+      <svg viewBox="0 0 336 132" role="img" aria-label="3つのステージを結ぶすごろく状の進行図。1つ目は解放済み">
+        <path d="M34 100 C90 100 84 60 140 60 S196 22 264 22" stroke="#0A5245" stroke-width="9"
+              fill="none" stroke-linecap="round" stroke-dasharray="1 17"/>
+        <circle cx="34" cy="100" r="22" fill="#FFD836" stroke="#C79A00" stroke-width="3"/>
+        <text x="34" y="107" text-anchor="middle" font-size="19" font-weight="900" fill="#2B1A00">1</text>
+        <circle cx="140" cy="60" r="20" fill="#0A5245" stroke="#17977f" stroke-width="3"/>
+        <text x="140" y="67" text-anchor="middle" font-size="17" font-weight="900" fill="#7FA99E">2</text>
+        <circle cx="264" cy="22" r="20" fill="#0A5245" stroke="#17977f" stroke-width="3"/>
+        <text x="264" y="29" text-anchor="middle" font-size="17" font-weight="900" fill="#7FA99E">3</text>
+        <text x="34" y="131" text-anchor="middle" font-size="11" font-weight="900" fill="#FFD836">ひらいた</text>
+        <text x="140" y="93" text-anchor="middle" font-size="11" font-weight="900" fill="#7FA99E">あと3問</text>
+        <text x="264" y="55" text-anchor="middle" font-size="11" font-weight="900" fill="#7FA99E">???</text>
+      </svg>
+    </div>
+    </div><!-- /stage -->
+    <div class="prizes">
+      <div class="pz done"><div class="no">✓</div>
+        <div class="t"><div class="c">ステージ1</div><div class="s">3問 こたえる</div></div>
+        <div class="v">150pt</div></div>
+      <div class="pz open"><div class="no">2</div>
+        <div class="t"><div class="c">ステージ2</div><div class="s">10問 こたえる</div></div>
+        <div class="v">300pt</div></div>
+      <div class="pz lock"><div class="no">3</div>
+        <div class="t"><div class="c">ステージ3</div><div class="s">ひらくと わかります</div></div>
+        <div class="v">???</div></div>
+    </div>
+    <div class="say"><p>いま <b>7問</b>。<br>あと3問で、つぎのステージがひらきます。</p></div>
+  </div>
+
+  <!-- ============ 2. 未参加 ============ -->
+  <div class="ph">
+    <div class="cap">未参加（0問／全部 ??? ）</div>
+    <div class="stage">
+    <div class="hero">
+      <svg viewBox="0 0 360 190" role="img" aria-label="夏の街のイラスト。ミッション開始前">
+        <rect width="360" height="190" fill="#0E6B5A"/>
+        <circle cx="300" cy="34" r="26" fill="#FFD836"/>
+        <path d="M0 150 Q40 120 80 148 T160 146 T240 150 T320 144 T360 152 L360 190 L0 190Z" fill="#0A5245"/>
+        <path d="M0 165 Q60 145 120 168 T240 164 T360 170 L360 190 L0 190Z" fill="#08443A"/>
+        <g fill="#17977f">
+          <rect x="18" y="96" width="34" height="58" rx="3"/><rect x="60" y="112" width="26" height="42" rx="3"/>
+          <rect x="272" y="104" width="30" height="50" rx="3"/><rect x="310" y="120" width="24" height="34" rx="3"/>
+        </g>
+        <g><circle cx="180" cy="134" r="12" fill="#FFE0C4"/><rect x="170" y="147" width="20" height="31" rx="7" fill="#FFD836"/></g>
+        <g fill="#fff" opacity=".92"><rect x="196" y="100" width="26" height="19" rx="5"/><path d="M204 119l-3 7 9-7z"/></g>
+      </svg>
+      <div class="copy">
+        <span class="k">MISSION</span>
+        <h1>こたえて、<em>ひらこう</em>。</h1>
+      </div>
+    </div>
+    <div class="slab">
+      <div class="now">
+        <span class="n">0</span><span class="u">問</span>
+        <span class="go">まずは <b>3問</b></span>
+      </div>
+      <button class="btn">はじめる</button>
+    </div>
+    <div class="map">
+      <div class="h"><b>みんなで ひらく</b><span>参加した人みんなでステージを解放します</span></div>
+      <svg viewBox="0 0 336 132" role="img" aria-label="3つのステージ。まだどれも解放されていない">
+        <path d="M34 100 C90 100 84 60 140 60 S196 22 264 22" stroke="#0A5245" stroke-width="9"
+              fill="none" stroke-linecap="round" stroke-dasharray="1 17"/>
+        <circle cx="34" cy="100" r="22" fill="#0A5245" stroke="#17977f" stroke-width="3"/>
+        <text x="34" y="107" text-anchor="middle" font-size="19" font-weight="900" fill="#7FA99E">1</text>
+        <circle cx="140" cy="60" r="20" fill="#0A5245" stroke="#17977f" stroke-width="3"/>
+        <text x="140" y="67" text-anchor="middle" font-size="17" font-weight="900" fill="#7FA99E">2</text>
+        <circle cx="264" cy="22" r="20" fill="#0A5245" stroke="#17977f" stroke-width="3"/>
+        <text x="264" y="29" text-anchor="middle" font-size="17" font-weight="900" fill="#7FA99E">3</text>
+        <text x="34" y="131" text-anchor="middle" font-size="11" font-weight="900" fill="#FFD836">あと3問</text>
+        <text x="140" y="93" text-anchor="middle" font-size="11" font-weight="900" fill="#7FA99E">???</text>
+        <text x="264" y="55" text-anchor="middle" font-size="11" font-weight="900" fill="#7FA99E">???</text>
+      </svg>
+    </div>
+    </div><!-- /stage -->
+    <div class="prizes">
+      <div class="pz open"><div class="no">1</div>
+        <div class="t"><div class="c">ステージ1</div><div class="s">3問 こたえる</div></div>
+        <div class="v">150pt</div></div>
+      <div class="pz lock"><div class="no">2</div>
+        <div class="t"><div class="c">ステージ2</div><div class="s">ひらくと わかります</div></div>
+        <div class="v">???</div></div>
+      <div class="pz lock"><div class="no">3</div>
+        <div class="t"><div class="c">ステージ3</div><div class="s">ひらくと わかります</div></div>
+        <div class="v">???</div></div>
+    </div>
+    <div class="say"><p>まずは <b>1問</b> から。<br>3問で、さいしょのステージがひらきます。</p></div>
+  </div>
+
+  <!-- ============ 3. 特別ステージ ============ -->
+  <div class="ph">
+    <div class="cap">特別ステージ（全部ひらいた）</div>
+    <div class="stage">
+    <div class="hero">
+      <svg viewBox="0 0 360 190" role="img" aria-label="夜空に花火。特別ステージが解放された様子">
+        <rect width="360" height="190" fill="#08443A"/>
+        <g stroke="#FFD836" stroke-width="2.5" stroke-linecap="round">
+          <g transform="translate(96,58)"><path d="M0-26V-12M0 26V12M-26 0H-12M26 0H12M-18-18l10 10M18 18l-10-10M18-18l-10 10M-18 18l10-10"/></g>
+          <g transform="translate(268,44)" stroke="#FF9A3C"><path d="M0-20V-9M0 20V9M-20 0H-9M20 0H9M-14-14l7 7M14 14l-7-7M14-14l-7 7M-14 14l7-7"/></g>
+        </g>
+        <circle cx="96" cy="58" r="6" fill="#FFD836"/><circle cx="268" cy="44" r="5" fill="#FF9A3C"/>
+        <path d="M0 150 Q40 120 80 148 T160 146 T240 150 T320 144 T360 152 L360 190 L0 190Z" fill="#062F28"/>
+        <g><circle cx="150" cy="138" r="11" fill="#FFD8B0"/><rect x="141" y="150" width="18" height="26" rx="7" fill="#FF6B4A"/>
+           <circle cx="196" cy="136" r="11" fill="#FFE0C4"/><rect x="187" y="148" width="18" height="28" rx="7" fill="#FFD836"/></g>
+      </svg>
+      <div class="copy">
+        <span class="k">SPECIAL STAGE</span>
+        <h1>ぜんぶ <em>ひらいた</em>。</h1>
+      </div>
+    </div>
+    <div class="slab">
+      <div class="now">
+        <span class="n">20</span><span class="u">問</span>
+        <span class="go">特別ステージ <b>解放</b></span>
+      </div>
+      <button class="btn">特別ステージへ すすむ</button>
+    </div>
+    </div><!-- /stage -->
+    <div class="prizes">
+      <div class="pz done"><div class="no">✓</div>
+        <div class="t"><div class="c">ステージ1</div><div class="s">受け取りずみ</div></div><div class="v">150pt</div></div>
+      <div class="pz done"><div class="no">✓</div>
+        <div class="t"><div class="c">ステージ2</div><div class="s">受け取りずみ</div></div><div class="v">300pt</div></div>
+      <div class="pz done"><div class="no">✓</div>
+        <div class="t"><div class="c">ステージ3</div><div class="s">受け取りずみ</div></div><div class="v">550pt</div></div>
+      <div class="pz open"><div class="no">★</div>
+        <div class="t"><div class="c">特別ステージ</div><div class="s">参加した人で 分けます</div></div>
+        <div class="v">50,000pt</div></div>
+    </div>
+    <div class="say"><p><b>みんなで</b> 分け合います。<br>人数が少ないほど、ひとりの取り分は大きくなります。</p></div>
+    <div class="note">
+      ⚠ <b>1人あたり上限 2,000pt</b>（景表法）。上限が無いと参加者10人で5,000pt/人となり、
+      仮に懸賞と評価された場合の上限2,000円を超える。<br>
+      ⚠ 「回答が多いほど<b>当たりやすい</b>」設計は採らない（消費者庁Q19）。「<b>参加できる</b>」なら安全側。
+    </div>
+  </div>
+
+  <!-- ============ 4. ボタン状態 ============ -->
+  <div class="ph">
+    <div class="cap">ボタン8状態（ベタ影・押すと沈む）</div>
+    <div class="btnstack">
+      <button class="btn">こたえる</button>
+      <button class="btn is-hover">hover</button>
+      <button class="btn is-focus">focus</button>
+      <button class="btn is-active">active（沈む）</button>
+      <button class="btn" disabled>まだ ひらけません</button>
+      <button class="btn sub">LINEで さそう</button>
+      <button class="btn sub is-hover">hover（sub）</button>
+      <button class="btn" style="background:#FF6B4A;border-color:#C8452A;box-shadow:0 3px 0 0 #C8452A;color:#fff">もう一度</button>
+    </div>
+    <div class="note">
+      本家の主犯はここ。<b>ブラー無しの3pxベタ影＋2px実線ボーダー＋ピル型</b>。
+      押すと <code>translateY(3px)</code> で影が消えて<b>物理的に沈む</b>。
+      モダンSaaSの <code>0 4px 12px rgba(0,0,0,.08)</code> 系ふんわり影とは真逆で、
+      これだけで「押せるゲームUI」に見える。
+    </div>
+  </div>
+
+
+  <!-- ============ 5. 部屋えらび ============ -->
+  <div class="ph">
+    <div class="cap">部屋えらび（テーマ別・projects.category を流用）</div>
+    <div class="stage">
+    <div class="hero">
+      <svg viewBox="0 0 360 130" role="img" aria-label="4つの扉が並ぶイラスト">
+        <rect width="360" height="130" fill="#0E6B5A"/>
+        <path d="M0 104 Q90 88 180 104 T360 100 L360 130 L0 130Z" fill="#0A5245"/>
+        <g>
+          <rect x="44" y="46" width="42" height="58" rx="4" fill="#E8734A"/>
+          <rect x="110" y="52" width="42" height="52" rx="4" fill="#4A9BD1"/>
+          <rect x="176" y="44" width="42" height="60" rx="4" fill="#8B7BC4"/>
+          <rect x="242" y="56" width="42" height="48" rx="4" fill="#D96BA0"/>
+        </g>
+        <g fill="#FFD836">
+          <circle cx="78" cy="76" r="3"/><circle cx="144" cy="79" r="3"/>
+          <circle cx="210" cy="75" r="3"/><circle cx="276" cy="81" r="3"/>
+        </g>
+      </svg>
+      <div class="copy"><span class="k">ROOMS</span><h1>どの部屋に <em>いく？</em></h1></div>
+    </div>
+    </div><!-- /stage -->
+    <div class="rooms">
+      <button class="room" data-c="food">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#E8734A" stroke-width="2.2"
+          stroke-linecap="round"><path d="M4 3v8a3 3 0 006 0V3M7 11v10M17 3c-1.5 2-2 4-2 6s.5 3 2 3 2-1 2-3-.5-4-2-6zM17 12v9"/></svg></div>
+        <div class="nm">たべもの</div>
+        <div class="mt">3問 のこってる</div>
+        <div class="dots"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div>
+      </button>
+      <button class="room" data-c="life">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#4A9BD1" stroke-width="2.2"
+          stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-7 9 7v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 22V12h6v10"/></svg></div>
+        <div class="nm">くらし</div>
+        <div class="mt">5問 のこってる</div>
+        <div class="dots"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+      </button>
+      <button class="room" data-c="work">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#8B7BC4" stroke-width="2.2"
+          stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></div>
+        <div class="nm">しごと</div>
+        <div class="mt">ぜんぶ こたえた</div>
+        <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></div>
+      </button>
+      <button class="room locked" data-c="fun">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#9FB0AA" stroke-width="2.2"
+          stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg></div>
+        <div class="nm">???</div>
+        <div class="mt">2部屋 クリアで ひらく</div>
+        <div class="dots"><i></i><i></i><i></i><i></i><i></i></div>
+      </button>
+    </div>
+    <div class="say"><p>すきな部屋から どうぞ。<br><b>2部屋</b> クリアすると、かくれた部屋がひらきます。</p></div>
+    <div class="note">
+      <b>projects.category（040で既存）を流用</b>できるので新規カラム不要。
+      4つ目は <b>条件達成で開く</b>＝偶然性がないので<b>懸賞にならない</b>。
+    </div>
+  </div>
+
+  <!-- ============ 6. 残り人数（案件指定型） ============ -->
+  <div class="ph">
+    <div class="cap">残り人数を出す（分母がある時だけ）</div>
+    <div class="stage">
+    <div class="hero">
+      <svg viewBox="0 0 360 130" role="img" aria-label="人が集まっていくイラスト">
+        <rect width="360" height="130" fill="#0E6B5A"/>
+        <path d="M0 100 Q90 84 180 100 T360 96 L360 130 L0 130Z" fill="#0A5245"/>
+        <g>
+          <circle cx="70" cy="72" r="9" fill="#FFD8B0"/><rect x="63" y="82" width="14" height="20" rx="6" fill="#FFD836"/>
+          <circle cx="104" cy="68" r="9" fill="#FFE0C4"/><rect x="97" y="78" width="14" height="24" rx="6" fill="#FF6B4A"/>
+          <circle cx="138" cy="74" r="9" fill="#F3C79B"/><rect x="131" y="84" width="14" height="18" rx="6" fill="#5FC3E4"/>
+        </g>
+        <g opacity=".38">
+          <circle cx="196" cy="70" r="9" fill="#BFE0D6"/><rect x="189" y="80" width="14" height="22" rx="6" fill="#BFE0D6"/>
+          <circle cx="230" cy="74" r="9" fill="#BFE0D6"/><rect x="223" y="84" width="14" height="18" rx="6" fill="#BFE0D6"/>
+          <circle cx="264" cy="69" r="9" fill="#BFE0D6"/><rect x="257" y="79" width="14" height="23" rx="6" fill="#BFE0D6"/>
+        </g>
+      </svg>
+      <div class="copy"><span class="k">あと 38人</span><h1>みんなで <em>おわらせよう</em>。</h1></div>
+    </div>
+    <div class="slab">
+      <div class="left" style="margin:0">
+        <div class="top">
+          <span class="n">12</span><span class="of">/ 50人</span>
+          <span class="dl">のこり 5日</span>
+        </div>
+        <div class="bar"><i style="width:24%"></i></div>
+        <p class="msg">あなたの1件が、いちばん重い時期です。</p>
+      </div>
+      <button class="btn">この調査に こたえる</button>
+    </div>
+    </div><!-- /stage -->
+    <div class="note">
+      <b>「12人が参加中」は出さないが「50人中12人・あと38人」は出す。</b>
+      差は<b>分母の有無</b>——分母があると過疎ではなく進捗に見え、残りが少ないほど
+      「自分が入れば終わる」が効く。<br>
+      ⚠ 目標は <code>max_respondents</code>、締切は <code>recruit_deadline</code> の<b>実データのみ</b>。
+      未設定なら<b>帯ごと出さない</b>（分母を捏造しない）。
+    </div>
+  </div>
+
+  <!-- ============ 7. 隠し部屋（ボス）4種 ============ -->
+  <div class="ph">
+    <div class="cap">隠し部屋・4つの開き方（すべて合法な形）</div>
+    <div class="boss">
+      <svg class="art" viewBox="0 0 356 120" role="img" aria-label="夜の森に光る扉">
+        <rect width="356" height="120" fill="#1B1030"/>
+        <g fill="#2A1A47">
+          <path d="M40 120V64l16-22 16 22v56z"/><path d="M300 120V70l14-19 14 19v50z"/>
+          <path d="M96 120V78l12-16 12 16v42z"/><path d="M244 120V82l11-15 11 15v38z"/>
+        </g>
+        <rect x="148" y="34" width="60" height="86" rx="6" fill="#2A1A47" stroke="#4A3570" stroke-width="2"/>
+        <path d="M178 52v50M162 77h32" stroke="#FFD836" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="178" cy="77" r="21" fill="none" stroke="#FFD836" stroke-width="2" opacity=".5"/>
+        <g fill="#FFD836"><circle cx="70" cy="30" r="1.8"/><circle cx="286" cy="24" r="1.8"/>
+          <circle cx="120" cy="18" r="1.4"/><circle cx="236" cy="40" r="1.4"/></g>
+      </svg>
+      <div class="in">
+        <span class="k">HIDDEN ROOM</span>
+        <h3>まだ ひらいていない 部屋があります。</h3>
+        <p>ここだけ、ふだんより大きく返ってきます。<br>ひらき方は 4つ あります。</p>
+        <span class="how safe">1 条件でひらく — 2部屋クリア</span><br>
+        <span class="how time">2 毎週 金曜 20時にひらく</span><br>
+        <span class="how first">3 先着 100名でひらく</span><br>
+        <span class="how safe">4 出現がランダム（中身は全員おなじ）</span>
+        <div class="amt">
+          <span class="n">???</span><span class="u">pt</span>
+          <span class="cap">ひらくと わかります<br>1人あたり上限 2,000pt</span>
+        </div>
+        <button class="btn boss-btn" disabled>あと 1部屋 でひらく</button>
+      </div>
+    </div>
+    <div class="note">
+      <b>4種すべて合法にできる。</b>危険なのは「ランダム」だけで、それも設計で回避する:<br>
+      1 条件達成・2 時間限定 = <b>偶然性なし</b>＝懸賞の定義に当たらない<br>
+      3 先着 = 運用基準3に「<b>先着順は懸賞に該当しない</b>」と<b>明文</b>がある<br>
+      4 ランダム = <b>「いつ出るか」だけをランダムにし、「何がもらえるか」は全員同じ</b>にする。
+      開けて<b>ハズレがある設計は採らない</b>（相手方も価額も偶然で決めない）。
+      額を変えるなら<b>上限2,000ptのキャップ</b>を併用する。
+    </div>
+  </div>
+
+  <!-- ============ 8. 隠し部屋が開いた ============ -->
+  <div class="ph">
+    <div class="cap">隠し部屋が ひらいた</div>
+    <div class="boss">
+      <svg class="art" viewBox="0 0 356 120" role="img" aria-label="開いた扉から光があふれる">
+        <rect width="356" height="120" fill="#1B1030"/>
+        <g fill="#2A1A47">
+          <path d="M40 120V64l16-22 16 22v56z"/><path d="M300 120V70l14-19 14 19v50z"/>
+        </g>
+        <path d="M148 120 L128 120 L178 30 L228 120 L208 120Z" fill="#FFD836" opacity=".14"/>
+        <rect x="148" y="34" width="60" height="86" rx="6" fill="#FFD836"/>
+        <rect x="156" y="42" width="44" height="78" rx="4" fill="#1B1030"/>
+        <g fill="#FFD836"><circle cx="70" cy="30" r="2.2"/><circle cx="286" cy="24" r="2.2"/>
+          <circle cx="120" cy="18" r="1.8"/><circle cx="236" cy="40" r="1.8"/>
+          <circle cx="96" cy="52" r="1.4"/><circle cx="266" cy="60" r="1.4"/></g>
+      </svg>
+      <div class="in">
+        <span class="k">HIDDEN ROOM — OPEN</span>
+        <h3>ひらきました。</h3>
+        <p>この部屋のアンケートは、いま参加している人で分け合います。<br>人数が少ないほど、ひとりの取り分は大きくなります。</p>
+        <div class="amt">
+          <span class="n">50,000</span><span class="u">pt</span>
+          <span class="cap">参加した人で分けます<br>1人あたり上限 2,000pt</span>
+        </div>
+        <button class="btn boss-btn">この部屋に はいる</button>
+      </div>
+    </div>
+    <div class="note">
+      「少人数ほど有利」は<b>ルールの提示だけで成立する</b>——
+      <b>実際の参加人数を出さなくてよい</b>。少人数期に実数を出すと過疎に見えるため（D-1）、
+      人数は出さずルールだけ書くのが安全。締切直前だけ出す、という出し分けも可能。
+    </div>
+  </div>
+
+
+  <!-- ============ 9. 「戻る」レイヤー ============ -->
+  <div class="ph">
+    <div class="cap">途切れた人にだけ出す（積み上げとは別の動機）</div>
+    <div class="back">
+      <svg class="art" viewBox="0 0 356 128" role="img" aria-label="夜。消えかけた灯りにもう一度火が灯る">
+        <rect width="356" height="128" fill="#2E2440"/>
+        <g fill="#241B34">
+          <path d="M0 104 Q90 90 180 104 T356 100 L356 128 L0 128Z"/>
+        </g>
+        <g opacity=".3" fill="#FFD836">
+          <circle cx="52" cy="30" r="1.6"/><circle cx="300" cy="26" r="1.6"/>
+          <circle cx="118" cy="18" r="1.2"/><circle cx="248" cy="36" r="1.2"/>
+        </g>
+        <g opacity=".22">
+          <circle cx="96" cy="72" r="13" fill="none" stroke="#A493C0" stroke-width="2"/>
+          <circle cx="140" cy="72" r="13" fill="none" stroke="#A493C0" stroke-width="2"/>
+          <circle cx="184" cy="72" r="13" fill="none" stroke="#A493C0" stroke-width="2"/>
+        </g>
+        <circle cx="228" cy="72" r="15" fill="none" stroke="#FFD836" stroke-width="2.5"/>
+        <path d="M228 64v16M220 72h16" stroke="#FFD836" stroke-width="2.5" stroke-linecap="round"/>
+        <g stroke="#FFD836" stroke-width="1.6" opacity=".55" stroke-linecap="round">
+          <path d="M228 46v-8M228 106v8M254 72h8M194 72h-8M247 53l6-6M209 91l-6 6M247 91l6 6M209 53l-6-6"/>
+        </g>
+      </svg>
+      <div class="in">
+        <span class="k">WELCOME BACK</span>
+        <h3>12日 つづいていました。<br><em>1問</em> で、そこに戻れます。</h3>
+        <div class="lost">
+          <div class="row">
+            <div class="was"><div class="lb">つづいていた</div><div class="vl">12日</div></div>
+            <span class="arw">›</span>
+            <div class="was"><div class="lb">いま</div><div class="now-v">とぎれた</div></div>
+          </div>
+        </div>
+        <p class="one">積み上げ直しではありません。<br><b>1問</b> こたえれば、記録はつながります。</p>
+        <button class="btn magic">1問だけ こたえる</button>
+      </div>
+    </div>
+    <div class="note">
+      <b>構造は積み上げ型と真逆。</b>積み上げ＝時間をかけて別人になる。
+      戻る＝<b>すでに持っていたものを取り戻す</b>。<br>
+      核心は<b>「一度の行為で戻る」</b>——新たな努力を要求しないので、
+      面倒くささが動機を殺さない。<br>
+      ⚠ <b>性別ではなく「途切れたかどうか」で出し分ける</b>ので外れない。
+      復帰しない人には一生表示されない。
+    </div>
+  </div>
+
+  <!-- ============ 10. 戻る先の候補（未確定） ============ -->
+  <div class="ph">
+    <div class="cap">「何を取り戻すか」は未確定 — 候補3つ</div>
+    <div class="opts">
+      <div class="opt pick">
+        <span class="tag">候補A</span>
+        <div class="t">連続記録を つなぎ直す</div>
+        <div class="d">「12日つづいていたのに途切れた」を1問で復元。
+        <b>失ったものが明確</b>で、ランクの意味を壊さない。
+        既存の回答履歴から算出できるので<b>新規テーブル不要</b>。</div>
+      </div>
+      <div class="opt">
+        <span class="tag ok">候補B</span>
+        <div class="t">見た目・飾りを 取り戻す</div>
+        <div class="d">バッジやアバターの装飾を復元。実害ゼロで安全だが、
+        <b>現状Hibiに飾りの仕組みが無い</b>ため新規実装が大きい。
+        rank-icons.js のメダリオン資産は流用できる。</div>
+      </div>
+      <div class="opt">
+        <span class="tag warn">候補C</span>
+        <div class="t">ランクそのものを 戻す</div>
+        <div class="d">シルバー→ゴールドに復元。直感的だが<b>採らないほうがいい</b>——
+        ランクは「有効回答×品質」で決まる設計なので、
+        別経路で戻せると<b>ランクの意味が壊れる</b>。</div>
+      </div>
+    </div>
+    <div class="note">
+      <b>Aを推奨。</b>失ったものが具体的で、既存データから作れて、
+      ランクの正しさを壊さない。<br>
+      ⚠ <b>共通の絶対条件</b>：戻すのは<b>「記録の連続性」だけ</b>で、
+      <b>ポイントやランクを買い戻せる形にはしない</b>。
+      課金的な抜け道を作ると、有効回答×品質で積み上げた土台が無意味になる。
+    </div>
+  </div>
+
+</div>
+</div>

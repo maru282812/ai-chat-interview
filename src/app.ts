@@ -4,17 +4,18 @@ import { adminAuthMiddleware } from "./middleware/adminAuth";
 import { adminCsrfMiddleware } from "./middleware/adminCsrf";
 import { adminLocals } from "./middleware/adminLocals";
 import { perfTiming } from "./middleware/perfTiming";
-import { errorHandler } from "./lib/http";
+import { asyncHandler, errorHandler } from "./lib/http";
 import { adminRoutes } from "./routes/adminRoutes";
 import { liffRoutes } from "./routes/liffRoutes";
 import { webhookRoutes } from "./routes/webhookRoutes";
 import { cronRoutes } from "./routes/cronRoutes";
 import { mentalProxyRoutes } from "./routes/mentalProxyRoutes";
 import { partnerAdminRoutes } from "./routes/partnerAdminRoutes";
+import { surveyPreviewController } from "./controllers/surveyPreviewController";
 import { partnerRoutes } from "./routes/partnerRoutes";
 import { registerAdminChatTools } from "./services/adminChat/registerTools";
 import { renderCompiled } from "./lib/compiledViews";
-import { serveCompiledAsset } from "./lib/compiledAssets";
+import { assetUrl, serveCompiledAsset } from "./lib/compiledAssets";
 
 /**
  * express が view の絶対パスを組み立てるための基準ディレクトリ。
@@ -102,6 +103,10 @@ export function createApp() {
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       return originalRender(view, options as never, callback as never);
     }) as typeof res.render;
+    // 静的資産のキャッシュ破棄用 URL を全ビューへ配る（admin も LIFF も使う）。
+    // ⚠ `/public/styles.css` を直書きすると、デプロイ直後に
+    // 「新しい HTML ＋ 1時間キャッシュされた古い CSS」でレイアウトが崩れる。
+    res.locals.assetUrl = assetUrl;
     next();
   });
 
@@ -111,7 +116,28 @@ export function createApp() {
   // 再生成: npm run build:assets
   app.use("/public", serveCompiledAsset);
   app.use("/webhooks/line", express.raw({ type: "application/json" }));
-  app.use(express.json({ limit: "10mb" }));
+  // ⚠ raw で読み終えたパスに後続のボディパーサを通してはいけない。
+  //
+  // Node ではストリームが消費済みなら express.json() は素通りするが、
+  // Cloudflare Workers ではそうならない。アダプタ（workers/expressAdapter.ts）は
+  // body-parser の誤判定を避けるため req.complete=false / socket.readable=true を
+  // 意図的に維持しており、その状態だと json() が「まだ読める」と判断して
+  // 二度目の読み取りに入り、永久に end を待って**ハングする**。
+  // 結果 res.end が呼ばれず、Workers ランタイムがリクエストを強制終了して 500
+  // （error code: 1101）を返す＝LINE Webhook が全滅する。
+  //
+  // 2026-08-29 に workerd（wrangler dev --local）で再現・修正を実測。
+  // 最小構成では raw 単体は正常。raw の直後に「パス限定なしの」json を置いた
+  // ときだけ再現する。Node 側の挙動は変わらない（元から素通りしていた）。
+  const rawBodyPaths = ["/webhooks/line"];
+  const jsonParser = express.json({ limit: "10mb" });
+  app.use((req, res, next) => {
+    if (rawBodyPaths.some((p) => req.path === p || req.path.startsWith(`${p}/`))) {
+      next();
+      return;
+    }
+    jsonParser(req, res, next);
+  });
   // 計測ビーコンだけは「壊れた JSON でも 204」を守る。express.json() はパース失敗を
   // throw し、それはルートの try/catch より前で起きるためルート側では捕まえられない。
   // ここで本ルートのパースエラーだけを body={} に丸め、計測が 500 を出さないようにする
@@ -124,7 +150,15 @@ export function createApp() {
     }
     next(err);
   });
-  app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+  // urlencoded も json と同じ理由で raw 済みパスを避ける（上のコメント参照）。
+  const urlencodedParser = express.urlencoded({ extended: true, limit: "10mb" });
+  app.use((req, res, next) => {
+    if (rawBodyPaths.some((p) => req.path === p || req.path.startsWith(`${p}/`))) {
+      next();
+      return;
+    }
+    urlencodedParser(req, res, next);
+  });
 
   app.get("/health", (_req, res) => {
     res.json({
@@ -136,13 +170,29 @@ export function createApp() {
   app.use("/webhooks", webhookRoutes);
   app.use("/api/cron", cronRoutes);
   app.use("/api/mental", mentalProxyRoutes);
+  // 調査票プレビュー（読み取り専用・HTML を返す）。
+  // **partnerRoutes より先に置く**。partnerRoutes はルータ全体に JSON 前提の
+  // 認証ミドルウェアを掛けており、iframe からの GET（ヘッダを付けられない）を
+  // 通せないため、このルートだけ独自に鍵とスコープを検証する。
+  app.get(
+    "/api/partner/surveys/:id/preview",
+    asyncHandler(surveyPreviewController.preview)
+  );
   // 会員ポータル（hibi-portal）向けパートナーAPI（docs/partner-api.md）。
   // 認証は X-Partner-Key（partnerRoutes 内でルータ全体に適用）。
   app.use("/api/partner", partnerRoutes);
   // 運営専用API（docs/partner-api.md §8）。ポータルの /ops から案件を店舗へ割り当てる。
   // 認証は X-Partner-Admin-Key（PARTNER_ADMIN_API_KEY・店舗用の鍵とは別物）。
   app.use("/api/partner-admin", partnerAdminRoutes);
-  app.use("/admin", adminAuthMiddleware, adminCsrfMiddleware, adminLocals, adminRoutes);
+  // 管理画面の HTML はキャッシュさせない。
+  // 一覧の「ロウデータ列」「Code」「Next」はサーバーが並び順から計算して描くため、
+  // 並べ替えたあと読み直したときに古いものを返されると「並べ替えたのに列が
+  // 直っていない」ように見える（ETag だけ付いていて Cache-Control が無かった）。
+  // 配信物(/public)は指紋付きURLで別管理なのでここには含めない。
+  app.use("/admin", (_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store, must-revalidate");
+    next();
+  }, adminAuthMiddleware, adminCsrfMiddleware, adminLocals, adminRoutes);
   app.use("/liff", perfTiming, liffRoutes);
 
   app.get("/", (_req, res) => {

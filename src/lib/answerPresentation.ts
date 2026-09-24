@@ -8,6 +8,18 @@
  *   2. プロジェクト単位   projects.answer_ui_preset（casual|standard|formal・デフォルト standard）
  *   3. 自動フォールバック  適用不能条件（設問文長・選択肢数）で casual→standard→formal 方向に降格
  *
+ * casual（スワイプ）の既定は美容室ABCで実機確認して決めた組み合わせに揃えている（2026-09-06）:
+ *   2択 = swipe_card / 順序尺度 = big_slider / 複数選択 = chip_select。
+ *   絵文字フェイス（face_scale）は既定から外した（「ださい」で不採用）。使いたい設問だけ
+ *   question_config.presentation.pattern で明示指定する。
+ *
+ * sort_swipe（1枚ずつ◯✕で振り分ける）は既定にしない（2026-09-08）。選択肢の数だけ
+ * 画面が続くため、casual というだけで自動適用すると回答者の操作量が設問数と無関係に
+ * 膨らむ。実際、美容室ABCでは A-Q5（来店直後のメニュー選択・7件）が意図せず7枚の
+ * 振り分けになっていた。「1枚ずつ聞くだけの時間的余裕がある」かは設問ごとの判断なので、
+ * 使う設問だけ presentation.pattern で明示指定する。9件以上を chip_select へ落とす
+ * 上限（SORT_SWIPE_OPTION_MAX）は、明示指定に対する安全弁として applyFallback 側に残す。
+ *
  * 責務外:
  *   - HTML/EJS 生成（描画は survey.ejs のパターンレジストリが担う）
  *   - 回答の保存形式（既存 answers 経路のまま。表示層のみの変換）
@@ -15,6 +27,7 @@
  */
 
 import type { AnswerUiPreset, QuestionConfig, QuestionType } from "../types/domain";
+import { isOtherLabel } from "./otherOption";
 
 /** 解決済みの表示パターン。resolveQuestionView の出力に同梱される。 */
 export interface AnswerPresentation {
@@ -36,6 +49,11 @@ const SWIPE_TEXT_MAX = 60;
 const CAROUSEL_OPTION_MAX = 8;
 /** 選択肢数がこれ以上の face_scale / big_slider は tap_cards へ降格。 */
 const SCALE_OPTION_MAX = 6;
+/**
+ * 明示指定された sort_swipe でも、これを超える件数は chip_select へ降格する。
+ * 1枚1画面のため、選択肢の数がそのまま画面数になり、9枚を超えると長すぎる。
+ */
+const SORT_SWIPE_OPTION_MAX = 8;
 /**
  * numeric の選択肢数がこれを超えたらドラムピッカー(number_wheel)で描く。
  * 0〜10 の11段階スケールまでは従来の丸ボタンで収まるため、それより多い場合のみ切り替える。
@@ -74,7 +92,9 @@ export function resolveAnswerPresentation(
     : basePattern(question.question_type, preset, cfg, n);
 
   // 3. 自動フォールバック（適用不能条件に該当したら降格）。
-  const finalPattern = applyFallback(base, question.question_text ?? "", n);
+  // sort_swipe は「デッキに並ぶ枚数」で判定する。排他選択肢（特になし）と自由記述つき
+  // 選択肢（その他）はカードにならず専用行へ出るため、件数に数えると実際より多く見える。
+  const finalPattern = applyFallback(base, question.question_text ?? "", n, deckCount(cfg, n));
 
   return {
     pattern: finalPattern,
@@ -102,13 +122,16 @@ function basePattern(
     case "yes_no": {
       // 0–100 スライダー指定 / 順序尺度指定は scale 系レイアウトへ
       if (slider) return formal ? "radio_list" : "big_slider";
-      if (scale) return casual ? "face_scale" : standard ? "big_slider" : "radio_list";
+      // 順序尺度は casual / standard ともスライダー（絵文字フェイスは設問単位の明示指定のみ）
+      if (scale) return formal ? "radio_list" : "big_slider";
       if (n <= 2) return casual ? "swipe_card" : standard ? "big_split" : "radio_list";
       return casual ? "carousel" : standard ? "tap_cards" : "radio_list";
     }
     case "multi_choice":
     case "multi_select": // legacy 別名
-      return casual ? "sort_swipe" : standard ? "chip_select" : "checkbox_list";
+      // casual でも sort_swipe は既定にしない（明示指定のみ・上の方針コメント参照）。
+      if (casual || standard) return "chip_select";
+      return "checkbox_list";
     case "matrix_single":
     case "matrix_multi":
     case "matrix_mixed":
@@ -161,8 +184,39 @@ function numericRangeCount(cfg: QuestionConfig | null): number {
   return max - min + 1;
 }
 
-/** 適用不能条件に該当したパターンを降格する。降格が起きなければ入力をそのまま返す。 */
-function applyFallback(pattern: string, questionText: string, n: number): string {
+/**
+ * sort_swipe のデッキに実際に並ぶカード枚数を数える。
+ *
+ * answer-ui.ejs の buildSortSwipeHtml と同じ条件で除外する:
+ *   - exclusive（「特になし」）… デッキ外。全カード✕＝「特になし」相当のため
+ *   - allow_free_text（「その他」）… デッキ外。カードを倒す操作に文字入力の余地がないため
+ *     専用のタップ+入力行で受ける（3a0189d）
+ *
+ * options を持たない設問（carry-forward で件数だけ渡る等）は数えようがないので
+ * 渡された件数 n をそのまま返す。
+ *
+ * ⚠ allow_free_text は DB に保存されているとは限らない。シード/Partner API 経由で作られた
+ * 「その他」はフラグを持たず、描画直前の applyAutoFreeText がラベルから付与する
+ * （otherOption.ts）。ここで生の options だけを見るとデッキ枚数を多く数えてしまい、
+ * 実際には収まる設問が不当に降格するため、同じラベル判定（isOtherLabel）を併用する。
+ */
+function deckCount(cfg: QuestionConfig | null, n: number): number {
+  const options = cfg?.options;
+  if (!Array.isArray(options) || options.length === 0) return n;
+  const excluded = options.filter(
+    (o) => o?.exclusive === true || o?.allow_free_text === true || isOtherLabel(o?.label),
+  ).length;
+  // n は carry-forward / disable 反映後の実件数。除外分を引いた下限は 0。
+  return Math.max(0, n - excluded);
+}
+
+/**
+ * 適用不能条件に該当したパターンを降格する。降格が起きなければ入力をそのまま返す。
+ *
+ * @param n     実選択肢数（carry-forward / disable 反映後）
+ * @param cards sort_swipe のデッキに並ぶ枚数（排他・自由記述を除いた数）
+ */
+function applyFallback(pattern: string, questionText: string, n: number, cards: number): string {
   switch (pattern) {
     case "swipe_card":
       // 設問文が全角60文字超 → big_split
@@ -170,6 +224,9 @@ function applyFallback(pattern: string, questionText: string, n: number): string
     case "carousel":
       // 選択肢8件超 → tap_cards
       return n > CAROUSEL_OPTION_MAX ? "tap_cards" : pattern;
+    case "sort_swipe":
+      // デッキ8枚超 → chip_select（1枚1画面なので枚数がそのまま操作量になる）
+      return cards > SORT_SWIPE_OPTION_MAX ? "chip_select" : pattern;
     case "face_scale":
     case "big_slider":
       // 選択肢6件以上 → tap_cards（尺度として破綻するため）

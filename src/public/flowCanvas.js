@@ -28,6 +28,22 @@
   // AI suggestion cache { questionId: suggestions }
   let aiSuggestionCache = {};
 
+  // ─── 自動保存 / 下書き ────────────────────────
+  // 右パネルは DOM だけが編集バッファなので、ノードを切り替えると innerHTML の
+  // 上書きで入力が消える。切り替えの「前」に必ず flushPendingEdits() を通して
+  // サーバへ逃がし、落とせなかった分は localStorage の下書きに退避する。
+  const DRAFT_PREFIX = 'hibi:flow:draft:' + DATA.projectId + ':';
+  const DRAFT_DEBOUNCE_MS = 800;
+
+  // 右パネルを描画した時点のサーバ値スナップショット。
+  // collectRpData() の結果とこれを比べて「本当に変わったか」を判定する。
+  let rpBaseline = null;
+  // 直列化用。多重クリックで保存が並走しないよう Promise を1本だけ持つ。
+  let pendingFlush = Promise.resolve();
+  let draftTimer = null;
+  // 下書きバナーで「破棄」した設問は、同じセッション中に再提示しない。
+  let draftDismissed = {};
+
   // Layout constants
   const NODE_W = 220;
   const NODE_GAP_Y = 56;
@@ -63,8 +79,15 @@
     bindLeftPanel();
     bindCanvasBackground();
     bindKeyboard();
+    bindUnloadDraft();
     showRightPanelEmpty();
   });
+
+  // タブを閉じる/リロード/「戻る」での全損を防ぐ。自動保存があるので
+  // 確認ダイアログは出さず、下書きだけ同期的に残す。
+  function bindUnloadDraft() {
+    window.addEventListener('beforeunload', function () { saveDraftNow(); });
+  }
 
   // ─── Position computation ──────────────────────
   function computeInitialPositions() {
@@ -315,7 +338,14 @@
     var typeLabel = getTypeLabel(q.question_type);
     var textPreview = q.question_text.length > 55 ? q.question_text.slice(0, 55) + '…' : q.question_text;
 
+    // 保存できない状態（＝サーバが弾く条件）だけを「未完成」として示す。
+    // 深掘りを使わない設問で「知りたいこと」が空なのは正常なので警告しない。
+    var researchGoal = (q.question_config && q.question_config.meta && q.question_config.meta.research_goal) || '';
+    var incomplete = !String(q.question_text || '').trim() ||
+      (q.ai_probe_enabled && !String(researchGoal).trim());
+
     var badgesHtml =
+      (incomplete ? '<span class="node-badge warn">未完成</span>' : '') +
       (q.is_required ? '<span class="node-badge required">必須</span>' : '') +
       (q.ai_probe_enabled ? '<span class="node-badge ai">AI深掘</span>' : '') +
       (q.answer_options_locked ? '<span class="node-badge locked">選択肢固定</span>' : '') +
@@ -375,19 +405,26 @@
     var textPreview = q.question_text.length > 25 ? q.question_text.slice(0, 25) + '…' : q.question_text;
 
     // Build branch output handles (right side for each branch)
+    // ポートの丸だけでは「どの選択肢の出口か」が図から読めないため、
+    // 丸の右に選択肢ラベルを実テキストで出す（hover の title 頼みにしない）。
     var branchHandles = (branchRule.branches || []).map(function (b, i) {
-      var label = getBranchLabel(b);
+      var label = getBranchLabel(b, q);
+      var shown = label || '分岐' + (i + 1);
       var topPct = (i + 1) / (branchCount + 1);
       var topPx = Math.round(topPct * DIAMOND_H);
+      var unset = b && b.next ? '' : ' is-unset';
       return '<div class="node-handle node-handle-out" style="bottom:auto;left:' + (DIAMOND_W - 4) + 'px;top:' + topPx + 'px;transform:none;" ' +
-             'data-handle-out="' + q.id + '" data-branch-key="branch_' + i + '" title="' + esc(label || '分岐' + (i+1)) + '"></div>';
+             'data-handle-out="' + q.id + '" data-branch-key="branch_' + i + '" title="' + esc(shown) + '"></div>' +
+             '<span class="node-port-label' + unset + '" style="left:' + (DIAMOND_W + 14) + 'px;top:' + (topPx - 7) + 'px;" ' +
+             'title="' + esc(shown) + '">' + esc(truncLabel(shown, 14)) + '</span>';
     }).join('');
 
     el.innerHTML =
       '<div class="node-diamond-bg"></div>' +
       '<div class="node-handle node-handle-in" data-handle-in="' + q.id + '"></div>' +
       // bottom tip = default out
-      '<div class="node-handle node-handle-out" style="top:113px;left:93px;bottom:auto;transform:none;" data-handle-out="' + q.id + '" data-branch-key="default" title="デフォルト遷移"></div>' +
+      '<div class="node-handle node-handle-out" style="top:113px;left:93px;bottom:auto;transform:none;" data-handle-out="' + q.id + '" data-branch-key="default" title="どの分岐にも当たらないとき"></div>' +
+      '<span class="node-port-label node-port-label-default" style="left:113px;top:113px;">それ以外</span>' +
       branchHandles +
       '<div class="node-diamond-content">' +
         '<span class="node-code">' + esc(q.question_code) + '</span>' +
@@ -451,7 +488,7 @@
       for (var bi = 0; bi < branches.length; bi++) {
         var branch = branches[bi];
         if (!branch.next) continue;
-        var label = getBranchLabel(branch);
+        var label = truncLabel(getBranchLabel(branch, q), 12);
         var connId = q.id + ':branch_' + bi;
         if (branch.next === 'END') {
           drawArrow(defs, q.id, '__end__', label, '#dda020', true, connId);
@@ -465,10 +502,10 @@
       if (branchRule.default_next) {
         var defConnId = q.id + ':default';
         if (branchRule.default_next === 'END') {
-          drawArrow(defs, q.id, '__end__', 'default', '#2ca87a', false, defConnId);
+          drawArrow(defs, q.id, '__end__', 'それ以外', '#2ca87a', false, defConnId);
         } else {
           var defQ = questions.find(function (x) { return x.question_code === branchRule.default_next; });
-          if (defQ) drawArrow(defs, q.id, defQ.id, 'default', '#2ca87a', false, defConnId);
+          if (defQ) drawArrow(defs, q.id, defQ.id, 'それ以外', '#2ca87a', false, defConnId);
         }
       } else if (branches.length === 0) {
         // Sequential
@@ -590,11 +627,76 @@
     }
   }
 
-  function getBranchLabel(branch) {
+  // 分岐条件の値から、その設問の選択肢ラベルを引く。
+  // branch.when の値は保存経路によって「選択肢のvalue（＝labelと同じ文字列）」のことも
+  // 「1始まりの選択肢番号」のこともあるため、value一致 → 番号 の順に解決する。
+  // どちらにも当たらなければ値をそのまま返す（自由記述や数値条件はこれで正しい）。
+  function resolveOptionLabel(q, rawValue) {
+    if (rawValue === undefined || rawValue === null) return '';
+    var value = String(rawValue);
+    var options = (q && q.question_config && q.question_config.options) || [];
+    if (!options.length) return value;
+
+    for (var i = 0; i < options.length; i++) {
+      var o = options[i] || {};
+      if (String(o.value) === value) return String(o.label || o.value);
+    }
+    // 1始まりの選択肢番号として解釈する（旧データの equals:1 形式）
+    if (/^[0-9]+$/.test(value)) {
+      var idx = parseInt(value, 10) - 1;
+      if (idx >= 0 && idx < options.length) {
+        var hit = options[idx] || {};
+        return String(hit.label || hit.value || value);
+      }
+    }
+    return value;
+  }
+
+  // 選択肢ラベルが長いとノードの外まで伸びて図が読めなくなるので詰める
+  function truncLabel(s, max) {
+    var t = String(s == null ? '' : s);
+    return t.length > max ? t.slice(0, max) + '…' : t;
+  }
+
+  // 右パネルの条件セレクト用。選択式設問なら {cond:'equals:値', label:'表示名'} を返す。
+  // cond の文字列形式は parseBranchCond / collectRpData がそのまま解釈する契約。
+  function getBranchChoiceOptions(q) {
+    var options = (q && q.question_config && q.question_config.options) || [];
+    return options.map(function (o, i) {
+      var value = (o && o.value !== undefined && o.value !== null) ? String(o.value) : '';
+      var label = (o && o.label) ? String(o.label) : value;
+      if (!value) return null;
+      // 既存データは条件が 1始まりの選択肢番号（equals:1）で入っていることがある。
+      // 同じ選択肢を指す別表記なので、セレクトの照合用に番号も持たせる。
+      // これが無いと保存済みの分岐が「選択肢外」に落ち、再保存で番号が
+      // ラベル文字列に書き換わってデータが黙って変わってしまう。
+      return { cond: 'equals:' + value, altCond: 'equals:' + (i + 1), label: label };
+    }).filter(Boolean);
+  }
+
+  /** 保存済みの条件文字列が、その選択肢を指しているか（value 一致・番号一致の両方を見る） */
+  function condMatchesChoice(condStr, choice) {
+    return Boolean(condStr) && (condStr === choice.cond || condStr === choice.altCond);
+  }
+
+  // branch.when を「equals:値」等の編集用文字列に戻す
+  function branchCondToString(b) {
+    var w = (b && b.when) || {};
+    if (w.equals   !== undefined) return 'equals:'   + w.equals;
+    if (w.any_of   !== undefined) return 'any_of:'   + (w.any_of || []).join(',');
+    if (w.includes !== undefined) return 'includes:' + w.includes;
+    if (w.gte      !== undefined) return 'gte:'      + w.gte;
+    if (w.lte      !== undefined) return 'lte:'      + w.lte;
+    return '';
+  }
+
+  function getBranchLabel(branch, q) {
     var w = branch.when || {};
-    if (w.equals   !== undefined) return '=' + w.equals;
-    if (w.any_of   !== undefined) return '∈[' + (w.any_of || []).join(',') + ']';
-    if (w.includes !== undefined) return '含' + w.includes;
+    if (w.equals   !== undefined) return resolveOptionLabel(q, w.equals);
+    if (w.any_of   !== undefined) {
+      return (w.any_of || []).map(function (v) { return resolveOptionLabel(q, v); }).join(' / ');
+    }
+    if (w.includes !== undefined) return resolveOptionLabel(q, w.includes);
     if (w.gte      !== undefined) return '≥' + w.gte;
     if (w.lte      !== undefined) return '≤' + w.lte;
     return '';
@@ -704,7 +806,7 @@
     connDrag = null;
   }
 
-  function applyConnection(fromId, branchKey, toId) {
+  async function applyConnection(fromId, branchKey, toId) {
     // toCode
     var toCode = toId === '__end__' ? 'END' : null;
     if (!toCode) {
@@ -719,6 +821,11 @@
       return;
     }
 
+    // saveBranchRule() は questions[]（＝最後にサーバから返った値）から payload を組む。
+    // 右パネルで編集中のまま線を引くと、編集前の値でサーバを上書きして変更が黙って消える。
+    // 先に編集内容を確定させてから branch_rule を載せる。
+    await flushPendingEdits();
+
     var fromQ = questions.find(function (x) { return x.id === fromId; });
     if (!fromQ) return;
     var branchRule = (fromQ.branch_rule && !Array.isArray(fromQ.branch_rule))
@@ -730,9 +837,13 @@
     } else if (branchKey.startsWith('branch_')) {
       var bidx = parseInt(branchKey.slice(7), 10);
       if (!branchRule.branches) branchRule.branches = [];
-      if (branchRule.branches[bidx]) {
-        branchRule.branches[bidx].next = toCode;
+      if (!branchRule.branches[bidx]) {
+        // 対応する分岐行が無い＝条件が未定義。黙って捨てると「線を引いたのに何も起きない」
+        // ことになるので、理由を出して止める。
+        showStatus('この分岐には条件がありません。右パネルの「分岐」タブで条件を設定してください', 'error');
+        return;
       }
+      branchRule.branches[bidx].next = toCode;
     }
 
     // Persist
@@ -784,7 +895,7 @@
   }
 
   // ─── Delete connection ─────────────────────────
-  function deleteSelectedConnection() {
+  async function deleteSelectedConnection() {
     if (!selectedConn) return;
     var connId = selectedConn.connId;
     var fromId = selectedConn.fromId;
@@ -793,6 +904,9 @@
       showStatus('STARTの接続は削除できません', 'error');
       return;
     }
+
+    // 線を消す前に編集中の内容を確定させる（applyConnection と同じ理由）
+    await flushPendingEdits();
 
     var fromQ = questions.find(function (x) { return x.id === fromId; });
     if (!fromQ) return;
@@ -822,7 +936,10 @@
   }
 
   // ─── Selection ────────────────────────────────
-  function selectNode(id) {
+  // 切り替えの前に編集中の内容を逃がす。await しないと innerHTML の上書きが
+  // 先に走って DOM から値が読めなくなる。
+  async function selectNode(id) {
+    if (selectedId && selectedId !== id) await flushPendingEdits();
     selectedId = id;
     selectedConn = null;
     $canvas.querySelectorAll('.flow-node').forEach(function (n) { n.classList.remove('selected'); });
@@ -842,9 +959,11 @@
     updateToolbarState();
   }
 
-  function clearSelection() {
+  async function clearSelection() {
+    if (selectedId) await flushPendingEdits();
     selectedId = null;
     selectedConn = null;
+    rpBaseline = null;
     $canvas.querySelectorAll('.flow-node').forEach(function (n) { n.classList.remove('selected'); });
     renderConnections();
     showRightPanelEmpty();
@@ -853,6 +972,8 @@
 
   // ─── Right panel: empty ───────────────────────
   function showRightPanelEmpty() {
+    // フォームが消える＝差分の基準も無効。残すと次の flush が古い基準で誤判定する。
+    rpBaseline = null;
     $rightPanel.innerHTML =
       '<div class="flow-right-empty">' +
         '<div><div class="empty-icon">📋</div>' +
@@ -861,6 +982,7 @@
   }
 
   function showRightPanelSpecial(type) {
+    rpBaseline = null;
     var label = type === 'start' ? '開始ノード' : '終了ノード';
     var desc  = type === 'start'
       ? 'アンケート/インタビューの開始点です。\n最初の質問から処理が始まります。'
@@ -921,11 +1043,20 @@
     // 回答形式変更時 → 型別UI（#rp-type-specific）を即時切り替え
     var rpBodyEl = document.getElementById('rpBody');
     if (rpBodyEl) {
+      var prevType = q.question_type;
       rpBodyEl.addEventListener('change', function (e) {
         if (e.target.id !== 'rp-question_type') return;
         var newType  = e.target.value;
         var typeArea = document.getElementById('rp-type-specific');
         if (!typeArea) return;
+        // 型別セクションに入力済みの値があるなら、差し替えは破壊操作になる。
+        // 誤操作で matrix の行列やプレースホルダが復元不能に消えるのを防ぐ。
+        if (typeSpecificHasInput(typeArea) &&
+            !confirm('回答形式を変えると、この形式向けに入力した設定は失われます。よろしいですか？')) {
+          e.target.value = prevType;
+          return;
+        }
+        prevType = newType;
         var currentConfig = q.question_config || {};
         var currentOpts   = currentConfig.options || [];
         typeArea.innerHTML = buildRpTypeSpecific(newType, currentOpts, currentConfig);
@@ -934,7 +1065,18 @@
         var aiArea = document.getElementById('rp-ai-suggestion-area');
         if (aiArea) aiArea.innerHTML = '';
       });
+
+      // 入力のたびに下書きを更新（800ms デバウンス）
+      rpBodyEl.addEventListener('input',  scheduleDraftSave);
+      rpBodyEl.addEventListener('change', scheduleDraftSave);
     }
+
+    // 「描画直後の値」をサーバ値の基準として確定させる。
+    // これ以降の collectRpData() との差分が「ユーザーが変えた分」になる。
+    rpBaseline = collectRpData();
+
+    // 未保存の下書きがあれば提示する（formV3 と同じく自動復元はしない）
+    maybeShowDraftBanner(q);
 
     // Restore AI suggestion if cached
     var cached = aiSuggestionCache[q.id];
@@ -1134,14 +1276,34 @@
         allNextOpts +
       '</select>';
 
+    // 条件は「equals:値」の文字列で保持する（collectRpData/parseBranchCond の契約）。
+    // 選択式の設問では、その文字列を value に持つ <select> にして選択肢から選ばせる。
+    // 手打ちを強いると選択肢の表記ゆれで無言に一致しなくなるため。
+    var branchOptionChoices = getBranchChoiceOptions(q);
+
+    function condControlHtml(condStr) {
+      if (!branchOptionChoices.length) {
+        return '<input type="text" class="rp-branch-cond" value="' + esc(condStr) + '" placeholder="equals:値" />';
+      }
+      var known = false;
+      var opts = branchOptionChoices.map(function (c) {
+        var sel = condMatchesChoice(condStr, c) ? ' selected' : '';
+        if (sel) known = true;
+        // 一致した既存条件は、その表記のまま value に残す（equals:1 を勝手に書き換えない）
+        var val = sel ? condStr : c.cond;
+        return '<option value="' + esc(val) + '"' + sel + '>' + esc(c.label) + '</option>';
+      }).join('');
+      // 選択肢に無い条件（数値条件や旧データ）は消さずに残す
+      var extra = (condStr && !known)
+        ? '<option value="' + esc(condStr) + '" selected>' + esc(condStr) + '（選択肢外）</option>'
+        : '';
+      return '<select class="rp-branch-cond">' +
+               '<option value="">選択肢を選ぶ…</option>' + opts + extra +
+             '</select>';
+    }
+
     var branchRowsHtml = branches.map(function (b, i) {
-      var w = b.when || {};
-      var condStr =
-        w.equals   !== undefined ? 'equals:'   + w.equals :
-        w.any_of   !== undefined ? 'any_of:'   + (w.any_of || []).join(',') :
-        w.includes !== undefined ? 'includes:' + w.includes :
-        w.gte      !== undefined ? 'gte:'      + w.gte :
-        w.lte      !== undefined ? 'lte:'      + w.lte : '';
+      var condStr = branchCondToString(b);
       var nextOpts = questions
         .filter(function (x) { return x.id !== q.id; })
         .map(function (x) {
@@ -1151,7 +1313,7 @@
       return (
         '<div class="rp-branch-row" data-bidx="' + i + '">' +
           '<div class="rp-row">' +
-            '<div class="rp-field"><label>条件</label><input type="text" class="rp-branch-cond" value="' + esc(condStr) + '" placeholder="equals:1" /></div>' +
+            '<div class="rp-field"><label>この選択肢なら</label>' + condControlHtml(condStr) + '</div>' +
             '<div class="rp-field"><label>遷移先</label>' +
               '<select class="rp-branch-next">' +
                 '<option value="">未設定</option>' +
@@ -1169,9 +1331,14 @@
       '<div class="rp-tab-pane' + activeClass + '" id="rp-tab-branch">' +
         '<div class="rp-field"><label>デフォルト遷移先</label>' + defaultNextSel + '</div>' +
         '<div class="rp-section-title">条件分岐</div>' +
-        '<p style="font-size:10px;color:#60726f;margin:0 0 8px">条件式: <code>equals:値</code>, <code>any_of:1,2,3</code>, <code>gte:数値</code>, <code>lte:数値</code></p>' +
+        (branchOptionChoices.length
+          ? '<p style="font-size:10px;color:#60726f;margin:0 0 8px">選択肢ごとに遷移先を決めます。どれにも当たらない回答は「デフォルト遷移先」へ進みます。</p>'
+          : '<p style="font-size:10px;color:#60726f;margin:0 0 8px">条件式: <code>equals:値</code>, <code>any_of:1,2,3</code>, <code>gte:数値</code>, <code>lte:数値</code></p>') +
         '<div id="rp-branch-rows">' + branchRowsHtml + '</div>' +
         '<button type="button" class="rp-add-btn" id="rp-add-branch">＋ 分岐追加</button>' +
+        (branchOptionChoices.length
+          ? '<button type="button" class="rp-add-btn" id="rp-branch-from-options" style="margin-left:6px">選択肢から分岐を作る（' + branchOptionChoices.length + '件）</button>'
+          : '') +
       '</div>'
     );
   }
@@ -1218,28 +1385,78 @@
     }
     // Add branch
     if (e.target.id === 'rp-add-branch') {
-      var bc = document.getElementById('rp-branch-rows');
-      if (!bc) return;
-      var blen = bc.querySelectorAll('.rp-branch-row').length;
-      var q = questions.find(function (x) { return x.id === selectedId; });
-      var nextOpts2 = q ? questions
-        .filter(function (x) { return x.id !== q.id; })
-        .map(function (x) { return '<option value="' + esc(x.question_code) + '">' + esc(x.question_code) + '</option>'; }).join('') : '';
-      var brow = document.createElement('div');
-      brow.className = 'rp-branch-row';
-      brow.setAttribute('data-bidx', blen);
-      brow.innerHTML =
-        '<div class="rp-row">' +
-          '<div class="rp-field"><label>条件</label><input type="text" class="rp-branch-cond" value="" placeholder="equals:1" /></div>' +
-          '<div class="rp-field"><label>遷移先</label>' +
-            '<select class="rp-branch-next"><option value="">未設定</option><option value="END">END</option>' + nextOpts2 + '</select>' +
-          '</div>' +
-        '</div>' +
-        '<button type="button" class="rp-add-btn" style="color:#c04040;border-color:#e8c0c0" data-del-branch="' + blen + '">削除</button>';
-      bc.appendChild(brow);
+      appendBranchRow('');
+      return;
+    }
+    // 選択肢から分岐を一括生成。分岐行が無いとポート自体が出ず線が引けないため、
+    // 「選択肢ぶんの行をまとめて作る」を1操作で済ませる。既にある条件は重複させない。
+    if (e.target.id === 'rp-branch-from-options') {
+      var fq = questions.find(function (x) { return x.id === selectedId; });
+      if (!fq) return;
+      var choices = getBranchChoiceOptions(fq);
+      if (!choices.length) { showStatus('この設問には選択肢がありません', 'info'); return; }
+
+      var existing = [];
+      document.querySelectorAll('#rp-branch-rows .rp-branch-row .rp-branch-cond').forEach(function (el) {
+        if (el.value) existing.push(el.value);
+      });
+
+      var added = 0;
+      choices.forEach(function (c) {
+        // equals:値 と equals:番号 は同じ選択肢を指すので、どちらかがあれば作らない
+        var dup = existing.some(function (v) { return condMatchesChoice(v, c); });
+        if (dup) return;
+        appendBranchRow(c.cond);
+        added++;
+      });
+      showStatus(added > 0
+        ? added + '件の分岐行を作りました。遷移先を選んで保存してください'
+        : '選択肢ぶんの分岐行はすべて作成済みです', added > 0 ? 'success' : 'info');
       return;
     }
   });
+
+  // 分岐行を1行追加する。cond は 'equals:値' 形式（空なら未設定）。
+  function appendBranchRow(cond) {
+    var bc = document.getElementById('rp-branch-rows');
+    if (!bc) return;
+    var blen = bc.querySelectorAll('.rp-branch-row').length;
+    var q = questions.find(function (x) { return x.id === selectedId; });
+    var nextOpts2 = q ? questions
+      .filter(function (x) { return x.id !== q.id; })
+      .map(function (x) { return '<option value="' + esc(x.question_code) + '">' + esc(x.question_code) + '</option>'; }).join('') : '';
+
+    var choices = q ? getBranchChoiceOptions(q) : [];
+    var condHtml;
+    if (choices.length) {
+      var known = false;
+      var optsHtml = choices.map(function (c) {
+        var sel = condMatchesChoice(cond, c) ? ' selected' : '';
+        if (sel) known = true;
+        var val = sel ? cond : c.cond;
+        return '<option value="' + esc(val) + '"' + sel + '>' + esc(c.label) + '</option>';
+      }).join('');
+      var extra = (cond && !known)
+        ? '<option value="' + esc(cond) + '" selected>' + esc(cond) + '（選択肢外）</option>'
+        : '';
+      condHtml = '<select class="rp-branch-cond"><option value="">選択肢を選ぶ…</option>' + optsHtml + extra + '</select>';
+    } else {
+      condHtml = '<input type="text" class="rp-branch-cond" value="' + esc(cond || '') + '" placeholder="equals:値" />';
+    }
+
+    var brow = document.createElement('div');
+    brow.className = 'rp-branch-row';
+    brow.setAttribute('data-bidx', blen);
+    brow.innerHTML =
+      '<div class="rp-row">' +
+        '<div class="rp-field"><label>この選択肢なら</label>' + condHtml + '</div>' +
+        '<div class="rp-field"><label>遷移先</label>' +
+          '<select class="rp-branch-next"><option value="">未設定</option><option value="END">END</option>' + nextOpts2 + '</select>' +
+        '</div>' +
+      '</div>' +
+      '<button type="button" class="rp-add-btn" style="color:#c04040;border-color:#e8c0c0" data-del-branch="' + blen + '">削除</button>';
+    bc.appendChild(brow);
+  }
 
   async function fetchAiSuggestion() {
     if (!selectedId || ['__start__','__end__'].includes(selectedId)) return;
@@ -1572,7 +1789,211 @@
     return s;
   }
 
+  /** 型別セクションに人が入れた値が残っているか（空欄だけなら破棄して困らない）。 */
+  function typeSpecificHasInput(typeArea) {
+    var els = typeArea.querySelectorAll('input, textarea, select');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (el.type === 'checkbox' || el.type === 'radio') {
+        if (el.checked !== el.defaultChecked) return true;
+      } else if (String(el.value || '').trim() !== '') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** 下書きがサーバ値と同じなら出す意味がないので、差があるときだけバナーを出す。 */
+  function maybeShowDraftBanner(q) {
+    if (draftDismissed[q.id]) return;
+    var draft = readDraft(q.id);
+    if (!draft || !draft.payload) return;
+    if (JSON.stringify(draft.payload) === JSON.stringify(rpBaseline)) {
+      clearDraft(q.id);
+      return;
+    }
+
+    var body = document.getElementById('rpBody');
+    if (!body) return;
+    var when = new Date(draft.savedAt || Date.now());
+    var hhmm = ('0' + when.getHours()).slice(-2) + ':' + ('0' + when.getMinutes()).slice(-2);
+
+    var banner = makeEl('div', 'rp-draft-banner');
+    banner.innerHTML =
+      '<div class="rp-draft-text">保存されていない下書きがあります（' + hhmm + '）</div>' +
+      '<div class="rp-draft-actions">' +
+        '<button type="button" class="rp-draft-restore">復元する</button>' +
+        '<button type="button" class="rp-draft-discard">破棄する</button>' +
+      '</div>';
+    body.insertBefore(banner, body.firstChild);
+
+    banner.querySelector('.rp-draft-restore').addEventListener('click', function () {
+      applyDraftToPanel(draft.payload);
+      banner.remove();
+      showStatus('下書きを復元しました', 'info');
+    });
+    banner.querySelector('.rp-draft-discard').addEventListener('click', function () {
+      clearDraft(q.id);
+      draftDismissed[q.id] = true;
+      banner.remove();
+    });
+  }
+
+  /**
+   * 下書きを右パネルの DOM へ流し込む。
+   * 選択肢・分岐行は本数が違いうるので、型別UIごと作り直さず
+   * 「値を持つ単純フィールド」だけを対象にする（復元できない分は下書きに残す）。
+   */
+  function applyDraftToPanel(payload) {
+    var setVal = function (id, v) {
+      var el = document.getElementById(id);
+      if (el && v !== undefined && v !== null) el.value = v;
+    };
+    var setChk = function (id, v) {
+      var el = document.getElementById(id);
+      if (el) el.checked = !!v;
+    };
+
+    setVal('rp-question_text', payload.question_text);
+    setVal('rp-question_goal', payload.question_goal);
+    setVal('rp-question_role', payload.question_role);
+    setVal('rp-sort_order',    payload.sort_order);
+    setVal('rp-page_group_id', payload.page_group_id);
+    setChk('rp-is_required',   payload.is_required);
+    setChk('rp-answer_options_locked', payload.answer_options_locked);
+    setChk('rp-ai_probe',      payload.ai_probe_enabled);
+    setVal('rp-probe_guideline', payload.probe_guideline);
+    setVal('rp-max_probe_count', payload.max_probe_count);
+
+    // AI深掘りの表示/非表示は checked に追従させる
+    var aiOpts = document.getElementById('rp-ai-options');
+    if (aiOpts) aiOpts.style.display = payload.ai_probe_enabled ? '' : 'none';
+
+    // 選択肢は既存行数の範囲で流し込む
+    if (Array.isArray(payload.options)) {
+      var optInputs = document.querySelectorAll('#rp-option-rows .rp-opt-input');
+      payload.options.forEach(function (label, i) {
+        if (optInputs[i]) optInputs[i].value = label;
+      });
+    }
+  }
+
+  // ─── 下書き（localStorage） ───────────────────
+  function draftKey(questionId) { return DRAFT_PREFIX + questionId; }
+
+  function readDraft(questionId) {
+    try {
+      var raw = localStorage.getItem(draftKey(questionId));
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+
+  function writeDraft(questionId, payload) {
+    try {
+      localStorage.setItem(draftKey(questionId), JSON.stringify({
+        savedAt: Date.now(),
+        payload: payload,
+      }));
+    } catch (e) { /* 容量超過などは黙って諦める。下書きは保険であって本体ではない */ }
+  }
+
+  function clearDraft(questionId) {
+    try { localStorage.removeItem(draftKey(questionId)); } catch (e) { /* noop */ }
+  }
+
+  function scheduleDraftSave() {
+    if (draftTimer) clearTimeout(draftTimer);
+    draftTimer = setTimeout(saveDraftNow, DRAFT_DEBOUNCE_MS);
+  }
+
+  function saveDraftNow() {
+    if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+    if (!selectedId || ['__start__','__end__'].includes(selectedId)) return;
+    var payload = collectRpData();
+    if (!payload) return;
+    if (!isDirtyAgainstBaseline(payload)) { clearDraft(selectedId); return; }
+    writeDraft(selectedId, payload);
+  }
+
+  /**
+   * 右パネルの現在値が、描画時のサーバ値から実際に変わっているか。
+   * 変わっていないのに POST すると「保存しました」が連打され、
+   * さらに他人の更新を古い値で踏み潰す危険もあるので必ず通す。
+   */
+  function isDirtyAgainstBaseline(payload) {
+    if (!rpBaseline) return false;
+    return JSON.stringify(payload) !== JSON.stringify(rpBaseline);
+  }
+
+  /**
+   * 編集中ノードの内容をサーバへ逃がす。ノード切替・接続操作・離脱の前に必ず通す。
+   * 必須未入力や保存失敗でも移動自体はブロックしない（下書きに残るので全損しない）。
+   * @returns {Promise<boolean>} サーバ保存まで到達したら true
+   */
+  function flushPendingEdits() {
+    pendingFlush = pendingFlush.then(doFlush, doFlush);
+    return pendingFlush;
+  }
+
+  async function doFlush() {
+    if (!selectedId || ['__start__','__end__'].includes(selectedId)) return false;
+    var targetId = selectedId;
+    var q = questions.find(function (x) { return x.id === targetId; });
+    if (!q) return false;
+
+    var payload = collectRpData();
+    if (!payload) return false;
+    if (!isDirtyAgainstBaseline(payload)) return false;
+
+    // サーバが 400 を返す条件だけを止める。設問文は常に必須、
+    // 「知りたいこと」は AI 深掘りを使う設問でのみ必須（深掘りの材料なので）。
+    // 止めた場合も移動はさせ、書きかけは下書きに残す。
+    if (!payload.question_text || (payload.ai_probe_enabled && !payload.question_goal)) {
+      writeDraft(targetId, payload);
+      showStatus('未入力のため保存できません。書きかけは残しています', 'info');
+      return false;
+    }
+
+    var ok = await postQuestion(targetId, payload);
+    if (ok) {
+      clearDraft(targetId);
+      if (targetId === selectedId) rpBaseline = collectRpData();
+    } else {
+      writeDraft(targetId, payload);
+    }
+    return ok;
+  }
+
+  /** 設問1件をサーバへ保存し、questions[] を返り値で更新する。 */
+  async function postQuestion(questionId, payload) {
+    try {
+      var resp = await fetch('/admin/api/questions/' + questionId, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) {
+        var err = await resp.json().catch(function () { return {}; });
+        showStatus('保存失敗: ' + (err.error || resp.statusText), 'error');
+        return false;
+      }
+      var result = await resp.json();
+      var idx = questions.findIndex(function (x) { return x.id === questionId; });
+      if (idx >= 0) {
+        questions[idx] = result.question || Object.assign({}, questions[idx], payload);
+      }
+      renderAll();
+      showStatus('保存しました ✓', 'success');
+      return true;
+    } catch (e) {
+      showStatus('保存中にエラー: ' + e.message, 'error');
+      return false;
+    }
+  }
+
   // ─── Save ─────────────────────────────────────
+  // 明示保存ボタン。自動保存と同じ経路を通すが、必須未入力は
+  // 「押したのに黙って保存されない」を避けるため、ここでだけエラーにする。
   async function saveCurrentNode() {
     if (!selectedId || ['__start__','__end__'].includes(selectedId)) return;
     var q = questions.find(function (x) { return x.id === selectedId; });
@@ -1582,33 +2003,24 @@
     if (!payload) return;
 
     if (!payload.question_text) { showStatus('設問文を入力してください', 'error'); return; }
-    if (!payload.question_goal) { showStatus('この質問で知りたいことを入力してください', 'error'); return; }
+    // 「知りたいこと」は AI 深掘りの材料なので、深掘りを使う設問でだけ必須にする
+    if (payload.ai_probe_enabled && !payload.question_goal) {
+      showStatus('AI深掘りを使う設問では「この質問で知りたいこと」が必要です', 'error');
+      return;
+    }
+
+    if (!isDirtyAgainstBaseline(payload)) { showStatus('変更はありません', 'info'); return; }
 
     var btn = document.getElementById('rpSaveBtn');
     if (btn) { btn.textContent = '保存中…'; btn.disabled = true; }
-
     try {
-      var resp = await fetch('/admin/api/questions/' + q.id, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!resp.ok) {
-        var err = await resp.json().catch(function () { return {}; });
-        showStatus('保存失敗: ' + (err.error || resp.statusText), 'error');
-        return;
+      var ok = await postQuestion(selectedId, payload);
+      if (ok) {
+        clearDraft(selectedId);
+        selectNode(selectedId);
+      } else {
+        writeDraft(selectedId, payload);
       }
-      var result = await resp.json();
-      var idx = questions.findIndex(function (x) { return x.id === selectedId; });
-      if (idx >= 0) {
-        questions[idx] = result.question || Object.assign({}, questions[idx], payload);
-      }
-      // page_group_id を更新したらグループ再描画
-      renderAll();
-      showStatus('保存しました ✓', 'success');
-      selectNode(selectedId);
-    } catch (e) {
-      showStatus('保存中にエラー: ' + e.message, 'error');
     } finally {
       if (btn) { btn.textContent = '保存'; btn.disabled = false; }
     }
@@ -1730,18 +2142,150 @@
     var el = document.getElementById('node-' + dragState.nodeId);
     if (el) { el.style.left = nx + 'px'; el.style.top = ny + 'px'; }
 
+    // 掴んだまま画面の端に来たらキャンバスを送る。
+    // これが無いと、画面に映っていない位置へは物理的に運べない
+    // （設問が増えるほど下の設問を上へ持ち上げられなくなる）。
+    autoScrollWhileDragging(e.clientY);
+    // どこに入るのかを線で示す。出してやらないと、離すまで結果が分からない。
+    showDropIndicator(dragState.nodeId, ny);
+
     renderConnections();
     renderGroupBoxes();
     updateCanvasSize();
   });
+
+  /** ドラッグ中、カーソルが上下の端に近ければキャンバスをスクロールする。 */
+  function autoScrollWhileDragging(clientY) {
+    var wrap = document.querySelector('.flow-canvas-wrapper');
+    if (!wrap) return;
+    var box = wrap.getBoundingClientRect();
+    var EDGE = 70;   // 端とみなす幅
+    var SPEED = 18;  // 1イベントあたりの送り量
+    if (clientY < box.top + EDGE) {
+      wrap.scrollTop -= SPEED;
+    } else if (clientY > box.bottom - EDGE) {
+      wrap.scrollTop += SPEED;
+    }
+  }
+
+  /**
+   * 掴んでいるノードが「今どの設問の間に入るか」を横線で示す。
+   * 並び順は縦位置で決まるので、判定は commitDragReorder と同じ基準にする。
+   */
+  function showDropIndicator(draggingId, draggingY) {
+    var line = document.getElementById('flow-drop-indicator');
+    if (!line) {
+      line = makeEl('div');
+      line.id = 'flow-drop-indicator';
+      line.className = 'flow-drop-indicator';
+      $canvas.appendChild(line);
+    }
+
+    // 自分以外の設問を縦位置で並べ、何番目に割り込むかを数える
+    var others = questions.filter(function (q) { return q.id !== draggingId; })
+      .map(function (q) { return { id: q.id, y: (nodePositions[q.id] || { y: 0 }).y }; })
+      .sort(function (a, b) { return a.y - b.y; });
+
+    var idx = 0;
+    while (idx < others.length && others[idx].y < draggingY) idx++;
+
+    // 割り込む位置の「すぐ上のノードの下端」に線を出す
+    var y;
+    if (idx === 0) {
+      y = others.length ? others[0].y - 18 : draggingY;
+    } else {
+      var prev = others[idx - 1];
+      var prevEl = document.getElementById('node-' + prev.id);
+      y = prev.y + (prevEl ? prevEl.offsetHeight : 80) + 8;
+    }
+
+    line.style.top = y + 'px';
+    line.style.left = (COL_X - 14) + 'px';
+    line.style.width = (NODE_W + 28) + 'px';
+    line.style.display = 'block';
+  }
+
+  function hideDropIndicator() {
+    var line = document.getElementById('flow-drop-indicator');
+    if (line) line.style.display = 'none';
+  }
 
   document.addEventListener('mouseup', function (e) {
     if (connDrag) {
       finishConnDrag(e);
       return;
     }
+    // ノードを離した位置を「並び順」として確定させる。
+    //
+    // これが無いと、ドラッグは見た目が動くだけで sort_order も位置も保存されず、
+    // リロードで必ず元へ戻っていた（＝ドラッグでの入れ替えが成立していなかった）。
+    // 掴んだだけ・数px動いただけのときは何もしない。
+    if (dragState && dragState.moved) {
+      var movedId = dragState.nodeId;
+      dragState = null;
+      hideDropIndicator();
+      commitDragReorder(movedId);
+      return;
+    }
     dragState = null;
+    hideDropIndicator();
   });
+
+  /**
+   * 縦位置の並び＝設問の並び順として保存する。
+   * このキャンバスは上から下へ1列に流れるので、Y座標の順序がそのまま回答順。
+   */
+  async function commitDragReorder(movedId) {
+    // 開始/終了ノードは設問ではないので並び順を持たない
+    if (!movedId || movedId === '__start__' || movedId === '__end__') return;
+
+    var ordered = questions.slice().sort(function (a, b) {
+      var ay = (nodePositions[a.id] || { y: 0 }).y;
+      var by = (nodePositions[b.id] || { y: 0 }).y;
+      if (ay !== by) return ay - by;
+      // 同じ高さに並べたときは元の順序を保つ（ソートを安定させる）
+      return a.sort_order - b.sort_order;
+    });
+
+    var orderedIds = ordered.map(function (q) { return q.id; });
+
+    // 並びが変わっていないなら保存しない（位置だけ微調整した場合）
+    var before = questions.slice().sort(function (a, b) { return a.sort_order - b.sort_order; })
+      .map(function (q) { return q.id; });
+    var same = before.length === orderedIds.length &&
+      before.every(function (id, i) { return id === orderedIds[i]; });
+    if (same) return;
+
+    // 右パネルで編集中の内容を先に確定させる。
+    // これを挟まないと、再描画で DOM の編集バッファが消えて入力が失われる。
+    await flushPendingEdits();
+
+    try {
+      var resp = await fetch('/admin/api/projects/' + DATA.projectId + '/questions/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds: orderedIds }),
+      });
+      var data = await resp.json().catch(function () { return {}; });
+      if (!resp.ok) {
+        showStatus('並び順の保存に失敗しました: ' + (data.error || resp.statusText), 'error');
+        return;
+      }
+
+      // 手元の sort_order も更新する。ここを直さないと、次に並びを比べたときに
+      // 古い値と突き合わせてしまい、保存済みなのに毎回 POST が飛ぶ。
+      orderedIds.forEach(function (id, i) {
+        var q = questions.find(function (x) { return x.id === id; });
+        if (q) q.sort_order = i + 1;
+      });
+
+      // 自動でつながる線は sort_order から引いているので引き直す
+      renderAll();
+      showStatus('並び順を保存しました ✓', 'success');
+    } catch (err) {
+      showStatus('並び順の保存でエラーが発生しました: ' + err.message, 'error');
+    }
+  }
 
   // ─── Keyboard ─────────────────────────────────
   function bindKeyboard() {
@@ -1767,7 +2311,11 @@
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
     on('tb-save',    'click', function () { saveCurrentNode(); });
-    on('tb-back',    'click', function () { window.location.href = '/admin/projects/' + DATA.projectId + '/questions'; });
+    // 離脱前に編集中の内容をサーバへ逃がす（下書きだけでは一覧に反映されない）
+    on('tb-back',    'click', async function () {
+      await flushPendingEdits();
+      window.location.href = '/admin/projects/' + DATA.projectId + '/questions';
+    });
     on('tb-preview', 'click', function () { window.open('/admin/projects/' + DATA.projectId + '/questions', '_blank'); });
     on('tb-zoom-in',  'click', function () { setZoom(zoom + 0.15); });
     on('tb-zoom-out', 'click', function () { setZoom(zoom - 0.15); });

@@ -12,8 +12,14 @@
 
   ホストが決めること:
     - onChange(value) … 値が更新された（未確定）。survey は answerCtx へ格納、デイリーは送信ボタン活性化。
-    - onCommit(value) … 確定操作（タップ/スワイプ/CTA/振り分け完了）。survey は「次へ」自動遷移、
-                        デイリーは次の設問へ or 即送信。
+    - onCommit(value, advance) … 確定操作（タップ/スワイプ/CTA/振り分け完了）。
+                        advance=true はカードを倒す/振り分けるジェスチャー系（swipe_card /
+                        split_swipe / sort_swipe）＝操作そのものが「送る」動作なので、
+                        ホストはそのまま次の設問へ進んでよい。
+                        advance=false は一覧から1つ選ぶタップ系（tap_cards / big_split /
+                        face_scale / carousel）＝押した瞬間に画面が変わると「選んだだけ」の
+                        つもりで進んでしまうため、遷移はホストの「次へ」に任せる。
+                        デイリー/今日の1問のように1問完結の面は advance を見ずに常に進めてよい。
     - 保存形式は UI に依存させない（single=スカラー / multi=配列）。これは Phase 3 でも不変。
 
   実装上の罠（project_answer_ui_renderer_gotchas・触るときは必読）:
@@ -67,13 +73,135 @@
   }
   .answer-chips .chip-item.selected { border-color: #2ca87a; background: #e8f7f0; }
   .answer-chips .chip-item .card-item-title { font-size: 14px; }
+  /* 自由記述つきチップ（「その他（　）」等）はピルに収まらない。
+     .chip-item は flex-direction:row のため、そのままだと width:100% の入力欄が
+     ラベルと同じ行に入り、ピルの右を飛び出したうえにラベルが1文字ずつ折り返される。
+     行を独占させ、角丸カードとして縦積みにする（.answer-freetext-rows と同じ形）。 */
+  .answer-chips .chip-item.has-freetext {
+    flex: 1 0 100%; flex-direction: column; align-items: stretch;
+    border-radius: 14px; padding: 10px 14px;
+  }
 
-  /* big_slider */
-  .answer-bigslider { padding: 8px 4px; }
+  /* スワイプ系から外した自由記述つき選択肢（「その他」）の行。
+     デッキの下に置き、タップで選択→記述欄に入力する。 */
+  /* 自由記述欄はどのパターンでも親カードからはみ出させない。
+     他の選択肢は「触って終わり」だが、ここだけは文字を打つ。同じ高さの1行ボックスだと
+     選択肢の一部にしか見えず、書ける場所だと気付かれない（＝その他が空のまま確定される）。
+     2行ぶんの高さ＋沈んだ下地＋破線で「書く欄」だと形で分かるようにする（文言は足さない）。 */
+  .other-text-input {
+    display: block; width: 100%;
+    max-width: 100%; min-width: 0; box-sizing: border-box;
+    /* 2行分: line-height 1.5 × 14px × 2 = 42px + 上下 padding 9px×2 + 枠 2px = 62px */
+    min-height: 62px;
+    padding: 9px 11px; border: 1px dashed #78918c; border-radius: 10px;
+    font-size: 14px; line-height: 1.5; background-color: #f6faf8; color: #1a2f2a;
+    font-family: inherit;
+    transition: border-color 0.15s cubic-bezier(0, 0, 0.2, 1),
+                background-color 0.15s cubic-bezier(0, 0, 0.2, 1);
+  }
+  .other-text-input::placeholder { color: #5a736e; }
+  .other-text-input:hover { border-color: #4f6b65; }
+  .other-text-input:focus,
+  .other-text-input:focus-visible {
+    outline: 2px solid #2ca87a; outline-offset: 1px;
+    border-style: solid; border-color: #2ca87a; background-color: #fff;
+  }
+  .other-text-input:disabled { opacity: 0.5; cursor: not-allowed; }
+  /* 何か書かれたら「下書きの欄」から「確定した回答」の見た目へ（破線→実線）。 */
+  .other-text-input:not(:placeholder-shown) {
+    border-style: solid; border-color: #2ca87a; background-color: #fff;
+  }
+  /* ダーク(compact)側。白い箱のままだと下地から浮いて別部品に見えるので、
+     親カードの半透明ルールに合わせる。 */
+  .answer-ui-compact .other-text-input {
+    background-color: rgba(255,255,255,0.10); border-color: rgba(255,255,255,0.75); color: #fff;
+  }
+  /* 0.88 未満だと下地(緑)とのコントラストが 4.5:1 を切って読めなくなる。 */
+  .answer-ui-compact .other-text-input::placeholder { color: rgba(255,255,255,0.88); }
+  /* ⚠ background は必ず color と同じルールで上書きすること。
+     compact の base( rgba(255,255,255,0.10) )が残ったまま color だけ #14493a になると、
+     濃緑の下地に濃緑の文字＝入力した内容が見えなくなる。 */
+  .answer-ui-compact .other-text-input:focus,
+  .answer-ui-compact .other-text-input:focus-visible,
+  .answer-ui-compact .other-text-input:not(:placeholder-shown) {
+    background-color: #fff; color: #14493a; border-color: #2ca87a;
+  }
+  .answer-ui-compact .other-text-input:focus,
+  .answer-ui-compact .other-text-input:focus-visible { outline-color: #fff; }
+  /* 選択済みカードの中では下地が白なので、compact の半透明を戻す。 */
+  .answer-ui-compact .chip-item.selected .other-text-input,
+  .answer-ui-compact .card-item.selected .other-text-input {
+    background-color: #f6faf8; border-color: #78918c; color: #1a2f2a;
+  }
+  .answer-ui-compact .chip-item.selected .other-text-input::placeholder,
+  .answer-ui-compact .card-item.selected .other-text-input::placeholder { color: #5a736e; }
+  @media (prefers-reduced-motion: reduce) {
+    .other-text-input { transition-duration: 0.01ms; }
+  }
+  .answer-freetext-rows { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .answer-freetext-rows .chip-item {
+    display: flex; flex-direction: column; align-items: stretch;
+    padding: 10px 14px; border: 2px solid #d8e3e0; border-radius: 14px;
+    background: #fff; cursor: pointer; transition: all 0.12s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .answer-freetext-rows .chip-item.selected { border-color: #2ca87a; background: #e8f7f0; }
+  .answer-freetext-rows .chip-item .card-item-title { font-size: 14px; font-weight: 700; color: #1a2f2a; }
+  .answer-ui-compact .answer-freetext-rows .chip-item { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.45); }
+  .answer-ui-compact .answer-freetext-rows .chip-item .card-item-title { color: #fff; }
+  .answer-ui-compact .answer-freetext-rows .chip-item.selected { background: #fff; }
+  .answer-ui-compact .answer-freetext-rows .chip-item.selected .card-item-title { color: #14493a; }
+
+  /* big_slider
+     ネイティブ range をそのまま出すと、つまみが小さく（iOS は track タップで動かない）
+     「スライドしにくい」になる。見た目は range の疑似要素で描き、操作は .bigslider-hit の
+     Pointer Events で受ける（trackのどこを触っても最寄りの段階に飛ぶ／そのまま引きずれる）。 */
+  .answer-bigslider { padding: 8px 4px; --bs-thumb: 40px; --bs-track: 14px; --bs-fill: 50%; }
   .bigslider-value { text-align: center; min-height: 44px; display: flex; align-items: center; justify-content: center; }
-  .bigslider-label { font-size: 18px; font-weight: 700; color: #2ca87a; }
-  .bigslider-range { width: 100%; margin: 14px 0 6px; accent-color: #2ca87a; height: 28px; }
-  .bigslider-ends { display: flex; justify-content: space-between; font-size: 12px; color: #60726f; }
+  .bigslider-label { font-size: 18px; font-weight: 700; color: #90a29e; transition: color 0.15s; }
+  .answer-bigslider.engaged .bigslider-label { color: #2ca87a; }
+  .bigslider-hit {
+    position: relative; padding: 10px 0 4px; cursor: pointer;
+    touch-action: pan-y; /* 横は自前で受け、縦はページスクロールに渡す */
+    -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none;
+  }
+  .bigslider-range {
+    -webkit-appearance: none; appearance: none; display: block; width: 100%; margin: 0;
+    height: calc(var(--bs-thumb) + 8px); background: transparent; pointer-events: none;
+  }
+  .bigslider-range:focus { outline: none; }
+  .bigslider-range:focus-visible { outline: 3px solid rgba(44,168,122,0.45); outline-offset: 4px; border-radius: 8px; }
+  .bigslider-range::-webkit-slider-runnable-track {
+    height: var(--bs-track); border-radius: 999px;
+    background: linear-gradient(to right, #2ca87a var(--bs-fill), #d8e3e0 var(--bs-fill));
+  }
+  .bigslider-range::-webkit-slider-thumb {
+    -webkit-appearance: none; width: var(--bs-thumb); height: var(--bs-thumb); border-radius: 50%;
+    margin-top: calc((var(--bs-track) - var(--bs-thumb)) / 2);
+    background: #fff; border: 3px solid #2ca87a; box-shadow: 0 2px 8px rgba(26,47,42,0.25);
+    transition: transform 0.12s, border-color 0.15s, background 0.15s;
+  }
+  .bigslider-range::-moz-range-track {
+    height: var(--bs-track); border-radius: 999px;
+    background: linear-gradient(to right, #2ca87a var(--bs-fill), #d8e3e0 var(--bs-fill));
+  }
+  .bigslider-range::-moz-range-thumb {
+    width: var(--bs-thumb); height: var(--bs-thumb); border-radius: 50%;
+    background: #fff; border: 3px solid #2ca87a; box-shadow: 0 2px 8px rgba(26,47,42,0.25);
+  }
+  /* 未操作: つまみもゲージも灰色＝「まだ答えていない」を見た目で伝える */
+  .answer-bigslider:not(.engaged) .bigslider-range::-webkit-slider-runnable-track { background: #d8e3e0; }
+  .answer-bigslider:not(.engaged) .bigslider-range::-webkit-slider-thumb { border-color: #b7c7c2; background: #f3f7f5; }
+  .answer-bigslider:not(.engaged) .bigslider-range::-moz-range-track { background: #d8e3e0; }
+  .answer-bigslider:not(.engaged) .bigslider-range::-moz-range-thumb { border-color: #b7c7c2; background: #f3f7f5; }
+  .answer-bigslider.dragging .bigslider-range::-webkit-slider-thumb { transform: scale(1.12); }
+  /* 段階の目盛り。つまみの可動域（thumb/2 〜 width - thumb/2）に合わせて内側に寄せる */
+  .bigslider-ticks { display: flex; justify-content: space-between; padding: 0 calc(var(--bs-thumb) / 2 - 4px); margin-top: 2px; }
+  .bigslider-tick { width: 8px; height: 8px; border-radius: 50%; background: #d8e3e0; transition: background 0.15s, transform 0.15s; }
+  .answer-bigslider.engaged .bigslider-tick.on { background: #2ca87a; transform: scale(1.3); }
+  .bigslider-ends { display: flex; justify-content: space-between; font-size: 12px; color: #60726f; margin-top: 8px; }
+  .bigslider-ends span { max-width: 45%; }
+  .bigslider-ends span:last-child { text-align: right; }
 
   /* swipe_card / sort_swipe 共通のデッキ（フルハイト＝カードが画面の主役・確定はサムゾーンの丸ボタン） */
   .answer-swipe, .answer-sortswipe { display: flex; flex-direction: column; align-items: stretch; }
@@ -104,6 +232,19 @@
   .sort-title { font-size: 20px; font-weight: 800; color: #1a2f2a; }
   .sort-desc, .carousel-desc { font-size: 12px; color: #60726f; }
   .sort-done { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #2ca87a; }
+  /* スワイプ確定後の結果パネル（カードが飛んでいくので「何を選んだか」をここに残す） */
+  .swipe-result {
+    position: absolute; inset: 0; display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 12px; text-align: center;
+    border: 1.5px solid #2ca87a; border-radius: 20px; background: #f4fbf8; padding: 20px;
+  }
+  .swipe-result.shown { display: flex; }
+  .swipe-result-cap { font-size: 12px; font-weight: 700; color: #60726f; letter-spacing: 0.04em; }
+  .swipe-result-val { font-size: 22px; font-weight: 800; color: #14493a; }
+  .swipe-redo {
+    border: 1.5px solid #cfe0da; background: #fff; color: #2f4a44;
+    border-radius: 999px; padding: 9px 20px; font-size: 13px; font-weight: 700; cursor: pointer;
+  }
   /* サムゾーンの丸型確定ボタン */
   .swipe-round-btns { display: flex; justify-content: center; gap: 40px; }
   .round-btn {
@@ -222,6 +363,9 @@
   .answer-ui-compact .sort-chip { background: rgba(255,255,255,0.22); color: #eaf6f1; }
   .answer-ui-compact .sort-chip.active { background: #fff; color: #14493a; }
   .answer-ui-compact .sort-done { color: #fff; }
+  .answer-ui-compact .swipe-result { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.5); }
+  .answer-ui-compact .swipe-result-cap { color: rgba(255,255,255,0.85); }
+  .answer-ui-compact .swipe-result-val { color: #fff; }
   .answer-ui-compact .bigslider-label { color: #fff; }
   .answer-ui-compact .bigslider-ends { color: rgba(255,255,255,0.85); }
   .answer-ui-compact .split-label { font-size: 17px; }
@@ -234,8 +378,18 @@
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
+    /**
+     * ジェスチャー系＝カードを左右に倒す/振り分ける操作そのものが「送る」動作なので、
+     * 確定したらそのまま次の設問へ進む（onCommit に advance=true を渡す）。
+     */
+    var GESTURE_COMMIT_PATTERNS = ['swipe_card', 'split_swipe', 'sort_swipe'];
+    /**
+     * 選択肢タップ系＝一覧から1つ選ぶ操作。押した瞬間に画面が変わると
+     * 「選んだだけのつもりが進んでしまう」ので、遷移はホストの「次へ」に任せる。
+     */
+    var PICK_COMMIT_PATTERNS = ['tap_cards', 'big_split', 'face_scale', 'carousel'];
     /** 確定操作を自分で持つパターン（＝ホストの送信ボタンが要らない）。 */
-    var AUTO_COMMIT_PATTERNS = ['tap_cards', 'big_split', 'face_scale', 'swipe_card', 'split_swipe', 'carousel', 'sort_swipe'];
+    var AUTO_COMMIT_PATTERNS = PICK_COMMIT_PATTERNS.concat(GESTURE_COMMIT_PATTERNS);
     /** このレンダラが描けるパターン（対象外はホスト側の従来描画に任せる）。 */
     var SUPPORTED_PATTERNS = AUTO_COMMIT_PATTERNS.concat(['chip_select', 'big_slider']);
 
@@ -245,11 +399,46 @@
       return 'data-exclusive="' + (c.exclusive ? '1' : '0') + '" data-exclusive-with="' + esc(ew) + '"';
     }
 
+    /**
+     * 自由記述つき選択肢（「その他（　）」等）か。
+     *
+     * この種の選択肢はスワイプ/スライド系のパターンから必ず外す。カードを倒す・
+     * 振り分けるジェスチャーには「文字を入力する」余地が無く、◯に倒しても記述欄が
+     * 出ないまま値だけ入って、回答者が具体的な内容を書けなくなるため
+     * （＝設問全体の指示がスワイプでも、その他だけはタップ＋入力欄で受ける）。
+     * 判定は allow_free_text 一本。ラベル文字列は見ない（「その他」以外の自由記述にも効かせる）。
+     */
+    function isFreeText(c) {
+      return !!(c && c.allow_free_text);
+    }
+
+    /**
+     * スワイプ系から外した自由記述つき選択肢を、デッキの下にタップ+入力欄で描く。
+     * .card-item を使うので配線は既存の wireChoiceItems がそのまま担当する
+     * （チェック状態・記述の収集・排他解除まで共通経路に乗る）。
+     */
+    function freeTextRowsHtml(q, choices, multi) {
+      var rows = choices.filter(isFreeText);
+      if (rows.length === 0) return '';
+      var items = rows.map(function (c) {
+        return '<div class="card-item chip-item freetext-item">'
+          + '<input type="' + (multi ? 'checkbox' : 'radio') + '" name="q_' + esc(q.question_code) + '" value="' + esc(c.value) + '" ' + exclAttrs(c) + ' style="display:none" />'
+          + '<span class="card-item-title">' + esc(c.label) + '</span>'
+          + otherInput(q, c, '', 6)
+          + '</div>';
+      }).join('');
+      return '<div class="answer-freetext-rows" data-type="' + (multi ? 'multi' : 'single') + '">' + items + '</div>';
+    }
+
     function otherInput(q, c, extraClass, marginTop) {
       if (!c.allow_free_text) return '';
       return '<input type="text" class="other-text-input' + (extraClass ? ' ' + extraClass : '') + '"'
-        + ' data-code="' + esc(q.question_code) + '" data-val="' + esc(c.value) + '" placeholder="自由記述"'
-        + ' onclick="event.stopPropagation();" style="margin-top:' + marginTop + 'px;width:100%;box-sizing:border-box;" />';
+        + ' data-code="' + esc(q.question_code) + '" data-val="' + esc(c.value) + '" placeholder="ご自由にご記入ください"'
+        // 幅は .other-text-input（max-width:100%）に任せる。inline の width:100% は
+        // 横並びの親（chip/choice-item）だと gap/padding 分あふれるため付けない。
+        // margin-top は 8px を下限にする。ラベルと記述欄がくっつくと「ラベルの続き」に
+        // 見えて、別の入力欄だと分かりにくいため。
+        + ' onclick="event.stopPropagation();" style="margin-top:' + Math.max(8, marginTop || 0) + 'px;" />';
     }
 
     // ---- タップ確定系（tap_cards / big_split・migration 075）----
@@ -296,7 +485,8 @@
     // 共通クリック配線の input.checked 反転が二重発火して相殺され、選択できなくなる。
     function buildChipSelectHtml(q, choices) {
       var items = choices.map(function (c) {
-        return '<div class="card-item chip-item">'
+        // has-freetext: 記述欄つきは1行を独占する縦積みカードにする（ピルには収まらない）。
+        return '<div class="card-item chip-item' + (isFreeText(c) ? ' has-freetext' : '') + '">'
           + '<input type="checkbox" name="q_' + esc(q.question_code) + '" value="' + esc(c.value) + '" ' + exclAttrs(c) + ' style="display:none" />'
           + '<span class="card-item-title">' + esc(c.label) + '</span>'
           + otherInput(q, c, '', 6)
@@ -308,17 +498,70 @@
     // ---- big_slider（順序尺度を標準プリセットで）----
     // 値の格納はレンジ操作時に onChange で行う（決定はホストの「次へ」/送信）。
     function buildBigSliderHtml(q, choices) {
+      // 自由記述つき選択肢はスライダーの目盛りでは入力できないうえ、順序尺度の中に
+      // 「その他」が混じること自体が尺度として成立しない。含むならタップ+入力欄で描く。
+      if (choices.some(isFreeText)) return buildTapChoiceHtml(q, choices, 'tap_cards');
       var n = choices.length;
       var mid = Math.floor((n - 1) / 2);
       var values = JSON.stringify(choices.map(function (c) { return c.value; }));
       var labels = JSON.stringify(choices.map(function (c) { return c.label; }));
       var first = choices[0] ? esc(choices[0].label) : '';
       var last = choices[n - 1] ? esc(choices[n - 1].label) : '';
+      var ticks = choices.map(function (_c, i) {
+        return '<span class="bigslider-tick" data-i="' + i + '"></span>';
+      }).join('');
+      // 初期位置は中央だが「未操作」扱い（.engaged なし）。触るまで値はホストへ渡さない。
       return '<div class="answer-bigslider" data-code="' + esc(q.question_code) + '">'
-        + '<div class="bigslider-value"><span class="bigslider-label">スライドして選択してください</span></div>'
+        + '<div class="bigslider-value"><span class="bigslider-label">スライドまたはタップで選択</span></div>'
+        + '<div class="bigslider-hit">'
         + '<input type="range" class="bigslider-range" min="0" max="' + (n - 1) + '" step="1" value="' + mid + '"'
+        + ' aria-label="' + esc(q.question_text || '') + '"'
         + " data-values='" + values + "' data-labels='" + labels + "' />"
+        + '<div class="bigslider-ticks">' + ticks + '</div>'
+        + '</div>'
         + '<div class="bigslider-ends"><span>' + first + '</span><span>' + last + '</span></div>'
+        + '</div>';
+    }
+
+    /**
+     * スワイプ確定後の結果パネルの表示/復帰。
+     * ジェスチャー確定は通常そのまま次へ進むが、ホストが進めない文脈（survey_page 等）では
+     * カードが画面外へ飛んだまま止まるため、選んだ内容と「選び直す」をここに残す。
+     * enabled=false（既定）では何も出さない。
+     * @returns {{show:(label:string)=>void, reset:()=>void}|null}
+     */
+    function wireSwipeResult(rootEl, cardEl, enabled, onReset) {
+      var panel = rootEl.querySelector('.swipe-result');
+      if (!panel || !enabled) return null;
+      var valEl = panel.querySelector('.swipe-result-val');
+      var redo = panel.querySelector('.swipe-redo');
+      var reset = function () {
+        panel.classList.remove('shown');
+        if (cardEl) {
+          cardEl.style.transition = '';
+          cardEl.style.transform = '';
+          cardEl.style.opacity = '';
+        }
+        [].slice.call(rootEl.querySelectorAll('.swipe-stamp')).forEach(function (st) { st.style.opacity = '0'; });
+        [].slice.call(rootEl.querySelectorAll('.split-half')).forEach(function (h) { h.classList.remove('lit'); });
+        if (onReset) onReset();
+      };
+      if (redo) redo.addEventListener('click', reset);
+      return {
+        show: function (label) {
+          if (valEl) valEl.textContent = label;
+          panel.classList.add('shown');
+        },
+        reset: reset,
+      };
+    }
+
+    /** 結果パネルの器。実際に表示するかは wireSwipeResult の enabled が決める。 */
+    function swipeResultHtml() {
+      return '<div class="swipe-result">'
+        + '<span class="swipe-result-cap">この回答を選びました</span>'
+        + '<span class="swipe-result-val"></span>'
+        + '<button type="button" class="swipe-redo">選び直す</button>'
         + '</div>';
     }
 
@@ -326,9 +569,13 @@
     // 左スワイプ=選択肢1 / 右スワイプ=選択肢2（options 並び順）。左右ボタンでも回答可。
     function buildSwipeCardHtml(q, choices) {
       if (choices.length < 2) return buildTapChoiceHtml(q, choices, 'tap_cards');
+      // 自由記述つき選択肢はカードを倒すジェスチャーでは入力できないので、
+      // 1つでも含むならスワイプをやめてタップ+入力欄で描く（isFreeText 参照）。
+      if (choices.some(isFreeText)) return buildTapChoiceHtml(q, choices, 'tap_cards');
       var c0 = choices[0], c1 = choices[1];
       return '<div class="answer-swipe" data-code="' + esc(q.question_code) + '"'
-        + ' data-v0="' + esc(c0.value) + '" data-v1="' + esc(c1.value) + '">'
+        + ' data-v0="' + esc(c0.value) + '" data-v1="' + esc(c1.value) + '"'
+        + ' data-l0="' + esc(c0.label) + '" data-l1="' + esc(c1.label) + '">'
         + '<div class="swipe-deck">'
         + '<div class="swipe-back swipe-back2"></div>'
         + '<div class="swipe-back swipe-back1"></div>'
@@ -340,7 +587,9 @@
         + '<span class="swipe-opt">' + esc(c1.label) + ' ▶</span>'
         + '</div>'
         + '<span class="swipe-card-hint">カードを左右にスワイプ</span>'
-        + '</div></div>'
+        + '</div>'
+        + swipeResultHtml()
+        + '</div>'
         + '<div class="swipe-round-btns">'
         + '<button type="button" class="round-btn rb-l" data-dir="left"><span class="rb-circle">◀</span><span class="rb-label">' + esc(c0.label) + '</span></button>'
         + '<button type="button" class="round-btn rb-r" data-dir="right"><span class="rb-circle">▶</span><span class="rb-label">' + esc(c1.label) + '</span></button>'
@@ -355,9 +604,13 @@
     // 保存形式は swipe_card と同じく single のスカラー（onChange / onCommit で value を返す）。
     function buildSplitSwipeHtml(q, choices) {
       if (choices.length < 2) return buildTapChoiceHtml(q, choices, 'tap_cards');
+      // 自由記述つき選択肢はカードを倒すジェスチャーでは入力できないので、
+      // 1つでも含むならスワイプをやめてタップ+入力欄で描く（isFreeText 参照）。
+      if (choices.some(isFreeText)) return buildTapChoiceHtml(q, choices, 'tap_cards');
       var c0 = choices[0], c1 = choices[1];
       return '<div class="answer-splitswipe" data-code="' + esc(q.question_code) + '"'
-        + ' data-v0="' + esc(c0.value) + '" data-v1="' + esc(c1.value) + '">'
+        + ' data-v0="' + esc(c0.value) + '" data-v1="' + esc(c1.value) + '"'
+        + ' data-l0="' + esc(c0.label) + '" data-l1="' + esc(c1.label) + '">'
         + '<div class="swipe-deck">'
         + '<div class="swipe-back swipe-back2"></div>'
         + '<div class="swipe-back swipe-back1"></div>'
@@ -374,8 +627,10 @@
         + (c1.description ? '<span class="split-desc">' + esc(c1.description) + '</span>' : '')
         + '</div>'
         + '</div>'
-        + '</div></div>'
-        + '<p class="swipe-tip">選択肢をタップ、またはカードを左右にスワイプ</p>'
+        + '</div>'
+        + swipeResultHtml()
+        + '</div>'
+        + '<p class="swipe-tip">選択肢をタップ、またはカードを左右にスワイプ（そのまま次へ進みます）</p>'
         + '</div>';
     }
 
@@ -411,8 +666,9 @@
     // ---- sort_swipe（スワイプ振り分け・multi_choice）----
     // 1選択肢=1カードに分解し、右=該当 / 左=非該当で全件判定。保存形式は該当のみの配列で一致。
     // 排他選択肢（「特になし」等）はデッキから除外（全カード左＝空配列＝非該当全選択と等価）。
+    // 「その他」等の自由記述つき選択肢もデッキから除外し、下のタップ+入力欄で受ける（isFreeText 参照）。
     function buildSortSwipeHtml(q, choices) {
-      var deck = choices.filter(function (c) { return !c.exclusive; });
+      var deck = choices.filter(function (c) { return !c.exclusive && !isFreeText(c); });
       var strip = deck.map(function (c, i) {
         return '<span class="sort-chip" data-i="' + i + '">' + esc(c.label) + '</span>';
       }).join('');
@@ -435,6 +691,7 @@
         + '<button type="button" class="round-btn rb-r" data-dir="right"><span class="rb-circle">◯</span><span class="rb-label">あてはまる</span></button>'
         + '</div>'
         + '<p class="swipe-tip">スワイプまたはボタンで振り分け</p>'
+        + freeTextRowsHtml(q, choices, true)
         + '</div>';
     }
 
@@ -556,7 +813,13 @@
       var onChange = handlers.onChange || function () {};
       var onCommit = handlers.onCommit || function () {};
 
+      // スワイプ系が自前で合流させる自由記述行（.answer-freetext-rows 配下）は、
+      // ここで onChange を撃つと振り分け済みの値を上書きしてしまうので除外する。
+      // 選択状態のトグルだけは効かせたいので、配線自体は wirePatterns 側が担当する。
+      var ownedByPattern = function (el) { return !!el.closest('.answer-freetext-rows'); };
+
       [].slice.call(root.querySelectorAll('.card-item')).forEach(function (card) {
+        if (ownedByPattern(card)) return;
         card.addEventListener('click', function (e) {
           if (e.target.tagName === 'INPUT') return;
           var input = card.querySelector('input');
@@ -573,14 +836,16 @@
           var val = collectChoiceVal(root, code, multi);
           onChange(val);
           // タップで確定できるのは「その他」記述を持たない radio のみ（記述は入力待ちのため）。
+          // 一覧から1つ選ぶ操作なので advance=false（遷移はホストの「次へ」に任せる）。
           if (input.type === 'radio' && card.closest('[data-autoadvance="1"]') && !card.querySelector('.other-text-input')) {
-            onCommit(val);
+            onCommit(val, false);
           }
         });
       });
 
       // その他=自由記述: 入力したら該当選択肢を選択状態にして収集する。
       [].slice.call(root.querySelectorAll('.other-text-input')).forEach(function (inp) {
+        if (ownedByPattern(inp)) return;
         inp.addEventListener('input', function () {
           var wrap = inp.closest('.choice-item') || inp.closest('.card-item');
           var box = wrap && wrap.querySelector('input[name="q_' + code + '"]');
@@ -605,21 +870,93 @@
      */
     function wirePatterns(root, ctx, handlers) {
       var code = ctx.code;
+      // ホストが onCommit で次へ進まない場合（survey_page などジェスチャー確定でも
+      // 画面が変わらない文脈）だけ、飛んでいったカードの代わりに結果パネルを残す。
+      var showResult = !!ctx.showCommitResult;
       var onChange = handlers.onChange || function () {};
       var onCommit = handlers.onCommit || function () {};
 
       // big_slider: レンジ操作で選択肢 value を確定（決定はホスト側）
+      // 操作は .bigslider-hit の Pointer Events で受ける。track のどこを押しても最寄りの段階に
+      // 飛び、そのまま引きずれる（ネイティブ range はつまみを正確に掴む必要があり、iOS は
+      // track タップで動かない）。縦スクロールに取られたら（pointercancel）押下前に戻す。
       var slider = root.querySelector('.answer-bigslider[data-code="' + code + '"]');
       if (slider) {
         var range = slider.querySelector('.bigslider-range');
+        var hit = slider.querySelector('.bigslider-hit') || slider;
         var labelEl = slider.querySelector('.bigslider-label');
+        var ticks = slider.querySelectorAll('.bigslider-tick');
         var values = [], labels = [];
         try { values = JSON.parse(range.getAttribute('data-values') || '[]'); } catch (_e) {}
         try { labels = JSON.parse(range.getAttribute('data-labels') || '[]'); } catch (_e) {}
-        range.addEventListener('input', function () {
-          var i = parseInt(range.value, 10) || 0;
+        var n = values.length;
+        var thumbPx = parseFloat(getComputedStyle(slider).getPropertyValue('--bs-thumb')) || 40;
+
+        function paint(i) {
+          range.value = i;
+          slider.style.setProperty('--bs-fill', (n > 1 ? (i / (n - 1)) * 100 : 0) + '%');
           if (labelEl) labelEl.textContent = labels[i] || '';
+          ticks.forEach(function (t, ti) { t.classList.toggle('on', ti === i); });
+        }
+        function commit(i) {
+          slider.classList.add('engaged');
+          paint(i);
           onChange(values[i]);
+        }
+        function indexFromX(clientX) {
+          var rect = range.getBoundingClientRect();
+          var usable = Math.max(1, rect.width - thumbPx);
+          var ratio = (clientX - rect.left - thumbPx / 2) / usable;
+          return Math.round(Math.max(0, Math.min(1, ratio)) * (n - 1));
+        }
+
+        var drag = null; // { startVal, wasEngaged, last, moved }
+        hit.addEventListener('pointerdown', function (e) {
+          if (e.button != null && e.button !== 0) return;
+          drag = { startVal: parseInt(range.value, 10) || 0, wasEngaged: slider.classList.contains('engaged'), moved: false, x0: e.clientX };
+          drag.last = indexFromX(e.clientX);
+          try { hit.setPointerCapture(e.pointerId); } catch (_e) {}
+          slider.classList.add('dragging');
+          // 押した瞬間に見た目だけ追従（値の確定は pointerup／実際に動かした時）
+          slider.classList.add('engaged');
+          paint(drag.last);
+          if (e.pointerType === 'mouse') e.preventDefault();
+        });
+        hit.addEventListener('pointermove', function (e) {
+          if (!drag) return;
+          if (Math.abs(e.clientX - drag.x0) > 4) drag.moved = true;
+          var i = indexFromX(e.clientX);
+          if (i !== drag.last) {
+            drag.last = i;
+            paint(i);
+            if (drag.moved) {
+              onChange(values[i]);
+              try { if (navigator.vibrate) navigator.vibrate(6); } catch (_e) {}
+            }
+          }
+        });
+        function endDrag() {
+          if (!drag) return;
+          var i = drag.last;
+          drag = null;
+          slider.classList.remove('dragging');
+          commit(i);
+        }
+        hit.addEventListener('pointerup', endDrag);
+        hit.addEventListener('lostpointercapture', function () { if (drag) endDrag(); });
+        hit.addEventListener('pointercancel', function () {
+          // 縦スクロールに取られた: 押下前の状態に戻す（動かしていなければ回答扱いにしない）
+          if (!drag) return;
+          var d = drag; drag = null;
+          slider.classList.remove('dragging');
+          if (d.moved) { commit(d.last); return; }
+          if (d.wasEngaged) { paint(d.startVal); }
+          else { slider.classList.remove('engaged'); range.value = d.startVal; slider.style.setProperty('--bs-fill', '50%'); if (labelEl) labelEl.textContent = 'スライドまたはタップで選択'; ticks.forEach(function (t) { t.classList.remove('on'); }); }
+        });
+        // キーボード（フォーカスして←→）
+        range.addEventListener('input', function () {
+          if (drag) return;
+          commit(parseInt(range.value, 10) || 0);
         });
       }
 
@@ -636,10 +973,13 @@
           if (stampL) stampL.style.opacity = dx < 0 ? String(k) : '0';
           if (stampR) stampR.style.opacity = dx > 0 ? String(k) : '0';
         };
+        var swipeLabels = { left: swipe.getAttribute('data-l0') || '', right: swipe.getAttribute('data-l1') || '' };
+        var swipeResult = wireSwipeResult(swipe, card, showResult, function () { onChange(''); });
         var commitDir = function (dir) {
           var val = dir === 'left' ? v0 : v1;
           onChange(val);
-          onCommit(val);
+          onCommit(val, true); // ジェスチャー確定＝そのまま次へ
+          if (swipeResult) swipeResult.show(swipeLabels[dir] || val);
         };
         if (card) attachHorizontalDrag(card, commitDir, showStamp);
         [].slice.call(swipe.querySelectorAll('.round-btn')).forEach(function (btn) {
@@ -673,10 +1013,13 @@
           if (sHalfL) sHalfL.classList.toggle('lit', dx < -8);
           if (sHalfR) sHalfR.classList.toggle('lit', dx > 8);
         };
+        var splitLabels = { left: split.getAttribute('data-l0') || '', right: split.getAttribute('data-l1') || '' };
+        var splitResult = wireSwipeResult(split, scard, showResult, function () { onChange(''); });
         var sCommit = function (dir) {
           var val = dir === 'left' ? sv0 : sv1;
           onChange(val);
-          onCommit(val);
+          onCommit(val, true); // ジェスチャー確定＝そのまま次へ
+          if (splitResult) splitResult.show(splitLabels[dir] || val);
         };
         if (scard) attachHorizontalDrag(scard, sCommit, sPaint);
         [].slice.call(split.querySelectorAll('.split-half')).forEach(function (half) {
@@ -751,7 +1094,7 @@
           cards.forEach(function (c, k) { c.classList.toggle('picked', k === pickedIdx); });
           sync();
           onChange(val);
-          onCommit(val);
+          onCommit(val, false); // CTA は「選択の確定」であって送信ではない＝次へ待ち
         });
         // 初回ナッジは操作が始まったら止める（2.6秒後にも保険で解除）
         var stopNudge = function () { track.classList.remove('carousel-nudge'); };
@@ -768,8 +1111,46 @@
         var doneEl = sort.querySelector('.sort-done');
         var selected = [];
         var si = 0;
+        // デッキから外した自由記述（「その他」）は下のタップ+入力欄が持つので、
+        // 振り分け結果と合流させてからホストへ渡す（どちらか一方だけにならないように）。
+        var freeRows = sort.querySelector('.answer-freetext-rows');
+        var freeVals = function () {
+          if (!freeRows) return [];
+          return [].slice.call(freeRows.querySelectorAll('input[name="q_' + code + '"]:checked')).map(function (el) {
+            var wrap = el.closest('.card-item');
+            var other = wrap && wrap.querySelector('.other-text-input');
+            return (other && other.value.trim()) ? other.value.trim() : el.value;
+          });
+        };
+        var merged = function () { return selected.concat(freeVals()); };
+        // その他側のタップ選択と記述入力（wireChoiceItems からは除外してあるのでここで配線）。
+        // どちらも「振り分け済みの内容を保ったまま」合流値を送り直す。
+        if (freeRows) {
+          [].slice.call(freeRows.querySelectorAll('.card-item')).forEach(function (row) {
+            row.addEventListener('click', function (e) {
+              if (e.target.tagName === 'INPUT') return; // 記述欄のタップで選択を外さない
+              var box = row.querySelector('input[name="q_' + code + '"]');
+              if (!box) return;
+              box.checked = !box.checked;
+              row.classList.toggle('selected', box.checked);
+              onChange(merged());
+            });
+          });
+          // 記述したら自動でその選択肢を ON にする（チェックし忘れで記述が消えるのを防ぐ）。
+          [].slice.call(freeRows.querySelectorAll('.other-text-input')).forEach(function (inp) {
+            inp.addEventListener('input', function () {
+              var row = inp.closest('.card-item');
+              var box = row && row.querySelector('input[name="q_' + code + '"]');
+              if (box && !box.checked) {
+                box.checked = true;
+                row.classList.add('selected');
+              }
+              onChange(merged());
+            });
+          });
+        }
         // multi は「1件も該当なし」も有効回答になり得るため、開始時に空配列を渡す
-        onChange([]);
+        onChange(merged());
         var show = function (i) {
           si = i;
           sortCards.forEach(function (c, k) {
@@ -785,13 +1166,15 @@
           if (dir === 'right') selected.push(card.getAttribute('data-val'));
           var chip = chips[si];
           if (chip) { chip.classList.add('done'); if (dir === 'right') chip.classList.add('yes'); }
-          onChange(selected.slice());
+          onChange(merged());
           if (si + 1 < sortCards.length) {
             show(si + 1);
           } else {
             sortCards.forEach(function (c) { c.style.display = 'none'; });
             if (doneEl) doneEl.style.display = '';
-            onCommit(selected.slice());
+            // 「その他」の記述欄がある場合は、振り分け完了で勝手に次へ進めない
+            // （入力する前に画面が変わると書けないため。遷移はホストの「次へ」に任せる）。
+            onCommit(merged(), !freeRows);
           }
         };
         sortCards.forEach(function (cardEl) {
@@ -826,6 +1209,10 @@
       applyExclusion: applyExclusion,
       faceIconsFor: faceIconsFor,
       AUTO_COMMIT_PATTERNS: AUTO_COMMIT_PATTERNS,
+      GESTURE_COMMIT_PATTERNS: GESTURE_COMMIT_PATTERNS,
+      PICK_COMMIT_PATTERNS: PICK_COMMIT_PATTERNS,
+      /** カードを倒す/振り分けるジェスチャーで確定するパターンか（＝確定でそのまま次へ進んでよい）。 */
+      isGestureCommit: function (pattern) { return GESTURE_COMMIT_PATTERNS.indexOf(pattern) >= 0; },
       /** そのパターンが自前で確定操作を持つか（ホストの送信ボタンが不要か）。 */
       isAutoCommit: function (pattern) { return AUTO_COMMIT_PATTERNS.indexOf(pattern) >= 0; },
       /** 共通レンダラが描けるパターンか（false ならホスト側の従来描画にフォールバックする）。 */

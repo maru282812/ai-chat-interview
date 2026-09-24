@@ -318,19 +318,21 @@ test("混ざって返ってきた不適格案件は assignable=false + 理由付
 // 4種への写像
 // ------------------------------------------------------------------
 
-test("findUnmappableQuestions: 4種に写像できない設問だけを拾う（性年代とシステム設問は対象外）", () => {
+test("findUnmappableQuestions: 写像できない設問だけを拾う（性年代とシステム設問は対象外）", () => {
   const unmappable = findUnmappableQuestions([
     question({ question_code: "q1", question_type: "single_choice" }),
+    // マトリクスは設問形式の拡張（4種→9種）で写像できるようになったので対象外
     question({ id: "q2", question_code: "q2", question_type: "matrix_single" }),
     question({ id: "q3", question_code: "q3", question_type: "image_upload" }),
+    question({ id: "q6", question_code: "q6", question_type: "pairwise" }),
     // システム設問（free_comment）は元々パートナーに見せないので対象外
-    question({ id: "q4", question_code: "free_comment", question_type: "matrix_single", is_system: true }),
+    question({ id: "q4", question_code: "free_comment", question_type: "image_upload", is_system: true }),
     // 既に退避済み（is_hidden）も対象外
-    question({ id: "q5", question_code: "q5_retired0", question_type: "matrix_single", is_hidden: true })
+    question({ id: "q5", question_code: "q5_retired0", question_type: "image_upload", is_hidden: true })
   ]);
   assert.deepEqual(
     unmappable.map((entry) => entry.question_code),
-    ["q2", "q3"]
+    ["q3", "q6"]
   );
 });
 
@@ -434,12 +436,13 @@ test("完了セッションが1件でもあれば assign は 409", async () => {
   }
 });
 
-test("4種に写像できない設問を含む案件の assign は 409（その設問を返す）", async () => {
+test("写像できない設問を含む案件の assign は 409（その設問を返す）", async () => {
   const restore = stubAssignEnvironment({
     target: project({ id: TARGET_ID }),
     questions: [
       question({ question_code: "q1" }),
-      question({ id: "qid2", question_code: "q2", question_type: "matrix_single" })
+      // マトリクスは写像できるようになったので、今も運営専用の種別で検証する
+      question({ id: "qid2", question_code: "q2", question_type: "image_upload" })
     ]
   });
   try {
@@ -448,7 +451,7 @@ test("4種に写像できない設問を含む案件の assign は 409（その�
       body: { store_id: STORE_ID }
     });
     assert.equal(result.status, 409);
-    assert.equal(String(result.body.error).includes("q2(matrix_single)"), true);
+    assert.equal(String(result.body.error).includes("q2(image_upload)"), true);
   } finally {
     restore();
   }
@@ -593,5 +596,316 @@ test("割り当て済み一覧にも設問本文は含まれない", async () =>
     assert.equal(result.raw.includes(SECRET_QUESTION_TEXT), false);
   } finally {
     restore();
+  }
+});
+
+// ------------------------------------------------------------------
+// 閲覧専用の紐づけ（migration 103・§8.8〜8.10）
+// ------------------------------------------------------------------
+
+const { watchBlockedReason } = partnerAssignmentServiceModule;
+
+test("watchBlockedReason: 稼働中・締切済み・回答ありでも紐づけられる。archived / client / 割り当て済みは駄目", () => {
+  assert.equal(watchBlockedReason(project({ status: "published" })), null);
+  assert.equal(watchBlockedReason(project({ status: "closed" })), null);
+  assert.equal(watchBlockedReason(project({ status: "archived" })), "archived survey cannot be watched");
+  assert.equal(
+    watchBlockedReason(project({ client_id: "22222222-2222-4222-8222-222222222222" })),
+    "project belongs to a client"
+  );
+  assert.equal(watchBlockedReason(project({ partner_store_id: STORE_ID })), "already assigned to a store");
+});
+
+test("閲覧専用の候補一覧に設問本文は含まれず、回答数と開示設問数が出る", async () => {
+  const restores = [
+    stub(projectRepository, "listWatchableForPartner", async () => [
+      project({ id: TARGET_ID, status: "published", entry_code: "yotto-salon-a" })
+    ]),
+    stub(sessionRepository, "listByProject", async () => [
+      session(),
+      session({ id: "sid2" }),
+      session({ id: "sid3", status: "active" })
+    ]),
+    stub(questionRepository, "listByProject", async () => [
+      question({
+        question_code: "Q13",
+        question_type: "free_text_long",
+        question_config: {
+          meta: {
+            share_with_store: {
+              enabled: true,
+              mode: "verbatim",
+              timing: "immediate",
+              notice: "この設問のみ担当者が施術前に確認いたします。"
+            }
+          }
+        } as unknown as Question["question_config"]
+      }),
+      question({ id: "qid2", question_code: "Q1", question_type: "matrix_single" })
+    ])
+  ];
+  try {
+    const result = await call("GET", "/api/partner-admin/watchable-surveys", {
+      key: PARTNER_ADMIN_KEY
+    });
+    assert.equal(result.status, 200, result.raw);
+    const surveys = result.body.surveys as Record<string, unknown>[];
+    assert.equal(surveys.length, 1);
+    assert.equal(surveys[0]?.watchable, true);
+    assert.equal(surveys[0]?.completed_count, 2);
+    assert.equal(surveys[0]?.shareable_question_count, 1);
+    assert.equal(surveys[0]?.entry_code, "yotto-salon-a");
+    assert.equal(result.raw.includes(SECRET_QUESTION_TEXT), false);
+  } finally {
+    for (const restore of restores.reverse()) {
+      restore();
+    }
+  }
+});
+
+test("watch は partner_store_id と partner_readonly だけを更新し、稼働中・回答ありでも通る", async () => {
+  let captured: { projectId: string; storeId: string } | null = null;
+  const restores = [
+    stub(projectRepository, "getById", async () =>
+      project({
+        id: TARGET_ID,
+        status: "published",
+        entry_code: "yotto-salon-a",
+        visibility_type: "private_store"
+      })
+    ),
+    stub(sessionRepository, "listByProject", async () => [session()]),
+    stub(questionRepository, "listByProject", async () => [
+      question({ id: "qid2", question_code: "q2", question_type: "matrix_single" })
+    ]),
+    stub(projectRepository, "watchPartnerStore", async (projectId: string, storeId: string) => {
+      captured = { projectId, storeId };
+      return project({
+        id: projectId,
+        status: "published",
+        entry_code: "yotto-salon-a",
+        visibility_type: "private_store",
+        partner_store_id: storeId,
+        partner_readonly: true
+      });
+    }),
+    // assign と違い、性年代設問の作り直しや entry_code 採番を呼んではいけない
+    stub(projectRepository, "assignPartnerStore", async () => {
+      throw new Error("assignPartnerStore must not be called by watch");
+    }),
+    stub(projectRepository, "findAnyByEntryCode", async () => {
+      throw new Error("entry_code must not be generated by watch");
+    }),
+    stub(questionRepository, "create", async () => {
+      throw new Error("questions must not be created by watch");
+    })
+  ];
+  try {
+    const result = await call("POST", `/api/partner-admin/surveys/${TARGET_ID}/watch`, {
+      key: PARTNER_ADMIN_KEY,
+      body: { store_id: STORE_ID }
+    });
+    assert.equal(result.status, 200, result.raw);
+    assert.equal(result.body.store_id, STORE_ID);
+    assert.equal(result.body.status, "published");
+    assert.equal(result.body.entry_code, "yotto-salon-a");
+    assert.deepEqual(captured, { projectId: TARGET_ID, storeId: STORE_ID });
+  } finally {
+    for (const restore of restores.reverse()) {
+      restore();
+    }
+  }
+});
+
+test("watch: 割り当て済み / 条件付きUPDATE 0件 / archived は 409", async () => {
+  const already = [
+    stub(projectRepository, "getById", async () => project({ id: TARGET_ID, partner_store_id: STORE_ID }))
+  ];
+  try {
+    const result = await call("POST", `/api/partner-admin/surveys/${TARGET_ID}/watch`, {
+      key: PARTNER_ADMIN_KEY,
+      body: { store_id: STORE_ID }
+    });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error, "already assigned to a store");
+  } finally {
+    for (const restore of already.reverse()) restore();
+  }
+
+  const raced = [
+    stub(projectRepository, "getById", async () => project({ id: TARGET_ID, status: "published" })),
+    stub(projectRepository, "watchPartnerStore", async () => null)
+  ];
+  try {
+    const result = await call("POST", `/api/partner-admin/surveys/${TARGET_ID}/watch`, {
+      key: PARTNER_ADMIN_KEY,
+      body: { store_id: STORE_ID }
+    });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error, "already assigned to a store");
+  } finally {
+    for (const restore of raced.reverse()) restore();
+  }
+
+  const archived = [
+    stub(projectRepository, "getById", async () => project({ id: TARGET_ID, status: "archived" }))
+  ];
+  try {
+    const result = await call("POST", `/api/partner-admin/surveys/${TARGET_ID}/watch`, {
+      key: PARTNER_ADMIN_KEY,
+      body: { store_id: STORE_ID }
+    });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error, "archived survey cannot be watched");
+  } finally {
+    for (const restore of archived.reverse()) restore();
+  }
+});
+
+test("unwatch は entry_code に触らず紐づけだけ外す。通常の割り当て案件には当たらない", async () => {
+  let unwatched = 0;
+  const restores = [
+    stub(projectRepository, "getById", async () =>
+      project({
+        id: TARGET_ID,
+        partner_store_id: STORE_ID,
+        partner_readonly: true,
+        entry_code: "yotto-salon-a",
+        status: "published"
+      })
+    ),
+    stub(projectRepository, "unwatchPartnerStore", async (projectId: string) => {
+      unwatched += 1;
+      return project({
+        id: projectId,
+        partner_store_id: null,
+        partner_readonly: false,
+        entry_code: "yotto-salon-a",
+        status: "published"
+      });
+    }),
+    stub(projectRepository, "unassignPartnerStore", async () => {
+      throw new Error("unassignPartnerStore must not be called by unwatch");
+    }),
+    stub(questionRepository, "listByProject", async () => [])
+  ];
+  try {
+    const result = await call("POST", `/api/partner-admin/surveys/${TARGET_ID}/unwatch`, {
+      key: PARTNER_ADMIN_KEY
+    });
+    assert.equal(result.status, 200, result.raw);
+    assert.equal(result.body.store_id, "");
+    // QR の生命線は残る
+    assert.equal(result.body.entry_code, "yotto-salon-a");
+    assert.equal(unwatched, 1);
+  } finally {
+    for (const restore of restores.reverse()) restore();
+  }
+
+  // 通常の割り当て案件（partner_readonly=false）に unwatch は当たらない
+  const normal = [
+    stub(projectRepository, "getById", async () =>
+      project({ id: TARGET_ID, partner_store_id: STORE_ID, partner_readonly: false })
+    ),
+    stub(questionRepository, "listByProject", async () => [])
+  ];
+  try {
+    const result = await call("POST", `/api/partner-admin/surveys/${TARGET_ID}/unwatch`, {
+      key: PARTNER_ADMIN_KEY
+    });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error, "survey is not read-only (use unassign)");
+  } finally {
+    for (const restore of normal.reverse()) restore();
+  }
+});
+
+test("閲覧専用の紐づけに unassign を当てると 409（entry_code を落とさせない）", async () => {
+  const restores = [
+    stub(projectRepository, "getById", async () =>
+      project({
+        id: TARGET_ID,
+        partner_store_id: STORE_ID,
+        partner_readonly: true,
+        entry_code: "yotto-salon-a"
+      })
+    ),
+    stub(projectRepository, "unassignPartnerStore", async () => {
+      throw new Error("unassignPartnerStore must not be called for read-only survey");
+    }),
+    stub(questionRepository, "listByProject", async () => [])
+  ];
+  try {
+    const result = await call("POST", `/api/partner-admin/surveys/${TARGET_ID}/unassign`, {
+      key: PARTNER_ADMIN_KEY
+    });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error, "read-only survey (use unwatch)");
+  } finally {
+    for (const restore of restores.reverse()) restore();
+  }
+});
+
+test("割り当て済み一覧は readonly フラグを返す", async () => {
+  const restore = stub(projectRepository, "listAssignedToPartner", async () => [
+    project({ id: TARGET_ID, partner_store_id: STORE_ID, entry_code: "p-abc123" }),
+    project({
+      id: "55555555-5555-4555-8555-555555555555",
+      partner_store_id: STORE_ID,
+      partner_readonly: true,
+      entry_code: "yotto-salon-a"
+    })
+  ]);
+  try {
+    const result = await call("GET", "/api/partner-admin/assigned-surveys", {
+      key: PARTNER_ADMIN_KEY
+    });
+    const surveys = result.body.surveys as Record<string, unknown>[];
+    assert.equal(surveys[0]?.readonly, false);
+    assert.equal(surveys[1]?.readonly, true);
+  } finally {
+    restore();
+  }
+});
+
+test("閲覧専用の案件は店舗向け PUT / publish / close が 409。GET / stats は通る", async () => {
+  const partnerSurveyServiceModule =
+    require("../services/partnerSurveyService") as typeof import("../services/partnerSurveyService");
+  const { partnerSurveyService } = partnerSurveyServiceModule;
+  const readonly = project({
+    id: TARGET_ID,
+    partner_store_id: STORE_ID,
+    partner_readonly: true,
+    status: "published",
+    entry_code: "yotto-salon-a"
+  });
+  const restores = [
+    stub(projectRepository, "getPartnerProject", async () => readonly),
+    stub(projectRepository, "update", async () => {
+      throw new Error("projects.update must not be called for read-only survey");
+    }),
+    stub(questionRepository, "listByProject", async () => []),
+    stub(sessionRepository, "listByProject", async () => []),
+    ...stubDemographicWrites()
+  ];
+  try {
+    for (const attempt of [
+      () => partnerSurveyService.updateSurvey({ partnerStoreId: STORE_ID, surveyId: TARGET_ID, title: "x" }),
+      () => partnerSurveyService.publishSurvey(STORE_ID, TARGET_ID),
+      () => partnerSurveyService.closeSurvey(STORE_ID, TARGET_ID)
+    ]) {
+      await assert.rejects(attempt, (error: unknown) => {
+        const http = error as { statusCode?: number; status?: number; message: string };
+        assert.equal(http.message, "read-only survey");
+        return true;
+      });
+    }
+    // 読み取りは通る
+    const view = await partnerSurveyService.getSurvey(STORE_ID, TARGET_ID);
+    assert.equal(view.survey_id, TARGET_ID);
+    const stats = await partnerSurveyService.getStats(STORE_ID, TARGET_ID);
+    assert.equal(stats.total_count, 0);
+  } finally {
+    for (const restore of restores.reverse()) restore();
   }
 });

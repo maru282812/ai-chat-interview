@@ -6,7 +6,7 @@
     <title><%= title %></title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
-    <link rel="stylesheet" href="/public/hibi.css" />
+    <link rel="stylesheet" href="<%= typeof locals.assetUrl === 'function' ? locals.assetUrl('hibi.css') : '/public/hibi.css' %>" />
     <%# 行動計測。4タブの表示数を横並びで比較するための分母 %>
     <%- include('../partials/behavior-track') %>
     <%- include('../partials/daily-today-card') %>

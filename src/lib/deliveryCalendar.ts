@@ -15,6 +15,7 @@ import type {
 } from "../repositories/deliveryTemplateRepository";
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+export const CAMPAIGN_RESERVATION_CATCH_UP_WINDOW_MIN = 5;
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"] as const;
 
 function pad(value: number): string {
@@ -132,4 +133,14 @@ export function isoToJstParts(iso: string): { date: string; time: string } | nul
     date: clock.toISOString().slice(0, 10),
     time: `${pad(clock.getUTCHours())}:${pad(clock.getUTCMinutes())}`
   };
+}
+
+export function isCampaignReservationStale(
+  scheduledAt: string,
+  now: Date = new Date(),
+  windowMinutes: number = CAMPAIGN_RESERVATION_CATCH_UP_WINDOW_MIN
+): boolean {
+  const at = new Date(scheduledAt);
+  if (Number.isNaN(at.getTime())) return false;
+  return now.getTime() - at.getTime() >= windowMinutes * 60 * 1000;
 }

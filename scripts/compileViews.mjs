@@ -53,6 +53,15 @@ const RESERVED = new Set([
   "Map", "Set", "Promise", "Error", "console", "parseInt", "parseFloat", "isNaN",
   "encodeURIComponent", "decodeURIComponent", "encodeURI", "decodeURI", "Intl",
   "globalThis", "Symbol", "BigInt", "structuredClone",
+  // テンプレートが **グローバルとして呼ぶ** 組み込み。ここに入れ忘れると
+  // `const { URLSearchParams } = locals || {}` で undefined に潰され、
+  // 実行時に `URLSearchParams2 is not a constructor` で画面が落ちる
+  // （/admin/points と /admin/post-analysis が本番で全滅した）。
+  "URL", "URLSearchParams", "TextEncoder", "TextDecoder", "Buffer",
+  "Uint8Array", "Int8Array", "Uint16Array", "Int16Array", "Uint32Array",
+  "Int32Array", "Float32Array", "Float64Array", "ArrayBuffer", "DataView",
+  "WeakMap", "WeakSet", "Proxy", "Reflect", "Function", "Infinity", "NaN",
+  "atob", "btoa", "crypto", "AbortController", "Response", "Request", "Headers",
   // strict モードの予約語。束縛名にできないので分割代入に入れてはいけない
   // （EJS テンプレに `public` という locals があり、実際に SyntaxError を踏んだ）。
   "implements", "interface", "package", "private", "protected", "public", "static",

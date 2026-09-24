@@ -1,0 +1,57 @@
+<%- include("../../partials/header", { title }) %>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2>ミッション</h2>
+  <a href="/admin/mission/new" class="btn">＋ ミッションを作る</a>
+</div>
+
+<%
+const themeMap = Object.fromEntries(themes.map(t => [t.key, t]));
+const fmt = (v) => v ? new Date(v).toLocaleDateString("ja-JP") : "—";
+const now = Date.now();
+%>
+
+<div class="card">
+  <p style="font-size:12.5px;color:#6B7A75;margin-bottom:12px">
+    横断型は<b>同じ期間に1つだけ公開</b>する（2つ見せるとどちらも進まなくなる）。
+    案件指定型は案件ごとなので併走してよい。
+  </p>
+  <table>
+    <thead>
+      <tr><th>ミッション名</th><th>テーマ</th><th>対象範囲</th><th>期間</th><th>段</th><th>状態</th><th></th></tr>
+    </thead>
+    <tbody>
+      <% for (const m of missions) {
+        const t = themeMap[m.theme_key];
+        const inPeriod = now >= Date.parse(m.starts_at) && now <= Date.parse(m.ends_at);
+      %>
+        <tr>
+          <td><b><%= m.name %></b></td>
+          <td>
+            <% if (t) { %>
+              <span style="display:inline-flex;align-items:center;gap:6px">
+                <span style="width:14px;height:14px;border-radius:4px;background:<%= t.bg %>;display:inline-block"></span>
+                <span style="width:14px;height:14px;border-radius:4px;background:<%= t.accent %>;display:inline-block"></span>
+                <%= t.name %>
+              </span>
+            <% } else { %><%= m.theme_key %><% } %>
+          </td>
+          <td><%= m.scope === "project" ? "案件指定型" : "横断型" %></td>
+          <td style="font-size:12px"><%= fmt(m.starts_at) %> – <%= fmt(m.ends_at) %></td>
+          <td><%= m.stageCount %></td>
+          <td>
+            <% if (m.is_active && inPeriod) { %><span style="color:#1E7A5A;font-weight:700">公開中</span>
+            <% } else if (m.is_active) { %><span style="color:#6B7A75">期間外</span>
+            <% } else { %><span style="color:#6B7A75">下書き</span><% } %>
+          </td>
+          <td><a href="/admin/mission/<%= m.id %>" class="btn btn-secondary" style="font-size:11px;padding:.2rem .6rem">編集</a></td>
+        </tr>
+      <% } %>
+      <% if (missions.length === 0) { %>
+        <tr><td colspan="7" style="text-align:center;color:#999;padding:2rem">ミッションはまだありません</td></tr>
+      <% } %>
+    </tbody>
+  </table>
+</div>
+
+<%- include("../../partials/footer") %>

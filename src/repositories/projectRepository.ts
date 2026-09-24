@@ -10,6 +10,7 @@ import type {
   ProjectProbePolicy,
   ProjectResponseStyle,
   ProjectStatus,
+  Question,
   ResearchHypothesis,
   ResearchMode,
   ScreeningConfig
@@ -19,6 +20,56 @@ import { projectAssignmentRepository } from "./projectAssignmentRepository";
 import { FREE_COMMENT_QUESTION_CODE, questionRepository } from "./questionRepository";
 import { respondentRepository } from "./respondentRepository";
 import { sessionRepository } from "./sessionRepository";
+
+/**
+ * 複製時に必ず引き継ぐ「表示制御」項目。
+ *
+ * copyProject はもともと question_config と branch_rule しか写しておらず、
+ * display_tags_parsed / visibility_conditions / comment_top / comment_bottom が
+ * 落ちていた。この4つが落ちると、複製先の設問は「選択肢は全部あるのに
+ * 前問の回答で絞られない」状態になる（carry-forward = display_tags_parsed.optionSource、
+ * <disable> = display_tags_parsed.disableRules、表示条件 = visibility_conditions）。
+ *
+ * 店舗展開（storeProvisioningService）はこの copyProject を通るため、
+ * 落ちたまま本番の店舗アンケートが作られていた。
+ *
+ * page_group_id は意図的に写さない。複製元の page_groups の行を指しており、
+ * そのまま持ち越すと別案件のブロックを参照する不整合になるため。
+ */
+function copiedDisplayControlFields(question: Question) {
+  return {
+    comment_top: question.comment_top ?? null,
+    comment_bottom: question.comment_bottom ?? null,
+    display_tags_raw: question.display_tags_raw ?? null,
+    display_tags_parsed: question.display_tags_parsed ?? null,
+    visibility_conditions: question.visibility_conditions ?? null
+  };
+}
+
+/**
+ * 複製時に「店舗への開示設定」を必ず落とす。
+ *
+ * copyProject は question_config をまるごと写すため、そのままだと複製元の
+ * share_with_store（利用規約 第9条3項の開示フラグ）が引き継がれる。
+ * 案件複製は店舗展開の主要経路（storeProvisioningService）なので、
+ * 引き継ぐと「新しく作った店舗の設問が、誰も設定していないのに開示される」事故になる。
+ * 開示は店舗ごとに管理画面で明示的に有効化させる（安全側に倒す）。
+ */
+export function stripStoreDisclosureOnCopy(
+  config: Question["question_config"]
+): Question["question_config"] {
+  if (!config) {
+    return config;
+  }
+  const next = { ...config };
+  if (next.meta && typeof next.meta === "object" && !Array.isArray(next.meta)) {
+    const nextMeta = { ...next.meta };
+    delete nextMeta.share_with_store;
+    next.meta = nextMeta;
+  }
+  return next;
+}
+
 
 interface ProjectMutationInput {
   name: string;
@@ -42,6 +93,8 @@ interface ProjectMutationInput {
   research_hypothesis_json?: ResearchHypothesis | null;
   screening_config?: ScreeningConfig | null;
   screening_last_question_order?: number | null;
+  /** 送信完了画面のお礼文 (Migration 108)。 */
+  completion_message?: string | null;
   is_discoverable?: boolean;
   category?: string | null;
   display_thumbnail_url?: string | null;
@@ -131,6 +184,10 @@ export const projectRepository = {
       objective: source.objective,
       status: "draft",
       reward_points: source.reward_points,
+      // 送信完了画面のお礼文 (Migration 108)。copyProject は明示列挙なので、
+      // ここに足さないとコピーした案件だけお礼が消える（share_with_store と違い、
+      // これは開示フラグではなく文言なので引き継ぐのが正しい）。
+      completion_message: source.completion_message ?? null,
       research_mode: source.research_mode,
       primary_objectives: source.primary_objectives,
       secondary_objectives: source.secondary_objectives,
@@ -168,10 +225,11 @@ export const projectRepository = {
         is_required: question.is_required,
         sort_order: question.sort_order,
         branch_rule: question.branch_rule,
-        question_config: question.question_config,
+        question_config: stripStoreDisclosureOnCopy(question.question_config),
         ai_probe_enabled: question.ai_probe_enabled,
         is_system: question.is_system,
-        is_hidden: question.is_hidden
+        is_hidden: question.is_hidden,
+        ...copiedDisplayControlFields(question)
       });
     }
 
@@ -186,10 +244,11 @@ export const projectRepository = {
         is_required: sourceSystemQuestion.is_required,
         sort_order: sourceSystemQuestion.sort_order,
         branch_rule: sourceSystemQuestion.branch_rule,
-        question_config: sourceSystemQuestion.question_config,
+        question_config: stripStoreDisclosureOnCopy(sourceSystemQuestion.question_config),
         ai_probe_enabled: sourceSystemQuestion.ai_probe_enabled,
         is_system: sourceSystemQuestion.is_system,
-        is_hidden: sourceSystemQuestion.is_hidden
+        is_hidden: sourceSystemQuestion.is_hidden,
+        ...copiedDisplayControlFields(sourceSystemQuestion)
       });
     }
 
@@ -487,6 +546,124 @@ export const projectRepository = {
         is_discoverable: false
       })
       .eq("id", id)
+      .select("*");
+    throwIfError(error);
+    const rows = (data ?? []) as Project[];
+    return rows[0] ?? null;
+  },
+
+  /**
+   * 「閲覧専用」で紐づけられる候補（migration 103・docs/partner-api.md §8.8）。
+   *
+   * assign と違い、稼働中（published / paused）や締切済み（closed）でもよい。
+   * 「まだ誰のものでもない」「他社クライアントの案件でない」「archived でない」だけを条件にする。
+   */
+  async listWatchableForPartner(): Promise<Project[]> {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .is("partner_store_id", null)
+      .is("client_id", null)
+      .neq("status", "archived")
+      .order("created_at", { ascending: false });
+    throwIfError(error);
+    return (data ?? []) as Project[];
+  },
+
+  /**
+   * 閲覧専用で店舗に紐づける**条件付きUPDATE**（`where partner_store_id is null`）。
+   *
+   * assignPartnerStore と違い、**partner_store_id と partner_readonly しか触らない**。
+   * visibility_type / entry_code / is_discoverable は稼働中の案件の生命線なので変えない。
+   * 更新行が0件なら null（呼び出し側は「既に紐づけ済み」として 409 にする）。
+   */
+  async watchPartnerStore(projectId: string, storeId: string): Promise<Project | null> {
+    const id = projectId.trim();
+    const store = storeId.trim();
+    if (!id || !store) return null;
+    const { data, error } = await supabase
+      .from("projects")
+      .update({ partner_store_id: store, partner_readonly: true })
+      .eq("id", id)
+      .is("partner_store_id", null)
+      .select("*");
+    throwIfError(error);
+    const rows = (data ?? []) as Project[];
+    return rows[0] ?? null;
+  },
+
+  /**
+   * セット（A/B/C）を会員店舗へ閲覧専用で一括紐づけする (Migration 104)。
+   *
+   * watchPartnerStore と同じく **partner_store_id と partner_readonly しか触らない**
+   * （entry_code / visibility_type は稼働中の QR の生命線なので変えない）。
+   * 未紐づけの案件だけを対象にする条件付きUPDATE で、既に別店舗のものは黙って対象外になる。
+   * 返り値は実際に更新できた案件。呼び出し側が「3件そろったか」を判定する。
+   */
+  async linkPartnerStoreForProjects(
+    projectIds: string[],
+    storeId: string
+  ): Promise<Project[]> {
+    const ids = projectIds.map((id) => id.trim()).filter((id) => id.length > 0);
+    const store = storeId.trim();
+    if (ids.length === 0 || !store) return [];
+    const { data, error } = await supabase
+      .from("projects")
+      .update({ partner_store_id: store, partner_readonly: true })
+      .in("id", ids)
+      .is("partner_store_id", null)
+      .select("*");
+    throwIfError(error);
+    return (data ?? []) as Project[];
+  },
+
+  /**
+   * セットの紐づけを一括で外す (Migration 104)。
+   * 巻き戻しにも使うので、閲覧専用（partner_readonly=true）の行だけを対象にする
+   * ＝通常の割り当て案件を巻き添えで外さない。
+   */
+  async unlinkPartnerStoreForProjects(projectIds: string[]): Promise<Project[]> {
+    const ids = projectIds.map((id) => id.trim()).filter((id) => id.length > 0);
+    if (ids.length === 0) return [];
+    const { data, error } = await supabase
+      .from("projects")
+      .update({ partner_store_id: null, partner_readonly: false })
+      .in("id", ids)
+      .eq("partner_readonly", true)
+      .select("*");
+    throwIfError(error);
+    return (data ?? []) as Project[];
+  },
+
+  /**
+   * 案件のステータスだけを更新する（セットの一括公開に使う）。
+   * update() は巨大な部分更新で使い回しにくいので、公開経路を1本に絞るための薄い口。
+   */
+  async updateStatus(projectId: string, status: Project["status"]): Promise<Project | null> {
+    const id = projectId.trim();
+    if (!id) return null;
+    const { data, error } = await supabase
+      .from("projects")
+      .update({ status })
+      .eq("id", id)
+      .select("*");
+    throwIfError(error);
+    return ((data ?? []) as Project[])[0] ?? null;
+  },
+
+  /**
+   * 閲覧専用の紐づけを外す。**partner_store_id と partner_readonly を戻すだけ**。
+   * entry_code / visibility_type には触らない（unassign と決定的に違う点。QR を殺さない）。
+   * `partner_readonly = true` の行にしか当たらないので、通常の割り当て案件を誤って外せない。
+   */
+  async unwatchPartnerStore(projectId: string): Promise<Project | null> {
+    const id = projectId.trim();
+    if (!id) return null;
+    const { data, error } = await supabase
+      .from("projects")
+      .update({ partner_store_id: null, partner_readonly: false })
+      .eq("id", id)
+      .eq("partner_readonly", true)
       .select("*");
     throwIfError(error);
     const rows = (data ?? []) as Project[];

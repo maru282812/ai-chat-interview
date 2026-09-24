@@ -6,7 +6,7 @@
     <title><%= title %></title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <%- include('../partials/liff-auth') %>
-    <script src="/public/documentMarkdown.js"></script>
+    <script src="<%= typeof locals.assetUrl === 'function' ? locals.assetUrl('documentMarkdown.js') : '/public/documentMarkdown.js' %>"></script>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body {

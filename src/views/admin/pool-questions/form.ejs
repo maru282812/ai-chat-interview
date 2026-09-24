@@ -172,7 +172,7 @@
   const pvText = document.getElementById('pv_text');
   const pvRender = document.getElementById('pv_render');
   const pvPattern = document.getElementById('pv_pattern');
-  const patternLabel = { swipe_card:'スワイプ2択', carousel:'カルーセル', face_scale:'フェイス尺度', tap_cards:'タップ選択' };
+  const patternLabel = { swipe_card:'スワイプ2択', carousel:'カルーセル', big_slider:'スライダー', tap_cards:'タップ選択' };
 
   function optRows() { return [].slice.call(choicesBlock.querySelectorAll('.opt-row')); }
 
@@ -185,9 +185,10 @@
   }
 
   // casual プリセットのサーバー解決を JS で再現（src/lib/answerPresentation.ts）:
-  //   scale→face_scale / 選択肢<=2→swipe_card / >2→carousel。
+  //   scale→big_slider / 選択肢<=2→swipe_card / >2→carousel。
+  // ここを変えるときは必ずサーバー側（basePattern）と揃えること。ずれるとプレビューが嘘になる。
   function resolvePattern(type, n) {
-    if (type === 'scale') return 'face_scale';
+    if (type === 'scale') return 'big_slider';
     if (n <= 2) return 'swipe_card';
     return 'carousel';
   }

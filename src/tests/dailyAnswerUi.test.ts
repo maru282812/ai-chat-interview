@@ -120,18 +120,20 @@ test("casual: 3択以上の single_choice は carousel", () => {
   assert.equal(view.presentation.pattern, "carousel");
 });
 
-test("casual: scale は face_scale（絵文字フェイス）で選択肢は 1〜5", () => {
+test("casual: scale は big_slider（スライダー）で選択肢は 1〜5", () => {
   const view = resolveDailyQuestionView(q({ question_type: "scale" }), "casual");
-  assert.equal(view.presentation.pattern, "face_scale");
+  assert.equal(view.presentation.pattern, "big_slider");
   assert.equal(view.choices.length, 5);
 });
 
-test("casual: multiple_choice は sort_swipe（1選択肢=1カードの振り分け）", () => {
+test("casual: multiple_choice は chip_select（sort_swipe は既定にしない）", () => {
+  // sort_swipe は選択肢の数だけ画面が続くため casual の既定から外した（2026-09-08）。
+  // デイリーは1日1問の短い接触なので、複数選択はタップで一息に選ばせる。
   const view = resolveDailyQuestionView(
     q({ question_type: "multiple_choice", answer_options: YES_NO }),
     "casual",
   );
-  assert.equal(view.presentation.pattern, "sort_swipe");
+  assert.equal(view.presentation.pattern, "chip_select");
 });
 
 test("casual: text は textarea（共通レンダラ対象外＝従来の入力欄）", () => {
@@ -151,7 +153,7 @@ test("casual: 設問文が長い2択は big_split へ降格する（サーバー
 test("preset 未指定はデイリー既定の casual で解決する", () => {
   const view = resolveDailyQuestionView(q({ question_type: "scale" }), null);
   assert.equal(view.presentation.preset, "casual");
-  assert.equal(view.presentation.pattern, "face_scale");
+  assert.equal(view.presentation.pattern, "big_slider");
 });
 
 // ---- casual 以外のプリセット ----
@@ -181,5 +183,5 @@ test("resolveDailyQuestionViews: 元のタイプと選択肢を保ったまま p
   assert.equal(views[0]?.question_type, "scale");
   assert.equal(views[1]?.question_type, "multiple_choice");
   assert.deepEqual(views[1]?.answer_options, [{ label: "A", value: "a" }]);
-  assert.equal(views[0]?.presentation.pattern, "face_scale");
+  assert.equal(views[0]?.presentation.pattern, "big_slider");
 });

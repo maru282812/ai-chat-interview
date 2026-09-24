@@ -8,7 +8,7 @@
  *
  * ページ扱いしないもの（＝カタログ対象外）:
  * - `/api/*`（JSON API）
- * - `.csv` / `.png` / `.json` / `.zip`（エクスポート・画像）
+ * - `.csv` / `.png` / `.svg` / `.json` / `.zip`（エクスポート・画像）
  * - `/login`（認証前。ナビも出ない）
  * - 拡張子は無いが `res.json` を返す JSON API（下の JSON_API_PATHS）
  *
@@ -21,6 +21,8 @@ import { adminRoutes } from "../routes/adminRoutes";
 import {
   ADMIN_SCREENS,
   buildNavGroups,
+  buildPinnedNavItems,
+  buildScreenDirectory,
   getScreenByKey,
   resolveScreenByPath
 } from "../lib/adminScreenCatalog";
@@ -38,7 +40,7 @@ const JSON_API_PATHS = new Set([
   "/projects/:projectId/exports/stat/history"
 ]);
 
-const NON_PAGE_EXTENSIONS = [".csv", ".png", ".json", ".zip"];
+const NON_PAGE_EXTENSIONS = [".csv", ".png", ".svg", ".json", ".zip"];
 
 /** Express router stack から admin の GET ページルートを列挙する（`/admin` 込みのパスで返す）。 */
 function listAdminGetPagePaths(): string[] {
@@ -298,11 +300,108 @@ test("到達不能だった画面がナビか台帳から辿れる", () => {
   assert.ok(getScreenByKey("stores-index")?.related.includes("client-overview"));
 });
 
-test("配信オペレーションの強調と交換申請バッジがナビ項目に載る", () => {
+test("配信オペレーションの強調がナビ項目に載る", () => {
   const items = buildNavGroups().flatMap((g) => g.items);
   assert.equal(items.find((i) => i.href === "/admin/delivery-operations")?.primary, true);
+});
+
+// ---------------------------------------------------------------------------
+// buildPinnedNavItems（ヘッダー1段目の「よく使う」外出し列）
+// ---------------------------------------------------------------------------
+
+test("ピン留めは pinned:true の画面だけを宣言順で返す", () => {
+  const hrefs = buildPinnedNavItems().map((i) => i.href);
+  assert.deepEqual(hrefs, [
+    "/admin/projects",
+    "/admin/daily-surveys",
+    "/admin/respondents",
+    "/admin/exchange-requests",
+    "/admin/delivery-operations",
+    "/admin/delivery-calendar"
+  ]);
+});
+
+test("ピン留めした画面はグループ側からも消えない（近道であって引っ越しではない）", () => {
+  const groupHrefs = new Set(buildNavGroups().flatMap((g) => g.items.map((i) => i.href)));
+  for (const item of buildPinnedNavItems()) {
+    assert.ok(groupHrefs.has(item.href), `${item.href} がグループから消えている`);
+  }
+});
+
+test("交換申請バッジの DOM id はピン留め側にだけ出る（id 重複を作らない）", () => {
+  // 同じ id が2箇所にあると getElementById が先勝ちになり、片方が黙って更新されない。
   assert.equal(
-    items.find((i) => i.href === "/admin/exchange-requests")?.badgeId,
+    buildPinnedNavItems().find((i) => i.href === "/admin/exchange-requests")?.badgeId,
     "nav-exchange-badge"
   );
+  const groupItems = buildNavGroups().flatMap((g) => g.items);
+  assert.equal(
+    groupItems.find((i) => i.href === "/admin/exchange-requests")?.badgeId,
+    undefined
+  );
+  const badgeIds = [...buildPinnedNavItems(), ...groupItems]
+    .map((i) => i.badgeId)
+    .filter((id) => id !== undefined);
+  assert.equal(new Set(badgeIds).size, badgeIds.length, "ナビ全体でバッジ id が重複している");
+});
+
+test("ピン留めは全て nav:true（ドロップダウン側にも必ず居場所がある）", () => {
+  for (const screen of ADMIN_SCREENS) {
+    if (screen.pinned) assert.ok(screen.nav, `${screen.key} は pinned だが nav:false`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// buildScreenDirectory（「すべての画面」パネル）
+// ---------------------------------------------------------------------------
+
+test("ディレクトリはグループ順に並び、nav:true を親として全部載せる", () => {
+  const groups = buildScreenDirectory();
+  assert.deepEqual(groups.map((g) => g.label), [
+    "調査", "店舗", "回答者", "報酬", "配信", "投稿・分析", "設定"
+  ]);
+  const parents = groups.flatMap((g) => g.entries);
+  assert.equal(parents.length, ADMIN_SCREENS.filter((s) => s.nav).length);
+});
+
+test("ディレクトリは踏める静的URLを取りこぼさない（動的URLは除く）", () => {
+  const listed = new Set(
+    buildScreenDirectory().flatMap((g) =>
+      g.entries.flatMap((e) => [e.href, ...e.children.map((c) => c.href)])
+    )
+  );
+  for (const screen of ADMIN_SCREENS) {
+    if (screen.path.includes("/:")) continue;   // URLを組み立てられないので出せない
+    if (screen.path === "/admin") continue;     // ダッシュボードはナビの固定リンク
+    assert.ok(listed.has(screen.path), `${screen.path} がディレクトリから漏れている`);
+  }
+});
+
+test("ディレクトリに動的URLは絶対に入れない（踏むと必ず壊れる）", () => {
+  for (const group of buildScreenDirectory()) {
+    for (const entry of group.entries) {
+      assert.ok(!entry.href.includes("/:"), entry.href);
+      for (const child of entry.children) assert.ok(!child.href.includes("/:"), child.href);
+    }
+  }
+});
+
+test("ディレクトリの子（新規作成など）は1つの親にしか出ない", () => {
+  const seen = new Set<string>();
+  for (const group of buildScreenDirectory()) {
+    for (const entry of group.entries) {
+      for (const child of entry.children) {
+        assert.ok(!seen.has(child.href), `${child.href} が複数の親にぶら下がっている`);
+        seen.add(child.href);
+      }
+    }
+  }
+});
+
+test("ディレクトリの各画面に説明文がある（ナビの複製にしないための主役）", () => {
+  for (const group of buildScreenDirectory()) {
+    for (const entry of group.entries) {
+      assert.ok(entry.description.length > 0, `${entry.href} に説明が無い`);
+    }
+  }
 });

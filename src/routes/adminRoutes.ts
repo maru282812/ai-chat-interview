@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { adminAuthController } from "../controllers/adminAuthController";
 import { adminController } from "../controllers/adminController";
+import { missionController } from "../controllers/missionController";
 import { asyncHandler } from "../lib/http";
 
 export const adminRoutes = Router();
@@ -115,6 +116,10 @@ adminRoutes.get(
   asyncHandler(adminController.listProjectSnapshots)
 );
 adminRoutes.get("/questions/:questionId/edit", asyncHandler(adminController.editQuestion));
+// 設問プレビュー（回答者の実画面 liff/survey をそのまま描く・書込みなし）
+// POST は編集中（未保存）のフォーム内容で描くためのもので、保存は一切しない。
+adminRoutes.get("/questions/:questionId/preview", asyncHandler(adminController.previewQuestion));
+adminRoutes.post("/questions/:questionId/preview", asyncHandler(adminController.previewQuestion));
 adminRoutes.post("/questions/:questionId", asyncHandler(adminController.updateQuestion));
 
 adminRoutes.get("/respondents", asyncHandler(adminController.respondents));
@@ -173,6 +178,8 @@ adminRoutes.post("/api/questions/:questionId",                 asyncHandler(admi
 adminRoutes.post("/api/questions/:questionId/delete",          asyncHandler(adminController.apiDeleteQuestion));
 adminRoutes.post("/api/questions/:questionId/suggest-options", asyncHandler(adminController.apiSuggestAnswerOptions));
 adminRoutes.post("/api/projects/:projectId/questions",         asyncHandler(adminController.apiCreateQuestionFlow));
+// 並べ替え（一覧のドラッグ&ドロップ／フロー設計のノード移動が共通で使う）
+adminRoutes.post("/api/projects/:projectId/questions/reorder", asyncHandler(adminController.apiReorderQuestions));
 
 // フロー流用・自動生成 API
 adminRoutes.get("/api/projects-for-import",                               asyncHandler(adminController.apiListProjectsForImport));
@@ -255,6 +262,15 @@ adminRoutes.post("/scheduler-settings/run/:job", asyncHandler(adminController.ru
 
 // 報酬キャンペーン管理
 adminRoutes.get("/reward-campaigns", asyncHandler(adminController.rewardCampaigns));
+
+// ミッション Phase 1: 招待実績（不正の目視・取消）
+adminRoutes.get("/mission/invites",            asyncHandler(missionController.adminInvitesPage));
+adminRoutes.post("/mission/invites/:id/revoke", asyncHandler(missionController.adminRevokeInvite));
+
+// ミッション Phase 2: ミッション定義（ステージ・テーマ・期間）
+adminRoutes.get("/mission",            asyncHandler(missionController.adminMissionsPage));
+adminRoutes.get("/mission/:id",        asyncHandler(missionController.adminMissionFormPage));
+adminRoutes.post("/mission",           asyncHandler(missionController.adminMissionSave));
 adminRoutes.get("/reward-campaigns/new", asyncHandler(adminController.newRewardCampaign));
 adminRoutes.post("/reward-campaigns", asyncHandler(adminController.createRewardCampaign));
 adminRoutes.get("/reward-campaigns/:id/edit", asyncHandler(adminController.editRewardCampaign));
@@ -360,7 +376,7 @@ adminRoutes.get("/cycles",                              asyncHandler(adminContro
 adminRoutes.post("/cycles/:groupId",                     asyncHandler(adminController.updateCycleGroup));
 adminRoutes.get("/store-surveys",                       asyncHandler(adminController.storeSurveys));
 adminRoutes.get("/store-surveys/:projectId/flyer",      asyncHandler(adminController.storeSurveyFlyer));
-adminRoutes.get("/store-surveys/:projectId/qr.png",     asyncHandler(adminController.storeSurveyQr));
+adminRoutes.get("/store-surveys/:projectId/qr.svg",     asyncHandler(adminController.storeSurveyQr));
 adminRoutes.post("/store-surveys/mark",                 asyncHandler(adminController.markProjectAsStore));
 adminRoutes.post("/store-surveys/:projectId",           asyncHandler(adminController.updateStoreSurvey));
 adminRoutes.get("/clients/:clientId/overview",          asyncHandler(adminController.clientOverview));
