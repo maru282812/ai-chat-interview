@@ -621,6 +621,146 @@ draft を更新する。`title` と `questions` は**どちらか一方だけで
 
 ---
 
+### 5.6.2 `GET /api/partner/surveys/:id/gt`
+
+**GT集計表**（設問 × 属性のクロス集計）。`n` 行と `%` 行の2段で返す。
+
+開示対象の判定は `results` と同じ2段構え（ホワイトリスト＋同意日時）。
+`mode=verbatim` の設問は集計表にしないので含まれない。
+
+**レスポンス 200**
+
+```jsonc
+{
+  "survey_id": "0f2b...-uuid",
+  "status": "published",
+  "total_count": 42,
+  "small_n_threshold": 10,
+  "breaks": [
+    { "code": "__partner_gender__", "label": "性別" },
+    { "code": "__partner_age__",    "label": "年代" }
+  ],
+  "questions": [
+    {
+      "question_id": "aaaa...-uuid",
+      "question_code": "pq3",
+      "question_text": "来店のきっかけを教えてください（いくつでも）",
+      "question_type": "multi_choice",
+      "ratio_allowed": true,
+      "options": [
+        { "value": "sns",     "label": "SNSで見た" },
+        { "value": "friend",  "label": "知人の紹介" }
+      ],
+      "rows": [
+        {
+          "axis": "total", "code": null, "break_code": null, "label": "総数",
+          "n": 40, "suppressed": false,
+          "cells": [ { "count": 18, "percent": 45 }, { "count": 12, "percent": 30 } ]
+        },
+        {
+          "axis": "answer", "code": "__partner_gender__:female",
+          "break_code": "__partner_gender__:female", "label": "性別: 女性",
+          "n": 28, "suppressed": false,
+          "cells": [ { "count": 14, "percent": 50 }, { "count": 8, "percent": 28.6 } ]
+        },
+        {
+          "axis": "answer", "code": "__partner_gender__:male",
+          "break_code": "__partner_gender__:male", "label": "性別: 男性",
+          "n": 8, "suppressed": true,
+          "cells": [ { "count": 4, "percent": null }, { "count": 4, "percent": null } ]
+        }
+      ],
+      "notice": null
+    }
+  ]
+}
+```
+
+| フィールド | 内容 |
+|---|---|
+| `small_n_threshold` | この値未満の `n` の行は `%` をマスクする。UIに注記を出すために返す |
+| `breaks` | 属性ブレークの軸。性別・年代の**設問**から作る（プロフィールではない） |
+| `ratio_allowed` | `false`（選択肢を持たない設問）なら全セルの `percent` が `null` |
+| `rows[].n` | その行の有効回答数。**`%` の分母はこれ**（選択肢件数の合計ではない） |
+| `rows[].suppressed` | 小N抑制が効いて `%` を出していない行 |
+| `rows[].break_code` | `"<questionCode>:<value>"`。セルから抽出条件を復元するのに使う |
+
+**設計上の保証（変更しないこと）**
+
+- **`%` の分母は `n`**。複数選択では 1人が複数選ぶため件数の合計は `n` を超える。
+  合計を分母にすると「その選択肢を選んだ人が全体の何%か」を表さなくなる。
+- **`n < small_n_threshold` の行は `%` を出さない**（件数は出す）。母数の小さい比率を顧客に見せない。
+- **選択肢を持たない設問に `%` を出さない**（自由記述を比率で語らせない）。
+- 識別子は返さない（`results` と同じ保証）。
+
+---
+
+### 5.6.3 `POST /api/partner/surveys/:id/interviews`
+
+GT表のセル（＝**特定の設問で特定の選択肢を選んだ人**）を母集団として、
+追加の **AI深掘りインタビュー**を配信する。
+
+回答者向け利用規約 **v2.2 第9条3項**（migration 112）に基づく。
+
+**リクエスト**
+
+```jsonc
+{
+  "question_id": "aaaa...-uuid",
+  "option_value": "sns",
+  "break_axis": "__partner_gender__",   // 任意。break_code と対で指定する
+  "break_code": "__partner_gender__:female",
+  "question_text": "SNSのどの投稿が来店の決め手になりましたか？",  // dry_run=false のとき必須
+  "dry_run": true                        // 既定 true（人数だけ返す）
+}
+```
+
+**レスポンス 200（`dry_run: true`）**
+
+```jsonc
+{ "matched": 492, "reachable": 50 }
+```
+
+**レスポンス 200（`dry_run: false`）**
+
+```jsonc
+{ "request_id": "bbbb...-uuid", "matched": 492, "reachable": 50, "sent": 50, "failed": 0 }
+```
+
+| フィールド | 内容 |
+|---|---|
+| `matched` | セル条件に該当した人数。**GT表のセルの件数と一致する** |
+| `reachable` | うち、今インタビューを依頼できる人数 |
+
+`reachable` の除外条件（この定義は固定する。顧客に見せる数字のため）:
+
+1. 規約 v2.2 に未同意、または**同意日時より前の回答**（利用目的の追加は遡及しない）
+2. 通知拒否 / ブロック / 通知停止
+3. 直近14日に追加インタビューを受けている（配信頻度制御）
+4. 属性ブレーク指定時、その属性が未回答
+
+**設計上の保証（変更しないこと）**
+
+- **返すのは人数だけ**。誰が該当したかは返さない
+  （規約 v2.2: 選定に用いた回答内容と当該ユーザーの対応関係はクライアント企業へ提供しない）。
+- **人数は変動する**。`dry_run` の数字は目安で、実行時にサーバーが再計算する。
+  画面に出した数字と `sent` が違うのは異常ではない。
+- **二重配信しない**。`unique(request_id, line_user_id)` と送信前クレーム方式で担保する。
+- 謝礼は通常案件の**固定倍率（全員定額）**。抽選型にすると景品表示法の懸賞規制に入る。
+- `break_axis` と `break_code` は**対で指定**する。片方だけは 400（条件を再現できないため）。
+
+**エラー**
+
+| 状況 | ステータス |
+|---|---|
+| `break_axis` / `break_code` の片方だけ指定 | 400 |
+| `dry_run: false` で `question_text` 未指定 | 400 |
+| 選択肢を持たない設問を指定（自由記述から抽出できない） | 400 |
+| `option_value` が設問に存在しない | 400 |
+| 他店舗の案件・存在しない案件 | 404 |
+
+---
+
 ### 5.7 `POST /api/partner/surveys/:id/close`
 
 締め切る。ボディ不要。**冪等**（締切済みに再度呼んでも 200）。

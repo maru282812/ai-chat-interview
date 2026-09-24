@@ -25,7 +25,11 @@ import {
   countByOption,
   selectedOptionValues
 } from "../lib/answerOptionMatch";
-import { SMALL_N_THRESHOLD, buildGtQuestionTable } from "../lib/gtTable";
+import {
+  SMALL_N_THRESHOLD,
+  buildGtQuestionTable,
+  buildGtQuestionTableByAnswerBreaks
+} from "../lib/gtTable";
 import type { Answer, Question, QuestionOption } from "../types/domain";
 
 
@@ -308,4 +312,129 @@ test("プロフィール未登録は属性ブレークの行に計上されな�
     1,
     "属性が分かる1人だけが性別行に立つ"
   );
+});
+
+// ------------------------------------------------------------------
+// 回答ブレーク（パートナー調査は性年代を設問として聞く）
+// ------------------------------------------------------------------
+
+const GENDER_BREAK = {
+  code: "__partner_gender__",
+  label: "性別",
+  options: [
+    { value: "female", label: "女性" },
+    { value: "male", label: "男性" }
+  ]
+} as const;
+
+test("回答ブレーク: 総数行が先頭に立ち、ブレーク行が続く", () => {
+  const question = makeQuestion();
+
+  const table = buildGtQuestionTableByAnswerBreaks(
+    question,
+    [
+      ...Array.from({ length: 12 }, () => ({
+        answer: makeAnswer({ answer_text: "a" }),
+        breakValues: { __partner_gender__: "female" }
+      })),
+      ...Array.from({ length: 11 }, () => ({
+        answer: makeAnswer({ answer_text: "b" }),
+        breakValues: { __partner_gender__: "male" }
+      }))
+    ],
+    [GENDER_BREAK]
+  );
+
+  const total = must(table.rows[0], "総数行");
+  assert.equal(total.axis, "total");
+  assert.equal(total.n, 23);
+  assert.equal(must(total.cells[0], "セルa").count, 12);
+
+  const female = must(
+    table.rows.find((row) => row.break_code === "__partner_gender__:female"),
+    "女性行"
+  );
+  assert.equal(female.axis, "answer");
+  assert.equal(female.label, "性別: 女性");
+  assert.equal(female.n, 12);
+  assert.equal(must(female.cells[0], "セルa").count, 12);
+  assert.equal(must(female.cells[0], "セルa").percent, 100);
+});
+
+test("回答ブレーク: 該当0の選択肢は行を作らない（空行で表を伸ばさない）", () => {
+  const question = makeQuestion();
+
+  const table = buildGtQuestionTableByAnswerBreaks(
+    question,
+    Array.from({ length: 10 }, () => ({
+      answer: makeAnswer({ answer_text: "a" }),
+      breakValues: { __partner_gender__: "female" }
+    })),
+    [GENDER_BREAK]
+  );
+
+  assert.equal(
+    table.rows.filter((row) => row.break_code === "__partner_gender__:male").length,
+    0,
+    "男性の回答者がいないので男性行は出ない"
+  );
+});
+
+test("回答ブレーク: ブレーク属性が未回答の人は総数にだけ入る", () => {
+  const question = makeQuestion();
+
+  const table = buildGtQuestionTableByAnswerBreaks(
+    question,
+    [
+      ...Array.from({ length: 10 }, () => ({
+        answer: makeAnswer({ answer_text: "a" }),
+        breakValues: { __partner_gender__: "female" }
+      })),
+      ...Array.from({ length: 5 }, () => ({
+        answer: makeAnswer({ answer_text: "a" }),
+        breakValues: { __partner_gender__: null }
+      }))
+    ],
+    [GENDER_BREAK]
+  );
+
+  const total = must(table.rows[0], "総数行");
+  const breakRows = table.rows.filter((row) => row.axis === "answer");
+
+  assert.equal(total.n, 15, "総数は15人");
+  assert.equal(
+    breakRows.reduce((sum, row) => sum + row.n, 0),
+    10,
+    "性別が分かる10人だけがブレーク行に立つ"
+  );
+});
+
+test("回答ブレーク: 小N抑制は行ごとに効く（総数は出て内訳はマスク）", () => {
+  const question = makeQuestion();
+
+  const table = buildGtQuestionTableByAnswerBreaks(
+    question,
+    [
+      ...Array.from({ length: 8 }, () => ({
+        answer: makeAnswer({ answer_text: "a" }),
+        breakValues: { __partner_gender__: "female" }
+      })),
+      ...Array.from({ length: 7 }, () => ({
+        answer: makeAnswer({ answer_text: "a" }),
+        breakValues: { __partner_gender__: "male" }
+      }))
+    ],
+    [GENDER_BREAK]
+  );
+
+  const total = must(table.rows[0], "総数行");
+  assert.equal(total.n, 15);
+  assert.equal(total.suppressed, false, "総数は15人なので % を出す");
+  assert.equal(must(total.cells[0], "セル").percent, 100);
+
+  for (const row of table.rows.filter((item) => item.axis === "answer")) {
+    assert.equal(row.suppressed, true, `${row.label} は n<10 なのでマスクする`);
+    assert.equal(must(row.cells[0], "セル").percent, null);
+    assert.ok(must(row.cells[0], "セル").count > 0, "件数自体は出す");
+  }
 });

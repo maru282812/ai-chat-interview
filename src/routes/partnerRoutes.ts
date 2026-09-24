@@ -12,6 +12,7 @@ import {
   partnerTypeRequiresOptions
 } from "../lib/partnerQuestions";
 import { partnerAuthMiddleware, requirePartner } from "../middleware/partnerAuth";
+import { cellInterviewService } from "../services/cellInterviewService";
 import { partnerLegalService } from "../services/partnerLegalService";
 import { type PartnerQuestionInput, partnerSurveyService } from "../services/partnerSurveyService";
 import { partnerSurveySetService } from "../services/partnerSurveySetService";
@@ -534,6 +535,99 @@ partnerRoutes.get(
     const partner = requirePartner(req);
     const surveyId = parseSurveyId(req.params.id);
     res.json(await partnerSurveyService.getResults(partner.storeId, surveyId));
+  })
+);
+
+/**
+ * GT集計表（設問 × 属性のクロス集計）。
+ *
+ * ⚠ 返すのは集計と人数だけ。回答者の識別子は返さない（判定は service 側）。
+ * 小N（n<10）の行は % をマスクして返す。
+ */
+partnerRoutes.get(
+  "/surveys/:id/gt",
+  asyncHandler(async (req, res) => {
+    const partner = requirePartner(req);
+    const surveyId = parseSurveyId(req.params.id);
+    res.json(await partnerSurveyService.getGtTable(partner.storeId, surveyId));
+  })
+);
+
+/**
+ * GT表のセル（＝特定の設問で特定の選択肢を選んだ人）への追加AIインタビュー。
+ *
+ * - `dry_run: true`（既定）… 人数だけ返す。配信しない。
+ * - `dry_run: false`        … 追加インタビュー案件を生成して配信する。
+ *
+ * ⚠ 返すのは人数だけ。誰が該当したかは返さない
+ *   （規約 v2.2 第9条3項: 選定に用いた回答内容と当該ユーザーの対応関係は提供しない）。
+ * ⚠ 人数は変動するため、service 側が実行時に再計算する。画面の数字は目安。
+ */
+const cellInterviewBodySchema = z.object({
+  question_id: z.string().uuid(),
+  option_value: z.string().min(1).max(200),
+  /** 属性ブレークで絞る場合。軸と値は対で指定する（片方だけは 400）。 */
+  break_axis: z.string().min(1).max(40).optional(),
+  break_code: z.string().min(1).max(200).optional(),
+  /** 実行時のみ必須。AIが深掘りする起点の設問文。 */
+  question_text: z.string().min(1).max(500).optional(),
+  dry_run: z.boolean().optional()
+});
+
+partnerRoutes.post(
+  "/surveys/:id/interviews",
+  asyncHandler(async (req, res) => {
+    const partner = requirePartner(req);
+    const surveyId = parseSurveyId(req.params.id);
+
+    const parsed = cellInterviewBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, "invalid request body");
+    }
+    const body = parsed.data;
+
+    if ((body.break_axis === undefined) !== (body.break_code === undefined)) {
+      throw new HttpError(400, "break_axis and break_code must be provided together");
+    }
+
+    // 所有者スコープの確認。他店舗の案件を条件に指定させない。
+    // （service の resolve も設問と案件の所属を検証するが、ここで先に 404 にする）
+    await partnerSurveyService.assertOwnedSurvey(partner.storeId, surveyId);
+
+    const condition = {
+      sourceProjectId: surveyId,
+      sourceQuestionId: body.question_id,
+      optionValue: body.option_value,
+      ...(body.break_axis !== undefined
+        ? { breakAxis: body.break_axis as never, breakCode: body.break_code }
+        : {})
+    };
+
+    const dryRun = body.dry_run ?? true;
+    if (dryRun) {
+      const reachability = await cellInterviewService.estimate(condition);
+      // ⚠ breakdown は運営の診断用。顧客には人数だけ返す。
+      res.json({ matched: reachability.matched, reachable: reachability.reachable });
+      return;
+    }
+
+    if (!body.question_text) {
+      throw new HttpError(400, "question_text is required when dry_run is false");
+    }
+
+    const result = await cellInterviewService.execute({
+      condition,
+      questionText: body.question_text,
+      requestedByStoreId: partner.storeId
+    });
+
+    res.json({
+      request_id: result.request_id,
+      matched: result.matched,
+      reachable: result.reachable,
+      sent: result.sent,
+      failed: result.failed
+    });
   })
 );
 

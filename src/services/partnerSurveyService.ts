@@ -1,5 +1,10 @@
 import { HttpError } from "../lib/http";
 import { countByOption } from "../lib/answerOptionMatch";
+import {
+  type GtQuestionTable,
+  SMALL_N_THRESHOLD,
+  buildGtQuestionTableByAnswerBreaks
+} from "../lib/gtTable";
 import { logger } from "../lib/logger";
 import {
   AGE_OPTIONS,
@@ -151,6 +156,19 @@ export interface PartnerResultQuestionView {
   entries: Array<{ answered_at: string; text: string }> | null;
   /** この設問に回答した件数（開示対象に絞ったあとの数）。 */
   answered_count: number;
+}
+
+/** GT集計表のレスポンス。⚠ 集計と人数のみ。識別子は含まない。 */
+export interface PartnerGtView {
+  survey_id: string;
+  status: Project["status"];
+  /** 完了セッション数。 */
+  total_count: number;
+  /** この値未満の n の行は % をマスクしている（UIに注記を出すため返す）。 */
+  small_n_threshold: number;
+  /** 属性ブレークの軸一覧（行見出しの凡例用）。 */
+  breaks: Array<{ code: string; label: string }>;
+  questions: GtQuestionTable[];
 }
 
 export interface PartnerResultsView {
@@ -796,6 +814,158 @@ export const partnerSurveyService = {
       status: closed.status,
       closed_at: closed.updated_at,
       total_count: totalCount
+    };
+  },
+
+  /**
+   * 所有者スコープの検証だけを行う（存在しない・他店舗のものは 404）。
+   * セル条件を受け取るエンドポイントが、抽出に入る前に弾くために使う。
+   */
+  async assertOwnedSurvey(partnerStoreId: string, surveyId: string): Promise<void> {
+    await loadOwnedProject(surveyId, partnerStoreId);
+  },
+
+  /**
+   * GT集計表（設問 × 属性のクロス集計）。
+   *
+   * ⚠ 返すのは集計だけ。識別子（line_user_id / respondent_id / session_id）は返さない。
+   *   開示対象の判定は getResults と同じ2段構え:
+   *     1. selectShareableQuestions のホワイトリスト（既定は非開示）
+   *     2. isCoveredByConsent（同意日時より後の回答だけ）
+   *   ⚠ 新設問が黙って顧客に流れないよう、必ずホワイトリストを通す。
+   *
+   * 属性ブレークは性別・年代の**設問**（__partner_gender__ / __partner_age__）から作る。
+   * パートナー調査は属性をプロフィールではなく設問で聞くため。
+   */
+  async getGtTable(partnerStoreId: string, surveyId: string): Promise<PartnerGtView> {
+    const project = await loadOwnedProject(surveyId, partnerStoreId);
+
+    const [sessions, questions] = await Promise.all([
+      sessionRepository.listByProject(project.id),
+      questionRepository.listByProject(project.id, { includeHidden: true })
+    ]);
+    const completedSessions = sessions.filter((session) => session.status === "completed");
+
+    const shareable = selectShareableQuestions(questions, project.status);
+    if (shareable.length === 0 || completedSessions.length === 0) {
+      return {
+        survey_id: project.id,
+        status: project.status,
+        total_count: completedSessions.length,
+        small_n_threshold: SMALL_N_THRESHOLD,
+        breaks: [],
+        questions: []
+      };
+    }
+
+    // 同意の突き合わせ。ここで得た識別子はレスポンスに載せない。
+    const respondents = await respondentRepository.listByProject(project.id);
+    const lineUserIdByRespondent = new Map(respondents.map((r) => [r.id, r.line_user_id]));
+    const consentRecords = await userConsentRecordRepository.listActiveByLineUserIds(
+      respondents.map((r) => r.line_user_id)
+    );
+    const consentedAtByLineUser = new Map<string, string>();
+    for (const record of consentRecords) {
+      if (record.document_id !== STORE_DISCLOSURE_DOCUMENT_ID) {
+        continue;
+      }
+      const current = consentedAtByLineUser.get(record.line_user_id);
+      if (!current || record.consented_at < current) {
+        consentedAtByLineUser.set(record.line_user_id, record.consented_at);
+      }
+    }
+
+    const sessionById = new Map(completedSessions.map((s) => [s.id, s]));
+    const answers = await answerRepository.listBySessions(completedSessions.map((s) => s.id));
+    const primaryAnswers = answers.filter((answer) => answer.answer_role === "primary");
+
+    /** 同意でカバーされた回答だけを残す（遡及しない）。 */
+    const isCovered = (answer: (typeof primaryAnswers)[number]): boolean => {
+      const session = sessionById.get(answer.session_id);
+      if (!session) {
+        return false;
+      }
+      const lineUserId = lineUserIdByRespondent.get(session.respondent_id);
+      if (!lineUserId) {
+        return false;
+      }
+      return isCoveredByConsent(consentedAtByLineUser.get(lineUserId), answer.created_at);
+    };
+
+    // 属性ブレークは性年代の設問の回答から作る。
+    const genderQuestion = questions.find((q) => q.question_code === DEMOGRAPHIC_GENDER_CODE);
+    const ageQuestion = questions.find((q) => q.question_code === DEMOGRAPHIC_AGE_CODE);
+
+    const breakValuesBySession = new Map<string, Record<string, string | null>>();
+    for (const session of completedSessions) {
+      breakValuesBySession.set(session.id, {
+        [DEMOGRAPHIC_GENDER_CODE]: null,
+        [DEMOGRAPHIC_AGE_CODE]: null
+      });
+    }
+    for (const answer of primaryAnswers) {
+      const entry = breakValuesBySession.get(answer.session_id);
+      if (!entry) {
+        continue;
+      }
+      if (genderQuestion && answer.question_id === genderQuestion.id) {
+        entry[DEMOGRAPHIC_GENDER_CODE] = demographicAnswerToken(answer) || null;
+      } else if (ageQuestion && answer.question_id === ageQuestion.id) {
+        entry[DEMOGRAPHIC_AGE_CODE] = demographicAnswerToken(answer) || null;
+      }
+    }
+
+    const breaks: Array<{
+      code: string;
+      label: string;
+      options: readonly { value: string; label: string }[];
+    }> = [];
+    if (genderQuestion) {
+      breaks.push({ code: DEMOGRAPHIC_GENDER_CODE, label: "性別", options: GENDER_OPTIONS });
+    }
+    if (ageQuestion) {
+      breaks.push({ code: DEMOGRAPHIC_AGE_CODE, label: "年代", options: AGE_OPTIONS });
+    }
+
+    const tables: GtQuestionTable[] = [];
+    for (const { question, mode } of shareable) {
+      // verbatim（原文開示）の設問は集計表にしない。GT表は選択式のための表現。
+      if (mode === "verbatim") {
+        continue;
+      }
+      const covered = primaryAnswers.filter(
+        (answer) => answer.question_id === question.id && isCovered(answer)
+      );
+      if (covered.length === 0) {
+        continue;
+      }
+
+      const bySession = new Map(covered.map((answer) => [answer.session_id, answer]));
+      tables.push(
+        buildGtQuestionTableByAnswerBreaks(
+          question,
+          completedSessions.map((session) => ({
+            answer: bySession.get(session.id) ?? null,
+            breakValues: breakValuesBySession.get(session.id) ?? {}
+          })),
+          breaks
+        )
+      );
+    }
+
+    logger.info("partnerSurvey.gt", {
+      surveyId: project.id,
+      storeId: partnerStoreId,
+      questionCount: tables.length
+    });
+
+    return {
+      survey_id: project.id,
+      status: project.status,
+      total_count: completedSessions.length,
+      small_n_threshold: SMALL_N_THRESHOLD,
+      breaks: breaks.map((item) => ({ code: item.code, label: item.label })),
+      questions: tables
     };
   }
 };

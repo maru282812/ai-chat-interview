@@ -52,6 +52,13 @@ export const SMALL_N_THRESHOLD = 10;
 /** 属性ブレークの軸。 */
 export type BreakAxis = "total" | "sex" | "age_band" | "prefecture" | "occupation" | "marital" | "children";
 
+/**
+ * GT表の行の軸。
+ *
+ * "answer" は「別の設問の回答」をブレークにした行（パートナー調査は性年代を設問で聞くため）。
+ */
+export type GtRowAxis = BreakAxis | "answer";
+
 /** GT表の1セル。 */
 export interface GtCell {
   /** 該当件数（実数）。常に返す。 */
@@ -67,9 +74,14 @@ export interface GtCell {
 
 /** GT表の1行（総数 or 属性ブレークの1カテゴリ）。 */
 export interface GtRow {
-  axis: BreakAxis;
+  axis: GtRowAxis;
   /** 属性値のコード（総数行は null）。セル条件の再現に使う。 */
   code: string | null;
+  /**
+   * 回答ブレークの行を一意に指す `"<questionCode>:<value>"`（属性ブレーク・総数行は null）。
+   * セルをクリックした際に「どのブレークのどの値か」を復元するために使う。
+   */
+  break_code?: string | null;
   label: string;
   /** この行の有効回答数。%の分母。 */
   n: number;
@@ -187,6 +199,94 @@ export function breakCategoryOf(
 }
 
 /**
+ * 設問の回答そのものをブレーク軸にするGT表を組み立てる。
+ *
+ * 会員本体の調査は属性を `user_profiles` から取るが、パートナー（店舗）調査は
+ * 性別・年代を**設問として**聞く（`__partner_gender__` / `__partner_age__`）。
+ * その場合の属性列はプロフィールではなく回答から作るため、こちらを使う。
+ *
+ * @param question      集計する設問（列になる）
+ * @param respondents   回答者ごとの「集計対象設問への回答」と「ブレーク設問への回答」
+ * @param breaks        ブレーク軸。label は行見出しの接頭辞、options は行の並び順
+ */
+export function buildGtQuestionTableByAnswerBreaks(
+  question: Question,
+  respondents: Array<{
+    answer: Answer | null;
+    /** ブレーク軸のコード → その回答者の選択値（未回答は null）。 */
+    breakValues: Record<string, string | null>;
+  }>,
+  breaks: Array<{ code: string; label: string; options: readonly { value: string; label: string }[] }>
+): GtQuestionTable {
+  const options = optionsForQuestion(question);
+  const ratioAllowed = isRatioAllowed(question);
+  const optionIndex = buildOptionIndex(options);
+
+  const makeRow = (
+    axisLabel: string,
+    code: string | null,
+    label: string,
+    answers: Answer[]
+  ): GtRow => {
+    const n = countAnsweredAny(answers, options);
+    const suppressed = n < SMALL_N_THRESHOLD;
+    const counts = new Map<string, number>();
+    for (const option of options) {
+      counts.set(option.value, 0);
+    }
+    for (const answer of answers) {
+      for (const value of selectedOptionValues(answer, optionIndex)) {
+        counts.set(value, (counts.get(value) ?? 0) + 1);
+      }
+    }
+    return {
+      // 回答ブレークは属性軸の enum に載らないため、総数以外は "answer" として扱う。
+      axis: code === null ? "total" : "answer",
+      break_code: code,
+      code,
+      label: code === null ? label : `${axisLabel}: ${label}`,
+      n,
+      suppressed,
+      cells: options.map((option) => {
+        const count = counts.get(option.value) ?? 0;
+        const percent = ratioAllowed && !suppressed && n > 0 ? percentOf(count, n) : null;
+        return { count, percent };
+      })
+    };
+  };
+
+  const rows: GtRow[] = [
+    makeRow("総数", null, "総数", respondents.flatMap((item) => (item.answer ? [item.answer] : [])))
+  ];
+
+  for (const axis of breaks) {
+    for (const option of axis.options) {
+      const answers = respondents
+        .filter((item) => item.answer && item.breakValues[axis.code] === option.value)
+        .map((item) => item.answer as Answer);
+      // 該当者0の行は出さない（空行で表が伸びるだけなので）。
+      if (answers.length === 0) {
+        continue;
+      }
+      rows.push(makeRow(axis.label, `${axis.code}:${option.value}`, option.label, answers));
+    }
+  }
+
+  return {
+    question_id: question.id,
+    question_code: question.question_code,
+    question_text: question.question_text,
+    question_type: question.question_type,
+    ratio_allowed: ratioAllowed,
+    options: options.map((option: QuestionOption) => ({ value: option.value, label: option.label })),
+    rows,
+    notice: ratioAllowed
+      ? null
+      : "この設問は選択肢を持たないため、比率は算出しません（自由記述は比率で語れません）。"
+  };
+}
+
+/**
  * 1設問ぶんのGT表を組み立てる。
  *
  * @param question    対象設問
@@ -259,7 +359,7 @@ export function buildGtQuestionTable(
   }
 
   // 総数を先頭に、以降は軸の指定順・カテゴリのラベル順。
-  const axisOrder = new Map(axes.map((axis, index) => [axis, index]));
+  const axisOrder = new Map<GtRowAxis, number>(axes.map((axis, index) => [axis, index]));
   rows.sort((left, right) => {
     if (left.axis !== right.axis) {
       return (axisOrder.get(left.axis) ?? 0) - (axisOrder.get(right.axis) ?? 0);
