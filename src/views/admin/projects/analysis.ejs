@@ -226,6 +226,58 @@
 </section>
 
 <section class="stack" style="margin-top: 16px;">
+  <%
+    // GT集計表（n行 + %行）。顧客向け partner API と同じ lib/gtTable.ts の出力。
+    // 注意: percent が null のセルは「—」であって 0% ではない
+    //       （小N抑制、または比率を出せない設問）。
+    const gtTables = dataset.gtTables || [];
+  %>
+  <div class="card">
+    <h2>GT集計表（設問 × 属性）</h2>
+    <p class="muted">
+      各行の n がその行の%の分母です（選択肢の件数の合計ではありません）。
+      「—」は n &lt; <%= dataset.gtSmallNThreshold %> で比率を出していないセルです。
+      顧客ポータルに出る表と同じロジックで作っています。
+    </p>
+    <% if (gtTables.length === 0) { %>
+      <p class="muted">選択肢を持つ設問がないため、GT表はありません。</p>
+    <% } %>
+    <% for (const table of gtTables) { %>
+      <div style="margin-top: 18px;">
+        <h3 style="margin-bottom: 6px;">
+          <%= table.question_code %>
+          <span class="muted" style="font-weight: normal;"><%= table.question_text %></span>
+        </h3>
+        <table>
+          <thead>
+            <tr>
+              <th>回答者</th>
+              <th style="text-align: right;">n</th>
+              <% for (const option of table.options) { %>
+                <th style="text-align: right;"><%= option.label %></th>
+              <% } %>
+            </tr>
+          </thead>
+          <tbody>
+            <% for (const row of table.rows) { %>
+              <tr<%- row.axis === "total" ? ' style="font-weight: bold;"' : "" %>>
+                <td><%= row.label %></td>
+                <td style="text-align: right;"><%= row.n %></td>
+                <% for (const cell of row.cells) { %>
+                  <td style="text-align: right;">
+                    <%= cell.count %>
+                    <br />
+                    <span class="muted"><%= cell.percent === null ? "—" : cell.percent + "%" %></span>
+                  </td>
+                <% } %>
+              </tr>
+            <% } %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </div>
+
   <div class="card">
     <h2>Comparison Units</h2>
     <table>

@@ -5314,7 +5314,7 @@ function encode_char(c) {
 
 } as CompiledTemplate,
   "admin/projects/analysis": function (locals, escapeFn, include, rethrow) {
-  const { c, dataset, g, latestReport, project, s, title } = (locals || {});
+  const { API, GT, N, c, dataset, g, gtTable, latestReport, lib, n, partner, percent, project, s, title } = (locals || {});
 
 escapeFn = escapeFn || function (markup) {
   return markup == undefined
@@ -5337,113 +5337,158 @@ function encode_char(c) {
   var __output = "";
   function __append(s) { if (s !== undefined && s !== null) __output += s }
     ; __append( include("../../partials/header", { title }) )
-    ; __append("\r\n<div class=\"card\" style=\"margin-bottom: 16px;\">\r\n  <h2>")
+    ; __append("\n<div class=\"card\" style=\"margin-bottom: 16px;\">\n  <h2>")
     ; __append(escapeFn( project.name ))
-    ; __append("</h2>\r\n  ")
+    ; __append("</h2>\n  ")
     ;  if (project.user_display_title && project.user_display_title.trim() && project.user_display_title.trim() !== project.name) { 
-    ; __append("\r\n  <p class=\"muted\" style=\"margin-top:4px;font-size:0.85em;\">USER表示タイトル: <strong>")
+    ; __append("\n  <p class=\"muted\" style=\"margin-top:4px;font-size:0.85em;\">USER表示タイトル: <strong>")
     ; __append(escapeFn( project.user_display_title ))
-    ; __append("</strong></p>\r\n  ")
+    ; __append("</strong></p>\n  ")
     ;  } 
-    ; __append("\r\n  <p class=\"muted\">Research mode: ")
+    ; __append("\n  <p class=\"muted\">Research mode: ")
     ; __append(escapeFn( project.research_mode ))
-    ; __append("</p>\r\n  <p>\r\n    <a href=\"/admin/projects/")
+    ; __append("</p>\n  <p>\n    <a href=\"/admin/projects/")
     ; __append(escapeFn( project.id ))
-    ; __append("/respondents\">Respondents</a> |\r\n    <a href=\"/admin/projects/")
+    ; __append("/respondents\">Respondents</a> |\n    <a href=\"/admin/projects/")
     ; __append(escapeFn( project.id ))
-    ; __append("/exports/respondents.csv\">Export CSV</a>\r\n  </p>\r\n  <form method=\"post\" action=\"/admin/projects/")
+    ; __append("/exports/respondents.csv\">Export CSV</a>\n  </p>\n  <form method=\"post\" action=\"/admin/projects/")
     ; __append(escapeFn( project.id ))
-    ; __append("/analysis\" style=\"margin-top: 12px;\">\r\n    <button type=\"submit\">Run AI Analysis</button>\r\n  </form>\r\n</div>\r\n\r\n<div class=\"card\" style=\"margin-bottom:16px;\">\r\n  <h2>統計エクスポート（外部集計ソフト向け）</h2>\r\n  <p class=\"muted\" style=\"font-size:0.85em;\">UTF-8 BOM + RFC4180。列は送付時マスター順、多重選択は 0/1 展開、AI深掘りは元設問へ統合。出力主キーは擬似匿名。</p>\r\n  ")
+    ; __append("/analysis\" style=\"margin-top: 12px;\">\n    <button type=\"submit\">Run AI Analysis</button>\n  </form>\n</div>\n\n<div class=\"card\" style=\"margin-bottom:16px;\">\n  <h2>統計エクスポート（外部集計ソフト向け）</h2>\n  <p class=\"muted\" style=\"font-size:0.85em;\">UTF-8 BOM + RFC4180。列は送付時マスター順、多重選択は 0/1 展開、AI深掘りは元設問へ統合。出力主キーは擬似匿名。</p>\n  ")
     ;  const exBase = `/admin/projects/${project.id}/exports/stat`; 
-    ; __append("\r\n  <p style=\"display:flex;flex-wrap:wrap;gap:8px;align-items:center;\">\r\n    <label style=\"font-size:0.85em;\"><input type=\"checkbox\" id=\"ex-include-test\" /> テスト回答を含む</label>\r\n    <label style=\"font-size:0.85em;\"><input type=\"checkbox\" id=\"ex-consented-only\" /> 同意者のみ</label>\r\n  </p>\r\n  <p style=\"display:flex;flex-wrap:wrap;gap:8px;align-items:center;\">\r\n    <a class=\"button-link primary\" id=\"ex-bundle\" href=\"")
+    ; __append("\n  <p style=\"display:flex;flex-wrap:wrap;gap:8px;align-items:center;\">\n    <label style=\"font-size:0.85em;\"><input type=\"checkbox\" id=\"ex-include-test\" /> テスト回答を含む</label>\n    <label style=\"font-size:0.85em;\"><input type=\"checkbox\" id=\"ex-consented-only\" /> 同意者のみ</label>\n  </p>\n  <p style=\"display:flex;flex-wrap:wrap;gap:8px;align-items:center;\">\n    <a class=\"button-link primary\" id=\"ex-bundle\" href=\"")
     ; __append(escapeFn( exBase ))
-    ; __append("/bundle.zip\">集計アプリ用3点セット（zip）</a>\r\n    <span class=\"muted\" style=\"font-size:0.8em;\">respondents_wide / answers_long / codebook をまとめて取得</span>\r\n  </p>\r\n  <p style=\"display:flex;flex-wrap:wrap;gap:8px;\">\r\n    <a class=\"button-link\" id=\"ex-wide\" href=\"")
+    ; __append("/bundle.zip\">集計アプリ用3点セット（zip）</a>\n    <span class=\"muted\" style=\"font-size:0.8em;\">respondents_wide / answers_long / codebook をまとめて取得</span>\n  </p>\n  <p style=\"display:flex;flex-wrap:wrap;gap:8px;\">\n    <a class=\"button-link\" id=\"ex-wide\" href=\"")
     ; __append(escapeFn( exBase ))
-    ; __append("/respondents-wide.csv\">respondents_wide.csv</a>\r\n    <a class=\"button-link\" id=\"ex-long\" href=\"")
+    ; __append("/respondents-wide.csv\">respondents_wide.csv</a>\n    <a class=\"button-link\" id=\"ex-long\" href=\"")
     ; __append(escapeFn( exBase ))
-    ; __append("/answers-long.csv\">answers_long.csv</a>\r\n    <a class=\"button-link\" href=\"")
+    ; __append("/answers-long.csv\">answers_long.csv</a>\n    <a class=\"button-link\" href=\"")
     ; __append(escapeFn( exBase ))
-    ; __append("/codebook.csv\">codebook.csv</a>\r\n    <a class=\"button-link\" href=\"")
+    ; __append("/codebook.csv\">codebook.csv</a>\n    <a class=\"button-link\" href=\"")
     ; __append(escapeFn( exBase ))
-    ; __append("/questionnaire-snapshot.json\">questionnaire_snapshot.json</a>\r\n    <a class=\"button-link\" id=\"ex-rand\" href=\"")
+    ; __append("/questionnaire-snapshot.json\">questionnaire_snapshot.json</a>\n    <a class=\"button-link\" id=\"ex-rand\" href=\"")
     ; __append(escapeFn( exBase ))
-    ; __append("/randomization-log.csv\">randomization_log.csv</a>\r\n  </p>\r\n\r\n  <h2 style=\"margin-top:16px;\">送付前チェック / 調査票の確定</h2>\r\n  <p class=\"muted\" style=\"font-size:0.85em;\">確定すると現在の設問構成を凍結（スナップショット）します。依存順違反などのエラーがあると確定はブロックされます。</p>\r\n  <p style=\"display:flex;gap:8px;\">\r\n    <button type=\"button\" class=\"button-link secondary\" id=\"btn-validate\">調査票を検証</button>\r\n    <button type=\"button\" class=\"button-link primary\" id=\"btn-snapshot\">調査票を確定（スナップショット作成）</button>\r\n  </p>\r\n  <div id=\"validate-result\" style=\"margin-top:8px;font-size:0.85em;\"></div>\r\n</div>\r\n\r\n<script>\r\n(function () {\r\n  const base = \"/admin/projects/")
+    ; __append("/randomization-log.csv\">randomization_log.csv</a>\n  </p>\n\n  <h2 style=\"margin-top:16px;\">送付前チェック / 調査票の確定</h2>\n  <p class=\"muted\" style=\"font-size:0.85em;\">確定すると現在の設問構成を凍結（スナップショット）します。依存順違反などのエラーがあると確定はブロックされます。</p>\n  <p style=\"display:flex;gap:8px;\">\n    <button type=\"button\" class=\"button-link secondary\" id=\"btn-validate\">調査票を検証</button>\n    <button type=\"button\" class=\"button-link primary\" id=\"btn-snapshot\">調査票を確定（スナップショット作成）</button>\n  </p>\n  <div id=\"validate-result\" style=\"margin-top:8px;font-size:0.85em;\"></div>\n</div>\n\n<script>\n(function () {\n  const base = \"/admin/projects/")
     ; __append(escapeFn( project.id ))
-    ; __append("\";\r\n  function syncExportLinks() {\r\n    const params = new URLSearchParams();\r\n    if (document.getElementById(\"ex-include-test\").checked) params.set(\"includeTest\", \"1\");\r\n    if (document.getElementById(\"ex-consented-only\").checked) params.set(\"consentedOnly\", \"1\");\r\n    const qs = params.toString() ? (\"?\" + params.toString()) : \"\";\r\n    for (const [id, path] of [[\"ex-wide\", \"/respondents-wide.csv\"], [\"ex-long\", \"/answers-long.csv\"], [\"ex-rand\", \"/randomization-log.csv\"], [\"ex-bundle\", \"/bundle.zip\"]]) {\r\n      document.getElementById(id).href = base + \"/exports/stat\" + path + qs;\r\n    }\r\n  }\r\n  document.getElementById(\"ex-include-test\").addEventListener(\"change\", syncExportLinks);\r\n  document.getElementById(\"ex-consented-only\").addEventListener(\"change\", syncExportLinks);\r\n\r\n  function renderReport(report, prefix) {\r\n    const out = document.getElementById(\"validate-result\");\r\n    const findings = (report && report.findings) || [];\r\n    const errors = findings.filter(f => f.level === \"error\");\r\n    const warnings = findings.filter(f => f.level === \"warning\");\r\n    let html = prefix + \" エラー \" + errors.length + \" 件 / 警告 \" + warnings.length + \" 件\";\r\n    if (findings.length) {\r\n      html += \"<ul style='margin:6px 0;'>\" + findings.map(f =>\r\n        \"<li style='color:\" + (f.level === \"error\" ? \"#b00020\" : \"#8a5b00\") + \"'>[\" + f.level + \"] \" +\r\n        (f.question_code ? (f.question_code + \": \") : \"\") + f.message + \"</li>\").join(\"\") + \"</ul>\";\r\n    }\r\n    out.innerHTML = html;\r\n  }\r\n\r\n  document.getElementById(\"btn-validate\").addEventListener(\"click\", async () => {\r\n    document.getElementById(\"validate-result\").textContent = \"検証中...\";\r\n    try {\r\n      const res = await fetch(base + \"/validate\");\r\n      renderReport(await res.json(), \"検証結果:\");\r\n    } catch (e) { document.getElementById(\"validate-result\").textContent = \"検証に失敗しました: \" + e; }\r\n  });\r\n\r\n  document.getElementById(\"btn-snapshot\").addEventListener(\"click\", async () => {\r\n    if (!confirm(\"現在の設問構成を凍結してスナップショットを作成します。よろしいですか？\")) return;\r\n    document.getElementById(\"validate-result\").textContent = \"確定中...\";\r\n    try {\r\n      const res = await fetch(base + \"/snapshot\", { method: \"POST\" });\r\n      const data = await res.json();\r\n      if (res.ok && data.ok) {\r\n        renderReport(data.report, \"確定しました（version \" + data.snapshot_version + \"）。\");\r\n      } else {\r\n        renderReport(data.report, \"エラーのため確定をブロックしました。\");\r\n      }\r\n    } catch (e) { document.getElementById(\"validate-result\").textContent = \"確定に失敗しました: \" + e; }\r\n  });\r\n})();\r\n</script>\r\n\r\n<div class=\"card\" style=\"margin-bottom:16px;\">\r\n  <h2>ロウデータ出力（Freeasy水準）</h2>\r\n  <p class=\"muted\" style=\"font-size:0.85em;\">\r\n    Freeasy式列命名（q1 / q1c1 / q1t1 / q1s1 …）＋設問別回答時刻＋属性列（性別/年齢/年代/都道府県/地方/職業/業種/未既婚/世帯年収/子供/ランク）。\r\n    列の意味はレイアウトデータで引けます。含めるステータスは件数を見て手動選択（既定は完了＋未完了＝集計アプリ側でクリーニング裁定するため）。\r\n  </p>\r\n  <div id=\"rd-counts\" style=\"font-size:0.9em;margin-bottom:8px;\">件数を読み込み中...</div>\r\n  <p style=\"display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-size:0.85em;\">\r\n    <span>\r\n      出力タイプ:\r\n      <label><input type=\"radio\" name=\"rd-mode\" value=\"code\" checked /> コード出力</label>\r\n      <label><input type=\"radio\" name=\"rd-mode\" value=\"label\" /> 回答値出力</label>\r\n    </span>\r\n    <label><input type=\"checkbox\" id=\"rd-include-probe\" checked /> AI深掘り列を含む</label>\r\n    <label><input type=\"checkbox\" id=\"rd-include-test\" /> テスト回答を含む</label>\r\n    <label title=\"個人情報のため、不正検出で必要なときだけONにしてください\">\r\n      <input type=\"checkbox\" id=\"rd-include-pii\" /> UserAgent / IP を含む（不正検出用）\r\n    </label>\r\n  </p>\r\n  <p style=\"display:flex;flex-wrap:wrap;gap:8px;align-items:center;\">\r\n    <a class=\"button-link\" id=\"rd-csv\" href=\"")
+    ; __append("\";\n  function syncExportLinks() {\n    const params = new URLSearchParams();\n    if (document.getElementById(\"ex-include-test\").checked) params.set(\"includeTest\", \"1\");\n    if (document.getElementById(\"ex-consented-only\").checked) params.set(\"consentedOnly\", \"1\");\n    const qs = params.toString() ? (\"?\" + params.toString()) : \"\";\n    for (const [id, path] of [[\"ex-wide\", \"/respondents-wide.csv\"], [\"ex-long\", \"/answers-long.csv\"], [\"ex-rand\", \"/randomization-log.csv\"], [\"ex-bundle\", \"/bundle.zip\"]]) {\n      document.getElementById(id).href = base + \"/exports/stat\" + path + qs;\n    }\n  }\n  document.getElementById(\"ex-include-test\").addEventListener(\"change\", syncExportLinks);\n  document.getElementById(\"ex-consented-only\").addEventListener(\"change\", syncExportLinks);\n\n  function renderReport(report, prefix) {\n    const out = document.getElementById(\"validate-result\");\n    const findings = (report && report.findings) || [];\n    const errors = findings.filter(f => f.level === \"error\");\n    const warnings = findings.filter(f => f.level === \"warning\");\n    let html = prefix + \" エラー \" + errors.length + \" 件 / 警告 \" + warnings.length + \" 件\";\n    if (findings.length) {\n      html += \"<ul style='margin:6px 0;'>\" + findings.map(f =>\n        \"<li style='color:\" + (f.level === \"error\" ? \"#b00020\" : \"#8a5b00\") + \"'>[\" + f.level + \"] \" +\n        (f.question_code ? (f.question_code + \": \") : \"\") + f.message + \"</li>\").join(\"\") + \"</ul>\";\n    }\n    out.innerHTML = html;\n  }\n\n  document.getElementById(\"btn-validate\").addEventListener(\"click\", async () => {\n    document.getElementById(\"validate-result\").textContent = \"検証中...\";\n    try {\n      const res = await fetch(base + \"/validate\");\n      renderReport(await res.json(), \"検証結果:\");\n    } catch (e) { document.getElementById(\"validate-result\").textContent = \"検証に失敗しました: \" + e; }\n  });\n\n  document.getElementById(\"btn-snapshot\").addEventListener(\"click\", async () => {\n    if (!confirm(\"現在の設問構成を凍結してスナップショットを作成します。よろしいですか？\")) return;\n    document.getElementById(\"validate-result\").textContent = \"確定中...\";\n    try {\n      const res = await fetch(base + \"/snapshot\", { method: \"POST\" });\n      const data = await res.json();\n      if (res.ok && data.ok) {\n        renderReport(data.report, \"確定しました（version \" + data.snapshot_version + \"）。\");\n      } else {\n        renderReport(data.report, \"エラーのため確定をブロックしました。\");\n      }\n    } catch (e) { document.getElementById(\"validate-result\").textContent = \"確定に失敗しました: \" + e; }\n  });\n})();\n</script>\n\n<div class=\"card\" style=\"margin-bottom:16px;\">\n  <h2>ロウデータ出力（Freeasy水準）</h2>\n  <p class=\"muted\" style=\"font-size:0.85em;\">\n    Freeasy式列命名（q1 / q1c1 / q1t1 / q1s1 …）＋設問別回答時刻＋属性列（性別/年齢/年代/都道府県/地方/職業/業種/未既婚/世帯年収/子供/ランク）。\n    列の意味はレイアウトデータで引けます。含めるステータスは件数を見て手動選択（既定は完了＋未完了＝集計アプリ側でクリーニング裁定するため）。\n  </p>\n  <div id=\"rd-counts\" style=\"font-size:0.9em;margin-bottom:8px;\">件数を読み込み中...</div>\n  <p style=\"display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-size:0.85em;\">\n    <span>\n      出力タイプ:\n      <label><input type=\"radio\" name=\"rd-mode\" value=\"code\" checked /> コード出力</label>\n      <label><input type=\"radio\" name=\"rd-mode\" value=\"label\" /> 回答値出力</label>\n    </span>\n    <label><input type=\"checkbox\" id=\"rd-include-probe\" checked /> AI深掘り列を含む</label>\n    <label><input type=\"checkbox\" id=\"rd-include-test\" /> テスト回答を含む</label>\n    <label title=\"個人情報のため、不正検出で必要なときだけONにしてください\">\n      <input type=\"checkbox\" id=\"rd-include-pii\" /> UserAgent / IP を含む（不正検出用）\n    </label>\n  </p>\n  <p style=\"display:flex;flex-wrap:wrap;gap:8px;align-items:center;\">\n    <a class=\"button-link\" id=\"rd-csv\" href=\"")
     ; __append(escapeFn( exBase ))
-    ; __append("/rawdata.csv\">rawdata.csv</a>\r\n    <a class=\"button-link secondary\" id=\"rd-layout\" href=\"")
+    ; __append("/rawdata.csv\">rawdata.csv</a>\n    <a class=\"button-link secondary\" id=\"rd-layout\" href=\"")
     ; __append(escapeFn( exBase ))
-    ; __append("/rawdata-layout.csv\">rawdata-layout.csv（レイアウトデータ）</a>\r\n    <button type=\"button\" class=\"button-link secondary\" id=\"rd-history-btn\">出力履歴</button>\r\n  </p>\r\n  <div id=\"rd-history\" style=\"display:none;font-size:0.85em;margin-top:8px;\"></div>\r\n</div>\r\n\r\n<script>\r\n(function () {\r\n  const base = \"/admin/projects/")
+    ; __append("/rawdata-layout.csv\">rawdata-layout.csv（レイアウトデータ）</a>\n    <button type=\"button\" class=\"button-link secondary\" id=\"rd-history-btn\">出力履歴</button>\n  </p>\n  <div id=\"rd-history\" style=\"display:none;font-size:0.85em;margin-top:8px;\"></div>\n</div>\n\n<script>\n(function () {\n  const base = \"/admin/projects/")
     ; __append(escapeFn( project.id ))
-    ; __append("/exports/stat\";\r\n  const countsEl = document.getElementById(\"rd-counts\");\r\n  const STATUS_LABELS = { completed: \"完了\", partial: \"途中までの回答\", abandoned: \"離脱\", not_started: \"未開始\" };\r\n\r\n  function selectedStatuses() {\r\n    return [...document.querySelectorAll(\".rd-status:checked\")].map((el) => el.value);\r\n  }\r\n\r\n  function syncRawdataLinks() {\r\n    const includePii = document.getElementById(\"rd-include-pii\").checked;\r\n    const params = new URLSearchParams();\r\n    const mode = document.querySelector('input[name=\"rd-mode\"]:checked');\r\n    if (mode && mode.value === \"label\") params.set(\"mode\", \"label\");\r\n    const statuses = selectedStatuses();\r\n    if (statuses.length > 0) params.set(\"statuses\", statuses.join(\",\"));\r\n    if (!document.getElementById(\"rd-include-probe\").checked) params.set(\"includeProbe\", \"0\");\r\n    if (document.getElementById(\"rd-include-test\").checked) params.set(\"includeTest\", \"1\");\r\n    if (includePii) params.set(\"includePii\", \"1\");\r\n    document.getElementById(\"rd-csv\").href = base + \"/rawdata.csv?\" + params.toString();\r\n    // レイアウトは rawdata.csv と同じ列構成を説明する必要があるため includePii を揃える\r\n    const layoutParams = new URLSearchParams();\r\n    if (!document.getElementById(\"rd-include-probe\").checked) layoutParams.set(\"includeProbe\", \"0\");\r\n    if (includePii) layoutParams.set(\"includePii\", \"1\");\r\n    document.getElementById(\"rd-layout\").href = base + \"/rawdata-layout.csv\" + (layoutParams.toString() ? \"?\" + layoutParams.toString() : \"\");\r\n  }\r\n\r\n  async function loadCounts() {\r\n    try {\r\n      const res = await fetch(base + \"/status-counts\");\r\n      const data = await res.json();\r\n      const counts = (data && data.counts) || [];\r\n      if (counts.length === 0) {\r\n        countsEl.textContent = \"回答がまだありません。\";\r\n        return;\r\n      }\r\n      countsEl.innerHTML = counts.map((entry) => {\r\n        const label = STATUS_LABELS[entry.status] || entry.status;\r\n        const checked = entry.status !== \"not_started\" ? \"checked\" : \"\";\r\n        const test = entry.test_count > 0 ? \"（別途テスト \" + entry.test_count + \" 件）\" : \"\";\r\n        return '<label style=\"margin-right:16px;\"><input type=\"checkbox\" class=\"rd-status\" value=\"' + entry.status + '\" ' + checked + \" /> \" +\r\n          \"【\" + entry.sta_code + \"】\" + label + \" <strong>\" + entry.count + \"</strong> 件\" + test + \"</label>\";\r\n      }).join(\"\");\r\n      for (const el of document.querySelectorAll(\".rd-status\")) {\r\n        el.addEventListener(\"change\", syncRawdataLinks);\r\n      }\r\n      syncRawdataLinks();\r\n    } catch (e) {\r\n      countsEl.textContent = \"件数の取得に失敗しました: \" + e;\r\n    }\r\n  }\r\n\r\n  for (const el of document.querySelectorAll('input[name=\"rd-mode\"], #rd-include-probe, #rd-include-test, #rd-include-pii')) {\r\n    el.addEventListener(\"change\", syncRawdataLinks);\r\n  }\r\n  syncRawdataLinks();\r\n  loadCounts();\r\n\r\n  // 出力履歴（export_jobs 監査ログ）\r\n  document.getElementById(\"rd-history-btn\").addEventListener(\"click\", async () => {\r\n    const box = document.getElementById(\"rd-history\");\r\n    if (box.style.display !== \"none\") {\r\n      box.style.display = \"none\";\r\n      return;\r\n    }\r\n    box.style.display = \"\";\r\n    box.textContent = \"読み込み中...\";\r\n    try {\r\n      const res = await fetch(base + \"/history\");\r\n      const data = await res.json();\r\n      const jobs = (data && data.jobs) || [];\r\n      if (jobs.length === 0) {\r\n        box.textContent = \"出力履歴はまだありません。\";\r\n        return;\r\n      }\r\n      box.innerHTML = \"<table style='width:100%;'><thead><tr><th>日時</th><th>種類</th><th>実施者</th><th>フィルタ</th></tr></thead><tbody>\" +\r\n        jobs.map((job) => \"<tr><td>\" + new Date(job.exported_at).toLocaleString(\"ja-JP\") + \"</td><td>\" + job.export_type + \"</td><td>\" +\r\n          (job.exported_by || \"-\") + \"</td><td style='color:#888;'>\" + JSON.stringify(job.filters_json || {}) + \"</td></tr>\").join(\"\") +\r\n        \"</tbody></table>\";\r\n    } catch (e) {\r\n      box.textContent = \"履歴の取得に失敗しました: \" + e;\r\n    }\r\n  });\r\n})();\r\n</script>\r\n\r\n<section class=\"grid\">\r\n  <div class=\"card\">\r\n    <h2>Coverage</h2>\r\n    <p>Respondents: <strong>")
+    ; __append("/exports/stat\";\n  const countsEl = document.getElementById(\"rd-counts\");\n  const STATUS_LABELS = { completed: \"完了\", partial: \"途中までの回答\", abandoned: \"離脱\", not_started: \"未開始\" };\n\n  function selectedStatuses() {\n    return [...document.querySelectorAll(\".rd-status:checked\")].map((el) => el.value);\n  }\n\n  function syncRawdataLinks() {\n    const includePii = document.getElementById(\"rd-include-pii\").checked;\n    const params = new URLSearchParams();\n    const mode = document.querySelector('input[name=\"rd-mode\"]:checked');\n    if (mode && mode.value === \"label\") params.set(\"mode\", \"label\");\n    const statuses = selectedStatuses();\n    if (statuses.length > 0) params.set(\"statuses\", statuses.join(\",\"));\n    if (!document.getElementById(\"rd-include-probe\").checked) params.set(\"includeProbe\", \"0\");\n    if (document.getElementById(\"rd-include-test\").checked) params.set(\"includeTest\", \"1\");\n    if (includePii) params.set(\"includePii\", \"1\");\n    document.getElementById(\"rd-csv\").href = base + \"/rawdata.csv?\" + params.toString();\n    // レイアウトは rawdata.csv と同じ列構成を説明する必要があるため includePii を揃える\n    const layoutParams = new URLSearchParams();\n    if (!document.getElementById(\"rd-include-probe\").checked) layoutParams.set(\"includeProbe\", \"0\");\n    if (includePii) layoutParams.set(\"includePii\", \"1\");\n    document.getElementById(\"rd-layout\").href = base + \"/rawdata-layout.csv\" + (layoutParams.toString() ? \"?\" + layoutParams.toString() : \"\");\n  }\n\n  async function loadCounts() {\n    try {\n      const res = await fetch(base + \"/status-counts\");\n      const data = await res.json();\n      const counts = (data && data.counts) || [];\n      if (counts.length === 0) {\n        countsEl.textContent = \"回答がまだありません。\";\n        return;\n      }\n      countsEl.innerHTML = counts.map((entry) => {\n        const label = STATUS_LABELS[entry.status] || entry.status;\n        const checked = entry.status !== \"not_started\" ? \"checked\" : \"\";\n        const test = entry.test_count > 0 ? \"（別途テスト \" + entry.test_count + \" 件）\" : \"\";\n        return '<label style=\"margin-right:16px;\"><input type=\"checkbox\" class=\"rd-status\" value=\"' + entry.status + '\" ' + checked + \" /> \" +\n          \"【\" + entry.sta_code + \"】\" + label + \" <strong>\" + entry.count + \"</strong> 件\" + test + \"</label>\";\n      }).join(\"\");\n      for (const el of document.querySelectorAll(\".rd-status\")) {\n        el.addEventListener(\"change\", syncRawdataLinks);\n      }\n      syncRawdataLinks();\n    } catch (e) {\n      countsEl.textContent = \"件数の取得に失敗しました: \" + e;\n    }\n  }\n\n  for (const el of document.querySelectorAll('input[name=\"rd-mode\"], #rd-include-probe, #rd-include-test, #rd-include-pii')) {\n    el.addEventListener(\"change\", syncRawdataLinks);\n  }\n  syncRawdataLinks();\n  loadCounts();\n\n  // 出力履歴（export_jobs 監査ログ）\n  document.getElementById(\"rd-history-btn\").addEventListener(\"click\", async () => {\n    const box = document.getElementById(\"rd-history\");\n    if (box.style.display !== \"none\") {\n      box.style.display = \"none\";\n      return;\n    }\n    box.style.display = \"\";\n    box.textContent = \"読み込み中...\";\n    try {\n      const res = await fetch(base + \"/history\");\n      const data = await res.json();\n      const jobs = (data && data.jobs) || [];\n      if (jobs.length === 0) {\n        box.textContent = \"出力履歴はまだありません。\";\n        return;\n      }\n      box.innerHTML = \"<table style='width:100%;'><thead><tr><th>日時</th><th>種類</th><th>実施者</th><th>フィルタ</th></tr></thead><tbody>\" +\n        jobs.map((job) => \"<tr><td>\" + new Date(job.exported_at).toLocaleString(\"ja-JP\") + \"</td><td>\" + job.export_type + \"</td><td>\" +\n          (job.exported_by || \"-\") + \"</td><td style='color:#888;'>\" + JSON.stringify(job.filters_json || {}) + \"</td></tr>\").join(\"\") +\n        \"</tbody></table>\";\n    } catch (e) {\n      box.textContent = \"履歴の取得に失敗しました: \" + e;\n    }\n  });\n})();\n</script>\n\n<section class=\"grid\">\n  <div class=\"card\">\n    <h2>Coverage</h2>\n    <p>Respondents: <strong>")
     ; __append(escapeFn( dataset.respondent_count ))
-    ; __append("</strong></p>\r\n    <p>Completed sessions: <strong>")
+    ; __append("</strong></p>\n    <p>Completed sessions: <strong>")
     ; __append(escapeFn( dataset.completed_session_count ))
-    ; __append("</strong></p>\r\n    <p><strong>Primary objectives</strong><br />")
+    ; __append("</strong></p>\n    <p><strong>Primary objectives</strong><br />")
     ; __append(escapeFn( (project.primary_objectives || []).join(" / ") || "-" ))
-    ; __append("</p>\r\n    <p><strong>Secondary objectives</strong><br />")
+    ; __append("</p>\n    <p><strong>Secondary objectives</strong><br />")
     ; __append(escapeFn( (project.secondary_objectives || []).join(" / ") || "-" ))
-    ; __append("</p>\r\n  </div>\r\n  <div class=\"card\">\r\n    <h2>Free-text Policy</h2>\r\n    <p>")
+    ; __append("</p>\n  </div>\n  <div class=\"card\">\n    <h2>Free-text Policy</h2>\n    <p>")
     ; __append(escapeFn( dataset.freeAnswerPolicy.policy ))
-    ; __append("</p>\r\n    <p class=\"muted\">Target questions: ")
+    ; __append("</p>\n    <p class=\"muted\">Target questions: ")
     ; __append(escapeFn( dataset.freeAnswerPolicy.target_question_codes.join(", ") || "-" ))
-    ; __append("</p>\r\n  </div>\r\n</section>\r\n\r\n<section class=\"stack\" style=\"margin-top: 16px;\">\r\n  <div class=\"card\">\r\n    <h2>Comparison Units</h2>\r\n    <table>\r\n      <thead>\r\n        <tr>\r\n          <th>Question</th>\r\n          <th>Role</th>\r\n          <th>Type</th>\r\n          <th>Aggregation</th>\r\n          <th>Values</th>\r\n        </tr>\r\n      </thead>\r\n      <tbody>\r\n        ")
+    ; __append("</p>\n  </div>\n</section>\n\n<section class=\"stack\" style=\"margin-top: 16px;\">\n  ")
+    ; 
+    // GT集計表（n行 + %行）。顧客向け partner API と同じ lib/gtTable.ts の出力。
+    // 注意: percent が null のセルは「—」であって 0% ではない
+    //       （小N抑制、または比率を出せない設問）。
+    const gtTables = dataset.gtTables || [];
+  
+    ; __append("\n  <div class=\"card\">\n    <h2>GT集計表（設問 × 属性）</h2>\n    <p class=\"muted\">\n      各行の n がその行の%の分母です（選択肢の件数の合計ではありません）。\n      「—」は n &lt; ")
+    ; __append(escapeFn( dataset.gtSmallNThreshold ))
+    ; __append(" で比率を出していないセルです。\n      顧客ポータルに出る表と同じロジックで作っています。\n    </p>\n    ")
+    ;  if (gtTables.length === 0) { 
+    ; __append("\n      <p class=\"muted\">選択肢を持つ設問がないため、GT表はありません。</p>\n    ")
+    ;  } 
+    ; __append("\n    ")
+    ;  for (const table of gtTables) { 
+    ; __append("\n      <div style=\"margin-top: 18px;\">\n        <h3 style=\"margin-bottom: 6px;\">\n          ")
+    ; __append(escapeFn( table.question_code ))
+    ; __append("\n          <span class=\"muted\" style=\"font-weight: normal;\">")
+    ; __append(escapeFn( table.question_text ))
+    ; __append("</span>\n        </h3>\n        <table>\n          <thead>\n            <tr>\n              <th>回答者</th>\n              <th style=\"text-align: right;\">n</th>\n              ")
+    ;  for (const option of table.options) { 
+    ; __append("\n                <th style=\"text-align: right;\">")
+    ; __append(escapeFn( option.label ))
+    ; __append("</th>\n              ")
+    ;  } 
+    ; __append("\n            </tr>\n          </thead>\n          <tbody>\n            ")
+    ;  for (const row of table.rows) { 
+    ; __append("\n              <tr")
+    ; __append( row.axis === "total" ? ' style="font-weight: bold;"' : "" )
+    ; __append(">\n                <td>")
+    ; __append(escapeFn( row.label ))
+    ; __append("</td>\n                <td style=\"text-align: right;\">")
+    ; __append(escapeFn( row.n ))
+    ; __append("</td>\n                ")
+    ;  for (const cell of row.cells) { 
+    ; __append("\n                  <td style=\"text-align: right;\">\n                    ")
+    ; __append(escapeFn( cell.count ))
+    ; __append("\n                    <br />\n                    <span class=\"muted\">")
+    ; __append(escapeFn( cell.percent === null ? "—" : cell.percent + "%" ))
+    ; __append("</span>\n                  </td>\n                ")
+    ;  } 
+    ; __append("\n              </tr>\n            ")
+    ;  } 
+    ; __append("\n          </tbody>\n        </table>\n      </div>\n    ")
+    ;  } 
+    ; __append("\n  </div>\n\n  <div class=\"card\">\n    <h2>Comparison Units</h2>\n    <table>\n      <thead>\n        <tr>\n          <th>Question</th>\n          <th>Role</th>\n          <th>Type</th>\n          <th>Aggregation</th>\n          <th>Values</th>\n        </tr>\n      </thead>\n      <tbody>\n        ")
     ;  for (const unit of dataset.comparisonUnits) { 
-    ; __append("\r\n          <tr>\r\n            <td><strong>")
+    ; __append("\n          <tr>\n            <td><strong>")
     ; __append(escapeFn( unit.question_code ))
     ; __append("</strong><br /><span class=\"muted\">")
     ; __append(escapeFn( unit.question_text ))
-    ; __append("</span></td>\r\n            <td><span class=\"tag\">")
+    ; __append("</span></td>\n            <td><span class=\"tag\">")
     ; __append(escapeFn( unit.question_role ))
-    ; __append("</span></td>\r\n            <td>")
+    ; __append("</span></td>\n            <td>")
     ; __append(escapeFn( unit.question_type ))
-    ; __append("</td>\r\n            <td>")
+    ; __append("</td>\n            <td>")
     ; __append(escapeFn( unit.aggregation_type ))
     ; __append("<br /><span class=\"muted\">")
     ; __append(escapeFn( unit.note ))
-    ; __append("</span></td>\r\n            <td>\r\n              ")
+    ; __append("</span></td>\n            <td>\n              ")
     ;  if (unit.values.length > 0) { 
-    ; __append("\r\n                ")
+    ; __append("\n                ")
     ;  for (const value of unit.values) { 
-    ; __append("\r\n                  <div>")
+    ; __append("\n                  <div>")
     ; __append(escapeFn( value.label ))
     ; __append(": ")
     ; __append(escapeFn( value.count ))
-    ; __append("</div>\r\n                ")
+    ; __append("</div>\n                ")
     ;  } 
-    ; __append("\r\n              ")
+    ; __append("\n              ")
     ;  } else { 
-    ; __append("\r\n                <span class=\"muted\">qualitative only</span>\r\n              ")
+    ; __append("\n                <span class=\"muted\">qualitative only</span>\n              ")
     ;  } 
-    ; __append("\r\n            </td>\r\n          </tr>\r\n        ")
+    ; __append("\n            </td>\n          </tr>\n        ")
     ;  } 
-    ; __append("\r\n      </tbody>\r\n    </table>\r\n  </div>\r\n\r\n  <div class=\"card\">\r\n    <h2>Respondent Summaries</h2>\r\n    <table>\r\n      <thead>\r\n        <tr>\r\n          <th>Name</th>\r\n          <th>Session</th>\r\n          <th>Summary</th>\r\n        </tr>\r\n      </thead>\r\n      <tbody>\r\n        ")
+    ; __append("\n      </tbody>\n    </table>\n  </div>\n\n  <div class=\"card\">\n    <h2>Respondent Summaries</h2>\n    <table>\n      <thead>\n        <tr>\n          <th>Name</th>\n          <th>Session</th>\n          <th>Summary</th>\n        </tr>\n      </thead>\n      <tbody>\n        ")
     ;  for (const item of dataset.respondentSummaries) { 
-    ; __append("\r\n          <tr>\r\n            <td><strong>")
+    ; __append("\n          <tr>\n            <td><strong>")
     ; __append(escapeFn( item.respondent_name ))
     ; __append("</strong><br /><span class=\"muted\">")
     ; __append(escapeFn( item.line_user_id ))
-    ; __append("</span></td>\r\n            <td><span class=\"tag\">")
+    ; __append("</span></td>\n            <td><span class=\"tag\">")
     ; __append(escapeFn( item.session_status ))
     ; __append("</span><br /><span class=\"muted\">")
     ; __append(escapeFn( item.completed_at || "-" ))
-    ; __append("</span></td>\r\n            <td>")
+    ; __append("</span></td>\n            <td>")
     ; __append(escapeFn( item.summary ))
-    ; __append("</td>\r\n          </tr>\r\n        ")
+    ; __append("</td>\n          </tr>\n        ")
     ;  } 
-    ; __append("\r\n      </tbody>\r\n    </table>\r\n  </div>\r\n\r\n  <div class=\"card\">\r\n    <h2>Latest AI Report</h2>\r\n    ")
+    ; __append("\n      </tbody>\n    </table>\n  </div>\n\n  <div class=\"card\">\n    <h2>Latest AI Report</h2>\n    ")
     ;  if (latestReport) { 
-    ; __append("\r\n      <p class=\"muted\">Generated at: ")
+    ; __append("\n      <p class=\"muted\">Generated at: ")
     ; __append(escapeFn( latestReport.created_at ))
-    ; __append("</p>\r\n      <pre class=\"prelike\">")
+    ; __append("</p>\n      <pre class=\"prelike\">")
     ; __append(escapeFn( JSON.stringify(latestReport.report_json, null, 2) ))
-    ; __append("</pre>\r\n    ")
+    ; __append("</pre>\n    ")
     ;  } else { 
-    ; __append("\r\n      <p class=\"muted\">No project analysis report yet.</p>\r\n    ")
+    ; __append("\n      <p class=\"muted\">No project analysis report yet.</p>\n    ")
     ;  } 
-    ; __append("\r\n  </div>\r\n</section>\r\n")
+    ; __append("\n  </div>\n</section>\n")
     ; __append( include("../../partials/footer") )
-    ; __append("\r\n")
+    ; __append("\n")
   return __output;
 
 } as CompiledTemplate,

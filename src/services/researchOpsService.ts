@@ -1,5 +1,13 @@
 import { analysisRepository } from "../repositories/analysisRepository";
 import { answerExtractionRepository } from "../repositories/answerExtractionRepository";
+import {
+  type BreakAxis,
+  type GtRespondentInput,
+  SMALL_N_THRESHOLD,
+  buildGtQuestionTable,
+  isRatioAllowed
+} from "../lib/gtTable";
+import { userProfileRepository } from "../repositories/userProfileRepository";
 import { answerRepository } from "../repositories/answerRepository";
 import { messageRepository } from "../repositories/messageRepository";
 import { postRepository, type AdminPostFilters } from "../repositories/postRepository";
@@ -211,6 +219,14 @@ function buildRespondentSummary(input: {
     summary: truncate(input.analysis?.summary || input.session.summary || fallbackSummary || "No summary", 140)
   };
 }
+
+/**
+ * 運営GT表に並べる属性ブレーク。
+ *
+ * 都道府県・職業は値の種類が多く行が膨らむため既定では出さない
+ * （必要になったら軸を足す。表が縦に伸びると比較したい行が画面外へ出ていく）。
+ */
+const GT_BREAK_AXES: BreakAxis[] = ["total", "sex", "age_band", "marital", "children"];
 
 async function loadProjectBase(projectId: string) {
   const [project, questions, respondents, sessions] = await Promise.all([
@@ -573,9 +589,42 @@ export const researchOpsService = {
       (unit) => unit.aggregation_type === "qualitative_only"
     );
 
+    // ── GT集計表（n行 + %行・設問×属性クロス）────────────────────────────
+    //
+    // 顧客向け（partner API）と同じ lib/gtTable.ts を通す。表の作り方を運営用と
+    // 顧客用で分けると、同じ案件を見ているのに数字が食い違う。
+    //
+    // ⚠ 会員本体の調査は属性を user_profiles から取る（パートナー調査は設問で聞くため
+    //   別のビルダーを使う。lib/gtTable.ts の2関数の使い分けを参照）。
+    const profiles = await userProfileRepository.listByLineUserIds(
+      selectedSessions.map(({ respondent }) => respondent.line_user_id)
+    );
+    const profileByLineUser = new Map(profiles.map((profile) => [profile.line_user_id, profile]));
+
+    const gtTables = questions
+      // 選択肢を持たない設問（自由記述・数値）は比率で語れないので表にしない。
+      .filter((question) => isRatioAllowed(question))
+      .map((question) => {
+        const inputs: GtRespondentInput[] = selectedSessions.map(({ respondent, session }) => {
+          const group = (groupsBySession.get(session.id) ?? []).find(
+            (item) => item.question.id === question.id
+          );
+          return {
+            answer: group?.primaryAnswer ?? null,
+            profile: profileByLineUser.get(respondent.line_user_id) ?? null,
+            // 年齢は回答時点で数える（今日基準だと過去の集計が時間とともに動く）。
+            answeredAt: session.completed_at ?? session.started_at ?? null
+          };
+        });
+
+        return buildGtQuestionTable(question, inputs, GT_BREAK_AXES);
+      });
+
     return {
       project,
       questions,
+      gtTables,
+      gtSmallNThreshold: SMALL_N_THRESHOLD,
       respondent_count: selectedSessions.length,
       completed_session_count: selectedSessions.filter(({ session }) => session.status === "completed").length,
       respondentSummaries,
