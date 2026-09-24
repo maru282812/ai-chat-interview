@@ -384,6 +384,20 @@ export function validateSurvey(questions: Question[], project?: Project | null):
         question_code: question.question_code
       });
     }
+
+    // §6 選択肢 value にカンマを含めない。
+    //
+    // 複数選択の回答は answers.answer_text にカンマ連結で保存される
+    // （lib/answerOptionMatch.ts 参照）。value 自身にカンマが入ると連結を正しく分解できず、
+    // GT集計表の件数とセルからの回答者抽出がズレる。顧客に見せる人数が狂うため error とする。
+    if (values.some((value) => value?.includes(","))) {
+      findings.push({
+        level: "error",
+        code: "comma_in_option_value",
+        message: `選択肢 value にカンマを含められません（回答はカンマ連結で保存されるため集計がズレます）: ${question.question_code}`,
+        question_code: question.question_code
+      });
+    }
   }
   for (const [name, codes] of variableNames) {
     if (codes.length > 1) {

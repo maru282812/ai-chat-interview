@@ -140,6 +140,29 @@ export const answerRepository = {
     };
   },
 
+  /**
+   * 設問の primary 回答を全件返す（GT表のセル→回答者抽出の入力）。
+   *
+   * ⚠ **上限を付けない。** セル条件に該当する人数は顧客に見せる数字であり、
+   *   打ち切った母集団から人数を出すと表のセルの数字と食い違う
+   *   （sampleForAggregate が total と sampled を分けているのと同じ理由。
+   *    こちらは「真の集合」が必要なので打ち切ってはいけない）。
+   *
+   * ⚠ どの選択肢を選んだかの判定は、必ず lib/answerOptionMatch.ts で行う。
+   *   SQL 側で answer_text を LIKE で引くと、カンマ連結・normalized_answer・
+   *   value/label の揺れを取りこぼして GT表とズレる。
+   */
+  async listPrimaryByQuestion(questionId: string): Promise<Answer[]> {
+    const { data, error } = await supabase
+      .from("answers")
+      .select("*")
+      .eq("question_id", questionId)
+      .eq("answer_role", "primary")
+      .order("created_at", { ascending: true });
+    throwIfError(error);
+    return (data ?? []) as Answer[];
+  },
+
   async listAll(): Promise<Answer[]> {
     const { data, error } = await supabase
       .from("answers")

@@ -1,4 +1,5 @@
 import { HttpError } from "../lib/http";
+import { countByOption } from "../lib/answerOptionMatch";
 import { logger } from "../lib/logger";
 import {
   AGE_OPTIONS,
@@ -726,21 +727,13 @@ export const partnerSurveyService = {
       }
 
       // aggregate: 選択肢ごとの件数。定義済みの選択肢は 0 埋めで必ず返す。
+      //
+      // ⚠ 突合は lib/answerOptionMatch.ts に一本化している。ここに独自実装を戻さないこと。
+      //   GT集計表（lib/gtTable.ts）とセルからの回答者抽出（cellInterviewService）も同じ関数を使う。
+      //   別実装にすると「表のセルは492人なのに抽出は480人」というズレが出て、
+      //   顧客に見せた人数で配信できなくなる。
       const options = (question.question_config?.options ?? []) as QuestionOption[];
-      const counts = new Map<string, number>();
-      for (const option of options) {
-        counts.set(option.value, 0);
-      }
-      for (const answer of covered) {
-        // multi_choice はカンマ連結で入る。⚠ クライアント側で分解させない。
-        for (const token of String(answer.answer_text ?? "").split(",")) {
-          const value = token.trim();
-          if (value.length === 0 || !counts.has(value)) {
-            continue;
-          }
-          counts.set(value, (counts.get(value) ?? 0) + 1);
-        }
-      }
+      const counts = countByOption(covered, options);
 
       views.push({
         question_code: question.question_code,
