@@ -352,6 +352,13 @@ export interface Project {
    *    「送信前」に出るため、回答者には「お礼が出たのにまだ送信していない」状態に見える。
    */
   completion_message?: string | null;
+  /**
+   * 締め切った時刻 (Migration 114)。
+   * 集計はこの時刻までの完了セッションだけを数える（締切後の回答は「次回ぶん」）。
+   * NULL は回収中。**updated_at を締切時刻の代わりに使わないこと**
+   * （締切と無関係な更新でも動くので、集計の区切りがずれる）。
+   */
+  closed_at?: string | null;
   /** AIプロンプト方針設定 */
   ai_prompt_policy_json: AIPromptPolicy | null;
   /** ベースプロンプトテンプレート上書き設定 */

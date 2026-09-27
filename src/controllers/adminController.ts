@@ -115,6 +115,7 @@ import { questionPageGroupRepository } from "../repositories/questionPageGroupRe
 // どちらも「描画直前の前処理」なので、これを省くとプレビューだけ別物になる。
 import { resolveAnswerPresentation } from "../lib/answerPresentation";
 import { applyAutoFreeText } from "../lib/otherOption";
+import { resolveDisclosureNotice } from "../lib/questionShare";
 import { segmentRepository } from "../repositories/segmentRepository";
 import { userAttributeRepository } from "../repositories/userAttributeRepository";
 import { deliveryCampaignRepository } from "../repositories/deliveryCampaignRepository";
@@ -3786,6 +3787,9 @@ export const adminController = {
       return {
         ...q,
         question_config,
+        // 開示の告知もプレビューに出す。運営はここで「回答者に何が見えるか」を
+        // 確認するので、告知だけ出ないと設定漏れに気づけない（規約 第9条5項）。
+        disclosure_notice: resolveDisclosureNotice(q),
         presentation: resolveAnswerPresentation(
           { question_type: q.question_type, question_text: q.question_text, question_config },
           answerUiPreset,

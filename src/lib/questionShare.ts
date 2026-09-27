@@ -97,29 +97,77 @@ export function readShareConfig(question: Question): ShareWithStoreConfig | null
 /**
  * この設問の回答を店舗へ開示してよいかを判定する。
  *
- * 既定は共有しない。enabled=true かつ notice が実文字列のときだけ共有可とする。
+ * ## 規約は「項」で要件が違う。ここを混ぜないこと
+ *
+ * - **第9条4項**: 統計化・匿名加工した情報の第三者提供 → **事前明示は不要**
+ * - **第9条5項**: 統計化も匿名加工もしない**原文開示** → 「回答画面上であらかじめ
+ *   明示」が**必要**（＝ notice 必須）
+ *
+ * 選択式の件数集計（aggregate）は 4項の範囲なので、設定が無くても締切後に出せる。
+ * 以前は両方を同じ `enabled` + `notice` ゲートで塞いでおり、**4項で出せるはずの
+ * 集計まで出せていなかった**（店舗が締め切っても集計が1つも開かない状態）。
+ *
+ * ## 既定（設定が無いとき）
+ *
+ * - 選択式 → **aggregate / on_close で開示する**（4項）
+ * - 自由記述 → **開示しない**。原文が出るということなので 5項の領域に入る。
+ *   出すには運営が明示的に設定し、notice を書く必要がある
+ *
+ * `enabled: false` が明示されていれば、いずれにせよ開示しない（運営の意思を優先）。
  */
 export function resolveShareDecision(question: Question): ShareDecision {
   const config = readShareConfig(question);
 
-  if (!config || config.enabled !== true) {
+  // 運営が明示的に切っているなら、何があっても出さない
+  if (config?.enabled === false) {
     return { shared: false, reason: "not_enabled" };
   }
 
-  const notice = typeof config.notice === "string" ? config.notice.trim() : "";
-  if (notice.length === 0) {
-    // 規約 第9条3項の「あらかじめ明示」を満たさない。フラグが立っていても共有しない。
-    return { shared: false, reason: "missing_notice" };
+  if (!config || config.enabled !== true) {
+    return resolveDefaultShareDecision(question);
   }
 
   const mode: ShareMode = config.mode === "verbatim" ? "verbatim" : "aggregate";
   const timing: ShareTiming = config.timing === "immediate" ? "immediate" : "on_close";
+  const notice = typeof config.notice === "string" ? config.notice.trim() : "";
+
+  // **原文開示（5項）は notice が無ければ出さない。** フラグが立っていても同じ。
+  if (mode === "verbatim" && notice.length === 0) {
+    return { shared: false, reason: "missing_notice" };
+  }
 
   if (mode === "verbatim" && VERBATIM_FORBIDDEN_TYPES.includes(question.question_type)) {
     return { shared: false, reason: "type_not_allowed" };
   }
 
   return { shared: true, mode, timing, notice };
+}
+
+/**
+ * 設定が無い設問の既定。**選択式の件数集計だけを許す**（規約 第9条4項）。
+ *
+ * ⚠ 自由記述をここに含めないこと。自由記述の集計は実質的に原文の列挙になり、
+ *   「統計化又は匿名加工したうえで」に当たらない（5項の領域）。
+ *   `isFreeTextQuestion` に載っていない新しい設問型を足すときは、
+ *   **原文がそのまま出うるか**を必ず確認する。
+ */
+function resolveDefaultShareDecision(question: Question): ShareDecision {
+  if (isFreeTextQuestion(question.question_type)) {
+    return { shared: false, reason: "not_enabled" };
+  }
+  // image_upload など、件数集計になじまない型も既定では出さない
+  if (VERBATIM_FORBIDDEN_TYPES.includes(question.question_type)) {
+    return { shared: false, reason: "type_not_allowed" };
+  }
+  return {
+    shared: true,
+    mode: "aggregate",
+    // 締め切ってから開く。回収中に見せると「まだ集まっていない」数字で
+    // 判断させることになる（納品前ロックの考え方と揃える）。
+    timing: "on_close",
+    // 4項の範囲なので事前明示は要らない。告知は出さない
+    notice: "",
+  };
 }
 
 /**
@@ -156,6 +204,64 @@ export function selectShareableQuestions(
     selected.push({ question, mode: decision.mode, notice: decision.notice });
   }
   return selected;
+}
+
+/**
+ * 回答画面に出す開示の告知（規約 第9条5項の「あらかじめ明示」の実体）。
+ *
+ * `label` は**固定文言**、`notice` は設問ごとの補足。この2段構えにしているのは、
+ * 条文が要求する「当該設問である旨」「当該店舗等に開示される旨」を**固定側で必ず担保**
+ * するため。運営が notice を書き損ねても、法的に要る部分は落ちない。
+ */
+export interface ShareDisclosureNotice {
+  /** 設問カードに出すバッジ文言（固定）。 */
+  label: string;
+  /** 設問ごとの補足（何のために・いつ見るか）。空なら出さない。 */
+  notice: string;
+  /** 原文がそのまま出るか。文言の強さを変えるのに使う。 */
+  verbatim: boolean;
+}
+
+/**
+ * 原文（verbatim）開示のバッジ。「そのまま伝わる」ことを省略しない。
+ * 件数集計と違い、書いた内容がそのまま読まれるため。
+ */
+const VERBATIM_LABEL = "ご記入の内容が、そのままお店に伝わります（お名前は伝わりません）";
+
+/** 件数集計（aggregate）開示のバッジ。 */
+const AGGREGATE_LABEL = "この回答はお店に伝わります（お名前は伝わりません）";
+
+/**
+ * この設問の回答画面に出す告知を決める。**開示しない設問には何も出さない**。
+ *
+ * ⚠ `resolveShareDecision` と**同じ判定**を通すこと。ここで独自に条件を書くと、
+ *   「告知は出ていないのに開示される」「開示しないのに告知が出る」のどちらかが起きる。
+ *   前者は規約 第9条5項違反、後者は回答者を不必要に身構えさせる。
+ *
+ * タイミング（immediate / on_close）では出し分けない。回答者にとっては
+ * 「いつ店舗が見るか」ではなく「店舗に伝わるかどうか」が判断材料だから。
+ */
+export function resolveDisclosureNotice(question: Question): ShareDisclosureNotice | null {
+  const decision = resolveShareDecision(question);
+  if (!decision.shared) return null;
+
+  // **既定の件数集計（規約 第9条4項）には告知を出さない。**
+  //
+  // 4項は統計化した情報の提供なので事前明示を要さない。ここで全ての選択式設問に
+  // 「お店に伝わります」を出すと、告知が画面中に並んで**本当に見てほしい原文開示
+  // （5項）の告知が埋もれる**。伝えるべきものを目立たせるために、出す対象を絞る。
+  //
+  // 判定の根拠は「運営が明示的に設定したか」。設定がある＝その設問を店舗に
+  // 伝える意図で置いているので、集計であっても回答者に伝える。
+  const config = readShareConfig(question);
+  if (!config || config.enabled !== true) return null;
+
+  const verbatim = decision.mode === "verbatim";
+  return {
+    label: verbatim ? VERBATIM_LABEL : AGGREGATE_LABEL,
+    notice: decision.notice,
+    verbatim,
+  };
 }
 
 /**

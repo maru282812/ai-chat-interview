@@ -6,6 +6,7 @@ import {
   buildGtQuestionTableByAnswerBreaks
 } from "../lib/gtTable";
 import { logger } from "../lib/logger";
+import { countPostCloseSessions, selectCountedSessions } from "../lib/surveySnapshot";
 import {
   AGE_OPTIONS,
   DEMOGRAPHIC_AGE_CODE,
@@ -25,6 +26,7 @@ import {
   type PartnerQuestionView,
   buildCarryForwardTags,
   buildPartnerQuestionConfig,
+  carryOverQuestionMeta,
   toInternalQuestionType,
   toPartnerCarryForward,
   toPartnerOptions,
@@ -138,7 +140,14 @@ export interface PartnerSurveyView {
 export interface PartnerStatsView {
   survey_id: string;
   status: Project["status"];
+  /** 締切時点までの完了セッション数。**締切後に増えてもここは動かない**（納品する数字）。 */
   total_count: number;
+  /**
+   * 締切**後**に届いた完了セッション数（Migration 114）。
+   * 店舗には「次回ぶん」として件数だけ見せる。total_count には混ぜない。
+   * 回収中は 0。
+   */
+  post_close_count: number;
   demographics: DemographicSummary;
 }
 
@@ -342,13 +351,19 @@ async function replacePartnerQuestions(
     const carrySourceCode = input.carry_forward
       ? questionCodeBySortOrder.get(input.carry_forward.from_sort_order)
       : undefined;
+    const reused = editable[index];
+    // 運営が設定した meta（店舗開示など）を引き継ぐ。条件と理由は
+    // `carryOverQuestionMeta` のコメントを参照（引き継がないと自動保存で消える）。
+    const carriedMeta = carryOverQuestionMeta(reused, input.question_text);
+    const configWithMeta = carriedMeta ? { ...config, meta: carriedMeta } : config;
+
     const payload = {
       question_text: input.question_text,
       question_role: "main" as const,
       question_type: internalType,
       is_required: input.is_required ?? true,
       sort_order: PARTNER_QUESTION_SORT_OFFSET + index,
-      question_config: config,
+      question_config: configWithMeta,
       // 全置換なので、送られてこなければ持ち越し設定も消える（画像と同じ扱い）。
       display_tags_parsed: carrySourceCode
         ? buildCarryForwardTags(input.carry_forward, carrySourceCode)
@@ -357,9 +372,8 @@ async function replacePartnerQuestions(
       is_system: false,
       is_hidden: false
     };
-    const reusable = editable[index];
-    if (reusable) {
-      await questionRepository.update(reusable.id, { question_code: questionCode, ...payload });
+    if (reused) {
+      await questionRepository.update(reused.id, { question_code: questionCode, ...payload });
       continue;
     }
     await questionRepository.create({
@@ -598,7 +612,7 @@ export const partnerSurveyService = {
       sessionRepository.listByProject(project.id),
       questionRepository.listByProject(project.id, { includeHidden: true })
     ]);
-    const completedSessions = sessions.filter((session) => session.status === "completed");
+    const completedSessions = selectCountedSessions(sessions, project.closed_at ?? null);
 
     const genderQuestion = questions.find((q) => q.question_code === DEMOGRAPHIC_GENDER_CODE);
     const ageQuestion = questions.find((q) => q.question_code === DEMOGRAPHIC_AGE_CODE);
@@ -628,6 +642,8 @@ export const partnerSurveyService = {
       survey_id: project.id,
       status: project.status,
       total_count: completedSessions.length,
+      // 締切後に届いたぶん。店舗には「次回ぶん」として件数だけ見せる
+      post_close_count: countPostCloseSessions(sessions, project.closed_at ?? null),
       demographics: summarizeDemographics([...bySession.values()])
     };
   },
@@ -662,7 +678,7 @@ export const partnerSurveyService = {
       sessionRepository.listByProject(project.id),
       questionRepository.listByProject(project.id, { includeHidden: true })
     ]);
-    const completedSessions = sessions.filter((session) => session.status === "completed");
+    const completedSessions = selectCountedSessions(sessions, project.closed_at ?? null);
 
     // 共有対象の設問だけを選ぶ（ホワイトリスト）。0件なら以降の回答読み出しごと省く。
     const shareable = selectShareableQuestions(questions, project.status);
@@ -795,24 +811,39 @@ export const partnerSurveyService = {
     surveyId: string
   ): Promise<{ survey_id: string; status: Project["status"]; closed_at: string; total_count: number }> {
     const project = await loadOwnedWritableProject(surveyId, partnerStoreId);
-    const closed =
-      project.status === "closed"
-        ? project
-        : await projectRepository.update(project.id, { status: "closed" });
+
+    // 締切時刻は**最初の1回だけ**書く。
+    //
+    // closeSurvey は hibi の納品依頼から冪等に呼ばれる（連打・リロード・再送）。
+    // 2回目に closed_at を上書きすると集計の区切りが後ろへずれ、
+    // **納品済みの数字が後から動く**（「◯件で締め切りました」と食い違う）。
+    // すでに closed_at がある案件はそれを正とし、触らない。
+    const alreadyClosed = project.status === "closed" && Boolean(project.closed_at);
+    const closed = alreadyClosed
+      ? project
+      : await projectRepository.update(project.id, {
+          status: "closed",
+          closed_at: project.closed_at ?? new Date().toISOString()
+        });
+
+    // 区切り時刻が無い（旧データ）ときだけ null になる。そのときは従来どおり全件を数える。
+    const closedAt = closed.closed_at ?? null;
 
     const sessions = await sessionRepository.listByProject(closed.id);
-    const totalCount = sessions.filter((session) => session.status === "completed").length;
+    const totalCount = selectCountedSessions(sessions, closedAt).length;
 
     logger.info("partnerSurvey.closed", {
       surveyId: closed.id,
       storeId: partnerStoreId,
-      totalCount
+      totalCount,
+      closedAt
     });
 
     return {
       survey_id: closed.id,
       status: closed.status,
-      closed_at: closed.updated_at,
+      // closed_at が無い旧データだけ updated_at に落ちる（従来の挙動）
+      closed_at: closedAt ?? closed.updated_at,
       total_count: totalCount
     };
   },
@@ -844,7 +875,7 @@ export const partnerSurveyService = {
       sessionRepository.listByProject(project.id),
       questionRepository.listByProject(project.id, { includeHidden: true })
     ]);
-    const completedSessions = sessions.filter((session) => session.status === "completed");
+    const completedSessions = selectCountedSessions(sessions, project.closed_at ?? null);
 
     const shareable = selectShareableQuestions(questions, project.status);
     if (shareable.length === 0 || completedSessions.length === 0) {

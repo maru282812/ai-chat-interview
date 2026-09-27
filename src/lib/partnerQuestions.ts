@@ -392,3 +392,29 @@ export interface PartnerQuestionView {
   /** 選択肢の持ち越し設定。無ければ null。参照は sort_order。 */
   carry_forward: PartnerCarryForward | null;
 }
+
+/**
+ * 設問を差し替えるとき、既存の `question_config.meta` を引き継ぐか決める。
+ *
+ * ## なぜ要るか
+ * パートナーAPI の設問更新は `question_config` を**全置換**する。
+ * `meta` はパートナーAPI が扱わない領域（hibi は送ってこない）なので、
+ * 何もしないと運営が管理画面で入れた設定が毎回消える。
+ *
+ * 実際に起きていた事故: 運営が店舗開示（`meta.share_with_store`）を ON にしても、
+ * 店舗が hibi の編集画面で**自動保存を1回走らせた時点で消える**。
+ * 店舗のダッシュボードから集計が消え、申し送りも出なくなっていた。
+ *
+ * ## 引き継ぐ条件
+ * **設問文が一致するときだけ**。位置（index）だけで引き継ぐと、設問を入れ替えた
+ * ときに別の設問へ開示設定が移り、**告知していない設問の回答が店舗に出る**。
+ * 文言を変えた場合も「別の設問になった」とみなして引き継がない（fail-closed）。
+ */
+export function carryOverQuestionMeta(
+  previous: { question_text: string; question_config?: { meta?: unknown } | null } | undefined,
+  incomingQuestionText: string
+): unknown | undefined {
+  if (!previous) return undefined;
+  if (previous.question_text !== incomingQuestionText) return undefined;
+  return previous.question_config?.meta ?? undefined;
+}

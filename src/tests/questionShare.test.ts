@@ -14,6 +14,7 @@ import { test } from "node:test";
 
 import {
   isCoveredByConsent,
+  resolveDisclosureNotice,
   isFreeTextQuestion,
   isShareVisibleNow,
   readShareConfig,
@@ -71,16 +72,28 @@ test("S3: enabled が真偽値でない値（'true' 文字列）でも共有し�
 
 // ── 2. notice が無ければ共有しない（規約 第9条3項の「あらかじめ明示」） ────
 
-test("S4: enabled=true でも notice が無ければ共有しない", () => {
-  const d = resolveShareDecision(q({ share: { enabled: true } }));
+test("★S4: 原文開示(verbatim)は notice が無ければ共有しない（規約 第9条5項）", () => {
+  const d = resolveShareDecision(
+    q({ type: "free_text_long", share: { enabled: true, mode: "verbatim" } })
+  );
   assert.equal(d.shared, false);
   assert.equal(d.shared === false && d.reason, "missing_notice");
 });
 
-test("S5: notice が空白のみでも共有しない", () => {
-  const d = resolveShareDecision(q({ share: { enabled: true, notice: "   " } }));
+test("★S5: 原文開示は notice が空白のみでも共有しない", () => {
+  const d = resolveShareDecision(
+    q({ type: "free_text_long", share: { enabled: true, mode: "verbatim", notice: "   " } })
+  );
   assert.equal(d.shared, false);
   assert.equal(d.shared === false && d.reason, "missing_notice");
+});
+
+test("S4b: 件数集計(aggregate)は notice が無くても共有できる（規約 第9条4項）", () => {
+  // 4項は「統計化又は匿名加工したうえで」の提供なので事前明示を要さない。
+  // ここを notice 必須にしていたせいで、店舗が締め切っても集計が1つも開かなかった。
+  const d = resolveShareDecision(q({ share: { enabled: true } }));
+  assert.equal(d.shared, true);
+  assert.equal(d.shared && d.mode, "aggregate");
 });
 
 test("S6: enabled=true かつ notice ありなら共有可", () => {
@@ -217,4 +230,107 @@ test("S20: meta が無い/null でも複製で落ちない", () => {
   assert.equal(stripStoreDisclosureOnCopy(null), null);
   const noMeta = { options: [] } as unknown as Question["question_config"];
   assert.deepEqual(stripStoreDisclosureOnCopy(noMeta), { options: [] });
+});
+
+/**
+ * 回答画面への告知（規約 第9条5項「回答画面上であらかじめ明示」）。
+ *
+ * ここが落ちるときは、**原文が店舗に出るのに回答者へ告知していない状態**に
+ * なっている可能性がある。文言を変えるにしても、以下の性質は維持すること。
+ */
+test("開示しない設問には告知を出さない", () => {
+  assert.equal(resolveDisclosureNotice(q({ share: null })), null);
+  assert.equal(resolveDisclosureNotice(q({ share: { enabled: false, notice: NOTICE } })), null);
+});
+
+test("原文開示で notice が無ければ、開示もされず告知も出ない", () => {
+  const question = q({ type: "free_text_long", share: { enabled: true, mode: "verbatim", notice: "  " } });
+  assert.equal(resolveShareDecision(question).shared, false);
+  assert.equal(resolveDisclosureNotice(question), null);
+});
+
+test("★開示する設問には必ず告知が出る（条文の要求）", () => {
+  const d = resolveDisclosureNotice(q({ share: { enabled: true, notice: NOTICE } }));
+  assert.ok(d, "開示するのに告知が無いのは規約 第9条5項を満たさない");
+  assert.ok(d.label.length > 0, "固定文言が空だと『店舗に開示される旨』を伝えられない");
+  assert.equal(d.notice, NOTICE, "設問ごとの補足はそのまま渡すこと");
+});
+
+test("★固定文言だけで『店舗に伝わる』と『名前は伝わらない』が言えている", () => {
+  // notice を運営が書き損ねても、法的に要る部分は固定側で担保する設計
+  for (const mode of ["aggregate", "verbatim"] as const) {
+    const d = resolveDisclosureNotice(q({ share: { enabled: true, mode, notice: NOTICE } }));
+    assert.ok(d);
+    assert.ok(d.label.includes("お店に伝わります"), `${mode}: 開示される旨が必要`);
+    assert.ok(d.label.includes("お名前は伝わりません"), `${mode}: 直接識別子を出さない旨`);
+  }
+});
+
+test("原文開示は『そのまま伝わる』と明示する（件数集計より強く言う）", () => {
+  const vb = resolveDisclosureNotice(
+    q({ type: "free_text_long", share: { enabled: true, mode: "verbatim", notice: NOTICE } })
+  );
+  assert.ok(vb?.verbatim, "verbatim フラグが立つこと");
+  assert.ok(vb.label.includes("そのまま"), "書いた内容がそのまま読まれることを省略しない");
+
+  const agg = resolveDisclosureNotice(q({ share: { enabled: true, mode: "aggregate", notice: NOTICE } }));
+  assert.equal(agg?.verbatim, false);
+});
+
+test("告知の判定は開示の判定と必ず一致する", () => {
+  // ここがずれると「告知なしで開示」か「開示しないのに告知」のどちらかが起きる
+  const cases = [
+    { share: null },
+    { share: { enabled: false, notice: NOTICE } },
+    { share: { enabled: true, notice: "" } },
+    { share: { enabled: true, notice: NOTICE } },
+    { share: { enabled: true, mode: "verbatim" as const, notice: NOTICE } },
+  ];
+  for (const c of cases) {
+    const question = q(c);
+    const shared = resolveShareDecision(question).shared;
+    const notice = resolveDisclosureNotice(question) !== null;
+    assert.equal(notice, shared, `判定が食い違っている: ${JSON.stringify(c)}`);
+  }
+});
+
+/**
+ * 設定が無い設問の既定（規約 第9条4項の範囲だけを自動で開く）。
+ *
+ * ここが緩むと**運営が何も設定していない設問の回答が店舗に出る**。
+ * 特に自由記述は、集計と称しても実質的に原文の列挙になるので既定では絶対に出さない。
+ */
+test("★既定: 選択式は件数集計として締切後に開く（4項・告知不要）", () => {
+  const d = resolveShareDecision(q({ type: "single_choice", share: null }));
+  assert.equal(d.shared, true, "設定が無くても選択式の件数は出せる（4項）");
+  assert.equal(d.shared && d.mode, "aggregate");
+  assert.equal(d.shared && d.timing, "on_close", "回収中は出さない（締めてから開く）");
+});
+
+test("★既定: 自由記述は開示しない（実質的に原文の列挙になるため）", () => {
+  for (const type of ["text", "free_text_short", "free_text_long", "text_with_image"] as const) {
+    const d = resolveShareDecision(q({ type, share: null }));
+    assert.equal(d.shared, false, `${type} が既定で開示されている`);
+  }
+});
+
+test("★既定: image_upload は開示しない", () => {
+  assert.equal(resolveShareDecision(q({ type: "image_upload", share: null })).shared, false);
+});
+
+test("★enabled=false は既定より優先される（運営が切ったものは出さない）", () => {
+  const d = resolveShareDecision(q({ type: "single_choice", share: { enabled: false } }));
+  assert.equal(d.shared, false);
+  assert.equal(d.shared === false && d.reason, "not_enabled");
+});
+
+test("既定で開いた集計には告知を出さない（本当に伝えたい告知を埋もれさせない）", () => {
+  const question = q({ type: "single_choice", share: null });
+  assert.equal(resolveShareDecision(question).shared, true, "開示はする");
+  assert.equal(resolveDisclosureNotice(question), null, "が、告知は出さない（4項なので不要）");
+});
+
+test("運営が明示的に設定した集計には告知を出す", () => {
+  const question = q({ share: { enabled: true, notice: NOTICE } });
+  assert.ok(resolveDisclosureNotice(question), "設定した＝伝える意図があるので出す");
 });

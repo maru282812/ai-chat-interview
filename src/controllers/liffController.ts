@@ -5,6 +5,7 @@ import { HttpError } from "../lib/http";
 import { logger } from "../lib/logger";
 import { getProjectResearchSettings } from "../lib/projectResearch";
 import { normalizeQuestionMeta } from "../lib/questionMetadata";
+import { resolveDisclosureNotice } from "../lib/questionShare";
 import { findExclusionViolation } from "../lib/optionExclusion";
 import { isQuestionVisible } from "../lib/questionEngine";
 import { toDisplayAnswerForPrompt } from "../lib/answerLabel";
@@ -1046,6 +1047,9 @@ export const liffController = {
       return {
         ...q,
         question_config,
+        // 店舗開示の告知（規約 第9条5項の「あらかじめ明示」）。
+        // 開示しない設問では null。判定は questionShare.ts の1箇所に寄せている。
+        disclosure_notice: resolveDisclosureNotice(q),
         presentation: resolveAnswerPresentation(
           {
             question_type: q.question_type,
@@ -1076,6 +1080,9 @@ export const liffController = {
       screeningFailMessage: project.screening_config?.fail_message?.trim() || DEFAULT_FAIL_MSG,
       // 送信完了画面のお礼文 (Migration 108)。未設定は null を渡し、描画側で汎用文に落とす。
       completionMessage: project.completion_message?.trim() || null,
+      // 締切後の回答か (Migration 114)。締切は集計の区切りなので回答は止めないが、
+      // 黙って受けると「締め切った調査に答えさせられた」と受け取られうるので一言出す。
+      afterClose: project.status === "closed",
       liffId: liffConfig.liffId,
       liffAuthAvailable: liffConfig.liffAuthAvailable,
       authRequired: liffConfig.authRequired,

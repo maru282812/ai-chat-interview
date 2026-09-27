@@ -55,6 +55,10 @@ function createThenableSelectBuilder(response: SupabaseResponse, calls: QueryCal
       calls.push({ method: "eq", args });
       return builder;
     },
+    in(...args: unknown[]) {
+      calls.push({ method: "in", args });
+      return builder;
+    },
     or(...args: unknown[]) {
       calls.push({ method: "or", args });
       return builder;
@@ -175,7 +179,7 @@ test("getDiscoverableById は visibility_type=public で絞る（専用案件の
   );
 });
 
-test("getStoreProjectByEntryCode は private_store かつ published で絞る", async () => {
+test("getStoreProjectByEntryCode は private_store かつ published/closed で絞る", async () => {
   const calls: QueryCall[] = [];
   supabase.from = ((_table: string) =>
     createThenableSelectBuilder({ data: null, error: null }, calls)) as unknown as SupabaseClient["from"];
@@ -185,7 +189,22 @@ test("getStoreProjectByEntryCode は private_store かつ published で絞る", 
   const eqCalls = calls.filter((c) => c.method === "eq").map((c) => c.args);
   assert.ok(eqCalls.some((a) => a[0] === "entry_code" && a[1] === "abc"));
   assert.ok(eqCalls.some((a) => a[0] === "visibility_type" && a[1] === "private_store"));
-  assert.ok(eqCalls.some((a) => a[0] === "status" && a[1] === "published"));
+
+  // 締切は「集計の区切り」であって回答の停止ではない（Migration 114）。
+  // closed を弾くと、締め切ったあとに QR を読み直した人が 404 になり、
+  // しかも回答者には「コードが間違っている」としか見えない。
+  const inCalls = calls.filter((c) => c.method === "in").map((c) => c.args);
+  const statusIn = inCalls.find((a) => a[0] === "status");
+  assert.ok(statusIn, "status は in(...) で複数許可すること");
+  const allowed = statusIn?.[1] as string[];
+  assert.ok(allowed.includes("published"), "公開中は当然通す");
+  assert.ok(allowed.includes("closed"), "締切後も回答は受け付ける");
+  for (const blocked of ["draft", "paused", "archived"]) {
+    assert.ok(
+      !allowed.includes(blocked),
+      `${blocked} は通さないこと（「一時停止」と「締切後も受付」を同じ穴に通さない）`
+    );
+  }
 });
 
 test("listStoreProjects は visibility_type=private_store で絞る（管理画面一覧）", async () => {
