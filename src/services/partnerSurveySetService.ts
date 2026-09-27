@@ -13,6 +13,7 @@ import { cycleGroupRepository } from "../repositories/cycleRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { questionRepository } from "../repositories/questionRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
+import { selectCountedSessions } from "../lib/surveySnapshot";
 import { industryTemplateRepository, storeRepository } from "../repositories/storeRepository";
 import type { CycleGroup, CycleStepRole, Project, Question, Store } from "../types/domain";
 import { buildStoreEntryLiffUrl } from "./liffService";
@@ -265,7 +266,10 @@ async function buildSetView(
     let completedCount = 0;
     if (options.includeCounts) {
       const sessions = await sessionRepository.listByProject(project.id);
-      completedCount = sessions.filter((session) => session.status === "completed").length;
+      // 店舗に見せる件数なので**締切時点で固定**する（Migration 114）。
+      // 下の割り当てガード（setAssignmentBlockedReason に渡す件数）とは別物で、
+      // あちらは「1件でも回答が入っていたら渡さない」安全弁なので全件を数える。
+      completedCount = selectCountedSessions(sessions, project.closed_at ?? null).length;
     }
 
     surveys.push({
@@ -481,6 +485,7 @@ export const partnerSurveySetService = {
       let completedCount = 0;
       for (const step of steps) {
         const sessions = await sessionRepository.listByProject(step.project_id);
+        // ⚠ ここは締切で絞らない。割り当ての安全弁なので「1件でもあるか」を全期間で見る
         completedCount += sessions.filter((session) => session.status === "completed").length;
       }
 
@@ -524,6 +529,7 @@ export const partnerSurveySetService = {
     let completedCount = 0;
     for (const step of steps) {
       const sessions = await sessionRepository.listByProject(step.project_id);
+      // ⚠ ここは締切で絞らない（割り当ての安全弁。理由は setAssignmentBlockedReason）
       completedCount += sessions.filter((session) => session.status === "completed").length;
     }
     const reason = setAssignmentBlockedReason(store, completedCount);
@@ -594,6 +600,7 @@ export const partnerSurveySetService = {
     let completedCount = 0;
     for (const step of steps) {
       const sessions = await sessionRepository.listByProject(step.project_id);
+      // ⚠ ここは締切で絞らない（割り当ての安全弁。理由は setAssignmentBlockedReason）
       completedCount += sessions.filter((session) => session.status === "completed").length;
     }
     if (completedCount > 0) {

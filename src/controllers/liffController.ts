@@ -1076,6 +1076,9 @@ export const liffController = {
       screeningFailMessage: project.screening_config?.fail_message?.trim() || DEFAULT_FAIL_MSG,
       // 送信完了画面のお礼文 (Migration 108)。未設定は null を渡し、描画側で汎用文に落とす。
       completionMessage: project.completion_message?.trim() || null,
+      // 締切後の回答か (Migration 114)。締切は集計の区切りなので回答は止めないが、
+      // 黙って受けると「締め切った調査に答えさせられた」と受け取られうるので一言出す。
+      afterClose: project.status === "closed",
       liffId: liffConfig.liffId,
       liffAuthAvailable: liffConfig.liffAuthAvailable,
       authRequired: liffConfig.authRequired,

@@ -108,6 +108,8 @@ interface ProjectMutationInput {
   delivery_enabled?: boolean;
   delivery_type?: DeliveryType | null;
   delivered_at?: string | null;
+  /** 締め切った時刻 (Migration 114)。集計の区切り。一度書いたら上書きしない。 */
+  closed_at?: string | null;
   ai_prompt_policy_json?: AIPromptPolicy | null;
   ai_prompt_templates_json?: AIPromptTemplateMap | null;
   ai_prompt_mode?: 'custom' | 'package';
@@ -389,13 +391,24 @@ export const projectRepository = {
     return (data as Project | null) ?? null;
   },
 
+  /**
+   * 店頭QR（entry_code）から回答できる案件を引く。
+   *
+   * **closed も通す**（Migration 114）。締切は「集計の区切り」であって回答の停止ではない。
+   * 締め切ったあとに QR を読み直した人を 404 にすると、回答者には
+   * 「コードが間違っている」としか見えない（締切とは表示されない）。
+   * 締切後の回答は集計に混ざらない（`selectCountedSessions` が時刻で切る）。
+   *
+   * draft / paused / archived は**通さない**。「一時停止」と「締切後も受付」は別物で、
+   * 同じ穴を通すと止めたはずの案件に回答が入る。
+   */
   async getStoreProjectByEntryCode(entryCode: string): Promise<Project | null> {
     const { data, error } = await supabase
       .from("projects")
       .select("*")
       .eq("entry_code", entryCode)
       .eq("visibility_type", "private_store")
-      .eq("status", "published")
+      .in("status", ["published", "closed"])
       .maybeSingle();
     throwIfError(error);
     return (data as Project | null) ?? null;

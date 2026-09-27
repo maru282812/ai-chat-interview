@@ -31,6 +31,13 @@
       background: #fff; border-radius: 16px; padding: 20px;
       box-shadow: 0 2px 8px rgba(0,0,0,.08); margin-bottom: 12px;
     }
+    /* 締切後の回答であることの案内 (Migration 114)。警告ではなく案内なので穏やかな色 */
+    .after-close-note {
+      background: #f0f6fb; border: 1px solid #cfe0ee; border-radius: 12px;
+      padding: 12px 14px; margin-bottom: 12px;
+      font-size: 13px; line-height: 1.6; color: #35526b;
+    }
+    .after-close-note strong { font-weight: 700; }
     .question-number   { font-size: 12px; color: #60726f; margin-bottom: 6px; }
     .comment-top       { font-size: 13px; color: #4a6060; margin-bottom: 8px; }
     .question-text     { font-size: 16px; font-weight: 600; line-height: 1.5; margin-bottom: 12px; }
@@ -541,6 +548,17 @@
       <div class="page-header">
         <p class="question-number" id="pageIndicator"></p>
         <h2 class="page-title" id="pageTitle"></h2>
+      </div>
+    <% } %>
+
+    <%
+      /* 締切後の回答 (Migration 114)。締切は集計の区切りであって回答の停止ではないので
+         回答はそのまま進められるが、黙って受けると「締め切った調査に答えさせられた」と
+         受け取られうるため、先に一言だけ伝える。ポイントは従来どおり付与される。 */
+    %>
+    <% if (locals.afterClose === true) { %>
+      <div class="after-close-note" role="status">
+        この調査は集計をいったん締め切っています。いまいただくご回答は<strong>次回のまとめ</strong>に反映します。
       </div>
     <% } %>
 
