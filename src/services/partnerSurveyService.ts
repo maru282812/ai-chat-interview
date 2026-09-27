@@ -26,6 +26,7 @@ import {
   type PartnerQuestionView,
   buildCarryForwardTags,
   buildPartnerQuestionConfig,
+  carryOverQuestionMeta,
   toInternalQuestionType,
   toPartnerCarryForward,
   toPartnerOptions,
@@ -350,13 +351,19 @@ async function replacePartnerQuestions(
     const carrySourceCode = input.carry_forward
       ? questionCodeBySortOrder.get(input.carry_forward.from_sort_order)
       : undefined;
+    const reused = editable[index];
+    // 運営が設定した meta（店舗開示など）を引き継ぐ。条件と理由は
+    // `carryOverQuestionMeta` のコメントを参照（引き継がないと自動保存で消える）。
+    const carriedMeta = carryOverQuestionMeta(reused, input.question_text);
+    const configWithMeta = carriedMeta ? { ...config, meta: carriedMeta } : config;
+
     const payload = {
       question_text: input.question_text,
       question_role: "main" as const,
       question_type: internalType,
       is_required: input.is_required ?? true,
       sort_order: PARTNER_QUESTION_SORT_OFFSET + index,
-      question_config: config,
+      question_config: configWithMeta,
       // 全置換なので、送られてこなければ持ち越し設定も消える（画像と同じ扱い）。
       display_tags_parsed: carrySourceCode
         ? buildCarryForwardTags(input.carry_forward, carrySourceCode)
@@ -365,9 +372,8 @@ async function replacePartnerQuestions(
       is_system: false,
       is_hidden: false
     };
-    const reusable = editable[index];
-    if (reusable) {
-      await questionRepository.update(reusable.id, { question_code: questionCode, ...payload });
+    if (reused) {
+      await questionRepository.update(reused.id, { question_code: questionCode, ...payload });
       continue;
     }
     await questionRepository.create({
