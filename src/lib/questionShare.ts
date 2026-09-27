@@ -159,6 +159,53 @@ export function selectShareableQuestions(
 }
 
 /**
+ * 回答画面に出す開示の告知（規約 第9条5項の「あらかじめ明示」の実体）。
+ *
+ * `label` は**固定文言**、`notice` は設問ごとの補足。この2段構えにしているのは、
+ * 条文が要求する「当該設問である旨」「当該店舗等に開示される旨」を**固定側で必ず担保**
+ * するため。運営が notice を書き損ねても、法的に要る部分は落ちない。
+ */
+export interface ShareDisclosureNotice {
+  /** 設問カードに出すバッジ文言（固定）。 */
+  label: string;
+  /** 設問ごとの補足（何のために・いつ見るか）。空なら出さない。 */
+  notice: string;
+  /** 原文がそのまま出るか。文言の強さを変えるのに使う。 */
+  verbatim: boolean;
+}
+
+/**
+ * 原文（verbatim）開示のバッジ。「そのまま伝わる」ことを省略しない。
+ * 件数集計と違い、書いた内容がそのまま読まれるため。
+ */
+const VERBATIM_LABEL = "ご記入の内容が、そのままお店に伝わります（お名前は伝わりません）";
+
+/** 件数集計（aggregate）開示のバッジ。 */
+const AGGREGATE_LABEL = "この回答はお店に伝わります（お名前は伝わりません）";
+
+/**
+ * この設問の回答画面に出す告知を決める。**開示しない設問には何も出さない**。
+ *
+ * ⚠ `resolveShareDecision` と**同じ判定**を通すこと。ここで独自に条件を書くと、
+ *   「告知は出ていないのに開示される」「開示しないのに告知が出る」のどちらかが起きる。
+ *   前者は規約 第9条5項違反、後者は回答者を不必要に身構えさせる。
+ *
+ * タイミング（immediate / on_close）では出し分けない。回答者にとっては
+ * 「いつ店舗が見るか」ではなく「店舗に伝わるかどうか」が判断材料だから。
+ */
+export function resolveDisclosureNotice(question: Question): ShareDisclosureNotice | null {
+  const decision = resolveShareDecision(question);
+  if (!decision.shared) return null;
+
+  const verbatim = decision.mode === "verbatim";
+  return {
+    label: verbatim ? VERBATIM_LABEL : AGGREGATE_LABEL,
+    notice: decision.notice,
+    verbatim,
+  };
+}
+
+/**
  * 回答者が「開示に同意した後で」回答したかを判定する。
  *
  * ⚠ 個人情報保護法上、利用目的の追加は遡及しない（migration 102 のコメント参照）。

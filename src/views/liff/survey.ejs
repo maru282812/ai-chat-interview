@@ -38,6 +38,20 @@
       font-size: 13px; line-height: 1.6; color: #35526b;
     }
     .after-close-note strong { font-weight: 700; }
+    /*
+      店舗開示の告知（規約 第9条5項）。設問カードの中に置くのは、条文が
+      「当該設問である旨」を求めているため（画面共通の注記では要件を満たさない）。
+      目立たせるが警告色にはしない — 不安を煽ると書いてもらえなくなる。
+    */
+    .disclosure-note {
+      display: flex; flex-direction: column; gap: 4px;
+      background: #eef6f2; border-left: 3px solid #2ca87a; border-radius: 8px;
+      padding: 10px 12px; margin-bottom: 10px;
+    }
+    .disclosure-note.is-verbatim { background: #fdf4ec; border-left-color: #d98236; }
+    .disclosure-label  { font-size: 13px; font-weight: 700; color: #1f5f47; line-height: 1.5; }
+    .disclosure-note.is-verbatim .disclosure-label { color: #8a4a12; }
+    .disclosure-detail { font-size: 12px; color: #4a6060; line-height: 1.6; }
     .question-number   { font-size: 12px; color: #60726f; margin-bottom: 6px; }
     .comment-top       { font-size: 13px; color: #4a6060; margin-bottom: 8px; }
     .question-text     { font-size: 16px; font-weight: 600; line-height: 1.5; margin-bottom: 12px; }
@@ -1595,16 +1609,33 @@
   }
 
   // ---- 設問カード HTML 生成 ----
+  /**
+   * 店舗開示の告知を描く（規約 第9条5項の「回答画面上であらかじめ明示」）。
+   *
+   * ⚠ この表示を消すと、原文が店舗に出るのに回答者へ告知していない状態になる。
+   *   出す/出さないの判定はサーバー（questionShare.ts）が済ませており、
+   *   ここは disclosure_notice が来ていれば描くだけ。**画面側で条件を足さないこと**。
+   */
+  function buildDisclosureHtml(q) {
+    const d = q.disclosure_notice;
+    if (!d || !d.label) return '';
+    const cls = d.verbatim ? 'disclosure-note is-verbatim' : 'disclosure-note';
+    const detail = d.notice ? `<span class="disclosure-detail">${esc(d.notice)}</span>` : '';
+    return `<div class="${cls}"><span class="disclosure-label">${esc(d.label)}</span>${detail}</div>`;
+  }
+
   function renderQuestion(q, index, total) {
     const parsed = q.display_tags_parsed || {};
     const qText  = applyAns(q.question_text, parsed);
     const commentTop    = q.comment_top    ? `<p class="comment-top">${esc(q.comment_top)}</p>` : '';
     const commentBottom = q.comment_bottom ? `<p class="comment-bottom">${esc(q.comment_bottom)}</p>` : '';
+    const disclosureHtml = buildDisclosureHtml(q);
     const reqBadge = q.is_required ? '<span class="required-badge">必須</span>' : '';
     const inputHtml = buildAnswerInputHtml(q);
     const numLabel = total ? `Q${index+1} / ${total}` : `Q${index+1}`;
     return `<div class="question-card" data-code="${esc(q.question_code)}">
       <p class="question-number">${numLabel}${reqBadge}</p>
+      ${disclosureHtml}
       ${commentTop}
       <p class="question-text">${esc(qText)}</p>
       ${questionTextImageHtml(q)}

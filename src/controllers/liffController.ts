@@ -5,6 +5,7 @@ import { HttpError } from "../lib/http";
 import { logger } from "../lib/logger";
 import { getProjectResearchSettings } from "../lib/projectResearch";
 import { normalizeQuestionMeta } from "../lib/questionMetadata";
+import { resolveDisclosureNotice } from "../lib/questionShare";
 import { findExclusionViolation } from "../lib/optionExclusion";
 import { isQuestionVisible } from "../lib/questionEngine";
 import { toDisplayAnswerForPrompt } from "../lib/answerLabel";
@@ -1046,6 +1047,9 @@ export const liffController = {
       return {
         ...q,
         question_config,
+        // 店舗開示の告知（規約 第9条5項の「あらかじめ明示」）。
+        // 開示しない設問では null。判定は questionShare.ts の1箇所に寄せている。
+        disclosure_notice: resolveDisclosureNotice(q),
         presentation: resolveAnswerPresentation(
           {
             question_type: q.question_type,
