@@ -266,45 +266,6 @@ export function buildPartnerAnswerUrl(entryCode: string | null | undefined): str
   return buildStoreEntryLiffUrl(entryCode);
 }
 
-/** 性年代設問（サーバー固定）を、この案件に対して常に正しい形へそろえる。 */
-export async function ensureDemographicQuestions(projectId: string): Promise<void> {
-  for (const [index, spec] of DEMOGRAPHIC_QUESTION_SPECS.entries()) {
-    const sortOrder = index + 1;
-    const existing = await questionRepository.getByProjectAndCode(projectId, spec.question_code);
-    const config = buildPartnerQuestionConfig("single_choice", [...spec.options]);
-    if (existing) {
-      // パートナーが update で壊せない不変条件をここで必ず戻す。
-      await questionRepository.update(existing.id, {
-        question_text: spec.question_text,
-        question_role: "attribute",
-        question_type: "single_choice",
-        is_required: true,
-        sort_order: sortOrder,
-        question_config: config,
-        answer_options_locked: true,
-        ai_probe_enabled: false,
-        is_system: true,
-        is_hidden: false
-      });
-      continue;
-    }
-    await questionRepository.create({
-      project_id: projectId,
-      question_code: spec.question_code,
-      question_text: spec.question_text,
-      question_role: "attribute",
-      question_type: "single_choice",
-      is_required: true,
-      sort_order: sortOrder,
-      question_config: config,
-      answer_options_locked: true,
-      ai_probe_enabled: false,
-      is_system: true,
-      is_hidden: false
-    });
-  }
-}
-
 /** パートナー設問を全置換する（性年代設問とシステム設問は触らない）。 */
 async function replacePartnerQuestions(
   projectId: string,
@@ -496,7 +457,9 @@ export const partnerSurveyService = {
 
     // projectRepository.create が付ける free_comment システム設問はそのまま残す
     // （既存の会話フローが前提にしているため）。パートナーには見せない。
-    await ensureDemographicQuestions(project.id);
+    //
+    // 性年代の自動付与は 2026-09-28 に廃止した。聞きたいときは
+    // パートナーが**普通の設問として**入れる（固定2問をサーバーが足さない）。
     await replacePartnerQuestions(project.id, input.questions);
 
     logger.info("partnerSurvey.created", {
@@ -553,8 +516,8 @@ export const partnerSurveyService = {
     if (input.questions !== undefined) {
       await replacePartnerQuestions(project.id, input.questions);
     }
-    // 順序・必須・選択肢を含めて固定設問の不変条件を毎回戻す。
-    await ensureDemographicQuestions(project.id);
+    // 性年代の自動付与は 2026-09-28 に廃止。update のたびに固定2問を作り直さない
+    // （ここが残っていると、消しても保存のたびに復活する）。
 
     const updated = await projectRepository.getById(project.id);
     const questions = await loadPartnerQuestionViews(updated.id);
@@ -571,8 +534,8 @@ export const partnerSurveyService = {
       throw new HttpError(409, "closed survey cannot be published");
     }
 
-    // 公開前に固定設問をそろえる（draft 中に何が起きていても性年代は必ず入る）。
-    await ensureDemographicQuestions(project.id);
+    // 性年代の自動付与は 2026-09-28 に廃止。公開直前にも足さない
+    // （ここが残っていると、draft で消しても公開した瞬間に復活する）。
 
     const entryCode = project.entry_code?.trim() || (await generatePartnerEntryCode());
     const published =

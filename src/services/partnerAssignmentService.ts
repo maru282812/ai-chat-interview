@@ -9,7 +9,6 @@ import { sessionRepository } from "../repositories/sessionRepository";
 import type { Project, Question } from "../types/domain";
 import {
   type PartnerSurveyView,
-  ensureDemographicQuestions,
   generatePartnerEntryCode,
   loadPartnerQuestionViews,
   toSurveyView
@@ -381,8 +380,8 @@ export const partnerAssignmentService = {
       throw new HttpError(409, "already assigned to a store");
     }
 
-    // 割り当てた瞬間から、ポータルから作った案件と同じ不変条件（性年代の固定2問）を満たす。
-    await ensureDemographicQuestions(assigned.id);
+    // 性年代の自動付与は 2026-09-28 に廃止した（ここで固定2問を足さない）。
+    // 属性が要るなら、案件ごとに**普通の設問として**聞く。
 
     logger.info("partnerAssignment.assigned", {
       surveyId: assigned.id,
