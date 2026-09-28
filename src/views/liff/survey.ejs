@@ -53,6 +53,12 @@
     .disclosure-note.is-verbatim .disclosure-label { color: #8a4a12; }
     .disclosure-detail { font-size: 12px; color: #4a6060; line-height: 1.6; }
     .question-number   { font-size: 12px; color: #60726f; margin-bottom: 6px; }
+    /* screenGroup の見出し（任意指定時のみ出る） */
+    .screen-group-title {
+      font-size: 15px; font-weight: 700; color: #2f4f4a;
+      margin: 0 0 12px; padding-bottom: 8px;
+      border-bottom: 1px solid #d8e3e0;
+    }
     .comment-top       { font-size: 13px; color: #4a6060; margin-bottom: 8px; }
     .question-text     { font-size: 16px; font-weight: 600; line-height: 1.5; margin-bottom: 12px; }
     .comment-bottom    { font-size: 13px; color: #4a6060; margin-bottom: 10px; }
@@ -932,6 +938,70 @@
       grouped.get(key).questions.push(q);
     }
     return [...grouped.values()].filter(p => p.questions.length > 0);
+  }
+
+  // ---- 画面グループ（screenGroup）----
+  // survey_question モードで、同じ groupId を持つ連続した設問を1画面にまとめる。
+  // survey_page の page_group_id とは別系統で、複製に強い「ただの文字列」で持つ
+  // （page_group_id は複製時に意図的に落とされるが display_tags_parsed は引き継がれる）。
+
+  /** 設問の screenGroup.groupId（未設定なら null）。 */
+  function screenGroupIdOf(q) {
+    const g = q && q.display_tags_parsed && q.display_tags_parsed.screenGroup;
+    const id = g && g.groupId;
+    return (typeof id === 'string' && id.trim() !== '') ? id : null;
+  }
+
+  /**
+   * 可視設問リストを画面単位へまとめる。
+   * 同じ groupId でも「連続している」ものだけをまとめる。間に別設問が挟まる場合は
+   * まとめると表示順が壊れる（分岐で飛んできた設問を巻き込む）ため、別画面として扱う。
+   * @returns {Array<{groupId: string|null, title: string|null, questions: Array}>}
+   */
+  function groupByScreen(visList) {
+    const list = visList || [];
+    const screens = [];
+    for (const q of list) {
+      const gid = screenGroupIdOf(q);
+      const last = screens[screens.length - 1];
+      if (gid !== null && last && last.groupId === gid) {
+        last.questions.push(q);
+        continue;
+      }
+      const g = q && q.display_tags_parsed && q.display_tags_parsed.screenGroup;
+      const title = (gid !== null && g && typeof g.title === 'string' && g.title.trim() !== '')
+        ? g.title.trim()
+        : null;
+      screens.push({ groupId: gid, title: title, questions: [q] });
+    }
+    return screens;
+  }
+
+  /**
+   * cursor（visibleQs 上の index）が属する画面の設問リストを返す。
+   *
+   * cursor は従来どおり「設問単位」のまま維持する。分岐・深掘り・resolveNextIndex は
+   * すべて設問コード基準で動いているので、ここでグループ分を読み替えるだけにすると
+   * 既存の遷移ロジックに一切手を入れずに済む。
+   */
+  function screenQuestionsAt(visList, idx) {
+    const list = visList || [];
+    const cur = list[idx];
+    if (!cur) return [];
+    const screens = groupByScreen(list);
+    for (const sc of screens) {
+      if (sc.questions.some(qq => qq.question_code === cur.question_code)) return sc.questions;
+    }
+    return [cur];
+  }
+
+  /** 画面の先頭設問の index（戻る/進む時に画面の途中に着地しないようにする）。 */
+  function screenStartIndex(visList, idx) {
+    const qs = screenQuestionsAt(visList, idx);
+    if (qs.length === 0) return idx;
+    const list = visList || [];
+    const first = list.findIndex(qq => qq.question_code === qs[0].question_code);
+    return first >= 0 ? first : idx;
   }
 
   // ---- pipe 条件式の簡易評価 ----
@@ -1961,7 +2031,9 @@
           const page = allPages.filter(p => p.questions.filter(isVisible).length > 0)[pageCursor];
           qs = page ? page.questions.filter(isVisible) : [];
         } else {
-          qs = (visibleQs && visibleQs[cursor]) ? [visibleQs[cursor]] : [];
+          // screenGroup で1画面に複数設問が出ている場合、そのすべてを検証する
+          // （1問だけ見ていると、同居する未回答の必須設問を素通りさせてしまう）。
+          qs = (visibleQs && visibleQs[cursor]) ? screenQuestionsAt(visibleQs, cursor) : [];
         }
 
         if (!qs || qs.length === 0) {
@@ -2012,9 +2084,23 @@
       clearAnswerError();
       visibleQs = QUESTIONS.filter(isVisible); // 再評価
       if (cursor >= visibleQs.length) { showComplete(); return; }
-      const q = visibleQs[cursor];
-      questionArea.innerHTML = renderQuestion(q, cursor, visibleQs.length);
-      bindInputEvents(q);
+
+      // screenGroup が付いた設問は同じ画面にまとめて描く。
+      // 分岐等でグループの途中に着地した場合は先頭へ寄せる（設問が欠けた画面を出さない）。
+      cursor = screenStartIndex(visibleQs, cursor);
+      const screenQs = screenQuestionsAt(visibleQs, cursor);
+
+      // グループに見出しが指定されていれば画面上部に出す（任意）。
+      const screenInfo = groupByScreen(visibleQs)
+        .find(sc => sc.questions.some(qq => qq.question_code === screenQs[0].question_code));
+      const headingHtml = (screenInfo && screenInfo.title)
+        ? `<p class="screen-group-title">${esc(screenInfo.title)}</p>`
+        : '';
+
+      questionArea.innerHTML = headingHtml + screenQs
+        .map((sq, i) => renderQuestion(sq, cursor + i, visibleQs.length))
+        .join('');
+      screenQs.forEach(sq => bindInputEvents(sq));
       btnBack.style.display = 'none';
       btnNext.disabled = true;
       progressBar.style.width = (cursor / visibleQs.length * 100) + '%';
@@ -2075,6 +2161,9 @@
           onChange(value);
           if (!advance) return;
           if (DISPLAY_MODE !== 'survey_question') return;
+          // screenGroup で他の設問と同居している画面では自動で進めない。
+          // 進めると、同居している設問（例: 満足度の理由）を回答させずに飛ばしてしまう。
+          if (screenGroupIdOf(q) !== null) return;
           if (!isQuestionAnswered(q) || btnNext.disabled) return;
           setTimeout(() => { if (!btnNext.disabled) btnNext.click(); }, 220);
         };
@@ -2315,7 +2404,8 @@
       } else {
         const q = visibleQs[cursor];
         if (!q) { btnNext.disabled = false; return; }
-        btnNext.disabled = !isQuestionAnswered(q);
+        // screenGroup の同居設問も含め、画面内すべてが回答済みで初めて進める。
+        btnNext.disabled = !screenQuestionsAt(visibleQs, cursor).every(isQuestionAnswered);
       }
     }
 
@@ -2424,19 +2514,33 @@
       } else {
         const q = visibleQs[cursor];
         if (q) {
-          const val = answerCtx.answers[q.question_code.toLowerCase()];
-          const result = await submitAnswer(q.question_code, val);
-          if (!result.ok) {
-            showAnswerError(result.message);
-            recoverNextButton();
-            return;
+          // 画面内の設問をすべて保存する。screenGroup で同居している設問を
+          // 保存し忘れると、回答が静かに欠ける（survey_page 側と同じ理由）。
+          // 分岐・深掘りの基準は従来どおり「画面の起点設問 q」のままにする。
+          const screenQs = screenQuestionsAt(visibleQs, cursor);
+          for (const sq of screenQs) {
+            const sval = answerCtx.answers[sq.question_code.toLowerCase()];
+            // 任意設問で未入力のものは送らない（survey_page 側と同じ扱い）。
+            if (sq.question_code !== q.question_code && sval === undefined) continue;
+            const r = await submitAnswer(sq.question_code, sval);
+            if (!r.ok) {
+              showAnswerError(r.message);
+              recoverNextButton();
+              return;
+            }
           }
+          const val = answerCtx.answers[q.question_code.toLowerCase()];
           // 回答が入ったことで表示条件が変わるため、可視リストを再評価してから次位置を決める。
           // nextCursor は「この再評価後の visibleQs 上の index」。renderQuestionMode() が
           // 同じ条件で再度 filter するので意味が一致する（probe 経由の遅延適用も同様）。
           visibleQs = QUESTIONS.filter(isVisible);
-          const nextCursor = resolveNextIndex(q, visibleQs);
-          console.log('NEXT_QUESTION_ID', (resolveNext(q) ?? '(end)'), '-> idx', nextCursor);
+          // 次位置は「画面の最後の設問」から解決する。先頭設問(q)基準で解くと、
+          // 次＝同じ画面の2問目になり、同じ画面をもう一度描いてしまう。
+          // ただし先頭設問に分岐設定がある場合はそれを優先する（分岐は設問単位の指定なので）。
+          const screenNow = screenQuestionsAt(visibleQs, cursor);
+          const branchFrom = resolveNext(q) ? q : (screenNow[screenNow.length - 1] || q);
+          const nextCursor = resolveNextIndex(branchFrom, visibleQs);
+          console.log('NEXT_QUESTION_ID', (resolveNext(branchFrom) ?? '(end)'), '-> idx', nextCursor);
           const probeShown = await checkAndShowProbe(q, val, nextCursor);
           if (probeShown) return;
           cursor = nextCursor;
@@ -2449,7 +2553,12 @@
       if (DISPLAY_MODE === 'survey_page') {
         if (pageCursor > 0) { pageCursor--; renderPageMode(); }
       } else {
-        if (cursor > 0) { cursor--; renderQuestionMode(); }
+        // 画面単位で戻る。cursor-- だけだとグループの途中（2問目）に着地し、
+        // renderQuestionMode の先頭寄せで同じ画面に戻ってしまう。
+        if (cursor > 0) {
+          cursor = screenStartIndex(visibleQs, cursor - 1);
+          renderQuestionMode();
+        }
       }
     });
 

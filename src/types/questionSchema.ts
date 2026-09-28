@@ -181,6 +181,13 @@ export interface OptionSource {
  * タグの構造化表現（canonical）
  * raw 文字列は互換用。アプリ内部ではこちらを優先する。
  */
+/** 複数設問を1画面にまとめる指定（survey_question モード） */
+export interface ScreenGroup {
+  groupId: string;
+  /** 画面上部に出す見出し。未指定なら見出しなし。 */
+  title?: string;
+}
+
 export interface DisplayTagsParsed {
   // ---- 入力サイズ・基本制御 ----
   inputSize?: number;          // <size=n>
@@ -213,6 +220,17 @@ export interface DisplayTagsParsed {
   matrixColSettings?: MatrixColSetting[];  // <sa> <ma> <fs=n> <fl=c,r>
   beforeText?: string;                // <bf=text>
   afterText?: string;                 // <af=text>
+
+  // ---- 画面グループ ----
+  /**
+   * 同じ groupId を持つ設問を survey_question モードで1画面にまとめて出す。
+   *
+   * survey_page モードの page_group_id（DBの page_groups 行を指す）とは別物で、
+   * こちらは案件をまたいで複製しても壊れないよう「ただの文字列」で持つ。
+   * 複製時 page_group_id は意図的に落とされる（projectRepository 参照）が、
+   * display_tags_parsed は引き継がれるため、店舗展開してもグループが保たれる。
+   */
+  screenGroup?: ScreenGroup;
 
   // ---- 制御タグ ----
   pipingConditions?: PipingCondition[];    // <pipe 条件>  ※表示制御用のみ
