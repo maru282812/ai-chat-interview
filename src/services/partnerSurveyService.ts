@@ -159,6 +159,19 @@ export interface PartnerResultQuestionView {
   notice: string;
   /** aggregate=選択肢別の件数のみ / verbatim=原文一覧。 */
   mode: "aggregate" | "verbatim";
+  /**
+   * 開示が始まるタイミング。**店舗側はこれで画面を振り分ける。**
+   *
+   * - `immediate` … 回答が入り次第すぐ。店舗スタッフが接客・施術の前に読む
+   *   「申し送り」。運営が明示的に設定した設問だけがここに入る。
+   * - `on_close` … 締切後に開く集計（規約 第9条4項）。設定が無い選択式設問の
+   *   **既定**であり、性別・年齢のような属性設問も全部これになる。
+   *
+   * ⚠ この2つを同じ画面に混ぜないこと。既定の `on_close` を申し送りに流すと、
+   *   施術前に読む画面が属性の累計グラフで埋まり、本当に読むべき申し送りが
+   *   埋もれる（実際に起きた）。
+   */
+  timing: "immediate" | "on_close";
   /** mode=aggregate のとき。選択肢ごとの件数（0埋め）。 */
   choices: Array<{ value: string; label: string; count: number }> | null;
   /** mode=verbatim のとき。原文の一覧（新しい順）。 */
@@ -679,7 +692,7 @@ export const partnerSurveyService = {
     const answers = await answerRepository.listBySessions(completedSessions.map((s) => s.id));
 
     const views: PartnerResultQuestionView[] = [];
-    for (const { question, mode, notice } of shareable) {
+    for (const { question, mode, timing, notice } of shareable) {
       const target = answers.filter(
         (answer) =>
           answer.question_id === question.id &&
@@ -716,6 +729,7 @@ export const partnerSurveyService = {
           question_text: question.question_text,
           notice,
           mode,
+          timing,
           choices: null,
           entries,
           answered_count: entries.length
@@ -737,6 +751,7 @@ export const partnerSurveyService = {
         question_text: question.question_text,
         notice,
         mode,
+        timing,
         choices: options.map((option) => ({
           value: option.value,
           label: option.label,

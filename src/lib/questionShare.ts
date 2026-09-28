@@ -194,14 +194,27 @@ export function isShareVisibleNow(decision: ShareDecision, projectStatus: string
 export function selectShareableQuestions(
   questions: Question[],
   projectStatus: string
-): Array<{ question: Question; mode: ShareMode; notice: string }> {
-  const selected: Array<{ question: Question; mode: ShareMode; notice: string }> = [];
+): Array<{ question: Question; mode: ShareMode; timing: ShareTiming; notice: string }> {
+  const selected: Array<{
+    question: Question;
+    mode: ShareMode;
+    timing: ShareTiming;
+    notice: string;
+  }> = [];
   for (const question of questions) {
     const decision = resolveShareDecision(question);
     if (!decision.shared || !isShareVisibleNow(decision, projectStatus)) {
       continue;
     }
-    selected.push({ question, mode: decision.mode, notice: decision.notice });
+    // ⚠ timing を落とさないこと。店舗側は「開示してよいか」だけでなく
+    //   「どの画面に属するか」の判断にこれを使う（immediate=申し送り /
+    //   on_close=締切後の集計）。落とすと両者が同じ画面に混ざる。
+    selected.push({
+      question,
+      mode: decision.mode,
+      timing: decision.timing,
+      notice: decision.notice
+    });
   }
   return selected;
 }

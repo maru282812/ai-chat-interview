@@ -170,6 +170,26 @@ test("S13: 空配列でも落ちない", () => {
   assert.deepEqual(selectShareableQuestions([], "published"), []);
 });
 
+test("S13b: timing を落とさずに返す（店舗側の画面振り分けに使う）", () => {
+  // 明示設定の immediate（＝申し送り）と、設定なし選択式の既定 on_close（＝締切後の集計）。
+  // 両者を店舗側で分けられるよう、timing がそのまま出てくる必要がある。
+  const questions = [
+    q({
+      code: "Q20",
+      share: { enabled: true, notice: NOTICE, mode: "verbatim", timing: "immediate" }
+    }),
+    q({ code: "Q21", type: "single_choice", share: null })
+  ];
+  const selected = selectShareableQuestions(questions, "closed");
+  assert.deepEqual(
+    selected.map((s) => [s.question.question_code, s.timing]),
+    [
+      ["Q20", "immediate"],
+      ["Q21", "on_close"]
+    ]
+  );
+});
+
 // ── 6. 同意の遡及禁止 ─────────────────────────────────────────────────────
 
 test("S14: 同意より前の回答は開示対象にしない（利用目的の追加は遡及しない）", () => {
