@@ -121,13 +121,15 @@ MAX_AI_PROBES_PER_SESSION = "2"
 #    fail-closed（未設定なら画像を一切受け付けない）。値は .env から引き継いだが、
 #    ポータル側の本番ホストが変わっているなら見直すこと。
 #    2026-08-30: hibi-site が Cloudflare Workers + 独自ドメインへ移行したため
+#    2026-10-03: hibi-site の配信ドメインが anke.yottollc.com に変わった（ドメイン再編、
+#    hibi-site/docs/実装計画_ドメイン再編_2026-10-03.md）。3変数とも anke に追随。
 #    hibi.yottollc.com を追加。旧 hibi-site-seven.vercel.app は 503（停止済み）で
 #    残す実益がないため外した。検証は保存時（パートナーAPI受信時）のみで表示時には
 #    効かないので、既存の設問画像がこの変更で消えることはない。
-PARTNER_IMAGE_URL_ALLOWED_HOSTS = "hibi.yottollc.com,portal.local.test"
-PORTAL_OPS_URL = "https://hibi.yottollc.com"
+PARTNER_IMAGE_URL_ALLOWED_HOSTS = "anke.yottollc.com,portal.local.test"
+PORTAL_OPS_URL = "https://anke.yottollc.com"
 # 調査票プレビュー（GET /api/partner/surveys/:id/preview）を iframe 埋め込みできる元。
 # CSP の frame-ancestors にそのまま入る。**未設定なら 'self'＝ポータルから出せない**。
-PARTNER_PREVIEW_FRAME_ANCESTORS = "https://hibi.yottollc.com"
+PARTNER_PREVIEW_FRAME_ANCESTORS = "https://anke.yottollc.com"
 CYCLE_TEST_LINE_USER_IDS = "U0f5d4dac42b9a403b1fb4666481b7b35"
 MENU_ACTION_DEBUG_FORCE_PROJECT_LIST = "false"
