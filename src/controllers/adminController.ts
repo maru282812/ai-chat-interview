@@ -1,5 +1,6 @@
 ﻿import type { Request, Response } from "express";
 import { HttpError } from "../lib/http";
+import { ADMIN_MEMO_MAX_LENGTH, normalizeAdminMemo } from "../lib/adminMemo";
 import { redirectWithFlash, redirectWithError } from "../lib/adminFlash";
 import { formatDateTimeJst, fromDateTimeLocalJst, statusLabel } from "../lib/adminView";
 import { toCsvRfc4180 } from "../lib/statExport";
@@ -685,6 +686,8 @@ function renderProjectsIndex(
     templates?: import("../types/domain").IndustryTemplate[];
     stores?: import("../types/domain").Store[];
     totalCount?: number;
+    /** 絞り込み条件のクエリ文字列（JS無効時、メモ保存後に同じ一覧へ戻すため） */
+    currentQuery?: string;
   }
 ): void {
   const filter = input.filter ?? EMPTY_FILTER;
@@ -697,7 +700,8 @@ function renderProjectsIndex(
     hasFilter: hasActiveFilter(filter),
     industryTemplates: input.templates ?? [],
     stores: input.stores ?? [],
-    totalCount: input.totalCount ?? input.projects.length
+    totalCount: input.totalCount ?? input.projects.length,
+    currentQuery: input.currentQuery ?? ""
   });
 }
 
@@ -3257,7 +3261,11 @@ export const adminController = {
       filter,
       templates,
       stores,
-      totalCount: projects.length
+      totalCount: projects.length,
+      currentQuery: (req.originalUrl.split("?")[1] ?? "")
+        .split("&")
+        .filter((pair) => pair.length > 0 && !pair.startsWith("notice="))
+        .join("&")
     });
   },
 
@@ -3870,6 +3878,26 @@ export const adminController = {
   async copyProject(req: Request, res: Response): Promise<void> {
     const copied = await projectRepository.copyProject(routeParam(req, "projectId"));
     res.redirect(buildProjectEditRedirectPath(copied.id, "project_copied"));
+  },
+
+  /**
+   * 運営者メモの保存（Migration 117）。案件一覧のその場編集から fetch で呼ぶ。
+   * JS が無い場合はフォーム送信になるので、一覧（絞り込み条件付き）へ戻す。
+   */
+  async updateProjectMemo(req: Request, res: Response): Promise<void> {
+    const projectId = routeParam(req, "projectId");
+    const memo = normalizeAdminMemo(req.body.admin_memo);
+    if (memo !== null && memo.length > ADMIN_MEMO_MAX_LENGTH) {
+      throw new HttpError(400, `メモは${ADMIN_MEMO_MAX_LENGTH}文字以内で入力してください`);
+    }
+    await projectRepository.getById(projectId);
+    await projectRepository.update(projectId, { admin_memo: memo });
+
+    if ((req.get("accept") ?? "").includes("application/json")) {
+      res.json({ ok: true, admin_memo: memo });
+      return;
+    }
+    res.redirect(sanitizeAdminRedirect(req.body.return_to) ?? "/admin/projects");
   },
 
   async deleteProject(req: Request, res: Response): Promise<void> {

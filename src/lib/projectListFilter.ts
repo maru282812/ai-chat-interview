@@ -18,6 +18,7 @@ export interface FilterableProject {
   client_id?: string | null;
   name?: string | null;
   status?: string | null;
+  admin_memo?: string | null;
 }
 
 export interface ProjectListFilter {
@@ -27,7 +28,7 @@ export interface ProjectListFilter {
   store: string | null;
   /** entry / followup / verify / template */
   role: string | null;
-  /** 案件名の部分一致（大文字小文字を無視） */
+  /** 案件名・運営者メモの部分一致（大文字小文字を無視） */
   keyword: string | null;
   status: string | null;
 }
@@ -89,8 +90,11 @@ export function matchesProjectFilter(
   if (filter.status && (project.status ?? null) !== filter.status) return false;
 
   if (filter.keyword) {
+    // 運営者メモも対象にする（「検証用」「差し替え前」などメモで探せるように）。
+    const keyword = filter.keyword.toLowerCase();
     const name = (project.name ?? "").toLowerCase();
-    if (!name.includes(filter.keyword.toLowerCase())) return false;
+    const memo = (project.admin_memo ?? "").toLowerCase();
+    if (!name.includes(keyword) && !memo.includes(keyword)) return false;
   }
 
   return true;

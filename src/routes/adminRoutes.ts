@@ -20,6 +20,7 @@ adminRoutes.get("/projects/:projectId/edit", asyncHandler(adminController.editPr
 adminRoutes.post("/projects/:projectId", asyncHandler(adminController.updateProject));
 adminRoutes.get("/projects/:projectId/prompt-package-history", asyncHandler(adminController.projectPromptPackageHistoryPage));
 adminRoutes.post("/projects/:projectId/copy", asyncHandler(adminController.copyProject));
+adminRoutes.post("/projects/:projectId/memo", asyncHandler(adminController.updateProjectMemo));
 adminRoutes.post("/projects/:projectId/delete", asyncHandler(adminController.deleteProject));
 
 adminRoutes.get("/projects/:projectId/questions", asyncHandler(adminController.questions));

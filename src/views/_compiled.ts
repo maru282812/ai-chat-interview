@@ -5859,7 +5859,7 @@ function encode_char(c) {
 
 } as CompiledTemplate,
   "admin/projects/indexDesigner": function (locals, escapeFn, include, rethrow) {
-  const { A, B, C, c, entry, filter, followup, g, hasFilter, industryTemplates, noticeMessage, projects, stores, template, title, totalCount, verify } = (locals || {});
+  const { A, B, C, JS, c, currentQuery, entry, filter, followup, g, hasFilter, industryTemplates, noticeMessage, projects, stores, template, title, totalCount, verify } = (locals || {});
 
 escapeFn = escapeFn || function (markup) {
   return markup == undefined
@@ -5882,11 +5882,11 @@ function encode_char(c) {
   var __output = "";
   function __append(s) { if (s !== undefined && s !== null) __output += s }
     ; __append( include("../../partials/header", { title }) )
-    ; __append("\r\n")
+    ; __append("\n")
     ; 
   const notice = typeof noticeMessage === "string" ? noticeMessage : "";
 
-    ; __append("\r\n\r\n<div class=\"actions-row\">\r\n  <a class=\"button-link\" href=\"/admin/projects/new\">新規プロジェクト</a>\r\n  <a class=\"button-link\" href=\"/admin/stores\" style=\"margin-left:8px\">店舗管理</a>\r\n</div>\r\n\r\n")
+    ; __append("\n\n<div class=\"actions-row\">\n  <a class=\"button-link\" href=\"/admin/projects/new\">新規プロジェクト</a>\n  <a class=\"button-link\" href=\"/admin/stores\" style=\"margin-left:8px\">店舗管理</a>\n</div>\n\n")
     ; 
   // 店舗展開すると案件は「店舗数 × A/B/C」で増えるため、業種・店舗・役割で絞り込む。
   const storeNameById = {};
@@ -5895,164 +5895,183 @@ function encode_char(c) {
   industryTemplates.forEach(function (t) { templateNameById[t.id] = t.name; });
   const ROLE_LABELS = { template: "原本", entry: "A", followup: "B", verify: "C" };
   const ROLE_COLORS = { template: "#6b4fa8", entry: "#2a6fb0", followup: "#666", verify: "#c8851b" };
+  // メモ保存後（JS無効時のフォーム送信）に絞り込み条件ごと一覧へ戻すための URL
+  const returnTo = "/admin/projects" + (typeof currentQuery === "string" && currentQuery ? "?" + currentQuery : "");
 
-    ; __append("\r\n\r\n<form method=\"get\" action=\"/admin/projects\" class=\"card\"\r\n      style=\"margin-top:16px;padding:10px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end\">\r\n  <label style=\"font-size:12px;color:#555\">\r\n    業種<br>\r\n    <select name=\"industry\" style=\"padding:5px;min-width:150px\">\r\n      <option value=\"\">すべて</option>\r\n      ")
+    ; __append("\n\n<style>\n  .admin-memo { margin-top: 6px; max-width: 520px; }\n  /* 管理画面CSSの button{display:…} は UA の [hidden] に勝つので、ここで明示的に消す */\n  .admin-memo [hidden] { display: none !important; }\n  .admin-memo-view:not([hidden]) { display: flex; gap: 8px; align-items: flex-start;\n    background: #fff8e1; border: 1px solid #f0dca0; border-radius: 4px; padding: 5px 8px; }\n  .admin-memo-text { flex: 1; font-size: 12px; color: #5a4a10; white-space: pre-wrap; word-break: break-word; }\n  .admin-memo-edit-btn, .admin-memo-add-btn, .admin-memo-cancel {\n    background: none; border: none; padding: 0; color: #2a6fb0; font-size: 11px; cursor: pointer; width: auto; }\n  .admin-memo-edit-btn { flex: none; }\n  .admin-memo-add-btn { color: #999; }\n  .admin-memo-add-btn:hover { color: #2a6fb0; }\n  .admin-memo-form textarea { width: 100%; box-sizing: border-box; font-size: 12px; padding: 5px 7px;\n    border: 1px solid #d6c27a; border-radius: 4px; background: #fffdf3; resize: vertical; }\n  .admin-memo-actions:not([hidden]) { display: flex; gap: 10px; align-items: center; margin-top: 4px; }\n  .admin-memo-save { padding: 3px 12px; background: #2a6fb0; color: #fff; border: none; border-radius: 4px;\n    font-size: 12px; cursor: pointer; width: auto; }\n  .admin-memo-status { font-size: 11px; color: #777; }\n  .admin-memo-status.is-error { color: #c62828; }\n</style>\n\n<form method=\"get\" action=\"/admin/projects\" class=\"card\"\n      style=\"margin-top:16px;padding:10px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end\">\n  <label style=\"font-size:12px;color:#555\">\n    業種<br>\n    <select name=\"industry\" style=\"padding:5px;min-width:150px\">\n      <option value=\"\">すべて</option>\n      ")
     ;  industryTemplates.forEach(function (t) { 
-    ; __append("\r\n        <option value=\"")
+    ; __append("\n        <option value=\"")
     ; __append(escapeFn( t.id ))
     ; __append("\" ")
     ; __append(escapeFn( filter.industry === t.id ? 'selected' : '' ))
     ; __append(">")
     ; __append(escapeFn( t.name ))
-    ; __append("</option>\r\n      ")
+    ; __append("</option>\n      ")
     ;  }) 
-    ; __append("\r\n      <option value=\"none\" ")
+    ; __append("\n      <option value=\"none\" ")
     ; __append(escapeFn( filter.industry === 'none' ? 'selected' : '' ))
-    ; __append(">（業種なし）</option>\r\n    </select>\r\n  </label>\r\n\r\n  <label style=\"font-size:12px;color:#555\">\r\n    店舗<br>\r\n    <select name=\"store\" style=\"padding:5px;min-width:170px\">\r\n      <option value=\"\">すべて</option>\r\n      ")
+    ; __append(">（業種なし）</option>\n    </select>\n  </label>\n\n  <label style=\"font-size:12px;color:#555\">\n    店舗<br>\n    <select name=\"store\" style=\"padding:5px;min-width:170px\">\n      <option value=\"\">すべて</option>\n      ")
     ;  stores.forEach(function (st) { 
-    ; __append("\r\n        <option value=\"")
+    ; __append("\n        <option value=\"")
     ; __append(escapeFn( st.id ))
     ; __append("\" ")
     ; __append(escapeFn( filter.store === st.id ? 'selected' : '' ))
     ; __append(">")
     ; __append(escapeFn( st.name ))
-    ; __append("</option>\r\n      ")
+    ; __append("</option>\n      ")
     ;  }) 
-    ; __append("\r\n      <option value=\"none\" ")
+    ; __append("\n      <option value=\"none\" ")
     ; __append(escapeFn( filter.store === 'none' ? 'selected' : '' ))
-    ; __append(">（店舗なし・通常案件）</option>\r\n    </select>\r\n  </label>\r\n\r\n  <label style=\"font-size:12px;color:#555\">\r\n    種別<br>\r\n    <select name=\"role\" style=\"padding:5px;min-width:130px\">\r\n      <option value=\"\">すべて</option>\r\n      <option value=\"template\" ")
+    ; __append(">（店舗なし・通常案件）</option>\n    </select>\n  </label>\n\n  <label style=\"font-size:12px;color:#555\">\n    種別<br>\n    <select name=\"role\" style=\"padding:5px;min-width:130px\">\n      <option value=\"\">すべて</option>\n      <option value=\"template\" ")
     ; __append(escapeFn( filter.role === 'template' ? 'selected' : '' ))
-    ; __append(">原本（テンプレ）</option>\r\n      <option value=\"entry\" ")
+    ; __append(">原本（テンプレ）</option>\n      <option value=\"entry\" ")
     ; __append(escapeFn( filter.role === 'entry' ? 'selected' : '' ))
-    ; __append(">A：起点</option>\r\n      <option value=\"followup\" ")
+    ; __append(">A：起点</option>\n      <option value=\"followup\" ")
     ; __append(escapeFn( filter.role === 'followup' ? 'selected' : '' ))
-    ; __append(">B：来店後</option>\r\n      <option value=\"verify\" ")
+    ; __append(">B：来店後</option>\n      <option value=\"verify\" ")
     ; __append(escapeFn( filter.role === 'verify' ? 'selected' : '' ))
-    ; __append(">C：離脱検証</option>\r\n      <option value=\"none\" ")
+    ; __append(">C：離脱検証</option>\n      <option value=\"none\" ")
     ; __append(escapeFn( filter.role === 'none' ? 'selected' : '' ))
-    ; __append(">（サイクル外）</option>\r\n    </select>\r\n  </label>\r\n\r\n  <label style=\"font-size:12px;color:#555\">\r\n    状態<br>\r\n    <select name=\"status\" style=\"padding:5px;min-width:110px\">\r\n      <option value=\"\">すべて</option>\r\n      ")
+    ; __append(">（サイクル外）</option>\n    </select>\n  </label>\n\n  <label style=\"font-size:12px;color:#555\">\n    状態<br>\n    <select name=\"status\" style=\"padding:5px;min-width:110px\">\n      <option value=\"\">すべて</option>\n      ")
     ;  ['draft','ready','published','paused','closed','archived'].forEach(function (st) { 
-    ; __append("\r\n        <option value=\"")
+    ; __append("\n        <option value=\"")
     ; __append(escapeFn( st ))
     ; __append("\" ")
     ; __append(escapeFn( filter.status === st ? 'selected' : '' ))
     ; __append(">")
     ; __append(escapeFn( st ))
-    ; __append("</option>\r\n      ")
+    ; __append("</option>\n      ")
     ;  }) 
-    ; __append("\r\n    </select>\r\n  </label>\r\n\r\n  <label style=\"font-size:12px;color:#555\">\r\n    案件名<br>\r\n    <input type=\"text\" name=\"q\" value=\"")
+    ; __append("\n    </select>\n  </label>\n\n  <label style=\"font-size:12px;color:#555\">\n    案件名<br>\n    <input type=\"text\" name=\"q\" value=\"")
     ; __append(escapeFn( filter.keyword || '' ))
-    ; __append("\" placeholder=\"部分一致\" style=\"padding:5px;min-width:150px\">\r\n  </label>\r\n\r\n  <button type=\"submit\" style=\"padding:6px 16px;background:#2a6fb0;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px\">絞り込む</button>\r\n  ")
+    ; __append("\" placeholder=\"部分一致\" style=\"padding:5px;min-width:150px\">\n  </label>\n\n  <button type=\"submit\" style=\"padding:6px 16px;background:#2a6fb0;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px\">絞り込む</button>\n  ")
     ;  if (hasFilter) { 
-    ; __append("\r\n    <a href=\"/admin/projects\" style=\"font-size:12px;color:#666\">解除</a>\r\n  ")
+    ; __append("\n    <a href=\"/admin/projects\" style=\"font-size:12px;color:#666\">解除</a>\n  ")
     ;  } 
-    ; __append("\r\n\r\n  <span style=\"margin-left:auto;font-size:12px;color:#777\">\r\n    ")
+    ; __append("\n\n  <span style=\"margin-left:auto;font-size:12px;color:#777\">\n    ")
     ;  if (hasFilter) { 
-    ; __append("\r\n      <strong>")
+    ; __append("\n      <strong>")
     ; __append(escapeFn( projects.length ))
     ; __append("</strong> / ")
     ; __append(escapeFn( totalCount ))
-    ; __append(" 件\r\n    ")
+    ; __append(" 件\n    ")
     ;  } else { 
-    ; __append("\r\n      ")
+    ; __append("\n      ")
     ; __append(escapeFn( totalCount ))
-    ; __append(" 件\r\n    ")
+    ; __append(" 件\n    ")
     ;  } 
-    ; __append("\r\n  </span>\r\n</form>\r\n\r\n")
+    ; __append("\n  </span>\n</form>\n\n")
     ;  if (notice) { 
-    ; __append("\r\n  <section class=\"card subtle-card success-card\" style=\"margin-top: 16px;\">\r\n    <strong class=\"")
+    ; __append("\n  <section class=\"card subtle-card success-card\" style=\"margin-top: 16px;\">\n    <strong class=\"")
     ; __append(escapeFn( notice.includes('archived') ? '' : 'success-text' ))
     ; __append("\">")
     ; __append(escapeFn( notice ))
-    ; __append("</strong>\r\n  </section>\r\n")
+    ; __append("</strong>\n  </section>\n")
     ;  } 
-    ; __append("\r\n\r\n<table style=\"margin-top: 16px;\">\r\n  <thead>\r\n    <tr>\r\n      <th>Project</th>\r\n      <th>Client</th>\r\n      <th>Status</th>\r\n      <th>Reward</th>\r\n      <th>Design</th>\r\n      <th>AIプロンプト</th>\r\n      <th>Actions</th>\r\n    </tr>\r\n  </thead>\r\n  <tbody>\r\n    ")
+    ; __append("\n\n<table style=\"margin-top: 16px;\">\n  <thead>\n    <tr>\n      <th>Project</th>\n      <th>Client</th>\n      <th>Status</th>\n      <th>Reward</th>\n      <th>Design</th>\n      <th>AIプロンプト</th>\n      <th>Actions</th>\n    </tr>\n  </thead>\n  <tbody>\n    ")
     ;  for (const row of projects) { 
-    ; __append("\r\n      <tr>\r\n        <td>\r\n          ")
+    ; __append("\n      <tr>\n        <td>\n          ")
     ;  if (row.project.template_step_role) { 
-    ; __append("\r\n            <span style=\"display:inline-block;background:")
+    ; __append("\n            <span style=\"display:inline-block;background:")
     ; __append(escapeFn( ROLE_COLORS[row.project.template_step_role] || '#999' ))
     ; __append(";color:#fff;font-size:10px;padding:1px 6px;border-radius:3px;margin-right:5px\">")
     ; __append(escapeFn( ROLE_LABELS[row.project.template_step_role] || row.project.template_step_role ))
-    ; __append("</span>\r\n          ")
+    ; __append("</span>\n          ")
     ;  } 
-    ; __append("\r\n          <strong>")
+    ; __append("\n          <strong>")
     ; __append(escapeFn( row.project.name ))
-    ; __append("</strong><br />\r\n          ")
+    ; __append("</strong><br />\n          ")
     ;  if (row.project.store_id && storeNameById[row.project.store_id]) { 
-    ; __append("\r\n            <span style=\"font-size:11px;color:#2a6fb0\">")
+    ; __append("\n            <span style=\"font-size:11px;color:#2a6fb0\">")
     ; __append(escapeFn( storeNameById[row.project.store_id] ))
-    ; __append("</span>\r\n            ")
+    ; __append("</span>\n            ")
     ;  if (row.project.entry_code) { 
-    ; __append("\r\n              <code style=\"font-size:10px;color:#888;margin-left:4px\">")
+    ; __append("\n              <code style=\"font-size:10px;color:#888;margin-left:4px\">")
     ; __append(escapeFn( row.project.entry_code ))
-    ; __append("</code>\r\n            ")
+    ; __append("</code>\n            ")
     ;  } 
-    ; __append("\r\n            <br />\r\n          ")
+    ; __append("\n            <br />\n          ")
     ;  } 
-    ; __append("\r\n          <span class=\"muted\">")
+    ; __append("\n          <span class=\"muted\">")
     ; __append(escapeFn( row.project.objective || "-" ))
-    ; __append("</span>\r\n        </td>\r\n        <td>")
+    ; __append("</span>\n          ")
+    ; __append("\n          <div class=\"admin-memo\">\n            <div class=\"admin-memo-view\"")
+    ;  if (!row.project.admin_memo) { 
+    ; __append(" hidden")
+    ;  } 
+    ; __append(">\n              <span class=\"admin-memo-text\">")
+    ; __append(escapeFn( row.project.admin_memo || "" ))
+    ; __append("</span>\n              <button type=\"button\" class=\"admin-memo-edit-btn\">編集</button>\n            </div>\n            <button type=\"button\" class=\"admin-memo-add-btn\"")
+    ;  if (row.project.admin_memo) { 
+    ; __append(" hidden")
+    ;  } 
+    ; __append(">＋ メモ</button>\n            <form method=\"post\" action=\"/admin/projects/")
+    ; __append(escapeFn( row.project.id ))
+    ; __append("/memo\" class=\"admin-memo-form\" hidden>\n              <input type=\"hidden\" name=\"return_to\" value=\"")
+    ; __append(escapeFn( returnTo ))
+    ; __append("\">\n              <textarea name=\"admin_memo\" rows=\"3\" maxlength=\"2000\" placeholder=\"運営用のメモ（回答者・店舗には表示されません）\">")
+    ; __append(escapeFn( row.project.admin_memo || "" ))
+    ; __append("</textarea>\n              <div class=\"admin-memo-actions\">\n                <button type=\"submit\" class=\"admin-memo-save\">保存</button>\n                <button type=\"button\" class=\"admin-memo-cancel\">キャンセル</button>\n                <span class=\"admin-memo-status\" aria-live=\"polite\"></span>\n              </div>\n            </form>\n          </div>\n        </td>\n        <td>")
     ; __append(escapeFn( row.project.client_name || "-" ))
-    ; __append("</td>\r\n        <td><span class=\"tag\">")
+    ; __append("</td>\n        <td><span class=\"tag\">")
     ; __append(escapeFn( row.project.status ))
-    ; __append("</span></td>\r\n        <td>")
+    ; __append("</span></td>\n        <td>")
     ; __append(escapeFn( row.project.reward_points ))
-    ; __append(" pt</td>\r\n        <td>\r\n          <span class=\"tag\">")
+    ; __append(" pt</td>\n        <td>\n          <span class=\"tag\">")
     ; __append(escapeFn( row.project.research_mode ))
-    ; __append("</span><br />\r\n          <span class=\"muted\">questions: ")
+    ; __append("</span><br />\n          <span class=\"muted\">questions: ")
     ; __append(escapeFn( row.questionCount ))
     ; __append(" / branches: ")
     ; __append(escapeFn( row.branchCount ))
-    ; __append("</span>\r\n        </td>\r\n        <td style=\"font-size:12px\">\r\n          ")
+    ; __append("</span>\n        </td>\n        <td style=\"font-size:12px\">\n          ")
     ;  if (row.project.ai_prompt_mode === 'package' && row.packageInfo) { 
-    ; __append("\r\n            <a href=\"/admin/prompt-packages/")
+    ; __append("\n            <a href=\"/admin/prompt-packages/")
     ; __append(escapeFn( row.packageInfo.packageId ))
     ; __append("\" title=\"")
     ; __append(escapeFn( row.packageInfo.packageName ))
     ; __append(" の管理へ\"><code style=\"font-size:11px\">")
     ; __append(escapeFn( row.packageInfo.packageSlug ))
-    ; __append("</code></a><br />\r\n            ")
+    ; __append("</code></a><br />\n            ")
     ;  if (row.packageInfo.isFallback) { 
-    ; __append("\r\n              <span style=\"color:#999\">v")
+    ; __append("\n              <span style=\"color:#999\">v")
     ; __append(escapeFn( row.packageInfo.versionNo ))
-    ; __append(" archived</span>\r\n              <span style=\"color:#e65100\">→ fallback</span>\r\n              <span style=\"color:#1a7a5a\"> v")
+    ; __append(" archived</span>\n              <span style=\"color:#e65100\">→ fallback</span>\n              <span style=\"color:#1a7a5a\"> v")
     ; __append(escapeFn( row.packageInfo.fallbackVersionNo ))
-    ; __append("</span>\r\n            ")
+    ; __append("</span>\n            ")
     ;  } else { 
-    ; __append("\r\n              <span style=\"color:")
+    ; __append("\n              <span style=\"color:")
     ; __append(escapeFn( row.packageInfo.versionStatus === 'published' ? '#1a7a5a' : '#999' ))
-    ; __append("\">\r\n                v")
+    ; __append("\">\n                v")
     ; __append(escapeFn( row.packageInfo.versionNo ))
     ; __append(" ")
     ; __append(escapeFn( row.packageInfo.versionStatus ))
-    ; __append("\r\n              </span>\r\n            ")
+    ; __append("\n              </span>\n            ")
     ;  } 
-    ; __append("\r\n          ")
+    ; __append("\n          ")
     ;  } else if (row.project.ai_prompt_mode === 'package') { 
-    ; __append("\r\n            <span style=\"color:#c62828\">package（バージョン未設定）</span>\r\n          ")
+    ; __append("\n            <span style=\"color:#c62828\">package（バージョン未設定）</span>\n          ")
     ;  } else { 
-    ; __append("\r\n            <span style=\"color:#aaa\">custom</span>\r\n            <span title=\"後方互換モードです。プロンプトパッケージへの移行を推奨します。\"\r\n              style=\"font-size:10px;background:#fff3e0;color:#b36200;border:1px solid #f0c890;border-radius:3px;padding:0 4px;margin-left:4px\">要移行</span>\r\n          ")
+    ; __append("\n            <span style=\"color:#aaa\">custom</span>\n            <span title=\"後方互換モードです。プロンプトパッケージへの移行を推奨します。\"\n              style=\"font-size:10px;background:#fff3e0;color:#b36200;border:1px solid #f0c890;border-radius:3px;padding:0 4px;margin-left:4px\">要移行</span>\n          ")
     ;  } 
-    ; __append("\r\n        </td>\r\n        <td>\r\n          <div class=\"actions-row\">\r\n            <a href=\"/admin/projects/")
+    ; __append("\n        </td>\n        <td>\n          <div class=\"actions-row\">\n            <a href=\"/admin/projects/")
     ; __append(escapeFn( row.project.id ))
-    ; __append("/edit\">Edit</a>\r\n            <a href=\"/admin/projects/")
+    ; __append("/edit\">Edit</a>\n            <a href=\"/admin/projects/")
     ; __append(escapeFn( row.project.id ))
-    ; __append("/questions\">Questions</a>\r\n            <a href=\"/admin/projects/")
+    ; __append("/questions\">Questions</a>\n            <a href=\"/admin/projects/")
     ; __append(escapeFn( row.project.id ))
-    ; __append("/respondents\">Respondents</a>\r\n            <a href=\"/admin/projects/")
+    ; __append("/respondents\">Respondents</a>\n            <a href=\"/admin/projects/")
     ; __append(escapeFn( row.project.id ))
-    ; __append("/delivery\">Delivery</a>\r\n            <a href=\"/admin/projects/")
+    ; __append("/delivery\">Delivery</a>\n            <a href=\"/admin/projects/")
     ; __append(escapeFn( row.project.id ))
-    ; __append("/analysis\">Analysis</a>\r\n            <form method=\"post\" action=\"/admin/projects/")
+    ; __append("/analysis\">Analysis</a>\n            <form method=\"post\" action=\"/admin/projects/")
     ; __append(escapeFn( row.project.id ))
-    ; __append("/copy\" class=\"inline-form\" onsubmit=\"return window.confirm('このプロジェクトを複製します。複製先は draft として作成されます。よろしいですか？');\">\r\n              <button type=\"submit\" class=\"button-link secondary\">Copy</button>\r\n            </form>\r\n            <form method=\"post\" action=\"/admin/projects/")
+    ; __append("/copy\" class=\"inline-form\" onsubmit=\"return window.confirm('このプロジェクトを複製します。複製先は draft として作成されます。よろしいですか？');\">\n              <button type=\"submit\" class=\"button-link secondary\">Copy</button>\n            </form>\n            <form method=\"post\" action=\"/admin/projects/")
     ; __append(escapeFn( row.project.id ))
-    ; __append("/delete\" class=\"inline-form\" onsubmit=\"return window.confirm('このプロジェクトを削除します。回答履歴や配信履歴がある場合は archived に変更されます。よろしいですか？');\">\r\n              <button type=\"submit\" class=\"button-link danger\">Delete</button>\r\n            </form>\r\n          </div>\r\n        </td>\r\n      </tr>\r\n    ")
+    ; __append("/delete\" class=\"inline-form\" onsubmit=\"return window.confirm('このプロジェクトを削除します。回答履歴や配信履歴がある場合は archived に変更されます。よろしいですか？');\">\n              <button type=\"submit\" class=\"button-link danger\">Delete</button>\n            </form>\n          </div>\n        </td>\n      </tr>\n    ")
     ;  } 
-    ; __append("\r\n  </tbody>\r\n</table>\r\n\r\n")
+    ; __append("\n  </tbody>\n</table>\n\n<script>\n(function () {\n  // 運営者メモのその場編集。JS が無ければフォーム送信（return_to で一覧へ戻る）にフォールバックする。\n  document.querySelectorAll(\".admin-memo\").forEach(function (box) {\n    var view = box.querySelector(\".admin-memo-view\");\n    var text = box.querySelector(\".admin-memo-text\");\n    var addBtn = box.querySelector(\".admin-memo-add-btn\");\n    var form = box.querySelector(\".admin-memo-form\");\n    var textarea = form.querySelector(\"textarea\");\n    var saveBtn = form.querySelector(\".admin-memo-save\");\n    var status = form.querySelector(\".admin-memo-status\");\n    var saved = textarea.value;\n\n    function showView() {\n      form.hidden = true;\n      view.hidden = saved === \"\";\n      addBtn.hidden = saved !== \"\";\n    }\n    function openForm() {\n      textarea.value = saved;\n      status.textContent = \"\";\n      status.classList.remove(\"is-error\");\n      view.hidden = true;\n      addBtn.hidden = true;\n      form.hidden = false;\n      textarea.focus();\n    }\n\n    box.querySelector(\".admin-memo-edit-btn\").addEventListener(\"click\", openForm);\n    addBtn.addEventListener(\"click\", openForm);\n    form.querySelector(\".admin-memo-cancel\").addEventListener(\"click\", showView);\n    textarea.addEventListener(\"keydown\", function (e) {\n      if (e.key === \"Escape\") showView();\n      if (e.key === \"Enter\" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); form.requestSubmit(); }\n    });\n\n    form.addEventListener(\"submit\", function (e) {\n      e.preventDefault();\n      saveBtn.disabled = true;\n      status.classList.remove(\"is-error\");\n      status.textContent = \"保存中…\";\n      fetch(form.action, {\n        method: \"POST\",\n        headers: { \"Accept\": \"application/json\", \"Content-Type\": \"application/x-www-form-urlencoded\" },\n        body: new URLSearchParams({ admin_memo: textarea.value }).toString(),\n        credentials: \"same-origin\"\n      })\n        .then(function (res) {\n          if (!res.ok) throw new Error(\"HTTP \" + res.status);\n          return res.json();\n        })\n        .then(function (data) {\n          saved = data.admin_memo || \"\";\n          text.textContent = saved;\n          textarea.value = saved;\n          showView();\n        })\n        .catch(function () {\n          status.classList.add(\"is-error\");\n          status.textContent = \"保存できませんでした。もう一度お試しください。\";\n        })\n        .then(function () { saveBtn.disabled = false; });\n    });\n  });\n})();\n</script>\n\n")
     ; __append( include("../../partials/footer") )
-    ; __append("\r\n")
+    ; __append("\n")
   return __output;
 
 } as CompiledTemplate,

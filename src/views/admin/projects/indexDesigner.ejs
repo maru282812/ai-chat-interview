@@ -16,7 +16,30 @@
   industryTemplates.forEach(function (t) { templateNameById[t.id] = t.name; });
   const ROLE_LABELS = { template: "原本", entry: "A", followup: "B", verify: "C" };
   const ROLE_COLORS = { template: "#6b4fa8", entry: "#2a6fb0", followup: "#666", verify: "#c8851b" };
+  // メモ保存後（JS無効時のフォーム送信）に絞り込み条件ごと一覧へ戻すための URL
+  const returnTo = "/admin/projects" + (typeof currentQuery === "string" && currentQuery ? "?" + currentQuery : "");
 %>
+
+<style>
+  .admin-memo { margin-top: 6px; max-width: 520px; }
+  /* 管理画面CSSの button{display:…} は UA の [hidden] に勝つので、ここで明示的に消す */
+  .admin-memo [hidden] { display: none !important; }
+  .admin-memo-view:not([hidden]) { display: flex; gap: 8px; align-items: flex-start;
+    background: #fff8e1; border: 1px solid #f0dca0; border-radius: 4px; padding: 5px 8px; }
+  .admin-memo-text { flex: 1; font-size: 12px; color: #5a4a10; white-space: pre-wrap; word-break: break-word; }
+  .admin-memo-edit-btn, .admin-memo-add-btn, .admin-memo-cancel {
+    background: none; border: none; padding: 0; color: #2a6fb0; font-size: 11px; cursor: pointer; width: auto; }
+  .admin-memo-edit-btn { flex: none; }
+  .admin-memo-add-btn { color: #999; }
+  .admin-memo-add-btn:hover { color: #2a6fb0; }
+  .admin-memo-form textarea { width: 100%; box-sizing: border-box; font-size: 12px; padding: 5px 7px;
+    border: 1px solid #d6c27a; border-radius: 4px; background: #fffdf3; resize: vertical; }
+  .admin-memo-actions:not([hidden]) { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
+  .admin-memo-save { padding: 3px 12px; background: #2a6fb0; color: #fff; border: none; border-radius: 4px;
+    font-size: 12px; cursor: pointer; width: auto; }
+  .admin-memo-status { font-size: 11px; color: #777; }
+  .admin-memo-status.is-error { color: #c62828; }
+</style>
 
 <form method="get" action="/admin/projects" class="card"
       style="margin-top:16px;padding:10px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
@@ -117,6 +140,23 @@
             <br />
           <% } %>
           <span class="muted"><%= row.project.objective || "-" %></span>
+          <%# 運営者メモ（Migration 117）。運営だけが見る。回答者・店舗には出さない。 %>
+          <div class="admin-memo">
+            <div class="admin-memo-view"<% if (!row.project.admin_memo) { %> hidden<% } %>>
+              <span class="admin-memo-text"><%= row.project.admin_memo || "" %></span>
+              <button type="button" class="admin-memo-edit-btn">編集</button>
+            </div>
+            <button type="button" class="admin-memo-add-btn"<% if (row.project.admin_memo) { %> hidden<% } %>>＋ メモ</button>
+            <form method="post" action="/admin/projects/<%= row.project.id %>/memo" class="admin-memo-form" hidden>
+              <input type="hidden" name="return_to" value="<%= returnTo %>">
+              <textarea name="admin_memo" rows="3" maxlength="2000" placeholder="運営用のメモ（回答者・店舗には表示されません）"><%= row.project.admin_memo || "" %></textarea>
+              <div class="admin-memo-actions">
+                <button type="submit" class="admin-memo-save">保存</button>
+                <button type="button" class="admin-memo-cancel">キャンセル</button>
+                <span class="admin-memo-status" aria-live="polite"></span>
+              </div>
+            </form>
+          </div>
         </td>
         <td><%= row.project.client_name || "-" %></td>
         <td><span class="tag"><%= row.project.status %></span></td>
@@ -164,5 +204,72 @@
     <% } %>
   </tbody>
 </table>
+
+<script>
+(function () {
+  // 運営者メモのその場編集。JS が無ければフォーム送信（return_to で一覧へ戻る）にフォールバックする。
+  document.querySelectorAll(".admin-memo").forEach(function (box) {
+    var view = box.querySelector(".admin-memo-view");
+    var text = box.querySelector(".admin-memo-text");
+    var addBtn = box.querySelector(".admin-memo-add-btn");
+    var form = box.querySelector(".admin-memo-form");
+    var textarea = form.querySelector("textarea");
+    var saveBtn = form.querySelector(".admin-memo-save");
+    var status = form.querySelector(".admin-memo-status");
+    var saved = textarea.value;
+
+    function showView() {
+      form.hidden = true;
+      view.hidden = saved === "";
+      addBtn.hidden = saved !== "";
+    }
+    function openForm() {
+      textarea.value = saved;
+      status.textContent = "";
+      status.classList.remove("is-error");
+      view.hidden = true;
+      addBtn.hidden = true;
+      form.hidden = false;
+      textarea.focus();
+    }
+
+    box.querySelector(".admin-memo-edit-btn").addEventListener("click", openForm);
+    addBtn.addEventListener("click", openForm);
+    form.querySelector(".admin-memo-cancel").addEventListener("click", showView);
+    textarea.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") showView();
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); form.requestSubmit(); }
+    });
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      saveBtn.disabled = true;
+      status.classList.remove("is-error");
+      status.textContent = "保存中…";
+      fetch(form.action, {
+        method: "POST",
+        headers: { "Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ admin_memo: textarea.value }).toString(),
+        credentials: "same-origin"
+      })
+        .then(function (res) {
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          return res.json();
+        })
+        .then(function (data) {
+          saved = data.admin_memo || "";
+          text.textContent = saved;
+          textarea.value = saved;
+          showView();
+        })
+        .catch(function () {
+          status.classList.add("is-error");
+          status.textContent = "保存できませんでした。もう一度お試しください。";
+        })
+        .then(function () { saveBtn.disabled = false; });
+    });
+  });
+})();
+</script>
 
 <%- include("../../partials/footer") %>

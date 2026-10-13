@@ -110,6 +110,8 @@ interface ProjectMutationInput {
   delivered_at?: string | null;
   /** 締め切った時刻 (Migration 114)。集計の区切り。一度書いたら上書きしない。 */
   closed_at?: string | null;
+  /** 運営者メモ (Migration 117)。 */
+  admin_memo?: string | null;
   ai_prompt_policy_json?: AIPromptPolicy | null;
   ai_prompt_templates_json?: AIPromptTemplateMap | null;
   ai_prompt_mode?: 'custom' | 'package';

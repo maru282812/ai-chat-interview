@@ -359,6 +359,8 @@ export interface Project {
    * （締切と無関係な更新でも動くので、集計の区切りがずれる）。
    */
   closed_at?: string | null;
+  /** 運営者メモ (Migration 117)。管理画面の案件一覧でのみ表示・編集。回答者・店舗には出さない。 */
+  admin_memo?: string | null;
   /** AIプロンプト方針設定 */
   ai_prompt_policy_json: AIPromptPolicy | null;
   /** ベースプロンプトテンプレート上書き設定 */
