@@ -151,6 +151,7 @@
       'matrix_single':'マトリクス', 'matrix_multi':'マトリクス(複)', 'matrix_mixed':'マトリクス(混)',
       'image_upload':'画像', 'hidden_single':'隠し', 'hidden_multi':'隠し複',
       'text_with_image':'テキスト+画像', 'sd':'SD法',
+      'date':'日付', 'time':'時刻', 'datetime':'日時', 'period':'期間',
     };
     return map[type] || type;
   }
@@ -1230,6 +1231,7 @@
       ['matrix_mixed','マトリクス（混合）'],['image_upload','画像アップロード'],
       ['hidden_single','隠し項目（単一）'],['hidden_multi','隠し項目（複数）'],
       ['text_with_image','テキスト+画像選択肢'],['sd','SD法'],
+      ['date','日付'],['time','時刻'],['datetime','日付＋時刻'],['period','期間（開始〜終了）'],
     ];
     var typeSelOpts = allTypeOpts.map(function (t) {
       return '<option value="' + t[0] + '"' + (qType === t[0] ? ' selected' : '') + '>' + t[1] + '</option>';

@@ -268,3 +268,18 @@ test("is_system 設問は表示モードチェックの対象外", () => {
   const report = validateSurvey(questions, makeProject({ display_mode: "survey_page" }));
   assert.ok(!CODES(report).includes("page_mode_with_ai_probe"));
 });
+
+test("日付・時刻・期間（migration 118）はチャット形式でだけ未対応の warning を出す", () => {
+  const questions = [
+    makeQuestion({ question_code: "Q1", question_type: "date", sort_order: 1, ai_probe_enabled: true }),
+    makeQuestion({ question_code: "Q2", question_type: "period", sort_order: 2 })
+  ];
+  const chat = validateSurvey(questions, makeProject({ display_mode: "interview_chat" }));
+  const hits = chat.findings.filter((f) => f.code === "datetime_type_unsupported_in_chat");
+  assert.deepEqual(hits.map((f) => f.question_code), ["Q1", "Q2"]);
+  assert.ok(hits.every((f) => f.level === "warning"));
+  const one = validateSurvey(questions, makeProject({ display_mode: "survey_question" }));
+  assert.ok(!CODES(one).includes("datetime_type_unsupported_in_chat"));
+  // 新回答形式（レンダラ未実装）の警告とは別物
+  assert.ok(!CODES(one).includes("new_answer_type_no_renderer"));
+});

@@ -194,6 +194,95 @@
       .wheel-viewport { scroll-behavior: auto; }
       .wheel-item     { transition: none; }
     }
+    /* ---- 日付・時刻・期間（migration 118）----
+       月カレンダーは常時表示。320px 幅（カード内 248px）でも 7 列が 32px 以上のタップ領域を保つ。
+       時間軸は .bigslider-hit と同じく touch-action: pan-y（横は自前・縦はページスクロールへ）。 */
+    .dt-widget        { display: flex; flex-direction: column; gap: 14px; }
+    .dt-widget.free-text-required { border: none !important; }
+    .dt-widget.free-text-required .dt-summary { color: #e55; }
+    .dt-cal           { user-select: none; -webkit-user-select: none; }
+    .dt-cal-shortcuts { display: flex; gap: 8px; margin-bottom: 10px; }
+    .dt-cal-jump      {
+      flex: 1; min-height: 40px; border: 1.5px solid #2ca87a; border-radius: 999px;
+      background: #fff; color: #1f7a58; font-size: 14px; font-weight: 600; cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .dt-cal-jump:active { background: #e8f7f0; }
+    .dt-cal-jump:disabled { border-color: #d8e3e0; color: #b0bfbb; cursor: not-allowed; background: #f7f9f8; }
+    .dt-cal-head      { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+    .dt-cal-title     { font-size: 15px; font-weight: 700; color: #17423a; }
+    .dt-cal-nav       {
+      width: 40px; height: 40px; border-radius: 50%; border: 1px solid #d8e3e0; background: #fff;
+      font-size: 20px; line-height: 1; color: #2f4f4a; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    }
+    .dt-cal-nav:disabled { color: #cfd9d6; cursor: not-allowed; }
+    .dt-cal-week, .dt-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px 0; }
+    .dt-cal-week span { text-align: center; font-size: 11px; color: #60726f; padding: 2px 0 4px; }
+    .dt-cal-week .is-sun { color: #c0504d; }
+    .dt-cal-week .is-sat { color: #3d6fb4; }
+    .dt-day           {
+      position: relative; aspect-ratio: 1 / 1; min-height: 32px; max-height: 48px; width: 100%;
+      border: none; border-radius: 50%; background: transparent;
+      font-size: 14px; font-weight: 600; color: #1a2f2a; cursor: pointer; padding: 0;
+      font-family: inherit; -webkit-tap-highlight-color: transparent;
+    }
+    .dt-day.is-blank  { pointer-events: none; }
+    .dt-day.is-sun    { color: #c0504d; }
+    .dt-day.is-sat    { color: #3d6fb4; }
+    .dt-day.is-today  { box-shadow: inset 0 0 0 1.5px #2ca87a; }
+    .dt-day:disabled  { color: #c9d3d0; cursor: not-allowed; font-weight: 400; text-decoration: line-through; text-decoration-color: rgba(150,165,161,.5); }
+    .dt-day.is-in-range { background: #e8f7f0; border-radius: 0; color: #17423a; }
+    .dt-day.is-selected { background: #2ca87a; color: #fff; }
+    .dt-day.is-range-start { border-radius: 50% 0 0 50%; }
+    .dt-day.is-range-end   { border-radius: 0 50% 50% 0; }
+    .dt-day:not(:disabled):not(.is-selected):active { background: #d4efe3; }
+    .dt-axis-block    { display: flex; flex-direction: column; gap: 2px; }
+    .dt-axis-title    { margin: 0; font-size: 13px; font-weight: 700; color: #2f4f4a; }
+    .dt-axis          { padding: 2px 4px; user-select: none; -webkit-user-select: none; }
+    .dt-axis-value    { text-align: center; min-height: 40px; display: flex; align-items: center; justify-content: center; }
+    .dt-axis-label    { font-size: 18px; font-weight: 700; color: #90a29e; font-variant-numeric: tabular-nums; }
+    .dt-axis.engaged .dt-axis-label { font-size: 24px; color: #17423a; }
+    .dt-axis-hit      {
+      position: relative; height: 48px; cursor: pointer; outline: none;
+      touch-action: pan-y; -webkit-tap-highlight-color: transparent;
+    }
+    .dt-axis-hit:focus-visible { box-shadow: 0 0 0 3px rgba(44,168,122,0.45); border-radius: 10px; }
+    .dt-axis-track    {
+      position: absolute; left: 14px; right: 14px; top: 50%; height: 12px; transform: translateY(-50%);
+      border-radius: 999px; background: repeating-linear-gradient(90deg, #d8e3e0 0 1px, #eef3f1 1px 100%);
+      background-color: #eef3f1; box-shadow: inset 0 0 0 1px #d8e3e0;
+    }
+    .dt-axis-fill     { position: absolute; top: 0; bottom: 0; left: 0; width: 0; border-radius: 999px; background: #2ca87a; }
+    .dt-axis-rail     { position: absolute; left: 14px; right: 14px; top: 0; bottom: 0; pointer-events: none; }
+    .dt-axis-thumb    {
+      position: absolute; top: 50%; left: 50%; width: 28px; height: 28px; margin-left: -14px;
+      transform: translateY(-50%);
+      border-radius: 50%; background: #fff; border: 3px solid #2ca87a; box-sizing: border-box;
+      box-shadow: 0 2px 6px rgba(28,43,39,0.18); opacity: 0; pointer-events: none;
+      transition: transform 0.12s;
+    }
+    .dt-axis.engaged .dt-axis-thumb { opacity: 1; }
+    .dt-axis.dragging .dt-axis-thumb { transform: translateY(-50%) scale(1.15); }
+    .dt-axis-ticks    { position: relative; height: 16px; margin: 0 14px; }
+    .dt-axis-ticks span {
+      position: absolute; top: 0; transform: translateX(-50%);
+      font-size: 11px; color: #60726f; white-space: nowrap; font-variant-numeric: tabular-nums;
+    }
+    .dt-axis-nudge    { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; margin-top: 6px; }
+    .dt-nudge-group   { display: inline-flex; align-items: center; gap: 6px; }
+    .dt-nudge-cap     { font-size: 12px; color: #60726f; }
+    .dt-axis-nudge button {
+      min-width: 44px; min-height: 36px; padding: 0 10px; border-radius: 999px;
+      border: 1px solid #d8e3e0; background: #fff; color: #2f4f4a; font-size: 13px; font-weight: 600; cursor: pointer;
+      font-family: inherit; -webkit-tap-highlight-color: transparent;
+    }
+    .dt-axis-nudge button:active { background: #e8f7f0; }
+    .dt-summary       { margin: 0; min-height: 20px; text-align: center; font-size: 13px; color: #60726f; line-height: 1.5; }
+    .dt-summary.is-done  { color: #1f7a58; font-weight: 700; font-size: 14px; }
+    .dt-summary.is-error { color: #e55; }
+    @media (prefers-reduced-motion: reduce) {
+      .dt-axis-thumb { transition: none; }
+    }
     .nav-btns          { display: flex; gap: 10px; margin-top: 16px; }
     /* 回答送信失敗の可視化（Phase 2）。従来は fetch 失敗を握りつぶして先へ進めていたため
        回答が静かに欠損していた。失敗時はここに理由を出し、カーソルを進めずに再送させる。 */
@@ -1032,6 +1121,17 @@
     if (m) {
       const actual = String(answerCtx.answers[m[1].toLowerCase()] ?? '');
       const expected = m[3].trim();
+      // 日付・時刻（migration 118）: 両辺が同じ ISO 形式なら文字列比較（サーバー questionEngine と同じ）。
+      // parseFloat だと "2026-10-13" が 2026 になり年しか比べない。
+      const ISO_SHAPES = [/^\d{4}-\d{2}-\d{2}$/, /^\d{2}:\d{2}$/, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/];
+      if (m[2] !== '=' && m[2] !== '!=' && ISO_SHAPES.some(re => re.test(actual) && re.test(expected))) {
+        switch(m[2]) {
+          case '>':  return actual > expected;
+          case '<':  return actual < expected;
+          case '>=': return actual >= expected;
+          case '<=': return actual <= expected;
+        }
+      }
       switch(m[2]) {
         case '=':  return actual === expected;
         case '!=': return actual !== expected;
@@ -1070,7 +1170,10 @@
     let result = text;
     for (const ins of parsed.answerInsertions) {
       const val = answerCtx.answers[ins.source.toLowerCase()];
-      const display = Array.isArray(val) ? val.join('、') : String(val ?? '');
+      const srcQ = QUESTIONS.find(qq => qq.question_code.toLowerCase() === ins.source.toLowerCase());
+      const display = Array.isArray(val) ? val.join('、')
+        : (srcQ && DATETIME_TYPES.includes(srcQ.question_type) && val) ? DT.label(srcQ.question_type, String(val))
+        : String(val ?? '');
       result = result.replace(new RegExp(`<ans\\s+${ins.source}>`, 'gi'), display);
       result = result.replace(new RegExp(`\\{ans:${ins.source}\\}`, 'gi'), display);
     }
@@ -1395,6 +1498,503 @@
     });
   }
 
+  // ================================================================
+  // 日付・時刻・期間（migration 118・docs/plan-datetime-answer-types.md）
+  // ================================================================
+  // 月カレンダーは画面内に常時表示（ネイティブ input[type=date] は使わない）。時刻は横の時間軸を
+  // 指でなぞって刻み単位で止める。値は answer_text の形式（YYYY-MM-DD / HH:MM /
+  // YYYY-MM-DDTHH:MM / 開始/終了）の文字列で answerCtx に入れ、検証はサーバーが権威。
+  //
+  // 誤確定を防ぐ方針（big_slider の教訓）:
+  //   - 描画しただけでは値を入れない（触るまで未回答）
+  //   - 時間軸は touch-action: pan-y。縦スクロールに取られた（pointercancel）押下は無かったことにする
+  //   - 自動で次へ進めない（確定は「次へ」ボタン）
+  const DATETIME_TYPES = ['date', 'time', 'datetime', 'period'];
+
+  const DT = (function () {
+    const DAY = 86400000;
+    const WD = ['日', '月', '火', '水', '木', '金', '土'];
+    const STEPS = [5, 10, 15, 30, 60];
+    const pad = (n) => String(n).padStart(2, '0');
+    const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+    const TIME_RE = /^(\d{2}):(\d{2})$/;
+    const DATETIME_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/;
+
+    // 回答日は JST 基準（サーバー jstTodayDayNumber と同じ）。端末のタイムゾーンに依らない。
+    function todayNum() { return Math.floor((Date.now() + 9 * 3600000) / DAY); }
+    function numToDate(n) {
+      const d = new Date(n * DAY);
+      return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
+    }
+    function dateToNum(s) {
+      const m = DATE_RE.exec(s || '');
+      if (!m) return null;
+      const t = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+      const d = new Date(t);
+      if (d.getUTCFullYear() !== +m[1] || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) return null;
+      return Math.round(t / DAY);
+    }
+    function timeToMin(s, allow24) {
+      const m = TIME_RE.exec(s || '');
+      if (!m) return null;
+      const h = +m[1], mi = +m[2];
+      if (mi > 59) return null;
+      if (h === 24 && mi === 0) return allow24 ? 1440 : null;
+      if (h > 23) return null;
+      return h * 60 + mi;
+    }
+    function minToTime(m) { return pad(Math.floor(m / 60)) + ':' + pad(m % 60); }
+    function intOrNull(v) {
+      if (v === null || v === undefined || v === '') return null;
+      const n = Number(v);
+      return Number.isInteger(n) ? n : null;
+    }
+    // サーバー resolveDatetimeConfig と同じ既定値・同じ不正値の扱い。
+    function config(q) {
+      const c = (q && q.question_config) || {};
+      const step = intOrNull(c.time_step_minutes);
+      let tMin = typeof c.time_min === 'string' ? timeToMin(c.time_min, false) : null;
+      let tMax = typeof c.time_max === 'string' ? timeToMin(c.time_max, true) : null;
+      if (tMin === null) tMin = 0;
+      if (tMax === null) tMax = 1440;
+      if (tMax <= tMin) { tMin = 0; tMax = 1440; }
+      return {
+        minOffset: intOrNull(c.date_min_offset),
+        maxOffset: intOrNull(c.date_max_offset),
+        step: STEPS.includes(step) ? step : 15,
+        timeMin: tMin,
+        timeMax: tMax,
+        unit: ['date', 'time', 'datetime'].includes(c.period_unit) ? c.period_unit : 'date',
+      };
+    }
+    function weekday(n) { return WD[new Date(n * DAY).getUTCDay()]; }
+    function dateLabel(s, withYear) {
+      const n = dateToNum(s);
+      if (n === null) return String(s || '');
+      const p = s.split('-').map(Number);
+      return (withYear === false ? '' : p[0] + '年') + p[1] + '月' + p[2] + '日(' + weekday(n) + ')';
+    }
+    function dtLabelOne(s, withYear) {
+      const m = DATETIME_RE.exec(s || '');
+      return m ? dateLabel(m[1], withYear) + ' ' + m[2] : String(s || '');
+    }
+    // サーバー formatDatetimeAnswerLabel と同じ表記。
+    function label(type, text) {
+      const t = String(text || '').trim();
+      if (!t) return '';
+      if (type === 'date') return dateLabel(t, true);
+      if (type === 'time') return t;
+      if (type === 'datetime') return dtLabelOne(t, true);
+      if (type !== 'period') return t;
+      const parts = t.split('/');
+      if (parts.length !== 2) return t;
+      const a = parts[0], b = parts[1];
+      if (TIME_RE.test(a)) return a + '〜' + b;
+      const sameYear = a.slice(0, 4) === b.slice(0, 4);
+      if (DATE_RE.test(a)) return dateLabel(a, !sameYear) + '〜' + dateLabel(b, !sameYear);
+      const ma = DATETIME_RE.exec(a), mb = DATETIME_RE.exec(b);
+      if (!ma || !mb) return t;
+      if (ma[1] === mb[1]) return dateLabel(ma[1], false) + ' ' + ma[2] + '〜' + mb[2];
+      return dtLabelOne(a, !sameYear) + '〜' + dtLabelOne(b, !sameYear);
+    }
+    /**
+     * 時間軸に並ぶ値（分）。左端・右端は刻み外でも端点として含める（サーバー checkTime と同じ）。
+     * allow24=false のときは 24:00 を除く（単独の時刻・期間の開始には 24:00 が無い）。
+     */
+    function axisValues(rc, allow24) {
+      const max = (!allow24 && rc.timeMax === 1440) ? 1439 : rc.timeMax;
+      const out = [rc.timeMin];
+      for (let m = (Math.floor(rc.timeMin / rc.step) + 1) * rc.step; m <= max; m += rc.step) out.push(m);
+      if (max === rc.timeMax && out[out.length - 1] !== max) out.push(max);
+      return out;
+    }
+    return { todayNum, numToDate, dateToNum, timeToMin, minToTime, config, weekday, dateLabel, label, axisValues, WD };
+  })();
+
+  /** 回答欄の骨組み。中身（カレンダー・時間軸）は wireDatetimeWidget が描く。 */
+  function buildDatetimeHtml(q) {
+    const type = q.question_type;
+    const rc = DT.config(q);
+    const unit = type === 'period' ? rc.unit : null;
+    const code = esc(q.question_code);
+    const hasCal = type === 'date' || type === 'datetime' || (type === 'period' && unit !== 'time');
+    const axes = [];
+    if (type === 'time' || type === 'datetime') axes.push({ role: 'single', title: type === 'datetime' ? '時刻' : '' });
+    if (type === 'period' && unit === 'time') axes.push({ role: 'range', title: '' });
+    if (type === 'period' && unit === 'datetime') {
+      axes.push({ role: 'start', title: '開始時刻' });
+      axes.push({ role: 'end', title: '終了時刻' });
+    }
+    return `<div class="dt-widget" data-code="${code}" data-dt-type="${esc(type)}" data-dt-unit="${esc(unit || '')}">
+      ${hasCal ? `<div class="dt-cal" data-cal-mode="${type === 'period' ? 'range' : 'single'}"></div>` : ''}
+      ${axes.map(a => `<div class="dt-axis-block">
+        ${a.title ? `<p class="dt-axis-title">${esc(a.title)}</p>` : ''}
+        <div class="dt-axis" data-axis-role="${a.role}"></div>
+      </div>`).join('')}
+      <p class="dt-summary" aria-live="polite"></p>
+    </div>`;
+  }
+
+  /**
+   * 日時系の回答欄を配線する。onChange は値が変わったとき（未確定→確定も含む）に呼ぶ。
+   * 既に answerCtx に値があれば（戻って開き直した等）その値で復元する。
+   */
+  function wireDatetimeWidget(root, q, onChange) {
+    if (!DATETIME_TYPES.includes(q.question_type)) return;
+    const widget = root.querySelector(`.dt-widget[data-code="${q.question_code}"]`);
+    if (!widget || widget.dataset.wired) return;
+    widget.dataset.wired = '1';
+    const type = q.question_type;
+    const rc = DT.config(q);
+    const unit = type === 'period' ? rc.unit : null;
+    const code = q.question_code.toLowerCase();
+    const summary = widget.querySelector('.dt-summary');
+    const today = DT.todayNum();
+    const minDay = rc.minOffset === null ? null : today + rc.minOffset;
+    const maxDay = rc.maxOffset === null ? null : today + rc.maxOffset;
+
+    // 状態（文字列。未選択は null）
+    const st = { date: null, start: null, end: null, time: null, tStart: null, tEnd: null };
+
+    // ---- 既存値から復元 ----
+    const existing = answerCtx.answers[code];
+    if (typeof existing === 'string' && existing) {
+      if (type === 'date') st.date = existing;
+      else if (type === 'time') st.time = existing;
+      else if (type === 'datetime') { const p = existing.split('T'); st.date = p[0] || null; st.time = p[1] || null; }
+      else {
+        const p = existing.split('/');
+        if (p.length === 2) {
+          if (unit === 'date') { st.start = p[0]; st.end = p[1]; }
+          else if (unit === 'time') { st.tStart = p[0]; st.tEnd = p[1]; }
+          else {
+            const a = p[0].split('T'), b = p[1].split('T');
+            st.start = a[0]; st.tStart = a[1] || null; st.end = b[0]; st.tEnd = b[1] || null;
+          }
+        }
+      }
+    }
+
+    function compose() {
+      if (type === 'date') return st.date ? { value: st.date } : { value: null, hint: '日付をタップしてください' };
+      if (type === 'time') return st.time ? { value: st.time } : { value: null, hint: '時間軸をなぞって選んでください' };
+      if (type === 'datetime') {
+        if (!st.date && !st.time) return { value: null, hint: '日付と時刻を選んでください' };
+        if (!st.date) return { value: null, hint: '日付をタップしてください' };
+        if (!st.time) return { value: null, hint: '時刻を選んでください' };
+        return { value: st.date + 'T' + st.time };
+      }
+      if (unit === 'date') {
+        if (!st.start) return { value: null, hint: '開始日をタップしてください' };
+        return { value: st.start + '/' + (st.end || st.start), hint: st.end && st.end !== st.start ? '' : '終了日をタップ（同じ日ならそのままでOK）' };
+      }
+      if (unit === 'time') {
+        if (!st.tStart || !st.tEnd) return { value: null, hint: '開始から終了まで時間軸をなぞってください' };
+        return { value: st.tStart + '/' + st.tEnd };
+      }
+      // datetime 期間
+      if (!st.start) return { value: null, hint: '開始日と終了日をタップしてください' };
+      if (!st.tStart || !st.tEnd) return { value: null, hint: '開始時刻と終了時刻を選んでください' };
+      const s = st.start + 'T' + st.tStart, e = (st.end || st.start) + 'T' + st.tEnd;
+      if (s > e) return { value: null, hint: '終了は開始より後にしてください', error: true };
+      return { value: s + '/' + e };
+    }
+
+    function update(fromUser) {
+      const r = compose();
+      if (summary) {
+        summary.classList.toggle('is-error', !!r.error);
+        summary.classList.toggle('is-done', !!r.value && !r.hint);
+        summary.textContent = r.value
+          ? DT.label(type, r.value) + (r.hint ? '　' + r.hint : '')
+          : (r.hint || '');
+      }
+      if (!fromUser) return;
+      if (r.value) answerCtx.answers[code] = r.value;
+      else delete answerCtx.answers[code];
+      widget.classList.remove('free-text-required');
+      if (onChange) onChange();
+    }
+
+    // ================= カレンダー =================
+    const calEl = widget.querySelector('.dt-cal');
+    if (calEl) {
+      const rangeMode = calEl.dataset.calMode === 'range';
+      const inRange = (n) => (minDay === null || n >= minDay) && (maxDay === null || n <= maxDay);
+      const ymOf = (n) => { const s = DT.numToDate(n); return { y: +s.slice(0, 4), m: +s.slice(5, 7) }; };
+      const ymIndex = (ym) => ym.y * 12 + (ym.m - 1);
+      const firstSel = rangeMode ? st.start : st.date;
+      let initialNum = firstSel ? DT.dateToNum(firstSel) : today;
+      if (initialNum === null) initialNum = today;
+      if (!firstSel) {
+        if (minDay !== null && initialNum < minDay) initialNum = minDay;
+        if (maxDay !== null && initialNum > maxDay) initialNum = maxDay;
+      }
+      let view = ymOf(initialNum);
+      const minYm = minDay === null ? null : ymIndex(ymOf(minDay));
+      const maxYm = maxDay === null ? null : ymIndex(ymOf(maxDay));
+      let awaitingEnd = rangeMode && !!st.start && (!st.end || st.end === st.start);
+
+      const jumps = [{ label: '今日', n: today }, { label: '昨日', n: today - 1 }];
+      calEl.innerHTML = `<div class="dt-cal-shortcuts">${jumps.map((j, i) =>
+          `<button type="button" class="dt-cal-jump" data-jump="${i}" ${inRange(j.n) ? '' : 'disabled'}>${j.label}</button>`).join('')}</div>
+        <div class="dt-cal-head">
+          <button type="button" class="dt-cal-nav" data-nav="-1" aria-label="前の月">‹</button>
+          <span class="dt-cal-title"></span>
+          <button type="button" class="dt-cal-nav" data-nav="1" aria-label="次の月">›</button>
+        </div>
+        <div class="dt-cal-week">${DT.WD.map((w, i) => `<span class="${i === 0 ? 'is-sun' : i === 6 ? 'is-sat' : ''}">${w}</span>`).join('')}</div>
+        <div class="dt-cal-grid" role="grid"></div>`;
+      const grid = calEl.querySelector('.dt-cal-grid');
+      const title = calEl.querySelector('.dt-cal-title');
+      const prevBtn = calEl.querySelector('[data-nav="-1"]');
+      const nextBtn = calEl.querySelector('[data-nav="1"]');
+
+      function render() {
+        title.textContent = view.y + '年' + view.m + '月';
+        const idx = ymIndex(view);
+        prevBtn.disabled = minYm !== null && idx <= minYm;
+        nextBtn.disabled = maxYm !== null && idx >= maxYm;
+        const first = DT.dateToNum(view.y + '-' + String(view.m).padStart(2, '0') + '-01');
+        const lead = new Date(first * 86400000).getUTCDay();
+        const nextFirstYm = { y: view.m === 12 ? view.y + 1 : view.y, m: view.m === 12 ? 1 : view.m + 1 };
+        const last = DT.dateToNum(nextFirstYm.y + '-' + String(nextFirstYm.m).padStart(2, '0') + '-01') - 1;
+        const sN = rangeMode ? (st.start ? DT.dateToNum(st.start) : null) : (st.date ? DT.dateToNum(st.date) : null);
+        const eN = rangeMode ? (st.end ? DT.dateToNum(st.end) : sN) : sN;
+        let html = '';
+        for (let i = 0; i < lead; i++) html += '<span class="dt-day is-blank" aria-hidden="true"></span>';
+        for (let n = first; n <= last; n++) {
+          const dow = new Date(n * 86400000).getUTCDay();
+          const cls = ['dt-day'];
+          if (dow === 0) cls.push('is-sun');
+          if (dow === 6) cls.push('is-sat');
+          if (n === today) cls.push('is-today');
+          if (sN !== null && eN !== null && n >= sN && n <= eN) {
+            cls.push(n === sN || n === eN ? 'is-selected' : 'is-in-range');
+            if (rangeMode && sN !== eN) cls.push(n === sN ? 'is-range-start' : n === eN ? 'is-range-end' : '');
+          }
+          const ok = inRange(n);
+          html += `<button type="button" class="${cls.filter(Boolean).join(' ')}" data-n="${n}" ${ok ? '' : 'disabled aria-disabled="true"'}
+            aria-label="${esc(DT.dateLabel(DT.numToDate(n), true))}${n === today ? '（今日）' : ''}">${n - first + 1}</button>`;
+        }
+        grid.innerHTML = html;
+      }
+
+      function pick(n) {
+        if (!inRange(n)) return;
+        const s = DT.numToDate(n);
+        if (!rangeMode) { st.date = s; }
+        else if (!st.start || !awaitingEnd) { st.start = s; st.end = s; awaitingEnd = true; }
+        else if (s < st.start) { st.start = s; st.end = s; awaitingEnd = true; }
+        else { st.end = s; awaitingEnd = false; }
+        view = ymOf(n);
+        render();
+        update(true);
+      }
+
+      grid.addEventListener('click', (e) => {
+        const btn = e.target.closest('.dt-day[data-n]');
+        if (!btn || btn.disabled) return;
+        pick(parseInt(btn.dataset.n, 10));
+      });
+      calEl.querySelectorAll('.dt-cal-jump').forEach((btn) => {
+        btn.addEventListener('click', () => { const j = jumps[parseInt(btn.dataset.jump, 10)]; if (j) pick(j.n); });
+      });
+      [prevBtn, nextBtn].forEach((btn) => btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        const d = parseInt(btn.dataset.nav, 10);
+        let m = view.m + d, y = view.y;
+        if (m < 1) { m = 12; y--; } else if (m > 12) { m = 1; y++; }
+        view = { y, m };
+        render();
+      }));
+      render();
+    }
+
+    // ================= 時間軸 =================
+    widget.querySelectorAll('.dt-axis').forEach((axisEl) => {
+      const role = axisEl.dataset.axisRole; // single | range | start | end
+      const isRange = role === 'range';
+      const values = DT.axisValues(rc, isRange || role === 'end');
+      const n = values.length;
+      if (n < 2) return;
+      // 範囲（期間・時刻）の開始端に 24:00 は置けない（サーバーと同じ制約）。
+      const startMaxIdx = values[n - 1] === 1440 ? n - 2 : n - 1;
+      const idxOf = (t) => { const m = DT.timeToMin(t, true); const i = values.indexOf(m); return i >= 0 ? i : null; };
+      const get = () => {
+        if (role === 'single') return { a: st.time ? idxOf(st.time) : null };
+        if (role === 'start') return { a: st.tStart ? idxOf(st.tStart) : null };
+        if (role === 'end') return { a: st.tEnd ? idxOf(st.tEnd) : null };
+        return { a: st.tStart ? idxOf(st.tStart) : null, b: st.tEnd ? idxOf(st.tEnd) : null };
+      };
+      const set = (a, b) => {
+        const t = (i) => (i === null || i === undefined ? null : DT.minToTime(values[i]));
+        if (role === 'single') st.time = t(a);
+        else if (role === 'start') st.tStart = t(a);
+        else if (role === 'end') st.tEnd = t(a);
+        else { st.tStart = t(a); st.tEnd = t(b); }
+      };
+
+      // 目盛りラベル: 320px 幅でも重ならない5個前後に収まる間隔（1/2/3/4/6時間）で時刻を出す。
+      const spanH = (rc.timeMax - rc.timeMin) / 60;
+      const every = [1, 2, 3, 4, 6, 12].find((h) => spanH / h <= 4) || 12;
+      const pct = (i) => (n > 1 ? (i / (n - 1)) * 100 : 0);
+      const ticks = [];
+      values.forEach((m, i) => { if (m % (every * 60) === 0 || i === 0 || i === n - 1) ticks.push({ i, m }); });
+      // 端点と近すぎる目盛りは重なるので間引く
+      const shown = ticks.filter((t, k) => k === 0 || k === ticks.length - 1 ||
+        (pct(t.i) - pct(ticks[0].i) > 16 && pct(ticks[ticks.length - 1].i) - pct(t.i) > 16));
+      axisEl.innerHTML = `<div class="dt-axis-value"><span class="dt-axis-label"></span></div>
+        <div class="dt-axis-hit" tabindex="0" role="slider" aria-label="${esc(q.question_text || '時刻')}"
+             aria-valuemin="0" aria-valuemax="${n - 1}">
+          <div class="dt-axis-track"><div class="dt-axis-fill"></div></div>
+          <div class="dt-axis-rail">
+            <div class="dt-axis-thumb" data-h="a"></div>
+            ${isRange ? '<div class="dt-axis-thumb" data-h="b"></div>' : ''}
+          </div>
+        </div>
+        <div class="dt-axis-ticks">${shown.map(t => `<span style="left:${pct(t.i)}%">${DT.minToTime(t.m).replace(/^0(\d):00$/, '$1:00')}</span>`).join('')}</div>
+        <div class="dt-axis-nudge">
+          ${isRange
+            ? `<span class="dt-nudge-group"><span class="dt-nudge-cap">開始</span><button type="button" data-nudge="a" data-d="-1" aria-label="開始を${rc.step}分前へ">−</button><button type="button" data-nudge="a" data-d="1" aria-label="開始を${rc.step}分後へ">＋</button></span>
+               <span class="dt-nudge-group"><span class="dt-nudge-cap">終了</span><button type="button" data-nudge="b" data-d="-1" aria-label="終了を${rc.step}分前へ">−</button><button type="button" data-nudge="b" data-d="1" aria-label="終了を${rc.step}分後へ">＋</button></span>`
+            : `<span class="dt-nudge-group"><button type="button" data-nudge="a" data-d="-1" aria-label="${rc.step}分前へ">−${rc.step}分</button><button type="button" data-nudge="a" data-d="1" aria-label="${rc.step}分後へ">＋${rc.step}分</button></span>`}
+        </div>`;
+      const hit = axisEl.querySelector('.dt-axis-hit');
+      const fill = axisEl.querySelector('.dt-axis-fill');
+      const thumbA = axisEl.querySelector('[data-h="a"]');
+      const thumbB = axisEl.querySelector('[data-h="b"]');
+      const labelEl = axisEl.querySelector('.dt-axis-label');
+      const placeholder = isRange ? '開始から終了までなぞって選択' : 'なぞって選択';
+
+      function paint(a, b) {
+        const engaged = a !== null && a !== undefined;
+        axisEl.classList.toggle('engaged', engaged);
+        thumbA.style.left = engaged ? pct(a) + '%' : '50%';
+        if (isRange) {
+          const hasB = b !== null && b !== undefined;
+          thumbB.style.left = hasB ? pct(b) + '%' : '50%';
+          fill.style.left = engaged && hasB ? pct(Math.min(a, b)) + '%' : '0';
+          fill.style.width = engaged && hasB ? Math.abs(pct(b) - pct(a)) + '%' : '0';
+          labelEl.textContent = engaged && hasB ? DT.minToTime(values[a]) + '〜' + DT.minToTime(values[b]) : placeholder;
+        } else {
+          fill.style.left = '0';
+          fill.style.width = engaged ? pct(a) + '%' : '0';
+          labelEl.textContent = engaged ? DT.minToTime(values[a]) : placeholder;
+        }
+        hit.setAttribute('aria-valuenow', engaged ? String(a) : '');
+        hit.setAttribute('aria-valuetext', labelEl.textContent);
+      }
+      function indexFromX(clientX) {
+        const r = hit.getBoundingClientRect();
+        const pad = 14; // つまみ半径ぶん。端の値にも指が届くようにする
+        const ratio = (clientX - r.left - pad) / Math.max(1, r.width - pad * 2);
+        return Math.round(Math.max(0, Math.min(1, ratio)) * (n - 1));
+      }
+      // 範囲の正規化: a ≦ b、開始端は 24:00 不可
+      function norm(a, b) {
+        if (b !== null && b !== undefined && a > b) { const t = a; a = b; b = t; }
+        if (a > startMaxIdx) a = startMaxIdx;
+        if (b !== null && b !== undefined && b < a) b = a;
+        return [a, b];
+      }
+      function commit(a, b) {
+        if (isRange) { const r = norm(a, b); a = r[0]; b = r[1]; }
+        else if (role !== 'end' && a > startMaxIdx) a = startMaxIdx;
+        set(a, b);
+        paint(a, b);
+        update(true);
+      }
+
+      let drag = null; // { x0, moved, active, before, a, b }
+      hit.addEventListener('pointerdown', (e) => {
+        if (e.button != null && e.button !== 0) return;
+        const cur = get();
+        const i = indexFromX(e.clientX);
+        drag = { x0: e.clientX, moved: false, before: cur, a: cur.a, b: cur.b, active: 'a' };
+        if (isRange) {
+          if (cur.a === null || cur.b === null) { drag.a = i; drag.b = i; drag.active = 'b'; }
+          else {
+            drag.active = Math.abs(i - cur.a) < Math.abs(i - cur.b) ? 'a' : (Math.abs(i - cur.a) > Math.abs(i - cur.b) ? 'b' : (i < cur.a ? 'a' : 'b'));
+            drag[drag.active] = i;
+          }
+        } else {
+          drag.a = i;
+        }
+        try { hit.setPointerCapture(e.pointerId); } catch (_e) {}
+        axisEl.classList.add('dragging');
+        paint(drag.a, drag.b); // 見た目だけ追従。確定は pointerup
+        if (e.pointerType === 'mouse') e.preventDefault();
+      });
+      hit.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        if (Math.abs(e.clientX - drag.x0) > 4) drag.moved = true;
+        const i = indexFromX(e.clientX);
+        if (drag[drag.active] === i) return;
+        drag[drag.active] = i;
+        if (isRange && drag.a > drag.b) {
+          const t = drag.a; drag.a = drag.b; drag.b = t;
+          drag.active = drag.active === 'a' ? 'b' : 'a';
+        }
+        paint(drag.a, drag.b);
+        try { if (drag.moved && navigator.vibrate) navigator.vibrate(4); } catch (_e) {}
+      });
+      function endDrag() {
+        if (!drag) return;
+        const d = drag; drag = null;
+        axisEl.classList.remove('dragging');
+        commit(d.a, d.b);
+      }
+      hit.addEventListener('pointerup', endDrag);
+      hit.addEventListener('lostpointercapture', () => { if (drag) endDrag(); });
+      hit.addEventListener('pointercancel', () => {
+        // 縦スクロールに取られた: 横に動かしていなければ押下は無かったことにする（誤確定防止）。
+        if (!drag) return;
+        const d = drag; drag = null;
+        axisEl.classList.remove('dragging');
+        if (d.moved) { commit(d.a, d.b); return; }
+        paint(d.before.a, d.before.b);
+      });
+      // ＋−ボタン（刻み1つ分）。未選択なら中央付近から始める。
+      axisEl.querySelectorAll('[data-nudge]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const cur = get();
+          const which = btn.dataset.nudge;
+          const d = parseInt(btn.dataset.d, 10);
+          const mid = Math.floor((n - 1) / 2);
+          let a = cur.a, b = cur.b;
+          if (which === 'a') a = a === null ? mid : Math.max(0, Math.min(n - 1, a + d));
+          else b = b === null ? (a === null ? mid : a) : Math.max(0, Math.min(n - 1, b + d));
+          if (isRange) {
+            if (a === null) a = b;
+            if (b === null) b = a;
+            // つまみ同士は追い越さない（＋−は端を詰める操作）
+            if (which === 'a' && a > b) a = b;
+            if (which === 'b' && b < a) b = a;
+          }
+          commit(a, b);
+        });
+      });
+      // キーボード（←→）
+      hit.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        const d = e.key === 'ArrowRight' ? 1 : -1;
+        const cur = get();
+        if (isRange) {
+          const b = cur.b === null ? Math.floor((n - 1) / 2) : Math.max(0, Math.min(n - 1, cur.b + d));
+          commit(cur.a === null ? b : cur.a, b);
+        } else {
+          commit(cur.a === null ? Math.floor((n - 1) / 2) : Math.max(0, Math.min(n - 1, cur.a + d)));
+        }
+      });
+      const init = get();
+      paint(init.a, init.b);
+    });
+
+    update(false);
+  }
+
   function buildAnswerInputHtml(q, showSubmitButton = false) {
     const parsed = q.display_tags_parsed || {};
     const qType = q.question_type;
@@ -1535,6 +2135,9 @@
             choices.map(c => choiceListItem(`<input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" ${exclAttrs(c)} />`, c)).join('') + `</div>`;
         }
       }
+    } else if (DATETIME_TYPES.includes(qType)) {
+      // 日付・時刻・期間（migration 118）。表示モード・プリセットに依らず同じ専用UI。
+      inputHtml = buildDatetimeHtml(q);
     } else if (['numeric', 'sd'].includes(qType)) {
       if (q.presentation && q.presentation.pattern === 'number_wheel') {
         inputHtml = buildNumberWheelHtml(q);
@@ -1674,6 +2277,8 @@
     }
 
     // hidden系のみボタン不要（自由記述系はインライン「次へ」ボタンで送信）
+    // 日付・時刻・期間はボタンを残す: 日付と時刻・開始と終了のように操作が複数段あり、
+    // 1回のタップで確定させると途中の値で送ってしまうため。
     const NO_BUTTON_TYPES = ['hidden_single', 'hidden_multi'];
     return buildAnswerLayout(q, inputHtml, showSubmitButton && !NO_BUTTON_TYPES.includes(qType));
   }
@@ -1724,6 +2329,9 @@
     if (val === null || val === undefined) return '';
     const cfg = q ? (q.question_config || {}) : {};
     const qType = q ? q.question_type : '';
+
+    // 日付・時刻・期間: 2026-10-13 → 2026年10月13日(火)
+    if (DATETIME_TYPES.includes(qType)) return DT.label(qType, String(val));
 
     // 画像アップロード: 内部のStorage URLは絶対に露出させず、受領メッセージのみ表示する。
     // （サムネイルは設問ブロック内に表示済みで凍結後も残る）
@@ -1793,6 +2401,9 @@
     'single_choice', 'multi_choice', 'text_with_image',
     'matrix_single', 'matrix_multi', 'matrix_mixed',
     'numeric', 'sd',
+    // 日付・時刻・期間（migration 118）: 値が入れば OK（定型文チェックは自由記述用なので掛けない）。
+    // 未完成（日付だけ・開始だけ等）のあいだは wireDatetimeWidget が値を入れない。
+    'date', 'time', 'datetime', 'period',
   ];
   // image_upload はファイル添付後に URL 配列を answerCtx に格納
   const IMAGE_UPLOAD_TYPES = ['image_upload'];
@@ -2320,6 +2931,8 @@
       });
       // numeric ドラムピッカー
       wireNumberWheel(questionArea, q, () => checkNextEnabled());
+      // 日付・時刻・期間（カレンダー＋時間軸）
+      wireDatetimeWidget(questionArea, q, () => checkNextEnabled());
       // matrix inputs（mq_<code>_<rowIndex> という name を使う）
       if (['matrix_single','matrix_multi','matrix_mixed'].includes(q.question_type)) {
         const matrixRows = q.question_config?.matrix_rows || q.question_config?.options || [];
@@ -2933,6 +3546,9 @@
           checkChatNextEnabled();
         });
       });
+
+      // 日付・時刻・期間（チャット形式は契約上の対象外だが、表示された場合も操作できるようにする）
+      wireDatetimeWidget(answerRoot, q, () => checkChatNextEnabled());
 
       // scale buttons (numeric / sd)
       answerRoot.querySelectorAll(`.scale-btn[data-code="${q.question_code}"]`).forEach(btn => {

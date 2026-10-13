@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   applyCarryForward,
+  evaluatePipeExpression,
   resolveQuestionView,
 } from "../lib/questionEngine";
 import type { QuestionOption } from "../types/domain";
@@ -118,4 +119,34 @@ test("resolveQuestionView: carry-forward → disable の順で適用される", 
   );
   // 持ち越しで C,D → disable で C 除外 → D のみ
   assert.deepEqual(view.options.map((o) => o.value), ["D"]);
+});
+
+// ------------------------------------------------------------------
+// 日付・時刻の比較（migration 118）: 同じ ISO 形式どうしは文字列比較
+// ------------------------------------------------------------------
+
+test("evaluatePipeExpression: 日付は年だけでなく月日まで比べる", () => {
+  const ctx = ctxOf({ q1: "2026-10-13" });
+  // parseFloat だと 2026 > 2026 = false になっていた
+  assert.equal(evaluatePipeExpression("q1>2026-10-01", ctx).visible, true);
+  assert.equal(evaluatePipeExpression("q1<2026-10-01", ctx).visible, false);
+  assert.equal(evaluatePipeExpression("q1>=2026-10-13", ctx).visible, true);
+  assert.equal(evaluatePipeExpression("q1<=2026-10-12", ctx).visible, false);
+  assert.equal(evaluatePipeExpression("q1=2026-10-13", ctx).visible, true);
+});
+
+test("evaluatePipeExpression: 時刻・日時の比較", () => {
+  assert.equal(evaluatePipeExpression("q1>=18:00", ctxOf({ q1: "18:30" })).visible, true);
+  // parseFloat だと 9 < 18 で true になる。文字列比較なら "09:30" < "18:00"
+  assert.equal(evaluatePipeExpression("q1<18:00", ctxOf({ q1: "09:30" })).visible, true);
+  assert.equal(evaluatePipeExpression("q1>18:00", ctxOf({ q1: "09:30" })).visible, false);
+  assert.equal(
+    evaluatePipeExpression("q1>2026-10-13T12:00", ctxOf({ q1: "2026-10-13T14:30" })).visible,
+    true,
+  );
+});
+
+test("evaluatePipeExpression: 数値の比較は従来どおり数値で", () => {
+  assert.equal(evaluatePipeExpression("q1>9", ctxOf({ q1: "10" })).visible, true);
+  assert.equal(evaluatePipeExpression("q1<=3", ctxOf({ q1: "3" })).visible, true);
 });

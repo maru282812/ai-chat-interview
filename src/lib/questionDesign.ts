@@ -30,7 +30,15 @@ const MANAGED_CONFIG_KEYS = [
   "max_label",
   "scaleMin",
   "scaleMax",
-  "scaleLabels"
+  "scaleLabels",
+  // 日付・時刻・期間（migration 118）。日時系の設問だけ buildQuestionConfigFromRequest が
+  // 入れ直す。ここで落とさないと、日付→単一選択へ種別を変えたときに設定が残る。
+  "date_min_offset",
+  "date_max_offset",
+  "time_step_minutes",
+  "time_min",
+  "time_max",
+  "period_unit"
 ] as const;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

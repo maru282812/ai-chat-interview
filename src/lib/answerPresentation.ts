@@ -154,6 +154,16 @@ function basePattern(
       // 年齢のような広い数値レンジは丸ボタンを敷き詰めると数十個並んで実用にならないため、
       // ドラム(ホイール)ピッカーで描く。狭いレンジ(5段階評価など)は従来の丸ボタンのまま。
       return isWheelNumeric(cfg, n) ? "number_wheel" : "legacy";
+    // --- 日付・時刻・期間（migration 118）---
+    // プリセットに依らず専用レンダラ（月カレンダー常時表示＋横の時間軸）で描く。
+    case "date":
+      return "date_calendar";
+    case "time":
+      return "time_axis";
+    case "datetime":
+      return "datetime_picker";
+    case "period":
+      return "period_range";
     // image_upload / hidden_* / text_with_image / sd / scale(legacy) は従来描画
     default:
       return "legacy";

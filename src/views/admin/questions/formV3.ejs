@@ -40,7 +40,27 @@
     { value: "hidden_multi",   label: "隠し項目（複数）" },
     { value: "text_with_image","label": "テキスト+画像選択肢" },
     { value: "sd",             label: "SD法" },
+    // 日付・時刻・期間（migration 118・docs/plan-datetime-answer-types.md）
+    { value: "date",           label: "日付" },
+    { value: "time",           label: "時刻" },
+    { value: "datetime",       label: "日付＋時刻" },
+    { value: "period",         label: "期間（開始〜終了）" },
   ];
+  const DATETIME_TYPES = ["date","time","datetime","period"];
+  // 日時系の設定欄の初期値（保存済み config から）。日付範囲はプリセットへ逆算する。
+  const dtCfg = (question && question.question_config) || {};
+  const dtMin = typeof dtCfg.date_min_offset === "number" ? dtCfg.date_min_offset : null;
+  const dtMax = typeof dtCfg.date_max_offset === "number" ? dtCfg.date_max_offset : null;
+  const dtPreset = (dtMin === null && dtMax === null) ? "none"
+    : (dtMin === null && dtMax === 0) ? "past"
+    : (dtMin === 0 && dtMax === null) ? "future"
+    : "window";
+  const dtDaysBefore = dtPreset === "window" && dtMin !== null ? String(-dtMin) : "";
+  const dtDaysAfter = dtPreset === "window" && dtMax !== null ? String(dtMax) : "";
+  const dtStep = [5,10,15,30,60].includes(dtCfg.time_step_minutes) ? dtCfg.time_step_minutes : 15;
+  const dtTimeMin = typeof dtCfg.time_min === "string" ? dtCfg.time_min : "00:00";
+  const dtTimeMax = typeof dtCfg.time_max === "string" ? dtCfg.time_max : "24:00";
+  const dtUnit = ["date","time","datetime"].includes(dtCfg.period_unit) ? dtCfg.period_unit : "date";
   const MATRIX_TYPES = ["matrix_single","matrix_multi","matrix_mixed"];
   const CHOICE_TYPES  = ["single_choice","multi_choice",
                          "hidden_single","hidden_multi","text_with_image","sd"];
@@ -577,6 +597,10 @@
             <%= shareEnabled ? 'checked' : '' %> onchange="onShareToggle()" />
           この設問の回答を店舗に開示する
         </label>
+        <p id="shareDatetimeNote" class="helper-text"
+           style="color:#8a5a00;background:#fff8e6;border:1px solid #f0d9a8;border-radius:8px;padding:8px 10px;margin:6px 0;<%= DATETIME_TYPES.includes(qType) ? '' : 'display:none;' %>">
+          ⚠ 日付・時刻の回答（来店日時など）を<strong>原文</strong>で店舗に見せると、店舗側の予約記録と突き合わせて<strong>回答者個人を特定できるおそれ</strong>があります。開示は本当に必要な場合に限り、既定はOFFのままにしてください。
+        </p>
         <div id="shareDetail" style="<%= shareEnabled ? '' : 'display:none' %>">
           <label>
             回答画面に出す告知文（必須）
@@ -838,7 +862,7 @@
       </div>
 
       <!-- テキスト入力補助 -->
-      <div id="typeTextFields" class="stack-sm <%= (CHOICE_TYPES.includes(qType) || SCALE_TYPES.includes(qType) || MATRIX_TYPES.includes(qType)) ? 'hidden' : '' %>">
+      <div id="typeTextFields" class="stack-sm <%= (CHOICE_TYPES.includes(qType) || SCALE_TYPES.includes(qType) || MATRIX_TYPES.includes(qType) || DATETIME_TYPES.includes(qType)) ? 'hidden' : '' %>">
         <label>
           入力補助テキスト
           <input type="text" name="placeholder" value="<%= safeForm.placeholder || '' %>"
@@ -1005,6 +1029,56 @@
       </div>
 
       <!-- image_upload 設定 -->
+      <!-- 日付・時刻・期間の設定（migration 118）
+           ⚠ 他の種別では hidden になるが、hidden でも POST はされる（年齢 1〜5 事故と同じ構造）。
+              表示状態と disabled を syncTypeVisibility() で必ず連動させ、他の種別へ値を送らない。
+              サーバー側も日時系の case でしか dt_* を読まない（二重の防御）。 -->
+      <% const dtActive = DATETIME_TYPES.includes(qType); %>
+      <div id="typeDatetimeFields" class="stack-sm <%= dtActive ? '' : 'hidden' %>"
+           style="padding:12px;border:1px solid #d8e3e0;border-radius:10px;background:#fafcfb;">
+        <h3 style="margin:0 0 8px 0;">日付・時刻の設定</h3>
+        <p class="helper-text" style="margin:0 0 8px;">回答画面には月カレンダー（「今日」「昨日」ボタン付き）と、指でなぞる横の時間軸が出ます。日付の基準は回答した日（日本時間）です。</p>
+        <input type="hidden" name="dt_config_present" value="1" <%= dtActive ? '' : 'disabled' %> />
+        <div id="dtPeriodUnitRow" class="form-grid">
+          <label>
+            期間の単位
+            <select name="dt_period_unit" id="dtPeriodUnit" <%= dtActive ? '' : 'disabled' %>>
+              <option value="date" <%= dtUnit === 'date' ? 'selected' : '' %>>日付（例: 10月1日〜10月3日）</option>
+              <option value="time" <%= dtUnit === 'time' ? 'selected' : '' %>>時刻（例: 13:00〜15:30）</option>
+              <option value="datetime" <%= dtUnit === 'datetime' ? 'selected' : '' %>>日付＋時刻</option>
+            </select>
+          </label>
+        </div>
+        <div id="dtDateRow" class="stack-sm">
+          <label>
+            選べる日付の範囲
+            <select name="dt_range_preset" id="dtRangePreset" <%= dtActive ? '' : 'disabled' %>>
+              <option value="none" <%= dtPreset === 'none' ? 'selected' : '' %>>制限なし</option>
+              <option value="past" <%= dtPreset === 'past' ? 'selected' : '' %>>過去のみ（今日まで）</option>
+              <option value="future" <%= dtPreset === 'future' ? 'selected' : '' %>>未来のみ（今日から）</option>
+              <option value="window" <%= dtPreset === 'window' ? 'selected' : '' %>>今日から前後N日</option>
+            </select>
+          </label>
+          <div id="dtWindowRow" class="form-grid" style="<%= dtPreset === 'window' ? '' : 'display:none;' %>">
+            <label>今日より前（日）<input type="number" name="dt_days_before" min="0" max="3660" value="<%= dtDaysBefore %>" placeholder="例: 30（空欄＝制限なし）" <%= dtActive ? '' : 'disabled' %> /></label>
+            <label>今日より後（日）<input type="number" name="dt_days_after" min="0" max="3660" value="<%= dtDaysAfter %>" placeholder="例: 0（空欄＝制限なし）" <%= dtActive ? '' : 'disabled' %> /></label>
+          </div>
+        </div>
+        <div id="dtTimeRow" class="form-grid">
+          <label>
+            時刻の刻み
+            <select name="dt_time_step" <%= dtActive ? '' : 'disabled' %>>
+              <% for (const st of [5,10,15,30,60]) { %>
+                <option value="<%= st %>" <%= dtStep === st ? 'selected' : '' %>><%= st %>分</option>
+              <% } %>
+            </select>
+          </label>
+          <label>時間軸の左端（HH:MM）<input type="text" name="dt_time_min" value="<%= dtTimeMin %>" inputmode="numeric" pattern="[0-2][0-9]:[0-5][0-9]" placeholder="00:00" <%= dtActive ? '' : 'disabled' %> /></label>
+          <label>時間軸の右端（HH:MM・24:00可）<input type="text" name="dt_time_max" value="<%= dtTimeMax %>" inputmode="numeric" pattern="[0-2][0-9]:[0-5][0-9]" placeholder="24:00" <%= dtActive ? '' : 'disabled' %> /></label>
+        </div>
+        <p class="helper-text" style="font-size:11px;margin:4px 0 0;">保存形式: 日付 YYYY-MM-DD ／ 時刻 HH:MM ／ 日時 YYYY-MM-DDTHH:MM ／ 期間 開始/終了。チャット形式（AIチャット・LINEトーク）では未対応です。</p>
+      </div>
+
       <div id="typeImageUploadFields" class="stack-sm <%= qType !== 'image_upload' ? 'hidden' : '' %>"
            style="padding:12px;border:1px solid #d8e3e0;border-radius:10px;background:#fafcfb;">
         <h3 style="margin:0 0 12px 0;">画像アップロード設定</h3>
@@ -1552,8 +1626,45 @@
     document.getElementById('typeImageUploadFields').classList.toggle('hidden',
       type !== 'image_upload');
     document.getElementById('typeTextFields').classList.toggle('hidden',
-      CHOICE_TYPES.includes(type) || SCALE_TYPES.includes(type) || MATRIX_TYPES.includes(type) || type === 'image_upload');
+      CHOICE_TYPES.includes(type) || SCALE_TYPES.includes(type) || MATRIX_TYPES.includes(type) || type === 'image_upload' || DATETIME_TYPES.includes(type));
+    syncDatetimeFields(type);
   }
+
+  // ---- 日付・時刻・期間（migration 118）の設定欄 ----
+  // 種別ごとに関係する欄だけ出し、それ以外は disabled にして POST させない
+  // （hidden でも POST される＝別の種別の設定を既定値で上書きする事故の再発防止）。
+  const DATETIME_TYPES = <%- JSON.stringify(DATETIME_TYPES) %>;
+  function syncDatetimeFields(type) {
+    const block = document.getElementById('typeDatetimeFields');
+    if (!block) return;
+    const active = DATETIME_TYPES.includes(type);
+    const unitSel = document.getElementById('dtPeriodUnit');
+    const unit = type === 'period' ? (unitSel ? unitSel.value : 'date') : null;
+    const usesDate = type === 'date' || type === 'datetime' || (type === 'period' && unit !== 'time');
+    const usesTime = type === 'time' || type === 'datetime' || (type === 'period' && unit !== 'date');
+    const preset = document.getElementById('dtRangePreset');
+    block.classList.toggle('hidden', !active);
+    block.querySelectorAll('input, select, textarea').forEach((el) => { el.disabled = !active; });
+    // 外側から順に評価する（内側の行を後に処理して disabled を確定させる）。
+    const rows = [
+      ['dtPeriodUnitRow', active && type === 'period'],
+      ['dtDateRow', active && usesDate],
+      ['dtTimeRow', active && usesTime],
+      ['dtWindowRow', active && usesDate && preset && preset.value === 'window'],
+    ];
+    rows.forEach(([id, on]) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.style.display = on ? '' : 'none';
+      el.querySelectorAll('input, select, textarea').forEach((x) => { x.disabled = !on; });
+    });
+    const shareNote = document.getElementById('shareDatetimeNote');
+    if (shareNote) shareNote.style.display = active ? '' : 'none';
+  }
+  ['dtPeriodUnit', 'dtRangePreset'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', () => syncDatetimeFields(document.getElementById('questionType').value));
+  });
   document.getElementById('questionType').addEventListener('change', syncTypeVisibility);
 
   // ----------------------------------------------------------------
@@ -2633,6 +2744,8 @@
         // サーバ側は answer_options_locked が ON だと ok:false / locked:true を返す。
         // この画面には固定フラグの入力欄が無いので、解除の場所を文言で示す。
         if (data.locked) { showError(data.message || '回答項目が固定されています。フロー設計で固定を解除してください。'); return; }
+        // 日付・時刻・期間など提案の対象外の種別（サーバーが ok:false と理由を返す）。
+        if (data.ok === false && data.message) { showError(data.message); return; }
 
         lastSuggestions = data.suggestions || {};
         renderSuggestion(lastSuggestions);

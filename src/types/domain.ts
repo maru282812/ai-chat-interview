@@ -78,7 +78,12 @@ export type QuestionType =
   | "pairwise"
   | "ranking_top_n"
   | "point_allocation"
-  | "image_heatmap";
+  | "image_heatmap"
+  // 日付・時刻・期間（migration 118・docs/plan-datetime-answer-types.md）
+  | "date"
+  | "time"
+  | "datetime"
+  | "period";
 
 /** 回答UIプリセット（migration 075）。casual=A(スワイプ)/standard=B(タップ)/formal=C(従来型)。 */
 export type AnswerUiPreset = "casual" | "standard" | "formal";
@@ -676,6 +681,19 @@ export interface QuestionConfig {
   allocation?: AllocationConfig;
   /** image_heatmap（画像タップ）設定（migration 075）。 */
   heatmap?: HeatmapConfig;
+  // ---- 日付・時刻・期間（migration 118・docs/plan-datetime-answer-types.md）----
+  /** 回答日(JST)からの相対日数の下限。null=下限なし。「未来のみ」は 0。 */
+  date_min_offset?: number | null;
+  /** 回答日(JST)からの相対日数の上限。null=上限なし。「過去のみ」は 0。 */
+  date_max_offset?: number | null;
+  /** 時間軸の刻み（分）。5|10|15|30|60・既定 15。 */
+  time_step_minutes?: number;
+  /** 時間軸の左端 HH:MM（既定 00:00）。 */
+  time_min?: string;
+  /** 時間軸の右端 HH:MM（既定 24:00。24:00 は期間の終了端のみ選べる）。 */
+  time_max?: string;
+  /** period の各端の単位（既定 date）。 */
+  period_unit?: "date" | "time" | "datetime";
   extraction?: QuestionExtractionConfig | null;
   conversationControl?: {
     probeIntent?: string;

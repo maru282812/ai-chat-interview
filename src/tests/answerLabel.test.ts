@@ -99,3 +99,20 @@ test("AL-7: 変換規則が LINE webhook 経路（single=label / multi=label結�
   });
   assert.equal(toDisplayAnswerForPrompt("morning,night", multi), "朝, 夜");
 });
+
+test("AL-7: 日付・時刻・期間は日本語の表示ラベルになる（migration 118）", () => {
+  assert.equal(toDisplayAnswerForPrompt("2026-10-13", makeQuestion({ question_type: "date" })), "2026年10月13日(火)");
+  assert.equal(toDisplayAnswerForPrompt("14:30", makeQuestion({ question_type: "time" })), "14:30");
+  assert.equal(
+    toDisplayAnswerForPrompt("2026-10-13T14:30", makeQuestion({ question_type: "datetime" })),
+    "2026年10月13日(火) 14:30",
+  );
+  assert.equal(
+    toDisplayAnswerForPrompt("2026-10-01/2026-10-03", makeQuestion({ question_type: "period" })),
+    "10月1日(木)〜10月3日(土)",
+  );
+  assert.equal(
+    toDisplayAnswerForPrompt("13:00/15:30", makeQuestion({ question_type: "period", question_config: { period_unit: "time" } })),
+    "13:00〜15:30",
+  );
+});

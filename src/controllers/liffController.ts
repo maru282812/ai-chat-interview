@@ -23,6 +23,7 @@ import { applyAutoFreeText } from "../lib/otherOption";
 import { jstDateString } from "../lib/dailyQueue";
 import { resolveDailyQuestionViews } from "../lib/dailyAnswerUi";
 import { generatePairwisePairs, isNewAnswerType, validateNewTypeAnswer } from "../lib/answerTypes";
+import { isDatetimeType, validateDatetimeAnswer } from "../lib/datetimeAnswer";
 import { userProfileRepository, type UserProfileUpsertInput } from "../repositories/userProfileRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { projectFavoriteRepository } from "../repositories/projectFavoriteRepository";
@@ -1315,6 +1316,24 @@ export const liffController = {
       }
     }
 
+    // 日付・時刻・期間（migration 118）のサーバー権威バリデーション。
+    // answer_text は契約どおりの文字列（YYYY-MM-DD / HH:MM / YYYY-MM-DDTHH:MM / 開始/終了）、
+    // normalized_answer はクライアント送信値を使わずサーバーで組み直す。
+    // 任意設問の未回答（空）は他形式と同じく空のまま保存する。
+    let datetimeAnswer: { value: string; normalized: Record<string, unknown> } | null = null;
+    if (!isProbeAnswer && isDatetimeType(question.question_type)) {
+      const rawText = typeof answerValue === "string" ? answerValue.trim() : answerValue;
+      const isEmpty = rawText === undefined || rawText === null || rawText === "";
+      if (!(isEmpty && !question.is_required)) {
+        const result = validateDatetimeAnswer(question.question_type, question.question_config ?? null, rawText);
+        if (!result.ok) {
+          res.status(400).json({ ok: false, error: result.error });
+          return;
+        }
+        datetimeAnswer = { value: result.value, normalized: result.normalized };
+      }
+    }
+
     // 可視性ゲート: 既存回答から組んだ ctx でこの設問が visibility_conditions を満たさないなら拒否（§3-2）。
     // 条件が無い設問（大多数）は isQuestionVisible=true で常に通過する。
     // 別案件の回答（Migration 092）。宣言が無ければ空配列で従来どおり。
@@ -1330,12 +1349,15 @@ export const liffController = {
       return;
     }
 
-    const answerText = Array.isArray(answerValue)
-      ? answerValue.join(",")
-      : String(answerValue ?? "");
+    const answerText = datetimeAnswer
+      ? datetimeAnswer.value
+      : Array.isArray(answerValue)
+        ? answerValue.join(",")
+        : String(answerValue ?? "");
 
-    const normalizedAnswer =
-      normalizedAnswerRaw !== null &&
+    const normalizedAnswer = datetimeAnswer
+      ? datetimeAnswer.normalized
+      : normalizedAnswerRaw !== null &&
       normalizedAnswerRaw !== undefined &&
       typeof normalizedAnswerRaw === "object"
         ? (normalizedAnswerRaw as Record<string, unknown>)
@@ -1375,7 +1397,8 @@ export const liffController = {
       session_id: sessionId,
       question_id: question.id,
       answer_text: answerText,
-      free_text_answer: freeTextRaw,
+      // 日時系は構造化値なので自由記述欄には入れない（集計で自由回答扱いされないように）。
+      free_text_answer: datetimeAnswer ? null : freeTextRaw,
       normalized_answer: normalizedAnswer ?? undefined,
     });
 

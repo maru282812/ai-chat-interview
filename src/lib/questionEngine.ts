@@ -20,6 +20,7 @@
 import type { AnswerUiPreset, Question, QuestionOption } from "../types/domain";
 import { type AnswerPresentation, resolveAnswerPresentation } from "./answerPresentation";
 import { generatePairwisePairs } from "./answerTypes";
+import { isSameIsoDatetimeShape } from "./datetimeAnswer";
 import { applyAutoFreeText } from "./otherOption";
 import type {
   DisplayTagsParsed,
@@ -125,6 +126,19 @@ function compare(
 ): boolean {
   const a = String(actual ?? "");
   const e = expected;
+
+  // 日付・時刻（migration 118）: 両辺が同じ ISO 形式なら文字列比較＝時系列比較。
+  // parseFloat だと "2026-10-13" が 2026 になり、年しか比べない事故になる。
+  if (isSameIsoDatetimeShape(a, e)) {
+    switch (op) {
+      case ">":  return a > e;
+      case "<":  return a < e;
+      case ">=": return a >= e;
+      case "<=": return a <= e;
+      default:   break;
+    }
+  }
+
   const aNum = parseFloat(a);
   const eNum = parseFloat(e);
 

@@ -192,8 +192,9 @@ export function missingSentinel(state: ResponseState, variable: VariableDefiniti
     return null;
   }
   const code = DEFAULT_MISSING_CODES[state as Exclude<ResponseState, "answered">];
-  // テキスト型は数値センチネルが無意味なので空欄
-  return variable.data_type === "text" ? "" : code.code;
+  // テキスト型・日時型（migration 118）は数値センチネルが無意味なので空欄
+  // （日時列に -99 等が混ざると集計ソフトの日付パースが壊れる）
+  return variable.data_type === "text" || variable.data_type === "datetime" ? "" : code.code;
 }
 
 export function probeQuestionText(probe: Answer): string {
@@ -280,7 +281,7 @@ function writePrimaryCell(row: ExportRow, variable: VariableDefinition, group: E
     row[name] = selected.codes[0] ?? selected.otherText ?? primary.answer_text;
     return;
   }
-  // text / json その他
+  // text / json / datetime（YYYY-MM-DD 等の answer_text をそのまま）その他
   row[name] = primary.answer_text;
 }
 

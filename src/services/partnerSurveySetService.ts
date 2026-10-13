@@ -1,11 +1,14 @@
 import { HttpError } from "../lib/http";
 import { logger } from "../lib/logger";
 import { isDemographicQuestion } from "../lib/partnerDemographics";
+import type { DatetimeConfig } from "../lib/datetimeAnswer";
 import {
+  isPartnerDatetimeType,
   isPartnerMatrixType,
   type PartnerAnswerOption,
   type PartnerQuestionType,
   partnerTypeRequiresOptions,
+  toPartnerDatetimeConfig,
   toPartnerOptions,
   toPartnerQuestionType
 } from "../lib/partnerQuestions";
@@ -105,6 +108,8 @@ export interface FlattenedTemplateQuestion {
    * 注記付きの単一選択に落とすしかなかった。展示でも実物と同じ表を見せる。
    */
   matrix_cols: PartnerAnswerOption[] | null;
+  /** 日付・時刻・期間の設定（migration 118）。日時系の設問のときだけキーを持つ。 */
+  datetime_config?: DatetimeConfig;
   sort_order: number;
   /** パートナー種別にそのまま落ちなかった設問への注記。落ちたものは null。 */
   note: string | null;
@@ -163,6 +168,9 @@ export function flattenTemplateQuestion(
       matrix_cols: isPartnerMatrixType(mapped)
         ? toPartnerOptions(question.question_config?.matrix_cols ?? null)
         : null,
+      // 日付・時刻・期間（migration 118）は single_choice に落とさず実物の種別で返す。
+      // 設定（範囲・刻み・単位）も添える。日時系以外ではキーを生やさない。
+      ...(isPartnerDatetimeType(mapped) ? { datetime_config: toPartnerDatetimeConfig(question) } : {}),
       sort_order: question.sort_order,
       note: null,
     };

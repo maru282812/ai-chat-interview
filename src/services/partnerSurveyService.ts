@@ -1,3 +1,4 @@
+import { type DatetimeConfig, formatDatetimeAnswerLabel, isDatetimeType } from "../lib/datetimeAnswer";
 import { HttpError } from "../lib/http";
 import { countByOption } from "../lib/answerOptionMatch";
 import {
@@ -26,6 +27,7 @@ import {
   type PartnerQuestionView,
   buildCarryForwardTags,
   buildPartnerQuestionConfig,
+  toPartnerDatetimeConfig,
   carryOverQuestionMeta,
   toInternalQuestionType,
   toPartnerCarryForward,
@@ -82,6 +84,8 @@ export interface PartnerQuestionInput {
    * 参照先の存在・種別・前後関係・value 共有は partnerRoutes の zod が検証済み。
    */
   carry_forward?: PartnerCarryForward | null;
+  /** 日付・時刻・期間の設定（任意・日時系のみ・migration 118）。 */
+  datetime_config?: DatetimeConfig | null;
 }
 
 export interface CreateSurveyInput {
@@ -317,7 +321,8 @@ async function replacePartnerQuestions(
         matrix_cols: input.matrix_cols ?? null,
         min: input.min ?? null,
         max: input.max ?? null,
-        unit: input.unit ?? null
+        unit: input.unit ?? null,
+        datetime_config: input.datetime_config ?? null
       }
     );
     // 参照先が解決できなければ持ち越し無しとして保存する（壊れた参照は書かない）。
@@ -401,7 +406,11 @@ export async function loadPartnerQuestionViews(projectId: string): Promise<Partn
       is_required: question.is_required,
       is_fixed: isDemographicQuestion(question),
       question_text_image: toPartnerQuestionTextImage(question.question_config?.question_text_image),
-      carry_forward: toPartnerCarryForward(question.display_tags_parsed, sortOrderByQuestionCode)
+      carry_forward: toPartnerCarryForward(question.display_tags_parsed, sortOrderByQuestionCode),
+      // 日時系のときだけキーを生やす（それ以外のレスポンス形・版は従来どおり）。
+      ...(isDatetimeType(question.question_type)
+        ? { datetime_config: toPartnerDatetimeConfig(question) }
+        : {})
     });
   }
   return views.sort((left, right) => left.sort_order - right.sort_order);
@@ -719,7 +728,11 @@ export const partnerSurveyService = {
             answered_at: answer.created_at,
             // 自由記述は free_text_answer に入る場合と answer_text に入る場合がある。
             // 片方だけ見ると取りこぼす（migration 019 で後から足した列のため）。
-            text: (answer.free_text_answer ?? answer.answer_text ?? "").trim()
+            // 日付・時刻・期間（migration 118）は 2026-10-13 ではなく
+            // 「2026年10月13日(火)」の表示ラベルで渡す（契約）。
+            text: isDatetimeType(question.question_type)
+              ? formatDatetimeAnswerLabel(question.question_type, answer.answer_text, question.question_config)
+              : (answer.free_text_answer ?? answer.answer_text ?? "").trim()
           }))
           .filter((entry) => entry.text.length > 0)
           .sort((a, b) => b.answered_at.localeCompare(a.answered_at));

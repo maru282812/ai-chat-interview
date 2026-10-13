@@ -1,3 +1,4 @@
+import { validateDatetimeAnswer } from "../lib/datetimeAnswer";
 import { HttpError } from "../lib/http";
 import {
   normalizeBranchRule,
@@ -27,6 +28,13 @@ function findOption(input: string, options: QuestionOption[]): QuestionOption | 
     }) ?? null
   );
 }
+
+const DATETIME_TEXT_HINT: Record<"date" | "time" | "datetime" | "period", string> = {
+  date: "例: 2026-10-13",
+  time: "例: 14:30",
+  datetime: "例: 2026-10-13T14:30",
+  period: "例: 2026-10-01/2026-10-03",
+};
 
 export const questionFlowService = {
   async listByProject(projectId: string): Promise<Question[]> {
@@ -74,6 +82,13 @@ export const questionFlowService = {
       case "matrix_multi":
       case "matrix_mixed":
         return `${header}${question.question_text}\n（回答を入力してください）${help}`;
+      // 日付・時刻・期間（migration 118）: チャット/LINE は未対応。入力例だけ添えてテキストで受ける。
+      case "date":
+      case "time":
+      case "datetime":
+      case "period":
+        return `${header}${question.question_text}
+（${DATETIME_TEXT_HINT[question.question_type]}）${help}`;
       // テキスト系・デフォルト
       default:
         return `${header}${question.question_text}${help}`;
@@ -187,6 +202,17 @@ export const questionFlowService = {
       // 画像アップロードはLINEテキストでは対応不可だが、ループ防止のため受理
       case "image_upload":
         return { answerText: text, normalizedAnswer: { value: text, note: "image_upload_text_fallback" } };
+
+      // 日付・時刻・期間（migration 118）: 形式どおりなら構造化して受け、
+      // それ以外もループ防止のためテキストとして受理する（チャット/LINE は契約上の対象外）。
+      case "date":
+      case "time":
+      case "datetime":
+      case "period": {
+        const result = validateDatetimeAnswer(question.question_type, question.question_config ?? null, text);
+        if (result.ok) return { answerText: result.value, normalizedAnswer: result.normalized };
+        return { answerText: text, normalizedAnswer: { value: text, note: "datetime_text_fallback" } };
+      }
 
       default:
         // 未知の型は受理してスキップ（無限ループ防止）

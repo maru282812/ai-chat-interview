@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { DATETIME_CONFIG_KEYS, isDatetimeType } from "./datetimeAnswer";
 import type { PartnerQuestionView } from "./partnerQuestions";
 
 /**
@@ -66,6 +67,12 @@ interface VersionedQuestion {
   min?: number;
   max?: number;
   unit?: string;
+  /**
+   * 日付・時刻・期間の設定（migration 118）。**日時系の設問で設定があるときだけ**生やす。
+   * 末尾に足すのは、既存設問の JSON（キーの並び）を1バイトも変えないため
+   * （＝既存アンケートの版が変わって偽の 409 にならない）。キーは固定順で並べる。
+   */
+  dt?: Record<string, string | number>;
 }
 
 /**
@@ -120,6 +127,15 @@ function toVersionedQuestions(questions: PartnerQuestionView[]): VersionedQuesti
     const fromIndex = carry ? indexBySortOrder.get(carry.from_sort_order) : undefined;
     if (carry && fromIndex !== undefined) {
       material.carry = { fromIndex, mode: carry.mode ?? "selected" };
+    }
+    if (isDatetimeType(question.question_type) && question.datetime_config) {
+      const dt: Record<string, string | number> = {};
+      const cfg = question.datetime_config as Record<string, unknown>;
+      for (const key of DATETIME_CONFIG_KEYS) {
+        const v = cfg[key];
+        if (typeof v === "number" || (typeof v === "string" && v !== "")) dt[key] = v;
+      }
+      if (Object.keys(dt).length > 0) material.dt = dt;
     }
     return material;
   });

@@ -1,4 +1,5 @@
 import type { Question, QuestionOption, QuestionTextImage, QuestionType } from "../types/domain";
+import { type DatetimeConfig, DATETIME_CONFIG_KEYS, isDatetimeType, sanitizeDatetimeConfig } from "./datetimeAnswer";
 
 /**
  * partnerQuestions.ts
@@ -15,6 +16,10 @@ import type { Question, QuestionOption, QuestionTextImage, QuestionType } from "
  *   sd              SD法（対になる言葉の間で評価する単一スケール）
  *   numeric         フリー数値（数値入力）
  *   free_text       自由記述（大）
+ *   date            日付（YYYY-MM-DD）            ┐ migration 118・内部型と同名
+ *   time            時刻（HH:MM）                 │ 選択肢は持たない。設定は
+ *   datetime        日付＋時刻（YYYY-MM-DDTHH:MM）│ 任意の datetime_config で受け渡す
+ *   period          期間（開始/終了）             ┘ （docs/plan-datetime-answer-types.md）
  *
  * 内部 DB の question_type（types/domain.ts QuestionType）へここで写像する。
  *
@@ -53,7 +58,12 @@ export const PARTNER_QUESTION_TYPES = [
   "matrix_multi",
   "sd",
   "numeric",
-  "free_text"
+  "free_text",
+  // 日付・時刻・期間（migration 118）。内部型と同名。
+  "date",
+  "time",
+  "datetime",
+  "period"
 ] as const;
 
 export type PartnerQuestionType = (typeof PARTNER_QUESTION_TYPES)[number];
@@ -76,7 +86,12 @@ export function isPartnerMatrixType(type: PartnerQuestionType): boolean {
  * 自由記述と数値だけが選択肢を持たない。
  */
 export function partnerTypeRequiresOptions(type: PartnerQuestionType): boolean {
-  return type !== "free_text" && type !== "numeric";
+  return type !== "free_text" && type !== "numeric" && !isPartnerDatetimeType(type);
+}
+
+/** 日付・時刻・期間（migration 118）か。選択肢を持たず datetime_config を持つ。 */
+export function isPartnerDatetimeType(type: PartnerQuestionType | string): type is "date" | "time" | "datetime" | "period" {
+  return isDatetimeType(type);
 }
 
 /** パートナー種別 → 内部 question_type。 */
@@ -94,6 +109,11 @@ export function toInternalQuestionType(type: PartnerQuestionType): QuestionType 
       return "matrix_multi";
     case "sd":
       return "sd";
+    case "date":
+    case "time":
+    case "datetime":
+    case "period":
+      return type;
     // scale は「順序尺度として描画する single_choice」。内部型は single_choice のまま。
     case "scale":
     case "single_choice":
@@ -125,6 +145,11 @@ export function toPartnerQuestionType(question: Question): PartnerQuestionType |
       return "sd";
     case "numeric":
       return "numeric";
+    case "date":
+    case "time":
+    case "datetime":
+    case "period":
+      return question.question_type;
     // ⚠ free_text_short も "free_text" に寄せる（変更前からの挙動）。
     //   別種別にすると既存アンケートの版が変わって偽の 409 になる。
     case "free_text_long":
@@ -270,6 +295,23 @@ export interface PartnerQuestionExtras {
   min?: number | null;
   max?: number | null;
   unit?: string | null;
+  /** 日付・時刻・期間の設定（migration 118）。日時系以外では無視する。 */
+  datetime_config?: DatetimeConfig | null;
+}
+
+/**
+ * 内部 question_config の日時系キーを、パートナー表現の datetime_config に取り出す。
+ * 日時系以外の設問では undefined（＝レスポンスにキーを生やさない）。
+ * 日時系なら値のあるキーだけを持つオブジェクト（未設定なら {}）。
+ */
+export function toPartnerDatetimeConfig(question: Question): DatetimeConfig | undefined {
+  if (!isDatetimeType(question.question_type)) return undefined;
+  const cfg = (question.question_config ?? {}) as Record<string, unknown>;
+  const raw: Record<string, unknown> = {};
+  for (const key of DATETIME_CONFIG_KEYS) {
+    if (cfg[key] !== undefined && cfg[key] !== null) raw[key] = cfg[key];
+  }
+  return sanitizeDatetimeConfig(question.question_type, raw).config;
 }
 
 /**
@@ -303,6 +345,11 @@ export function buildPartnerQuestionConfig(
     if (typeof extras?.min === "number") config.min = extras.min;
     if (typeof extras?.max === "number") config.max = extras.max;
     if (extras?.unit) config.unit = extras.unit;
+  }
+  if (isPartnerDatetimeType(type)) {
+    // 日時系の設定は questions.config 直下に同じキー名で置く（契約）。
+    // 不正値は zod 側で 400 にしてあるので、ここでは関係するキーだけを写す。
+    Object.assign(config, sanitizeDatetimeConfig(type, (extras?.datetime_config ?? null) as Record<string, unknown> | null).config);
   }
   if (image) {
     config.question_text_image = {
@@ -391,6 +438,11 @@ export interface PartnerQuestionView {
   question_text_image: PartnerQuestionTextImage | null;
   /** 選択肢の持ち越し設定。無ければ null。参照は sort_order。 */
   carry_forward: PartnerCarryForward | null;
+  /**
+   * 日付・時刻・期間の設定（migration 118）。**日時系の設問のときだけ**キーを持つ
+   * （それ以外ではキー自体を生やさない＝既存レスポンスと版の材料を変えない）。
+   */
+  datetime_config?: DatetimeConfig;
 }
 
 /**

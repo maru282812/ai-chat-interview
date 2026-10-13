@@ -124,3 +124,61 @@ test("answer_options の null と [] は同じ版になる", () => {
 test("版は sha256: 前置きの16進64文字", () => {
   assert.match(computeSurveyVersion([q()]), /^sha256:[0-9a-f]{64}$/);
 });
+
+// ------------------------------------------------------------------
+// 日付・時刻・期間（migration 118）
+// ------------------------------------------------------------------
+
+test("既存（日時系でない）設問の版は migration 118 の前後で1バイトも変わらない", () => {
+  // 下の値は datetime_config 対応を入れる前のコードで計算した版。
+  // ここが変わると、運用中の店舗アンケートが一斉に「誰も編集していないのに 409」になる。
+  assert.equal(
+    computeSurveyVersion([q()]),
+    "sha256:db05effedcc68c786122211c8579c2a2bbfaf0a607270e851dde1634be1ced3b"
+  );
+  const num = q({
+    question_code: "pq2",
+    question_type: "numeric",
+    question_text: "年齢",
+    answer_options: null,
+    min: 10,
+    max: 99,
+    unit: "歳",
+    sort_order: 11
+  });
+  const ft = q({
+    question_code: "pq3",
+    question_type: "free_text",
+    question_text: "ご意見",
+    answer_options: null,
+    sort_order: 12,
+    is_required: false
+  });
+  assert.equal(
+    computeSurveyVersion([q(), num, ft]),
+    "sha256:7e12d57682273054217aa28b5312ffdbae9efb7f203c7e1114f4ca13ea20cbe2"
+  );
+});
+
+test("日時系以外に datetime_config が紛れても版は変わらない", () => {
+  assert.equal(
+    computeSurveyVersion([q()]),
+    computeSurveyVersion([q({ datetime_config: { date_max_offset: 0 } })])
+  );
+});
+
+test("日時系は datetime_config の変更を検知し、空と未設定は同じ版", () => {
+  const d = (cfg?: PartnerQuestionView["datetime_config"]) =>
+    q({ question_type: "date", question_text: "来店日", answer_options: null, datetime_config: cfg });
+  assert.equal(computeSurveyVersion([d()]), computeSurveyVersion([d({})]));
+  assert.notEqual(computeSurveyVersion([d()]), computeSurveyVersion([d({ date_max_offset: 0 })]));
+  assert.notEqual(
+    computeSurveyVersion([d({ date_max_offset: 0 })]),
+    computeSurveyVersion([d({ date_max_offset: 0, date_min_offset: -30 })])
+  );
+  // キーの並び順は版に影響しない
+  assert.equal(
+    computeSurveyVersion([d({ date_min_offset: -30, date_max_offset: 0 })]),
+    computeSurveyVersion([d({ date_max_offset: 0, date_min_offset: -30 })])
+  );
+});

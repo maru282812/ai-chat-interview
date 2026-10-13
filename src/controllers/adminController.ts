@@ -1,4 +1,5 @@
-﻿import type { Request, Response } from "express";
+﻿import { DATETIME_CONFIG_KEYS, type DatetimeConfig, isDatetimeType, sanitizeDatetimeConfig } from "../lib/datetimeAnswer";
+import type { Request, Response } from "express";
 import { HttpError } from "../lib/http";
 import { ADMIN_MEMO_MAX_LENGTH, normalizeAdminMemo } from "../lib/adminMemo";
 import { redirectWithFlash, redirectWithError } from "../lib/adminFlash";
@@ -958,6 +959,8 @@ function parseQuestionType(value: string): QuestionType {
     "numeric", "image_upload",
     "hidden_single", "hidden_multi",
     "text_with_image", "sd",
+    // 日付・時刻・期間（migration 118）
+    "date", "time", "datetime", "period",
   ];
   if (VALID.includes(value as QuestionType)) {
     return value as QuestionType;
@@ -2281,6 +2284,52 @@ const MULTI_CHOICE_TYPES: QuestionType[] = ["multi_choice"];
 const EXCLUSIVE_AUTO_LABEL_RE = /特になし|わからない|分からない|該当なし|その他/;
 const SCREENING_CHOICE_QUESTION_TYPES: QuestionType[] = ["single_choice", "multi_choice"];
 
+/**
+ * 管理画面の日時系設定欄（dt_*）→ questions.config の日時系キー。
+ * 不正値（刻みの候補外・HH:MM でない・min>max）は 400。
+ * 欄が無いリクエスト（dt_config_present が無い）では保存済みの値を種別に合わせて引き継ぐ。
+ */
+function readDatetimeConfigFromRequest(
+  req: Request,
+  questionType: QuestionType,
+  existing: Question["question_config"] | null
+): DatetimeConfig {
+  if (bodyString(req.body.dt_config_present) !== "1") {
+    return sanitizeDatetimeConfig(questionType, (existing ?? {}) as Record<string, unknown>).config;
+  }
+  const preset = bodyString(req.body.dt_range_preset).trim();
+  const raw: Record<string, unknown> = {};
+  if (preset === "past") {
+    raw.date_max_offset = 0;
+  } else if (preset === "future") {
+    raw.date_min_offset = 0;
+  } else if (preset === "window") {
+    const before = parseOptionalInteger(req.body.dt_days_before);
+    const after = parseOptionalInteger(req.body.dt_days_after);
+    if (before === null && after === null) {
+      throw new HttpError(400, "「今日から前後N日」を選んだときは、前・後の日数を入力してください。");
+    }
+    if ((before !== null && before < 0) || (after !== null && after < 0)) {
+      throw new HttpError(400, "前後の日数は0以上で入力してください。");
+    }
+    if (before !== null) raw.date_min_offset = -before;
+    if (after !== null) raw.date_max_offset = after;
+  }
+  const step = bodyString(req.body.dt_time_step).trim();
+  if (step) raw.time_step_minutes = step;
+  const tMin = bodyString(req.body.dt_time_min).trim();
+  const tMax = bodyString(req.body.dt_time_max).trim();
+  if (tMin && tMin !== "00:00") raw.time_min = tMin;
+  if (tMax && tMax !== "24:00") raw.time_max = tMax;
+  const unit = bodyString(req.body.dt_period_unit).trim();
+  if (unit) raw.period_unit = unit;
+  const { config, errors } = sanitizeDatetimeConfig(questionType, raw);
+  if (errors.length > 0) {
+    throw new HttpError(400, `日付・時刻の設定が正しくありません: ${errors.join(" / ")}`);
+  }
+  return config;
+}
+
 export function buildQuestionConfigFromRequest(
   req: Request,
   questionType: QuestionType,
@@ -2464,6 +2513,17 @@ export function buildQuestionConfigFromRequest(
         const numericMaxLabel = typeof existing?.max_label === "string" ? existing.max_label.trim() : "";
         if (numericMinLabel) { questionConfig.min_label = numericMinLabel; } else { delete questionConfig.min_label; }
         if (numericMaxLabel) { questionConfig.max_label = numericMaxLabel; } else { delete questionConfig.max_label; }
+        break;
+      }
+      case "date":
+      case "time":
+      case "datetime":
+      case "period": {
+        // 日付・時刻・期間（migration 118）。設定欄（dt_*）があるフォームから来たときだけ読み、
+        // 無い経路（フロー設計画面など）では保存済みの値を引き継ぐ。
+        // ⚠ 設定欄は他の種別でも hidden のまま POST されるが、ここ（日時系の case）でしか
+        //   読まないので他の種別に値が漏れることはない。
+        Object.assign(questionConfig, readDatetimeConfigFromRequest(req, questionType, existing));
         break;
       }
       case "image_upload": {
@@ -5103,6 +5163,13 @@ export const adminController = {
     }
 
 
+    // 日付・時刻・期間（migration 118）: フロー画面は設定欄を持たないので保存済みの値を引き継ぐ。
+    // 日時系以外へ種別を変えたときは日時系キーを落とす（別の種別に設定を漏らさない）。
+    for (const key of DATETIME_CONFIG_KEYS) delete newConfig[key];
+    if (isDatetimeType(questionType)) {
+      Object.assign(newConfig, sanitizeDatetimeConfig(questionType, existingConfig).config);
+    }
+
     // 画像アップロード設定
     if (questionType === "image_upload") {
       if (body.image_max_images != null && body.image_max_images !== "") newConfig.max_images = Math.max(1, Number(body.image_max_images));
@@ -5222,6 +5289,16 @@ export const adminController = {
     const currentQuestionType = String(
       req.body?.currentQuestionType ?? existing.question_type ?? "free_text_short"
     );
+
+    // 日付・時刻・期間（migration 118）は選択肢を持たない。範囲・刻みは管理画面の設定欄で決めるので
+    // AI 提案の対象外（LLM を呼ばずに返す）。
+    if (isDatetimeType(currentQuestionType)) {
+      res.json({
+        ok: false,
+        message: "日付・時刻・期間の設問には回答項目の提案はありません。範囲や刻みは「日付・時刻の設定」で指定してください。",
+      });
+      return;
+    }
 
     const CHOICE_TYPES_SET = new Set([
       "single_choice", "multi_choice",

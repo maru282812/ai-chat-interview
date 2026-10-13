@@ -93,6 +93,7 @@ type ColumnKind =
   | "matrix_sa"
   | "matrix_flag"
   | "raw_json"
+  | "datetime_answer"
   | "datetime"
   | "probe_final_text"
   | "probe_count"
@@ -199,6 +200,11 @@ function buildColumns(qNumber: number, variable: VariableDefinition, question: Q
     columns.push({ name: q, kind: "numeric" });
   } else if (variable.data_type === "text") {
     columns.push({ name: `${q}t1`, kind: "free_text" });
+  } else if (variable.data_type === "datetime") {
+    // 日付・時刻・期間（migration 118）: 設問1列に answer_text（YYYY-MM-DD 等）をそのまま出す。
+    // 列名は従来の生値列と同じ `${q}`（集計アプリ契約＝列の追加・改名はしない）。
+    // 直後の `${q}_datetime`（回答した時刻）とは別物。
+    columns.push({ name: q, kind: "datetime_answer" });
   } else {
     // json（マトリクス設定不備・image_upload 等）は生値1列
     columns.push({ name: q, kind: "raw_json" });
@@ -346,6 +352,9 @@ function writeQuestionCells(
         break;
       }
       case "raw_json":
+        row[column.name] = state === "answered" ? (primary?.answer_text ?? "") : "";
+        break;
+      case "datetime_answer":
         row[column.name] = state === "answered" ? (primary?.answer_text ?? "") : "";
         break;
       case "datetime":
@@ -650,6 +659,7 @@ const COLUMN_ROLE_LABELS: Record<ColumnKind, string> = {
   matrix_sa: "マトリクス単一選択（コード=列位置1始まり）",
   matrix_flag: "マトリクス複数選択フラグ（1=選択/0=非選択）",
   raw_json: "生値（構造化回答）",
+  datetime_answer: "日付・時刻の回答（YYYY-MM-DD / HH:MM / YYYY-MM-DDTHH:MM / 開始/終了・JST）",
   datetime: "設問回答時刻",
   probe_final_text: "AI深掘り統合テキスト（一次回答+深掘り）",
   probe_count: "AI深掘り回数",
@@ -841,7 +851,7 @@ export function buildRawdataLayoutRows(assignments: QAssignment[], options: Rawd
 // ============================================================
 
 const DATA_COLUMN_KINDS = new Set<ColumnKind>([
-  "sa", "ma_flag", "free_text", "numeric", "matrix_sa", "matrix_flag", "raw_json"
+  "sa", "ma_flag", "free_text", "numeric", "matrix_sa", "matrix_flag", "raw_json", "datetime_answer"
 ]);
 
 export interface RawdataColumnDetail {
@@ -874,6 +884,8 @@ function columnDetailLabel(column: ColumnSpec): string {
       return `${column.rowLabel ?? ""} × ${column.option?.label ?? ""}`;
     case "raw_json":
       return "生値";
+    case "datetime_answer":
+      return "日付・時刻（YYYY-MM-DD / HH:MM / 開始/終了）";
     default:
       return "";
   }

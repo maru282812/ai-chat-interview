@@ -515,3 +515,54 @@ test("image_url 無しの従来形式は一切変わらない（後方互換）"
     { value: "2", label: "不満" }
   ]);
 });
+
+// ------------------------------------------------------------------
+// 日付・時刻・期間（migration 118）
+// ------------------------------------------------------------------
+
+test("日時系: 選択肢なし・datetime_config 任意で通り、toQuestionInput に載る", () => {
+  for (const t of ["date", "time", "datetime", "period"]) {
+    const bare = questionSchema.safeParse(baseQuestion({ question_type: t, answer_options: null }));
+    assert.equal(bare.success, true, t);
+  }
+  const parsed = questionSchema.safeParse(
+    baseQuestion({
+      question_type: "period",
+      answer_options: null,
+      datetime_config: { period_unit: "time", time_step_minutes: 30, time_min: "09:00", time_max: "18:00", date_max_offset: null }
+    })
+  );
+  assert.equal(parsed.success, true);
+  if (parsed.success) {
+    const input = toQuestionInput(parsed.data);
+    // null のキーは「未指定」として落ちる
+    assert.deepEqual(input.datetime_config, {
+      period_unit: "time",
+      time_step_minutes: 30,
+      time_min: "09:00",
+      time_max: "18:00"
+    });
+  }
+});
+
+test("日時系: 不正な datetime_config・選択肢つきは 400", () => {
+  const bad = (overrides: Record<string, unknown>) =>
+    questionSchema.safeParse(baseQuestion({ question_type: "time", answer_options: null, ...overrides })).success;
+  assert.equal(bad({ datetime_config: { time_step_minutes: 7 } }), false);
+  assert.equal(bad({ datetime_config: { time_min: "25:00" } }), false);
+  assert.equal(bad({ datetime_config: { time_min: "18:00", time_max: "09:00" } }), false);
+  assert.equal(
+    questionSchema.safeParse(baseQuestion({ question_type: "date", answer_options: null, datetime_config: { date_min_offset: 5, date_max_offset: 1 } })).success,
+    false
+  );
+  assert.equal(bad({ answer_options: [{ value: "1", label: "朝" }, { value: "2", label: "夜" }] }), false);
+  assert.equal(
+    questionSchema.safeParse(baseQuestion({ question_type: "period", answer_options: null, datetime_config: { period_unit: "week" } })).success,
+    false
+  );
+});
+
+test("日時系以外に datetime_config を送ると 400（null は許容）", () => {
+  assert.equal(questionSchema.safeParse(baseQuestion({ datetime_config: { date_max_offset: 0 } })).success, false);
+  assert.equal(questionSchema.safeParse(baseQuestion({ datetime_config: null })).success, true);
+});

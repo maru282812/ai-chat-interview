@@ -1,5 +1,6 @@
 import type { LegacyBranchRule, Project, Question, QuestionBranchRule } from "../types/domain";
 import { NEW_ANSWER_TYPES, isNewAnswerType } from "./answerTypes";
+import { isDatetimeType } from "./datetimeAnswer";
 import { deriveVariableDefinition } from "./codebook";
 
 /**
@@ -303,6 +304,16 @@ function checkDisplayModeConsistency(
   }
 
   for (const question of activeQuestions) {
+    // 日付・時刻・期間（migration 118）はカレンダー／時間軸の画面専用。
+    // チャット形式（interview_chat）と LINE トーク経路では未対応（契約 docs/plan-datetime-answer-types.md）。
+    if (mode === "interview_chat" && isDatetimeType(question.question_type)) {
+      findings.push({
+        level: "warning",
+        code: "datetime_type_unsupported_in_chat",
+        message: `日付・時刻・期間の設問はチャット形式（AIチャット・LINEトーク）では未対応です: ${question.question_code}（${question.question_type}）。表示モードを「1問1答」か「ページ型」にしてください。`,
+        question_code: question.question_code
+      });
+    }
     if (isNewAnswerType(question.question_type)) {
       findings.push({
         level: "warning",

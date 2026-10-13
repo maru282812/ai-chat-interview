@@ -295,3 +295,14 @@ test("preset 未指定は standard 扱い", () => {
   assert.equal(p.preset, "standard");
   assert.equal(p.pattern, "tap_cards");
 });
+
+test("日付・時刻・期間（migration 118）はプリセットに依らず専用パターン", () => {
+  for (const preset of ["casual", "standard", "formal"] as const) {
+    const r = (t: "date" | "time" | "datetime" | "period") =>
+      resolveAnswerPresentation({ question_type: t, question_text: "いつ来店しましたか", question_config: null }, preset).pattern;
+    assert.equal(r("date"), "date_calendar");
+    assert.equal(r("time"), "time_axis");
+    assert.equal(r("datetime"), "datetime_picker");
+    assert.equal(r("period"), "period_range");
+  }
+});

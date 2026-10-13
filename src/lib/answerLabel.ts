@@ -18,6 +18,7 @@
  */
 
 import type { Question } from "../types/domain";
+import { formatDatetimeAnswerLabel, isDatetimeType } from "./datetimeAnswer";
 
 /** 複数選択の保存値はカンマ結合（surveyFlowService の解釈と同一規則）。 */
 const MULTI_VALUE_SEPARATOR = /[,、]/;
@@ -54,6 +55,10 @@ function findOptionLabel(token: string, options: Array<{ label?: unknown; value?
 export function toDisplayAnswerForPrompt(answerText: string, question: Question | null | undefined): string {
   const raw = answerText ?? "";
   if (!question || !raw.trim()) return raw;
+  // 日付・時刻・期間（migration 118）: 2026-10-13 → 2026年10月13日(火) のように回答者が見た表記へ。
+  if (isDatetimeType(question.question_type)) {
+    return formatDatetimeAnswerLabel(question.question_type, raw, question.question_config);
+  }
   if (!CHOICE_QUESTION_TYPES.has(question.question_type)) return raw;
 
   const options = Array.isArray(question.question_config?.options)

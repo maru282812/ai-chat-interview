@@ -460,3 +460,30 @@ test("statusCounts: ステータス別件数とテスト別掲", () => {
   assert.equal(counts[1]!.status, "partial");
   assert.equal(counts[1]!.count, 1);
 });
+
+test("rawdata: 日付・時刻・期間（migration 118）は設問1列に answer_text をそのまま出す（列名は従来どおり q{n}）", () => {
+  const qd = makeQuestion({ question_code: "Q1", question_type: "date", sort_order: 1 });
+  const qp = makeQuestion({ question_code: "Q2", question_type: "period", sort_order: 2, question_config: { period_unit: "time" } });
+  const questions = [qd, qp];
+  const assignments = assignQNumbers(deriveCodebook(questions), questions);
+  assert.deepEqual(assignments[0]!.columns.map((c) => c.name), ["q1", "q1_datetime"]);
+  assert.deepEqual(assignments[1]!.columns.map((c) => c.name), ["q2", "q2_datetime"]);
+  const respondent = makeRespondent({
+    groups: questions.map((question) => ({
+      question,
+      primaryAnswer:
+        question.id === qd.id
+          ? makeAnswer({ question_id: qd.id, answer_text: "2026-10-13", normalized_answer: { value: "2026-10-13" }, created_at: "2026-10-14T01:00:00.000Z" })
+          : makeAnswer({ question_id: qp.id, answer_text: "13:00/15:30", normalized_answer: { start: "13:00", end: "15:30", unit: "time" } }),
+      extraction: null,
+      probeAnswers: []
+    }))
+  });
+  for (const mode of ["code", "label"] as const) {
+    const row = buildRawdataRows(assignments, [respondent], { mode })[0]!;
+    assert.equal(row.q1, "2026-10-13");
+    assert.equal(row.q2, "13:00/15:30");
+    // 回答時刻列（別物）
+    assert.equal(row.q1_datetime, "2026-10-14T01:00:00.000Z");
+  }
+});

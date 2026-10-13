@@ -176,7 +176,7 @@ test("summarizeDemographics: 片方だけ未回答なら、判明している軸
 // 設問タイプの写像
 // ------------------------------------------------------------------
 
-test("パートナー設問タイプは9種（顧客の作成画面に出す形式）", () => {
+test("パートナー設問タイプは12種（顧客の作成画面に出す形式・日時系4種は migration 118）", () => {
   assert.deepEqual(
     [...PARTNER_QUESTION_TYPES],
     [
@@ -187,9 +187,34 @@ test("パートナー設問タイプは9種（顧客の作成画面に出す形�
       "matrix_multi",
       "sd",
       "numeric",
-      "free_text"
+      "free_text",
+      "date",
+      "time",
+      "datetime",
+      "period"
     ]
   );
+});
+
+test("日時系4種は内部型と同名で往復し、選択肢を要求しない", () => {
+  for (const t of ["date", "time", "datetime", "period"] as const) {
+    assert.equal(toInternalQuestionType(t), t);
+    assert.equal(partnerTypeRequiresOptions(t), false);
+  }
+});
+
+test("buildPartnerQuestionConfig: 日時系は datetime_config を config 直下に写し、他種別では無視する", () => {
+  const cfg = buildPartnerQuestionConfig("period", null, null, {
+    datetime_config: { period_unit: "time", time_step_minutes: 30, time_min: "09:00", date_max_offset: 0 }
+  });
+  // period(time) なので日付の範囲は関係ないキーとして落ちる
+  assert.deepEqual(cfg, { period_unit: "time", time_step_minutes: 30, time_min: "09:00" });
+  const date = buildPartnerQuestionConfig("date", null, null, { datetime_config: { date_max_offset: 0 } });
+  assert.deepEqual(date, { date_max_offset: 0 });
+  const single = buildPartnerQuestionConfig("single_choice", [{ value: "a", label: "A" }], null, {
+    datetime_config: { date_max_offset: 0 }
+  });
+  assert.deepEqual(single, { options: [{ value: "a", label: "A" }] });
 });
 
 test("toInternalQuestionType: 各種別が既存の内部型へ写像される", () => {

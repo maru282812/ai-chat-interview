@@ -2,11 +2,13 @@ import { Router } from "express";
 import { z } from "zod";
 import { env } from "../config/env";
 import { HttpError, asyncHandler } from "../lib/http";
+import { sanitizeDatetimeConfig } from "../lib/datetimeAnswer";
 import { RESERVED_QUESTION_CODES } from "../lib/partnerDemographics";
 import {
   PARTNER_QUESTION_TYPES,
   collectDisallowedImageUrls,
   isAllowedImageUrl,
+  isPartnerDatetimeType,
   isPartnerMatrixType,
   parseImageUrlAllowedHosts,
   partnerTypeRequiresOptions
@@ -82,6 +84,20 @@ const carryForwardSchema = z.object({
   mode: z.enum(["selected", "unselected"]).optional()
 });
 
+/**
+ * 日付・時刻・期間の設定（migration 118・docs/plan-datetime-answer-types.md）。
+ * キーは questions.config と同じ・すべて任意。値の整合（刻みの候補・HH:MM・min≦max）は
+ * superRefine で sanitizeDatetimeConfig に通して検査する。
+ */
+const datetimeConfigSchema = z.object({
+  date_min_offset: z.number().int().min(-3660).max(3660).nullable().optional(),
+  date_max_offset: z.number().int().min(-3660).max(3660).nullable().optional(),
+  time_step_minutes: z.number().int().nullable().optional(),
+  time_min: z.string().max(5).nullable().optional(),
+  time_max: z.string().max(5).nullable().optional(),
+  period_unit: z.enum(["date", "time", "datetime"]).nullable().optional()
+});
+
 const questionSchema = z
   .object({
     question_text: z.string().min(1).max(2000),
@@ -96,7 +112,8 @@ const questionSchema = z
     sort_order: z.number().int().min(0).max(1000),
     is_required: z.boolean().optional(),
     question_text_image: questionTextImageSchema.nullable().optional(),
-    carry_forward: carryForwardSchema.nullable().optional()
+    carry_forward: carryForwardSchema.nullable().optional(),
+    datetime_config: datetimeConfigSchema.nullable().optional()
   })
   .superRefine((value, ctx) => {
     const disallowed = collectDisallowedImageUrls(
@@ -185,6 +202,33 @@ const questionSchema = z
         code: "custom",
         path: ["matrix_cols"],
         message: `question_type=${value.question_type} must not have matrix_cols`
+      });
+    }
+
+    // ---- 日付・時刻・期間（migration 118）: 選択肢なし・datetime_config の整合 ----
+    if (isPartnerDatetimeType(value.question_type)) {
+      if (options && options.length > 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["answer_options"],
+          message: `question_type=${value.question_type} must not have answer_options`
+        });
+      }
+      const { errors } = sanitizeDatetimeConfig(
+        value.question_type,
+        (value.datetime_config ?? null) as Record<string, unknown> | null
+      );
+      for (const message of errors) {
+        ctx.addIssue({ code: "custom", path: ["datetime_config"], message });
+      }
+      return;
+    }
+    // 日時系以外に datetime_config を送られても解釈できない（黙って捨てない）。
+    if (value.datetime_config && Object.values(value.datetime_config).some((v) => v !== null && v !== undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["datetime_config"],
+        message: `question_type=${value.question_type} must not have datetime_config`
       });
     }
 
@@ -408,7 +452,13 @@ function toQuestionInput(question: z.infer<typeof questionSchema>): PartnerQuest
           caption: image.caption ?? null
         }
       : null,
-    carry_forward: question.carry_forward ?? null
+    carry_forward: question.carry_forward ?? null,
+    // null 値のキーは「未指定」と同じ扱い（既定値）にする。
+    datetime_config: question.datetime_config
+      ? (Object.fromEntries(
+          Object.entries(question.datetime_config).filter(([, v]) => v !== null && v !== undefined)
+        ) as PartnerQuestionInput["datetime_config"])
+      : null
   };
 }
 

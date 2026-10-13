@@ -1,4 +1,5 @@
 import type { Question, QuestionConfig, QuestionOption, QuestionType } from "../types/domain";
+import { datetimeFormatNote, isDatetimeType } from "./datetimeAnswer";
 
 /**
  * codebook.ts
@@ -188,6 +189,10 @@ function defaultDataType(type: QuestionType): CodebookDataType {
   if (type === "image_upload") {
     return "json";
   }
+  // 日付・時刻・期間（migration 118）。period も datetime（形式は cleaning_note に明記）。
+  if (isDatetimeType(type)) {
+    return "datetime";
+  }
   return "text";
 }
 
@@ -275,7 +280,7 @@ export function deriveVariableDefinition(question: Question): VariableDefinition
     scale_max: typeof scaleMax === "number" ? scaleMax : null,
     is_required: question.is_required,
     ai_probe_enabled: question.ai_probe_enabled,
-    cleaning_note: override.cleaning_note ?? "",
+    cleaning_note: override.cleaning_note ?? (isDatetimeType(type) ? datetimeFormatNote(type, config) : ""),
     metric_code: config?.meta?.metric_code ?? "",
     metric_direction: config?.meta?.metric_direction ?? ""
   };

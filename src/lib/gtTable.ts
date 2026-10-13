@@ -1,3 +1,4 @@
+import { isDatetimeType } from "./datetimeAnswer";
 import type { Answer, Question, QuestionOption, UserProfile } from "../types/domain";
 import {
   buildOptionIndex,
@@ -130,6 +131,8 @@ function percentOf(count: number, n: number): number {
  * researchOpsService の aggregation_type と同じ考え方だが、こちらは選択肢の有無で機械的に決める。
  */
 export function isRatioAllowed(question: Question): boolean {
+  // 日付・時刻・期間（migration 118）は選択肢を持たない連続値なので比率を出さない。
+  if (isDatetimeType(question.question_type)) return false;
   return optionsForQuestion(question).length > 0;
 }
 
