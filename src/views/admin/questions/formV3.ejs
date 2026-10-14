@@ -2564,6 +2564,14 @@
     ghost.setAttribute('target', 'livePreviewFrame');
     ghost.removeAttribute('id');
     ghost.style.display = 'none';
+    // cloneNode は select の「いま選ばれている値」を運ばない（初期の selected 属性に戻る）。
+    // 写さないと回答形式などを切り替えてもプレビューが保存済みの値のまま変わらない。
+    const liveSelects = liveForm.querySelectorAll('select');
+    ghost.querySelectorAll('select').forEach((sel, i) => {
+      const src = liveSelects[i];
+      if (!src) return;
+      Array.from(sel.options).forEach((opt, j) => { opt.selected = !!(src.options[j] && src.options[j].selected); });
+    });
     // 複製した中の id は元の要素と衝突するので落とす（getElementById の先勝ちを避ける）
     ghost.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
     // ファイル入力は複製しても中身が運べない。送っても意味が無いので外す。
