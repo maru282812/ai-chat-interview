@@ -2797,6 +2797,9 @@
       btnNext.disabled = true;
       progressBar.style.width = (cursor / visibleQs.length * 100) + '%';
       checkNextEnabled(); // 非必須・hidden 設問では即時活性化
+      // 画面を差し替えても window のスクロール位置は残る。前の設問が長いと、次の設問が
+      // 途中から表示されて設問文が見えないので、切り替えのたびに先頭へ戻す。
+      window.scrollTo(0, 0);
     }
 
     function renderPageMode() {
@@ -2824,6 +2827,7 @@
       btnNext.disabled = true;
       progressBar.style.width = (pageCursor / visiblePagesNow.length * 100) + '%';
       checkNextEnabled(); // 非必須・hidden 設問では即時活性化
+      window.scrollTo(0, 0); // renderQuestionMode と同じ理由でページ切り替え時に先頭へ戻す
     }
 
     function bindInputEvents(q) {
