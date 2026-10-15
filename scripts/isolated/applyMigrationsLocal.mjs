@@ -1,11 +1,18 @@
 /**
- * ローカル隔離DBへ migrations を流す。
+ * ローカル隔離DBへ migrations を流す（docs/isolated-verify-env.md）。
  *
- * 既知の問題: 034_notification_templates_seed.sql が daily_question_priorities に
- * attr_key='car_ownership' 等を insert するが、その attr_key を登録するのは
- * 035_attribute_definitions_daily_keys.sql。**依存順が逆**で、白紙からの再構築だと
- * FK 違反で落ちる（035 のコメント自身が「事前登録」と書いており、本来 034 より前）。
- * repo の migration は書き換えず、ここで適用順だけ入れ替える。
+ * 本番向けの `npm run db:migrate` は Supabase Management API を使うので
+ * ローカルDBには向けられない（project ref を URL から作るため 400 になる）。
+ * ローカルは DB コンテナの psql へ直接流す。適用はファイル名順そのまま。
+ *
+ * ⚠ Supabase CLI の `supabase start` / `db reset` に migration を任せていない
+ *   （config.toml の [db.migrations] enabled = false）。理由は
+ *   **067 が2本ある**こと（067_document_usage_category / 067_respondent_test_flag）。
+ *   CLI は supabase_migrations.schema_migrations をファイル名のバージョン部分で
+ *   主キーにするため、2本目で duplicate key になって止まる。
+ *   このプロジェクトの正準は filename 主キーの `_app_migrations`（applyMigrations.mjs）
+ *   なので 067 が2本でも問題なく、CLI 側の制約に合わせて番号を振り直すと
+ *   `_app_migrations` 側が「未適用」と見なして再実行事故になる。よって触らない。
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -17,16 +24,10 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
 const DIR = path.join(ROOT, "supabase/migrations");
 const DB = "postgresql://postgres:postgres@127.0.0.1:54622/postgres";
 
-let files = fs.readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
-
-// 依存順の入れ替え: 035 を 034 の前に出す
-const i34 = files.indexOf("034_notification_templates_seed.sql");
-const i35 = files.indexOf("035_attribute_definitions_daily_keys.sql");
-if (i34 >= 0 && i35 >= 0 && i35 > i34) {
-  files.splice(i35, 1);
-  files.splice(i34, 0, "035_attribute_definitions_daily_keys.sql");
-  console.log("順序入れ替え: 035 を 034 の前に適用する");
-}
+// ファイル名順にそのまま流す。
+// 034 は 035 が入れる attr_key を参照していたが、034 自身に同じ
+// ON CONFLICT 付き INSERT を持たせて自己完結させたので、並べ替えは不要になった。
+const files = fs.readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
 
 const failures = [];
 let applied = 0;

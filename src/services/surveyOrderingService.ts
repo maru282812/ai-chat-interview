@@ -8,7 +8,7 @@ import { extractOrderingEdges } from "../lib/surveyValidation";
 import { sessionRepository } from "../repositories/sessionRepository";
 import { snapshotService } from "./snapshotService";
 import { logger } from "../lib/logger";
-import type { Project, Question, QuestionPageGroup, Session } from "../types/domain";
+import type { Project, Question, QuestionOption, QuestionPageGroup, Session } from "../types/domain";
 
 /**
  * surveyOrderingService（統計エクスポート §3 / §22）
@@ -30,14 +30,35 @@ export function isRandomizationConfigured(pageGroups: QuestionPageGroup[]): bool
  * 選択肢ランダム化（L3）を回答者ごとに適用する。ページ設定とは独立に常に適用。
  * seed は session×設問で決定的（再描画で同じ並び）。アンカー（その他/特になし）は固定。
  */
+const MATRIX_TYPES = new Set(["matrix_single", "matrix_multi", "matrix_mixed"]);
+
 function applyOptionRandomization(questions: Question[], sessionId: string): Question[] {
   return questions.map((question) => {
     const config = question.question_config?.option_randomization;
-    const options = question.question_config?.options;
-    if (!config?.enabled || !options || options.length <= 1) {
+    if (!config?.enabled) {
       return question;
     }
-    const ordered = computeOptionOrder(options, config, `${sessionId}:${question.id}`);
+    const seed = `${sessionId}:${question.id}`;
+
+    // マトリクスは「行」を並べ替える。
+    // ⚠ 回答は {行index: 列index} で保存される（survey.ejs の mq_<code>_<ri>）ため、
+    //   並べ替えた位置をそのまま index にすると回答者ごとに行の意味が変わり、集計が壊れる。
+    //   各行に元の位置 row_index を持たせ、クライアントは必ず row_index を入力名・保存キーに使う。
+    if (MATRIX_TYPES.has(question.question_type)) {
+      const cfg = question.question_config ?? {};
+      const rowsKey = Array.isArray(cfg.matrix_rows) ? "matrix_rows" : "options";
+      const rows = (cfg[rowsKey] ?? []) as QuestionOption[];
+      if (rows.length <= 1) return question;
+      const indexed = rows.map((row, index) => ({ ...row, row_index: index }));
+      const ordered = computeOptionOrder(indexed, config, seed);
+      return { ...question, question_config: { ...cfg, [rowsKey]: ordered } };
+    }
+
+    const options = question.question_config?.options;
+    if (!options || options.length <= 1) {
+      return question;
+    }
+    const ordered = computeOptionOrder(options, config, seed);
     return { ...question, question_config: { ...question.question_config, options: ordered } };
   });
 }

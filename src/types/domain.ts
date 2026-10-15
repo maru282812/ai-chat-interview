@@ -492,6 +492,12 @@ export interface QuestionOption {
   description?: string;
   /** スクリーニング通過対象フラグ（is_screening_question=true の設問のみ有効） */
   isScreeningPass?: boolean;
+  /**
+   * マトリクス行の元の位置（0始まり）。surveyOrderingService が行をランダム化したときだけ付く。
+   * 回答は {行index: 列index} で保存されるため、並べ替え後も保存キーはこの値で固定する
+   * （survey.ejs は mq_<code>_<row_index> を入力名に使う）。DB には保存しない。
+   */
+  row_index?: number;
 }
 
 export interface ImageUploadConfig {

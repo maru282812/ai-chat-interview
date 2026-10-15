@@ -492,7 +492,9 @@
           + otherInput(q, c, '', 6)
           + '</div>';
       }).join('');
-      return '<div class="answer-chips" data-type="multi">' + items + '</div>';
+      var maxSelect = Number((q.question_config || {}).max_select) || 0;
+      var maxAttr = maxSelect > 0 ? ' data-max-select="' + maxSelect + '"' : '';
+      return '<div class="answer-chips" data-type="multi"' + maxAttr + '>' + items + '</div>';
     }
 
     // ---- big_slider（順序尺度を標準プリセットで）----
@@ -777,6 +779,35 @@
       return checked.length ? valueOf(checked[0]) : '';
     }
 
+    /**
+     * multi_choice 選択数上限（max_select）: 今 ON にした選択で上限を超えたら、その選択を取り消して案内を出す。
+     * 上限は入力を包む要素の data-max-select（survey.ejs の choice-list / card-grid、ここでは .answer-chips）から読む。
+     * 「その他」の自由記述は options の value で数えるため、記述の有無で件数は変わらない。
+     * @returns true = 上限超過で取り消した（呼び出し側は値の収集をしない）
+     */
+    function enforceMaxSelect(root, changedEl, code) {
+      if (!changedEl || !changedEl.checked || changedEl.type !== 'checkbox') return false;
+      var holder = changedEl.closest('[data-max-select]');
+      var max = holder ? parseInt(holder.getAttribute('data-max-select'), 10) : 0;
+      if (!(max > 0)) return false;
+      var checked = [].slice.call(root.querySelectorAll('input[name="q_' + code + '"]:checked'));
+      if (checked.length <= max) return false;
+      changedEl.checked = false;
+      var wrap = changedEl.closest('.choice-item') || changedEl.closest('.card-item');
+      if (wrap) wrap.classList.remove('selected');
+      var note = holder.nextElementSibling;
+      if (!note || !note.classList.contains('max-select-note')) {
+        note = document.createElement('p');
+        note.className = 'max-select-note';
+        holder.insertAdjacentElement('afterend', note);
+      }
+      note.textContent = '選べるのは' + max + 'つまでです。別のものを選ぶときは、先に選んだものを外してください。';
+      note.style.display = '';
+      clearTimeout(note._hideTimer);
+      note._hideTimer = setTimeout(function () { note.style.display = 'none'; }, 2500);
+      return true;
+    }
+
     /** multi_choice 排他制御: 今 ON にした選択肢と衝突する既存の ON を自動 OFF にする（無向評価）。 */
     function applyExclusion(root, changedEl, code) {
       if (!changedEl || !changedEl.checked) return;
@@ -816,7 +847,10 @@
       // スワイプ系が自前で合流させる自由記述行（.answer-freetext-rows 配下）は、
       // ここで onChange を撃つと振り分け済みの値を上書きしてしまうので除外する。
       // 選択状態のトグルだけは効かせたいので、配線自体は wirePatterns 側が担当する。
-      var ownedByPattern = function (el) { return !!el.closest('.answer-freetext-rows'); };
+      // 画像カードグリッド（survey.ejs の .card-grid）は <label> で描かれ、ブラウザ標準の
+      // label 活性化が input を切り替える。ここでも checked を反転させると二重トグルで相殺され
+      // 「タップしても選べない」になるため、配線はホスト側（change リスナー）に任せる。
+      var ownedByPattern = function (el) { return !!(el.closest('.answer-freetext-rows') || el.closest('.card-grid')); };
 
       [].slice.call(root.querySelectorAll('.card-item')).forEach(function (card) {
         if (ownedByPattern(card)) return;
@@ -831,6 +865,7 @@
           } else {
             input.checked = !input.checked;
             card.classList.toggle('selected', input.checked);
+            if (enforceMaxSelect(root, input, code)) return; // 上限超過は取り消し（値は変わらない）
             applyExclusion(root, input, code); // 排他相手を自動解除
           }
           var val = collectChoiceVal(root, code, multi);
@@ -1207,6 +1242,7 @@
       attachHorizontalDrag: attachHorizontalDrag,
       collectChoiceVal: collectChoiceVal,
       applyExclusion: applyExclusion,
+      enforceMaxSelect: enforceMaxSelect,
       faceIconsFor: faceIconsFor,
       AUTO_COMMIT_PATTERNS: AUTO_COMMIT_PATTERNS,
       GESTURE_COMMIT_PATTERNS: GESTURE_COMMIT_PATTERNS,

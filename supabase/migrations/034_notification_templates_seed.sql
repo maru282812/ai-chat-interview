@@ -233,6 +233,27 @@ INSERT INTO notification_templates (
 ON CONFLICT DO NOTHING;
 
 -- ============================================================
+-- daily_question_priorities が参照する attr_key の先行登録
+--
+-- ⚠ 下の INSERT は attribute_definitions(attr_key) への FK
+--   （daily_question_priorities_attr_key_fkey・migration 032）を持つ。
+--   これらのキーを入れているのは 035 なので、**白紙のDBに 001 から順に流すと
+--   034 が 035 より先に走って FK 違反で落ちる**（本番は増分で育ったため顕在化しなかった）。
+--   ファイル番号の付け替えは applyMigrations.mjs が filename で適用済みを管理している
+--   （_app_migrations）ため再実行事故になる。よって 034 を自己完結させる。
+--
+--   035 と同じ内容・同じ ON CONFLICT なので、既に 035 が適用済みの環境では完全な no-op。
+-- ============================================================
+INSERT INTO attribute_definitions (attr_key, label, category, data_type, is_user_editable, is_company_visible, sort_order)
+VALUES
+  ('car_ownership',      '車所有',           'lifestyle', 'text',    false, true,  130),
+  ('pet_ownership',      'ペット有無',        'lifestyle', 'text',    false, true,  140),
+  ('children',           '子供有無・年齢',    'lifestyle', 'text',    false, true,  150),
+  ('housing_type',       '住宅形態',          'lifestyle', 'text',    false, true,  160),
+  ('shopping_frequency', 'ネット購買頻度',    'lifestyle', 'text',    false, true,  170)
+ON CONFLICT (attr_key) DO NOTHING;
+
+-- ============================================================
 -- daily_question_priorities 初期データ
 -- AI が不足属性を優先出題するためのルール
 -- ============================================================

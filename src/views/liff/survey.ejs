@@ -335,6 +335,24 @@
     .matrix-cells .matrix-cell.selected { border-color: #2ca87a; background: #e8f7f0; }
     .matrix-row-next { margin-top: 12px; width: 100%; padding: 12px; border: 2px solid #2ca87a; border-radius: 10px; background: #fff; color: #2ca87a; font-size: 15px; font-weight: 600; cursor: pointer; }
     .matrix-done { text-align: center; color: #2ca87a; font-size: 14px; padding: 16px 0; }
+    /* matrix_list: 項目を縦に並べてページ分割 */
+    .matrixlist-progress { text-align: left; margin-bottom: 6px; }
+    .answer-matrixlist::before { content: ""; display: block; height: 4px; border-radius: 2px; background: #e4ecea; margin-bottom: 14px; }
+    .matrixlist-row { margin: 0 0 18px; padding: 10px 0 2px; border-radius: 10px; }
+    .matrixlist-row.attention { background: #fff5e6; box-shadow: 0 0 0 2px #f0b65a; padding: 10px 8px 2px; }
+    .matrixlist-row-q { font-size: 15px; font-weight: 700; margin: 0 0 8px; color: #17423a; }
+    .matrixlist-row-desc { font-size: 12px; color: #60726f; margin: -4px 0 8px; }
+    .matrixlist-cells { display: flex; flex-direction: column; gap: 8px; }
+    .matrixlist-cell { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border: 1.5px solid #d8e3e0; border-radius: 10px; background: #fff; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .matrixlist-cell input { margin: 0; width: 18px; height: 18px; accent-color: #2ca87a; flex-shrink: 0; pointer-events: none; }
+    .matrixlist-cell-label { font-size: 14px; color: #17423a; }
+    .matrixlist-cell.selected { border-color: #2ca87a; background: #e8f7f0; }
+    .matrixlist-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+    .matrixlist-nav button { padding: 10px 14px; border: 2px solid #2ca87a; border-radius: 10px; background: #fff; color: #2ca87a; font-size: 14px; font-weight: 600; cursor: pointer; }
+    .matrixlist-nav button:disabled { opacity: .4; cursor: default; }
+    .matrixlist-pageno { font-size: 12px; color: #90a29e; }
+    .matrixlist-hint { font-size: 12px; color: #c0392b; margin: 8px 0 0; text-align: center; }
+    .max-select-note { font-size: 12px; color: #c0392b; margin: 6px 0 0; }
     .choice-extra-img  { height: 60px; width: auto; max-width: 100%; object-fit: cover; border-radius: 4px; }
 
     /* ---- image_upload ---- */
@@ -1116,6 +1134,16 @@
     if (andParts.length > 1) return andParts.every(p => evalExpr(p));
     // NOT
     if (/^not\s+/i.test(expr)) return !evalExpr(expr.slice(4).trim());
+    // MA 含有: `q4 includes child`（サーバー questionEngine.evalExpr と同じ意味論）。
+    // multi_choice の回答は配列で answerCtx に入るため、配列なら含有・単一値なら一致で判定する。
+    // ここに無いと「not q7 includes none」が常に true（＝非表示にならない）になる。
+    const incl = expr.match(/^(q\d+)\s+includes\s+(.+)$/i);
+    if (incl) {
+      const raw = answerCtx.answers[incl[1].toLowerCase()];
+      const expected = incl[2].trim();
+      if (Array.isArray(raw)) return raw.map(String).includes(expected);
+      return String(raw ?? '') === expected;
+    }
     // 比較
     const m = expr.match(/^(q\d+)\s*(!=|>=|<=|>|<|=)\s*(.+)$/i);
     if (m) {
@@ -1344,6 +1372,13 @@
   const buildSortSwipeHtml  = (q, choices) => AnswerUI.build(q, choices, 'sort_swipe');
   const attachHorizontalDrag = (el, onCommit, onDrag) => AnswerUI.attachHorizontalDrag(el, onCommit, onDrag);
 
+  // ---- マトリクス行の保存キー ----
+  // 行がサーバーでランダム化されると row_index（元の位置）が付く。保存形式は {行index: 列index} で
+  // 集計もその index を見るため、入力名・収集・回答済み判定は必ずこの値を使う（表示位置 ri は使わない）。
+  function matrixRowIndex(row, ri) {
+    return (row && typeof row.row_index === 'number') ? row.row_index : ri;
+  }
+
   // ---- matrix_rows（行分解・casual/standard の matrix・migration 075）----
   // 1行=1画面。入力名 mq_<code>_<ri> を従来と同一にすることで既存の収集配線・保存形式を再利用する。
   function buildMatrixRowsHtml(q) {
@@ -1353,7 +1388,7 @@
     const isMulti = q.question_type === 'matrix_multi';
     const screens = rows.map((row, ri) => {
       const cells = colObjects.map((col, ci) => `<label class="card-item matrix-cell">
-        <input type="${isMulti ? 'checkbox' : 'radio'}" name="mq_${esc(q.question_code)}_${ri}" value="${ci}" style="display:none" />
+        <input type="${isMulti ? 'checkbox' : 'radio'}" name="mq_${esc(q.question_code)}_${matrixRowIndex(row, ri)}" value="${ci}" style="display:none" />
         <span class="card-item-title">${esc(col.label || String(ci + 1))}</span>
       </label>`).join('');
       return `<div class="matrix-row-screen" data-ri="${ri}" style="${ri === 0 ? '' : 'display:none;'}">
@@ -1366,6 +1401,46 @@
       <div class="matrix-progress"></div>
       ${screens}
       <div class="matrix-done" style="display:none;">全項目に回答しました</div>
+    </div>`;
+  }
+
+  // ---- matrix_list（項目を縦に並べ、数項目ずつページ分割）----
+  // 横に段階・縦に項目の表はスマホで文字とタップ位置が小さくなり、1項目1画面（matrix_rows）は
+  // 操作回数が多い。項目ごとに「見出し＋縦の選択ボタン」を並べ、matrix_page_size（既定4）項目で
+  // 1ページにする。入力名は mq_<code>_<row_index> で従来の収集・保存形式（{行:列}）と同一。
+  function buildMatrixListHtml(q) {
+    const cfg = q.question_config || {};
+    const rows = cfg.matrix_rows || cfg.options || [];
+    const colObjects = (cfg.matrix_cols || []).map(c => typeof c === 'string' ? { label: c } : c);
+    const isMulti = q.question_type === 'matrix_multi';
+    const pageSize = Math.max(1, parseInt(cfg.matrix_page_size, 10) || 4);
+    const pages = [];
+    for (let i = 0; i < rows.length; i += pageSize) pages.push(rows.slice(i, i + pageSize).map((row, k) => ({ row, ri: i + k })));
+    const pageHtml = pages.map((page, pi) => {
+      const rowsHtml = page.map(({ row, ri }) => {
+        const key = matrixRowIndex(row, ri);
+        const cells = colObjects.map((col, ci) => `<label class="matrixlist-cell">
+          <input type="${isMulti ? 'checkbox' : 'radio'}" name="mq_${esc(q.question_code)}_${key}" value="${ci}" />
+          <span class="matrixlist-cell-label">${esc(col.label || String(ci + 1))}</span>
+        </label>`).join('');
+        return `<div class="matrixlist-row" data-key="${key}">
+          <p class="matrixlist-row-q">${ri + 1}. ${esc(row.label || ('項目' + (ri + 1)))}</p>
+          ${row.description ? `<p class="matrixlist-row-desc">${esc(row.description)}</p>` : ''}
+          <div class="matrixlist-cells">${cells}</div>
+        </div>`;
+      }).join('');
+      return `<div class="matrixlist-page" data-pi="${pi}" style="${pi === 0 ? '' : 'display:none;'}">${rowsHtml}</div>`;
+    }).join('');
+    const nav = pages.length > 1 ? `<div class="matrixlist-nav">
+        <button type="button" class="matrixlist-prev" disabled>← 前の項目</button>
+        <span class="matrixlist-pageno"></span>
+        <button type="button" class="matrixlist-next">次の項目 →</button>
+      </div>` : '';
+    return `<div class="answer-matrixlist" data-code="${esc(q.question_code)}" data-total="${rows.length}" data-pages="${pages.length}">
+      <div class="matrix-progress matrixlist-progress"></div>
+      ${pageHtml}
+      ${nav}
+      <p class="matrixlist-hint" style="display:none;">まだ選んでいない項目があります</p>
     </div>`;
   }
 
@@ -2025,6 +2100,9 @@
       const ew = (c.exclusive_with || []).join(',');
       return `data-exclusive="${c.exclusive ? '1' : '0'}" data-exclusive-with="${esc(ew)}"`;
     }
+    // multi_choice の選択数上限（max_select）。入力の親要素に置き、AnswerUI.enforceMaxSelect が読む。
+    const maxSelectAttr = (qType === 'multi_choice' && Number(cfg.max_select) > 0)
+      ? ` data-max-select="${Number(cfg.max_select)}"` : '';
 
     function choiceImg(c) {
       if (!c.imageUrl) return '';
@@ -2111,7 +2189,7 @@
           <p style="font-size:11px;color:#e55;margin-top:4px;">※選択肢が設定されていません（管理画面で設定してください）</p>`;
       } else if (displayFormat === 'card' && hasImages) {
         const cols = Math.min(gridCols, 4);
-        inputHtml = `<div class="card-grid" style="grid-template-columns:repeat(${cols},1fr);" data-type="multi">` +
+        inputHtml = `<div class="card-grid" style="grid-template-columns:repeat(${cols},1fr);" data-type="multi"${maxSelectAttr}>` +
           choices.map(c => {
             const imgSrc = c.imageUrl || (c.imageUrls && c.imageUrls[0]) || '';
             const additionals = (c.imageUrls || []).filter(u => u && u !== imgSrc);
@@ -2131,7 +2209,7 @@
         } else if (mpattern === 'sort_swipe') {
           inputHtml = buildSortSwipeHtml(q, choices);
         } else {
-          inputHtml = `<div class="${choiceClass}" data-type="multi">` +
+          inputHtml = `<div class="${choiceClass}" data-type="multi"${maxSelectAttr}>` +
             choices.map(c => choiceListItem(`<input type="checkbox" name="q_${esc(q.question_code)}" value="${esc(c.value)}" ${exclAttrs(c)} />`, c)).join('') + `</div>`;
         }
       }
@@ -2178,6 +2256,9 @@
       if (DISPLAY_MODE === 'survey_question' && q.presentation && q.presentation.pattern === 'matrix_rows') {
         return buildAnswerLayout(q, buildMatrixRowsHtml(q), false);
       }
+      if (DISPLAY_MODE === 'survey_question' && q.presentation && q.presentation.pattern === 'matrix_list') {
+        return buildAnswerLayout(q, buildMatrixListHtml(q), false);
+      }
       const matrixRows = (q.question_config?.matrix_rows || q.question_config?.options || []);
       const colObjects = (q.question_config?.matrix_cols || []).map(c => typeof c === 'string' ? { label: c, value: c } : c);
       const cols = colObjects.map(c => c.label || c);
@@ -2223,7 +2304,7 @@
             </div>`;
           }
           return `<tr><td>${cellHtml}</td>` +
-            cols.map((_c, ci) => `<td><input type="${qType==='matrix_multi'?'checkbox':'radio'}" name="mq_${esc(q.question_code)}_${ri}" value="${ci}" /></td>`).join('') +
+            cols.map((_c, ci) => `<td><input type="${qType==='matrix_multi'?'checkbox':'radio'}" name="mq_${esc(q.question_code)}_${matrixRowIndex(row, ri)}" value="${ci}" /></td>`).join('') +
             `</tr>`;
         }).join('') + `</table></div>`;
     } else if (FREE_TEXT_TYPES.has(qType)) {
@@ -2835,6 +2916,75 @@
           mrows.querySelectorAll('.matrix-row-next').forEach(btn => btn.addEventListener('click', advanceRow));
           showRow(0);
         }
+
+        // matrix_list: 項目を縦に並べ、数項目ずつページ分割。セル選択→既存 mq_ 収集を change で駆動。
+        const mlist = questionArea.querySelector(`.answer-matrixlist[data-code="${qCode}"]`);
+        if (mlist) {
+          const total = parseInt(mlist.getAttribute('data-total'), 10) || 0;
+          const pages = [...mlist.querySelectorAll('.matrixlist-page')];
+          const progress = mlist.querySelector('.matrixlist-progress');
+          const pageNo = mlist.querySelector('.matrixlist-pageno');
+          const prevBtn = mlist.querySelector('.matrixlist-prev');
+          const nextBtn = mlist.querySelector('.matrixlist-next');
+          const hint = mlist.querySelector('.matrixlist-hint');
+          let pi = 0;
+          const answeredCount = () => [...mlist.querySelectorAll('.matrixlist-row')]
+            .filter(r => r.querySelector('input:checked')).length;
+          function paint() {
+            pages.forEach((p, k) => { p.style.display = k === pi ? '' : 'none'; });
+            if (progress) progress.textContent = `回答済み ${answeredCount()} / ${total}項目`;
+            if (pageNo) pageNo.textContent = `${pi + 1} / ${pages.length}ページ`;
+            if (prevBtn) prevBtn.disabled = pi === 0;
+            if (nextBtn) {
+              nextBtn.disabled = pi >= pages.length - 1;
+              nextBtn.style.visibility = pi >= pages.length - 1 ? 'hidden' : '';
+            }
+          }
+          function firstUnansweredOnPage() {
+            return [...pages[pi].querySelectorAll('.matrixlist-row')].find(r => !r.querySelector('input:checked')) || null;
+          }
+          function goto(next) {
+            pi = Math.max(0, Math.min(pages.length - 1, next));
+            if (hint) hint.style.display = 'none';
+            mlist.querySelectorAll('.matrixlist-row.attention').forEach(r => r.classList.remove('attention'));
+            paint();
+            const top = mlist.getBoundingClientRect().top + window.scrollY - 72;
+            window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+          }
+          mlist.querySelectorAll('.matrixlist-cell').forEach(cell => {
+            cell.addEventListener('click', (e) => {
+              if (e.target.tagName === 'INPUT') return;
+              e.preventDefault();
+              const input = cell.querySelector('input');
+              if (!input) return;
+              const row = cell.closest('.matrixlist-row');
+              if (input.type === 'radio') {
+                row.querySelectorAll('.matrixlist-cell').forEach(c => c.classList.remove('selected'));
+                input.checked = true;
+                cell.classList.add('selected');
+              } else {
+                input.checked = !input.checked;
+                cell.classList.toggle('selected', input.checked);
+              }
+              row.classList.remove('attention');
+              input.dispatchEvent(new Event('change', { bubbles: true })); // 既存のマトリクス収集を駆動
+              if (progress) progress.textContent = `回答済み ${answeredCount()} / ${total}項目`;
+            });
+          });
+          if (nextBtn) nextBtn.addEventListener('click', () => {
+            // 未回答の項目があれば進まず、その項目まで移動して知らせる
+            const missing = firstUnansweredOnPage();
+            if (missing) {
+              missing.classList.add('attention');
+              if (hint) hint.style.display = '';
+              missing.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              return;
+            }
+            goto(pi + 1);
+          });
+          if (prevBtn) prevBtn.addEventListener('click', () => goto(pi - 1));
+          paint();
+        }
       })();
 
       // ---- image_upload ----
@@ -2908,6 +3058,11 @@
         el.addEventListener('change', () => {
           const qType = q.question_type;
           if (qType === 'multi_choice') {
+            // 上限を超えた選択は取り消す（AnswerUI 側で checked を戻し、案内を出す）
+            if (AnswerUI.enforceMaxSelect(questionArea, el, q.question_code)) {
+              el.closest('label')?.classList.remove('selected');
+              return;
+            }
             // チェックボックスは個別に toggle（全解除してから追加すると他の選択が消える）
             el.closest('label')?.classList.toggle('selected', el.checked);
             applyExclusion(el, q.question_code); // 排他相手を自動解除
@@ -2939,10 +3094,11 @@
         questionArea.querySelectorAll(`input[name^="mq_${q.question_code}_"]`).forEach(input => {
           input.addEventListener('change', () => {
             const answer = {};
-            matrixRows.forEach((_, ri) => {
-              const checked = [...questionArea.querySelectorAll(`input[name="mq_${q.question_code}_${ri}"]:checked`)];
+            matrixRows.forEach((row, ri) => {
+              const key = matrixRowIndex(row, ri);
+              const checked = [...questionArea.querySelectorAll(`input[name="mq_${q.question_code}_${key}"]:checked`)];
               if (checked.length > 0) {
-                answer[ri] = q.question_type === 'matrix_multi'
+                answer[key] = q.question_type === 'matrix_multi'
                   ? checked.map(i => i.value)
                   : checked[0].value;
               }
@@ -2994,8 +3150,8 @@
         if (!val || typeof val !== 'object' || Array.isArray(val)) return false;
         const rows = q.question_config?.matrix_rows || q.question_config?.options || [];
         if (rows.length === 0) return false;
-        return rows.every((_, ri) => {
-          const rv = val[ri];
+        return rows.every((row, ri) => {
+          const rv = val[matrixRowIndex(row, ri)];
           return rv !== undefined && rv !== null && (!Array.isArray(rv) || rv.length > 0);
         });
       }
@@ -3421,8 +3577,8 @@
       if (['matrix_single','matrix_multi','matrix_mixed'].includes(qType)) {
         if (!val || typeof val !== 'object' || Array.isArray(val)) return false;
         const rows = q.question_config?.matrix_rows || q.question_config?.options || [];
-        return rows.length > 0 && rows.every((_, ri) => {
-          const rv = val[ri];
+        return rows.length > 0 && rows.every((row, ri) => {
+          const rv = val[matrixRowIndex(row, ri)];
           return rv !== undefined && rv !== null && (!Array.isArray(rv) || rv.length > 0);
         });
       }
@@ -3566,10 +3722,11 @@
         answerRoot.querySelectorAll(`input[name^="mq_${q.question_code}_"]`).forEach(input => {
           input.addEventListener('change', () => {
             const answer = {};
-            matrixRows.forEach((_, ri) => {
-              const checked = [...answerRoot.querySelectorAll(`input[name="mq_${q.question_code}_${ri}"]:checked`)];
+            matrixRows.forEach((row, ri) => {
+              const key = matrixRowIndex(row, ri);
+              const checked = [...answerRoot.querySelectorAll(`input[name="mq_${q.question_code}_${key}"]:checked`)];
               if (checked.length > 0) {
-                answer[ri] = q.question_type === 'matrix_multi' ? checked.map(i => i.value) : checked[0].value;
+                answer[key] = q.question_type === 'matrix_multi' ? checked.map(i => i.value) : checked[0].value;
               }
             });
             answerCtx.answers[q.question_code.toLowerCase()] = answer;

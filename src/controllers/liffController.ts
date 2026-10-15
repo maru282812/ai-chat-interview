@@ -1287,6 +1287,20 @@ export const liffController = {
         });
         return;
       }
+      // 選択数の上限（max_select）。画面側の制御を直叩きで回避した送信をサーバーで拒否する。
+      // 「その他」の自由記述は options に無い生テキストで届くので件数には数えない（排他判定と同じ扱い）。
+      const maxSelect = question.question_config?.max_select;
+      if (typeof maxSelect === "number" && maxSelect > 0) {
+        const known = new Set(options.map((o) => String(o.value)));
+        const selectedCount = answerValue.filter((v) => known.has(String(v))).length;
+        if (selectedCount > maxSelect) {
+          res.status(400).json({
+            ok: false,
+            error: `選べるのは${maxSelect}つまでです。`,
+          });
+          return;
+        }
+      }
     }
 
     // 新設問形式（migration 075）のサーバー権威バリデーション。

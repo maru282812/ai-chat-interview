@@ -40,21 +40,42 @@ node <scratch>/applyLocal.mjs
 ### migration を `supabase start` に任せない理由（重要）
 
 `supabase/config.toml` で `[db.migrations] enabled = false` にしている。
-**034 と 035 の依存順が逆**で、白紙から流すと必ず落ちるため。
+理由は **067 が2本あること**。
 
 ```
-034_notification_templates_seed.sql
-  → daily_question_priorities に attr_key='car_ownership' 等を INSERT
-035_attribute_definitions_daily_keys.sql
-  → その attr_key を attribute_definitions に登録（コメントに「事前登録」と書いてある）
+067_document_usage_category.sql     （書類の用途区分）
+067_respondent_test_flag.sql        （回答の有効性フラグ）
 ```
 
-FK `daily_question_priorities_attr_key_fkey` 違反で 034 が失敗する。
-035 を 034 の前に流すと **115/115 すべて成功する**。
+中身は別物で、別コミットで同じ番号に衝突した。Supabase CLI は
+`supabase_migrations.schema_migrations` の主キーをファイル名のバージョン部分
+（=`067`）にするため、2本目の記録で duplicate key になって `db reset` が止まる。
 
-本番は増分で育ったため顕在化していないが、**白紙からの再構築（DR・新環境・CI）はできない状態**。
-migration の並べ替えは DB 変更なので、このドキュメントでは repo の migration を書き換えず
-適用順だけ入れ替えている。恒久対応は別途判断が必要（下記「残課題」）。
+**このプロジェクトの正準は `npm run db:migrate`（`scripts/applyMigrations.mjs`）**で、
+こちらは `_app_migrations` の**ファイル名**を主キーにし、同番号は `localeCompare` で
+順序を決めるため 067 が2本でも問題なく通る。本番もこの経路なので影響はない。
+
+⚠ **番号を振り直してはいけない。** `_app_migrations` はファイル名で適用済みを見るので、
+リネームすると「未適用」と判定されて**本番で再実行される**。CLI 側の制約に
+合わせる価値より再実行事故のリスクが大きい。したがって CLI には任せず、
+ローカルは `scripts/isolated/applyMigrationsLocal.mjs` で psql に直接流す。
+
+### 修正済み: 034 の FK 依存（旧・白紙再構築が不可能だった原因）
+
+以前は 034 が落ちて白紙再構築ができなかった。
+
+```
+034 → daily_question_priorities に attr_key='car_ownership' 等を INSERT
+035 → その attr_key を attribute_definitions に登録（コメントは「事前登録」）
+```
+
+FK `daily_question_priorities_attr_key_fkey` 違反。**034 に 035 と同じ
+`ON CONFLICT (attr_key) DO NOTHING` 付き INSERT を持たせて自己完結させた**
+（番号の振り直しは上記の再実行事故になるため採らない）。035 が適用済みの環境では
+完全な no-op なので、本番への影響はない。
+
+これにより **ファイル名順そのままで 117/117 適用できる**（修正を戻すと 034 で
+FK 違反になることを実測して確認済み）。
 
 ## アプリを隔離環境に向ける
 
@@ -112,8 +133,9 @@ npx supabase stop            # コンテナは残る（--no-backup でボリュ�
 
 ## 残課題
 
-- **034/035 の依存順**: 白紙再構築が不可能な状態。migration の並べ替え（または 034 から
-  該当 INSERT を分離）が必要。DB 変更なので適用前に migration-review を通すこと。
+- **067 が2本ある**: `npm run db:migrate`（正準）では問題ないが、Supabase CLI の
+  `db reset` は通らない。番号の振り直しは本番での再実行事故になるため、CLI を
+  使いたい場合は `schema_migrations` 側を手当てする等の別手段が必要。
 - **zod 4 の `.uuid()` がバージョン桁を検証する**: `20000000-0000-0000-0000-000000000003`
   のような**バージョン桁が 0 の UUID** は弾かれる。`GET /assignable-surveys` は
   `assignable:true` で返すのに `GET/POST /surveys/:id` 系が 404 になり、
