@@ -595,6 +595,12 @@ export interface OptionRandomizationConfig {
   groups?: OptionGroup[];
   /** 群の順序もランダム化するか */
   randomize_groups?: boolean;
+  /**
+   * 別設問（question_code）の表示順にそろえる。値が一致する選択肢はその設問の並び順に、
+   * 一致しない選択肢（その他 / 特になし 等）は元の位置に残す。指定時は enabled より優先。
+   * 例: 「改善してほしいもの」を直前の満足度マトリクスの行順と同じに出す。
+   */
+  follow_question?: string;
 }
 
 /** 回答UI表示パターンの設問単位上書き（migration 075）。 */

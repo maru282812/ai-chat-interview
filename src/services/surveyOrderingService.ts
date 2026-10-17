@@ -3,7 +3,7 @@ import {
   type RandomizationQuestion,
   computeDisplayOrder
 } from "../lib/randomization";
-import { computeOptionOrder } from "../lib/optionRandomization";
+import { alignOptionOrder, computeOptionOrder } from "../lib/optionRandomization";
 import { extractOrderingEdges } from "../lib/surveyValidation";
 import { sessionRepository } from "../repositories/sessionRepository";
 import { snapshotService } from "./snapshotService";
@@ -33,9 +33,9 @@ export function isRandomizationConfigured(pageGroups: QuestionPageGroup[]): bool
 const MATRIX_TYPES = new Set(["matrix_single", "matrix_multi", "matrix_mixed"]);
 
 function applyOptionRandomization(questions: Question[], sessionId: string): Question[] {
-  return questions.map((question) => {
+  const shuffled = questions.map((question) => {
     const config = question.question_config?.option_randomization;
-    if (!config?.enabled) {
+    if (!config?.enabled || config.follow_question) {
       return question;
     }
     const seed = `${sessionId}:${question.id}`;
@@ -59,6 +59,29 @@ function applyOptionRandomization(questions: Question[], sessionId: string): Que
       return question;
     }
     const ordered = computeOptionOrder(options, config, seed);
+    return { ...question, question_config: { ...question.question_config, options: ordered } };
+  });
+  return applyFollowOrder(shuffled);
+}
+
+/**
+ * follow_question: 別設問の（ランダム化後の）表示順に選択肢をそろえる。
+ * 参照先がマトリクスなら行の並び、それ以外なら選択肢の並びに合わせる。参照先が無ければ元の順のまま。
+ */
+function applyFollowOrder(questions: Question[]): Question[] {
+  const byCode = new Map(questions.map((question) => [question.question_code.toLowerCase(), question]));
+  return questions.map((question) => {
+    const follow = question.question_config?.option_randomization?.follow_question;
+    const options = question.question_config?.options;
+    if (!follow || !options || options.length <= 1) return question;
+    const source = byCode.get(follow.toLowerCase());
+    if (!source || source === question) return question;
+    const sourceCfg = source.question_config ?? {};
+    const sourceItems = (
+      MATRIX_TYPES.has(source.question_type) && Array.isArray(sourceCfg.matrix_rows) ? sourceCfg.matrix_rows : sourceCfg.options
+    ) as QuestionOption[] | undefined;
+    if (!sourceItems || sourceItems.length === 0) return question;
+    const ordered = alignOptionOrder(options, sourceItems.map((item) => item.value));
     return { ...question, question_config: { ...question.question_config, options: ordered } };
   });
 }

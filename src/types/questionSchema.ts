@@ -174,6 +174,11 @@ export interface OptionSource {
   fromQuestion: string;
   /** selected=選んだものだけ残す / unselected=選ばなかったものだけ残す */
   mode: "selected" | "unselected";
+  /**
+   * 参照元の回答に関係なく必ず残す value（例: 「特になし」）。
+   * 「前問で選んだものだけ＋特になし」のように、持ち越しで絞っても常に選べる逃げ道を残すために使う。
+   */
+  alwaysInclude?: string[];
 }
 
 /**

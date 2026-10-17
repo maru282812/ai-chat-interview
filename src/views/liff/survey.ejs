@@ -1262,10 +1262,12 @@
   function applyCarryForward(choices, source) {
     if (!source || !source.fromQuestion) return choices;
     const selected = selectedValuesOf(source.fromQuestion);
+    // alwaysInclude（「特になし」等）は参照元の回答に関係なく残す（サーバー applyCarryForward と同じ）
+    const always = (source.alwaysInclude || []).map(String);
     if (source.mode === 'unselected') {
-      return choices.filter(c => !selected.includes(String(c.value)));
+      return choices.filter(c => always.includes(String(c.value)) || !selected.includes(String(c.value)));
     }
-    return choices.filter(c => selected.includes(String(c.value)));
+    return choices.filter(c => always.includes(String(c.value)) || selected.includes(String(c.value)));
   }
 
   // ---- <carry> 持ち越し → <disable> による選択肢フィルタ ----
