@@ -57,7 +57,7 @@ test("Q1〜Q13 が順番どおり・全員表示・ランダマイズなし", ()
 });
 
 test("性別のその他は記述欄なし・Q3/Q6/Q7/Q11 のその他（）は記述欄あり", () => {
-  assert.equal(opts("Q1")[2].allow_free_text, false);
+  assert.equal(opts("Q1")[2]?.allow_free_text, false);
   for (const [code, value] of [["Q3", "3"], ["Q6", "7"], ["Q7", "10"], ["Q11", "13"]] as const) {
     const o = opts(code).find((x) => x.value === value)!;
     assert.equal(o.label, "その他", code);
