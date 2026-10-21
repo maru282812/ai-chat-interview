@@ -44,7 +44,7 @@ export function computeOptionOrder(
       for (const option of members) {
         grouped.add(option.value);
       }
-      sequence.push(...seededShuffle(members, `${seed}:g${index}`));
+      sequence.push(...(group.keep_order ? members : seededShuffle(members, `${seed}:g${index}`)));
     }
     // どの群にも属さない非アンカー選択肢は末尾にシャッフルして付ける（取りこぼし防止）
     const leftovers = nonAnchored.filter((option) => !grouped.has(option.value));

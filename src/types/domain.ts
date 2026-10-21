@@ -583,6 +583,11 @@ export interface OptionGroup {
   label?: string;
   /** この群に属する選択肢 value */
   values: string[];
+  /**
+   * true なら群の中は values の順のまま固定する（群の位置だけが動く）。
+   * 調査票 F列の小数（1.1, 1.2 …）＝同じ群・この順で表示、に対応する。
+   */
+  keep_order?: boolean;
 }
 
 /** 選択肢ランダム化設定（L3）。 */
