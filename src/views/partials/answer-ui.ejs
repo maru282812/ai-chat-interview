@@ -787,6 +787,14 @@
      */
     function enforceMaxSelect(root, changedEl, code) {
       if (!changedEl || !changedEl.checked || changedEl.type !== 'checkbox') return false;
+      // 排他の選択肢（特になし 等）は上限の対象外。選べば他は applyExclusion で外れる。
+      if (changedEl.getAttribute('data-exclusive') === '1') {
+        // 直前に出した「選べるのは○つまで」の案内は、排他で選択が1つになるので消す。
+        var exHolder = changedEl.closest('[data-max-select]');
+        var exNote = exHolder && exHolder.nextElementSibling;
+        if (exNote && exNote.classList.contains('max-select-note')) exNote.style.display = 'none';
+        return false;
+      }
       var holder = changedEl.closest('[data-max-select]');
       var max = holder ? parseInt(holder.getAttribute('data-max-select'), 10) : 0;
       if (!(max > 0)) return false;
@@ -889,6 +897,7 @@
               [].slice.call(root.querySelectorAll('input[name="q_' + code + '"]')).forEach(function (b) { b.checked = false; });
             }
             box.checked = true;
+            if (box.type === 'checkbox' && !enforceMaxSelect(root, box, code)) applyExclusion(root, box, code);
             [].slice.call(root.querySelectorAll('.choice-item, .card-item')).forEach(function (l) {
               var b = l.querySelector('input');
               if (b) l.classList.toggle('selected', b.checked);
