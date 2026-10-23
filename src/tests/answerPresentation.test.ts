@@ -246,6 +246,21 @@ test("face_scale: 選択肢6件以上で tap_cards に降格", () => {
   assert.equal(p.fallback_applied, true);
 });
 
+test("big_slider 明示指定: 7件・11件はスライダーのまま / 12件で tap_cards に降格", () => {
+  const p7 = resolveAnswerPresentation(q("single_choice", { config: { ...optionsN(7), presentation: { pattern: "big_slider" } } }), "standard", 7);
+  assert.equal(p7.pattern, "big_slider");
+  assert.equal(p7.fallback_applied, false);
+  const p11 = resolveAnswerPresentation(q("single_choice", { config: { ...optionsN(11), presentation: { pattern: "big_slider" } } }), "standard", 11);
+  assert.equal(p11.pattern, "big_slider");
+  const p12 = resolveAnswerPresentation(q("single_choice", { config: { ...optionsN(12), presentation: { pattern: "big_slider" } } }), "standard", 12);
+  assert.equal(p12.pattern, "tap_cards");
+});
+
+test("scale 指定（自動解決）の big_slider は従来どおり6件以上で tap_cards", () => {
+  const p = resolveAnswerPresentation(q("single_choice", { config: { ...optionsN(7), presentation: { scale: true } } }), "standard", 7);
+  assert.equal(p.pattern, "tap_cards");
+});
+
 test("optionCount 引数が config.options 件数より優先される（carry-forward反映）", () => {
   // config には2件だが、実選択肢は9件（disable/carryで増えることは無いが逆パターンの検証）
   const p = resolveAnswerPresentation(q("single_choice", { config: optionsN(2) }), "casual", 9);

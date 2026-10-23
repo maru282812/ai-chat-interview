@@ -92,14 +92,17 @@ test("Q10 SAMTX = 行12項目×列6（利用していない含む）・ページ
   assert.equal(c.presentation.pattern, "matrix_list");
 });
 
-test("Q12 は 1〜7 のスケール・ラベルは 1/4/7 のみ・ドラムにならない", () => {
+test("Q12 は 1〜7 のスケールをスライダーで出す・左端=まったく勧めたくない・ラベルは 1/4/7 のみ", () => {
   const q12 = byCode("Q12");
-  assert.equal(q12.question_type, "numeric");
+  assert.equal(q12.question_type, "single_choice");
   const o = q12.question_config.options as Option[];
-  assert.deepEqual(o.map((x) => x.value), ["1", "2", "3", "4", "5", "6", "7"]);
-  assert.deepEqual(o.filter((x) => x.label !== x.value).map((x) => x.value), ["1", "4", "7"]);
+  assert.deepEqual(o.map((x) => x.value), ["7", "6", "5", "4", "3", "2", "1"]);
+  assert.equal(o[0]?.label, "まったく勧めたくない");
+  assert.equal(o[6]?.label, "とても勧めたい");
+  assert.deepEqual(o.filter((x) => x.label !== x.value).map((x) => x.value), ["7", "4", "1"]);
   const p = resolveAnswerPresentation(q12 as any, "standard");
-  assert.notEqual(p.pattern, "number_wheel");
+  assert.equal(p.pattern, "big_slider");
+  assert.equal(p.fallback_applied, false);
 });
 
 test("Q9 は必須・Q13 は任意", () => {

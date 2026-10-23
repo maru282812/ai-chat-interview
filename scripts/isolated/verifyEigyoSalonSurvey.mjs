@@ -222,9 +222,12 @@ async function answer(page, code, persona, q) {
       return;
     }
     case "Q12": {
-      // 1〜7 スケール（numeric + options の縦並びボタン）
-      await area.locator(`.scale-btn[data-val="${v}"]`).first().click();
-      await page.waitForTimeout(250);
+      // 1〜7 スケール（big_slider）。目盛りは左=7 … 右=1 の順なので index = 7 - v。目盛り位置をタップして確定する
+      const tick = area.locator(`.bigslider-tick[data-i="${7 - Number(v)}"]`).first();
+      const hit = await area.locator(".bigslider-hit").first().boundingBox();
+      const tb = await tick.boundingBox();
+      await page.mouse.click(tb.x + tb.width / 2, hit.y + hit.height / 2);
+      await page.waitForTimeout(400);
       return;
     }
     case "Q10": {
