@@ -2,6 +2,7 @@ import { Router } from "express";
 import { adminAuthController } from "../controllers/adminAuthController";
 import { adminController } from "../controllers/adminController";
 import { missionController } from "../controllers/missionController";
+import { testOperatorController } from "../controllers/testOperatorController";
 import { asyncHandler } from "../lib/http";
 
 export const adminRoutes = Router();
@@ -137,6 +138,10 @@ adminRoutes.get("/points", asyncHandler(adminController.points));
 adminRoutes.post("/user-points/:lineUserId/adjust", asyncHandler(adminController.adjustUserPoints));
 adminRoutes.get("/badges", asyncHandler(adminController.badgesPage));
 adminRoutes.patch("/badges/:badgeId/status", asyncHandler(adminController.updateBadgeStatus));
+// テスト運営者（migration 119）: 回答済みのアンケートを何度でも回答し直せる LINE アカウント
+adminRoutes.get("/test-operators", asyncHandler(testOperatorController.index));
+adminRoutes.post("/test-operators", asyncHandler(testOperatorController.create));
+adminRoutes.post("/test-operators/delete", asyncHandler(testOperatorController.remove));
 adminRoutes.get("/ranks", asyncHandler(adminController.ranks));
 adminRoutes.post("/ranks/:rankId", asyncHandler(adminController.updateRank));
 

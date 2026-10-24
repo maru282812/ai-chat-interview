@@ -35,6 +35,8 @@ const questionRepositoryModule =
   require("../repositories/questionRepository") as typeof import("../repositories/questionRepository");
 const sessionRepositoryModule =
   require("../repositories/sessionRepository") as typeof import("../repositories/sessionRepository");
+const respondentRepositoryModule =
+  require("../repositories/respondentRepository") as typeof import("../repositories/respondentRepository");
 const partnerAdminRoutesModule =
   require("../routes/partnerAdminRoutes") as typeof import("../routes/partnerAdminRoutes");
 const partnerAssignmentServiceModule =
@@ -886,6 +888,7 @@ test("閲覧専用の案件は店舗向け PUT / publish / close が 409。GET /
     }),
     stub(questionRepository, "listByProject", async () => []),
     stub(sessionRepository, "listByProject", async () => []),
+    stub(respondentRepositoryModule.respondentRepository, "listTestIdsByProject", async () => new Set<string>()),
     ...stubDemographicWrites()
   ];
   try {

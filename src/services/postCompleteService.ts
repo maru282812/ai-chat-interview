@@ -147,7 +147,8 @@ export async function runPostCompleteProcess({
   try {
     const messages: LineTextMessage[] = [];
 
-    if (awardResult) {
+    // テスト運営者の回答は 0pt で返ってくる（pointService）。「獲得 0pt」は誤解を招くので出さない。
+    if (awardResult && !awardResult.updatedRespondent.is_test) {
       // 通知メッセージは新スキーマの残高を優先（なければ旧スキーマから）
       let displayTotal = awardResult.updatedRespondent.total_points;
       try {
@@ -209,6 +210,8 @@ export async function awardDeferredCompletionsForMember(lineUserId: string): Pro
   let grandTotal = 0;
 
   for (const respondent of respondents) {
+    // テスト回答（migration 119）は保留分としても付与しない。
+    if (respondent.is_test) continue;
     const sessions = await sessionRepository.listByRespondent(respondent.id);
     const completed = sessions.filter((s) => s.status === "completed");
     if (completed.length === 0) continue;

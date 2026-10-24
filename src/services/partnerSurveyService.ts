@@ -228,6 +228,19 @@ function partnerQuestionCode(index: number): string {
  * 案件を所有者スコープ付きで取得する。
  * 存在しない・他店舗のものはどちらも 404（存在を漏らさない）。
  */
+/**
+ * 店舗に見せる集計の母集団になるセッション。テスト回答者（is_test・テスト運営者 migration 119）を除く。
+ * 運営の通し確認で回答し直したぶんが、店舗の件数・回答に混ざらないようにする。
+ */
+async function listCountableSessions(projectId: string) {
+  const [sessions, testRespondentIds] = await Promise.all([
+    sessionRepository.listByProject(projectId),
+    respondentRepository.listTestIdsByProject(projectId)
+  ]);
+  if (testRespondentIds.size === 0) return sessions;
+  return sessions.filter((session) => !testRespondentIds.has(session.respondent_id));
+}
+
 async function loadOwnedProject(surveyId: string, partnerStoreId: string): Promise<Project> {
   const project = await projectRepository.getPartnerProject(surveyId, partnerStoreId);
   if (!project) {
@@ -594,7 +607,7 @@ export const partnerSurveyService = {
     const project = await loadOwnedProject(surveyId, partnerStoreId);
 
     const [sessions, questions] = await Promise.all([
-      sessionRepository.listByProject(project.id),
+      listCountableSessions(project.id),
       questionRepository.listByProject(project.id, { includeHidden: true })
     ]);
     const completedSessions = selectCountedSessions(sessions, project.closed_at ?? null);
@@ -660,7 +673,7 @@ export const partnerSurveyService = {
     const project = await loadOwnedProject(surveyId, partnerStoreId);
 
     const [sessions, questions] = await Promise.all([
-      sessionRepository.listByProject(project.id),
+      listCountableSessions(project.id),
       questionRepository.listByProject(project.id, { includeHidden: true })
     ]);
     const completedSessions = selectCountedSessions(sessions, project.closed_at ?? null);
@@ -820,7 +833,7 @@ export const partnerSurveyService = {
     // 区切り時刻が無い（旧データ）ときだけ null になる。そのときは従来どおり全件を数える。
     const closedAt = closed.closed_at ?? null;
 
-    const sessions = await sessionRepository.listByProject(closed.id);
+    const sessions = await listCountableSessions(closed.id);
     const totalCount = selectCountedSessions(sessions, closedAt).length;
 
     logger.info("partnerSurvey.closed", {
@@ -863,7 +876,7 @@ export const partnerSurveyService = {
     const project = await loadOwnedProject(surveyId, partnerStoreId);
 
     const [sessions, questions] = await Promise.all([
-      sessionRepository.listByProject(project.id),
+      listCountableSessions(project.id),
       questionRepository.listByProject(project.id, { includeHidden: true })
     ]);
     const completedSessions = selectCountedSessions(sessions, project.closed_at ?? null);

@@ -1,7 +1,8 @@
 import { pointTransactionRepository } from "../repositories/pointTransactionRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
+import { testOperatorRepository } from "../repositories/testOperatorRepository";
 import { rewardRuleRepository } from "../repositories/rewardRuleRepository";
-import type { AnswerQualitySignals, QualityWeightedResult } from "../lib/qualityScore";
+import { QUALITY_NEUTRAL, type AnswerQualitySignals, type QualityWeightedResult } from "../lib/qualityScore";
 import { qualityScoringService } from "./qualityScoringService";
 import type { PointTransaction, PointTransactionType, Respondent } from "../types/domain";
 
@@ -29,6 +30,26 @@ export const pointService = {
     /** 品質判定のシグナル（回答内容・所要時間）。未指定なら判定材料なし＝満額。 */
     qualitySignals?: AnswerQualitySignals;
   }): Promise<AwardResult> {
+    // テスト運営者（migration 119）の回答は何度でもやり直せるため、付与すると無限に増える。
+    // 完了ステータスだけ進めて 0pt で返す（全完了経路がここを通るので、判定はここに集約する）。
+    // 判定中に印を付けておき、エクスポート等の集計からもこの回答を外す。
+    if (input.respondent.is_test || (await testOperatorRepository.isTestOperator(input.lineUserId))) {
+      if (!input.respondent.is_test) await respondentRepository.markTest(input.respondent.id);
+      const updatedRespondent = await respondentRepository.update(input.respondent.id, { status: "completed" });
+      return {
+        transactions: [],
+        totalAwarded: 0,
+        updatedRespondent: { ...updatedRespondent, is_test: true },
+        quality: {
+          points: 0,
+          basePoints: input.projectRewardPoints,
+          factor: QUALITY_NEUTRAL,
+          reasons: [],
+          isFullAmount: false
+        }
+      };
+    }
+
     const rules = await rewardRuleRepository.listActive(input.projectId);
     const previousCompletedCount = await respondentRepository.countCompletedByLineUser(input.lineUserId);
     const continuityRule = rules.find((rule) => rule.rule_code === "continuity_completion_bonus");
