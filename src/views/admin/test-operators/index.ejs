@@ -1,0 +1,76 @@
+<%- include("../../partials/header", { title }) %>
+<h2>テスト運営者</h2>
+<p class="muted">
+  ここに登録した LINE アカウントは、回答済みのアンケートを開くと「もう一度回答する（テスト）」が出て、
+  修正したアンケートを本番と同じ流れで何度でも回答し直せます。
+  回答はテスト扱いになり、エクスポート・ミッション・店舗開示の集計から外れます。ポイントとキャンペーン件数も増えません。
+</p>
+
+<div class="card">
+  <h2>登録中</h2>
+  <% if (operators.length === 0) { %>
+    <p class="muted">まだ登録がありません。下の検索から回答者を選んで登録してください。</p>
+  <% } else { %>
+    <table>
+      <thead><tr><th>呼び名</th><th>LINE userId</th><th>登録日</th><th></th></tr></thead>
+      <tbody>
+        <% for (const operator of operators) { %>
+          <tr>
+            <td><%= operator.label %></td>
+            <td><code><%= operator.line_user_id %></code></td>
+            <td><%= new Date(operator.created_at).toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo" }) %></td>
+            <td>
+              <form method="post" action="/admin/test-operators/delete"
+                onsubmit="return confirm(<%- JSON.stringify(operator.label + ' をテスト運営者から外します。これまでの回答はテスト扱いのまま残ります。よろしいですか？') %>)">
+                <input type="hidden" name="line_user_id" value="<%= operator.line_user_id %>" />
+                <button type="submit" class="secondary">外す</button>
+              </form>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<div class="card">
+  <h2>回答者から探して登録</h2>
+  <p class="muted">一度でも LINE からアンケートを開いた人が見つかります。表示名か LINE userId の一部で検索してください。</p>
+  <form method="get" action="/admin/test-operators">
+    <label>
+      表示名 / LINE userId
+      <input type="text" name="q" value="<%= q %>" placeholder="例: 篠原" />
+    </label>
+    <button type="submit">検索</button>
+  </form>
+
+  <% if (q) { %>
+    <% if (candidates.length === 0) { %>
+      <p class="muted">「<%= q %>」に一致する回答者は見つかりませんでした。</p>
+    <% } else { %>
+      <table>
+        <thead><tr><th>LINE 表示名</th><th>LINE userId</th><th>呼び名</th><th></th></tr></thead>
+        <tbody>
+          <% for (const candidate of candidates) { %>
+            <tr>
+              <td><%= candidate.display_name || "（表示名なし）" %></td>
+              <td><code><%= candidate.line_user_id %></code></td>
+              <% if (candidate.registered) { %>
+                <td colspan="2" class="muted">登録済み</td>
+              <% } else { %>
+                <td colspan="2">
+                  <form method="post" action="/admin/test-operators">
+                    <input type="hidden" name="line_user_id" value="<%= candidate.line_user_id %>" />
+                    <input type="text" name="label" value="<%= candidate.display_name || '' %>" maxlength="40" required />
+                    <button type="submit">登録</button>
+                  </form>
+                </td>
+              <% } %>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    <% } %>
+  <% } %>
+</div>
+<%- include("../../partials/footer") %>

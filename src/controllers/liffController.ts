@@ -69,6 +69,7 @@ import { computeRankProgress } from "../lib/pointStatus";
 import { buildDailyAnswerNoticeMessages } from "../lib/dailyAnswerNotice";
 import { lineMessagingService } from "../services/lineMessagingService";
 import { pointExchangeRepository } from "../repositories/pointExchangeRepository";
+import { testOperatorRepository } from "../repositories/testOperatorRepository";
 import { pointExchangeService, ExchangeError, EXCHANGE_UNIT_POINTS } from "../services/pointExchangeService";
 
 type SupportedPostEntryKey = "rant" | "diary";
@@ -380,6 +381,16 @@ async function incrementCampaignCount(
   field: "opened_count" | "started_count" | "completed_count"
 ): Promise<void> {
   const { supabase } = await import("../config/supabase");
+  // テスト運営者（migration 119）の回答し直しで開封・開始・完了数が膨らむと、
+  // 配信上限の判定が狂う。運営者のぶんは数えない。
+  const { data: owner } = await supabase
+    .from("project_assignments")
+    .select("user_id")
+    .eq("id", assignmentId)
+    .maybeSingle();
+  if (await testOperatorRepository.isTestOperator((owner as { user_id: string | null } | null)?.user_id)) {
+    return;
+  }
   const { data: maps } = await supabase
     .from("campaign_assignment_map")
     .select("campaign_id")
@@ -846,11 +857,17 @@ export const liffController = {
 
     // project とアクティブセッションは両方 assignment のみに依存するため並行取得する
     // （getActiveByRespondent の project_id は assignment.project_id と同一値）。
-    const [project, sessionForCheckInitial] = await Promise.all([
+    const [project, sessionForCheckInitial, isTestOperator] = await Promise.all([
       projectRepository.getById(assignment.project_id),
       sessionRepository.getActiveByRespondent(assignment.respondent_id, assignment.project_id),
+      testOperatorRepository.isTestOperator(assignment.user_id),
     ]);
     let sessionForCheck = sessionForCheckInitial;
+    // テスト運営者（migration 119）は開いた時点でテスト回答の印を付ける。
+    // 完了前に離脱した回答も、エクスポートや店舗開示の集計に混ざらないようにするため。
+    if (isTestOperator) {
+      await respondentRepository.markTest(assignment.respondent_id);
+    }
 
     // スクリーニング対象外（fall）: 既に fail 判定済みの場合は対象外画面を返す
     if (sessionForCheck?.state_json?.screening_result === "fail") {
@@ -872,6 +889,7 @@ export const liffController = {
         liffAuthAvailable: liffConfig.liffAuthAvailable,
         authRequired: false,
         skipAllowed: true,
+        retestAvailable: isTestOperator,
         // 体験設定（Phase 0）。サーバー権威で解決済みの値だけを渡す。
         experience: await experienceService.resolveForProjectConfig(project.experience_config),
       });
@@ -950,6 +968,7 @@ export const liffController = {
         liffAuthAvailable: liffConfig.liffAuthAvailable,
         authRequired: false,
         skipAllowed: true,
+        retestAvailable: isTestOperator,
         // 体験設定（Phase 0）。サーバー権威で解決済みの値だけを渡す。
         experience: await experienceService.resolveForProjectConfig(project.experience_config),
       });
@@ -1599,6 +1618,41 @@ export const liffController = {
       });
     }
 
+    res.json({ ok: true });
+  },
+
+  /**
+   * POST /liff/survey/:assignmentId/retest
+   * テスト運営者（migration 119）が同じアンケートを最初から回答し直すための準備。
+   *
+   * - 前回の回答（session）は消さずに締める。完了済みはそのまま、途中のものは abandoned にする。
+   *   回答者は is_test なので、残った回答は集計に入らない（修正前後の比較用に残す）。
+   * - assignment を未回答（opened）に戻す。スクリーニング判定もやり直す。
+   * - 所有者検証は完了確定と同じ基準。加えて assignment の持ち主が運営者でなければ 403。
+   *   画面のボタン表示には頼らない（一般の回答者が叩いても通らない）。
+   */
+  async retestSurvey(req: Request, res: Response): Promise<void> {
+    const assignmentId = stringValue(req.params.assignmentId).trim();
+    if (!isUuid(assignmentId)) throw new HttpError(404, "アンケートが見つかりません。");
+
+    await verifyAssignmentOwnerOrThrow(req, assignmentId);
+    const assignment = await projectAssignmentRepository.getById(assignmentId);
+    if (!(await testOperatorRepository.isTestOperator(assignment.user_id))) {
+      logger.warn("retestSurvey.notTestOperator", { assignmentId });
+      throw new HttpError(403, "この操作はテスト運営者のみ行えます。");
+    }
+
+    await respondentRepository.markTest(assignment.respondent_id);
+    await sessionRepository.abandonOpenByRespondent(assignment.respondent_id, assignment.project_id);
+    await projectAssignmentRepository.update(assignment.id, {
+      status: "opened",
+      started_at: null,
+      completed_at: null,
+      screening_result: null,
+      screening_result_at: null,
+    });
+
+    logger.info("retestSurvey.reset", { assignmentId, previousStatus: assignment.status });
     res.json({ ok: true });
   },
 

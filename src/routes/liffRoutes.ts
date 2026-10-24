@@ -150,6 +150,8 @@ liffRoutes.post("/survey/upload-image", asyncHandler(liffController.uploadRespon
 liffRoutes.post("/survey/verify-identity", asyncHandler(liffController.verifyIdentity));
 // 回答完了確定API: サーバー側で完了判定・ポイント付与・LINE通知を行う
 liffRoutes.post("/survey/:assignmentId/complete", asyncHandler(liffController.completeSurveyByAssignment));
+// テスト運営者（migration 119）の回答し直し。運営者かどうかはハンドラ側で必ず検証する。
+liffRoutes.post("/survey/:assignmentId/retest", asyncHandler(liffController.retestSurvey));
 // スクリーニング判定API
 liffRoutes.post("/survey/:assignmentId/judge-screening", asyncHandler(liffController.judgeScreening));
 // サーバー権威の次設問解決API（初回・再開用。Phase2 クライアントが消費）

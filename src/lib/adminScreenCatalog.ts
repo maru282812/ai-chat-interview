@@ -970,6 +970,18 @@ export const ADMIN_SCREENS: AdminScreenEntry[] = [
   // 設定
   // ---------------------------------------------------------------------------
   {
+    key: "test-operators-index",
+    path: "/admin/test-operators",
+    label: "テスト運営者",
+    group: "設定",
+    nav: true,
+    description:
+      "回答済みのアンケートを何度でも回答し直せる運営者の LINE アカウントを登録する。回答はテスト扱いで集計・ポイントから外れる。",
+    settings: ["テスト運営者の登録・解除", "呼び名"],
+    synonyms: ["テスト回答", "回答し直し", "やり直し", "通し確認", "検証アカウント", "運営者", "test"],
+    related: ["respondents-index"]
+  },
+  {
     key: "documents-index",
     path: "/admin/documents",
     label: "書類管理",

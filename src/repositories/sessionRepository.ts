@@ -17,6 +17,20 @@ export const sessionRepository = {
     return (data as Session | null) ?? null;
   },
 
+  /**
+   * 未完了（pending / active）のセッションを abandoned で締める。テスト運営者の回答し直し用。
+   * 消さないのは、前回の回答を修正前後の比較に残すため（回答者は is_test なので集計には入らない）。
+   */
+  async abandonOpenByRespondent(respondentId: string, projectId: string): Promise<void> {
+    const { error } = await supabase
+      .from("sessions")
+      .update({ status: "abandoned" })
+      .eq("respondent_id", respondentId)
+      .eq("project_id", projectId)
+      .in("status", ["pending", "active"]);
+    throwIfError(error);
+  },
+
   async create(input: {
     respondent_id: string;
     project_id: string;

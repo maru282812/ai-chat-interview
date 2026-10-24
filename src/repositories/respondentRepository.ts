@@ -149,6 +149,36 @@ export const respondentRepository = {
     return (data ?? []) as (Respondent & { current_rank?: Rank | null })[];
   },
 
+  /**
+   * テスト回答の印（is_test・migration 067）を付ける。テスト運営者（migration 119）の
+   * 回答を集計・ポイントから外すための唯一の書込み口。外す方向は用意しない
+   * （一度テストとして答えた回答が、後から本番集計に混ざらないようにする）。
+   */
+  async markTestByLineUserId(lineUserId: string): Promise<void> {
+    const { error } = await supabase
+      .from("respondents")
+      .update({ is_test: true })
+      .eq("line_user_id", lineUserId)
+      .eq("is_test", false);
+    throwIfError(error);
+  },
+
+  async markTest(id: string): Promise<void> {
+    const { error } = await supabase.from("respondents").update({ is_test: true }).eq("id", id);
+    throwIfError(error);
+  },
+
+  /** 案件内のテスト回答者 ID（店舗開示の集計から外すため）。 */
+  async listTestIdsByProject(projectId: string): Promise<Set<string>> {
+    const { data, error } = await supabase
+      .from("respondents")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("is_test", true);
+    throwIfError(error);
+    return new Set(((data ?? []) as { id: string }[]).map((row) => row.id));
+  },
+
   async countCompletedByLineUser(lineUserId: string): Promise<number> {
     const { count, error } = await supabase
       .from("respondents")

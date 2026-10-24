@@ -598,6 +598,19 @@
     <div style="font-size:48px;margin-bottom:16px;">✅</div>
     <p style="font-size:18px;font-weight:700;margin-bottom:8px;color:#333;">回答が完了しています</p>
     <p style="font-size:14px;color:#666;line-height:1.6;">このアンケートはすでに回答済みです。<br>ご協力ありがとうございました。</p>
+    <% if (locals.retestAvailable) { %>
+    <%# テスト運営者（migration 119）だけに出す。押すと回答をやり直せる（サーバー側でも運営者か検証する）。 %>
+    <div style="margin-top:28px;padding:16px;border:1px dashed #c9a227;border-radius:12px;background:#fffbea;text-align:left;">
+      <p style="font-size:13px;color:#7a5d00;line-height:1.6;margin:0 0 12px;">
+        テスト運営者として登録されています。もう一度最初から回答できます。<br>
+        回答はテストとして集計から外れ、ポイントも付きません。
+      </p>
+      <button type="button" id="btnRetest" style="width:100%;padding:14px;background:#c9a227;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;">
+        もう一度回答する（テスト）
+      </button>
+      <p id="retestError" style="display:none;font-size:13px;color:#c0392b;margin:10px 0 0;"></p>
+    </div>
+    <% } %>
   </div>
 <% } else if (locals.screeningFailed) { %>
   <!-- スクリーニング対象外画面 -->
@@ -607,6 +620,19 @@
     <p style="font-size:14px;color:#666;line-height:1.7;margin-bottom:0;">
       <%= locals.screeningFailMessage || "今回はご参加いただけませんでした。またの機会にご協力をお願いします。" %>
     </p>
+    <% if (locals.retestAvailable) { %>
+    <%# テスト運営者（migration 119）だけに出す。押すと回答をやり直せる（サーバー側でも運営者か検証する）。 %>
+    <div style="margin-top:28px;padding:16px;border:1px dashed #c9a227;border-radius:12px;background:#fffbea;text-align:left;">
+      <p style="font-size:13px;color:#7a5d00;line-height:1.6;margin:0 0 12px;">
+        テスト運営者として登録されています。もう一度最初から回答できます。<br>
+        回答はテストとして集計から外れ、ポイントも付きません。
+      </p>
+      <button type="button" id="btnRetest" style="width:100%;padding:14px;background:#c9a227;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;">
+        もう一度回答する（テスト）
+      </button>
+      <p id="retestError" style="display:none;font-size:13px;color:#c0392b;margin:10px 0 0;"></p>
+    </div>
+    <% } %>
   </div>
 <% } else if (locals.profileIncomplete) { %>
   <!-- プロフィール未設定画面 -->
@@ -4137,6 +4163,46 @@
   });
 
 })();
+</script>
+<% } %>
+<% if (locals.retestAvailable) { %>
+<script>
+  // テスト運営者の「もう一度回答する」。サーバーが前回の回答を締めて未回答に戻すので、
+  // 成功したら同じ URL を開き直すだけで最初から始まる。
+  (function () {
+    var btn = document.getElementById('btnRetest');
+    if (!btn) return;
+    var errEl = document.getElementById('retestError');
+    var ASSIGNMENT_ID = <%- JSON.stringify(locals.assignmentId || '') %>;
+    var LIFF_ID = <%- JSON.stringify(locals.liffId || '') %>;
+    btn.addEventListener('click', async function () {
+      btn.disabled = true;
+      errEl.style.display = 'none';
+      try {
+        var headers = { 'Content-Type': 'application/json' };
+        // 所有者検証用の ID トークン。取れない環境（認証スキップ運用）では付けずに送る。
+        if (LIFF_ID && window.LiffAuth) {
+          try {
+            var token = await LiffAuth.initLiffOrWebAuth(LIFF_ID);
+            if (!token) return; // LINE Login へリダイレクト中
+            headers.Authorization = 'Bearer ' + token;
+          } catch (_e) {}
+        }
+        var resp = await fetch('/liff/survey/' + encodeURIComponent(ASSIGNMENT_ID) + '/retest', {
+          method: 'POST',
+          headers: headers,
+          body: '{}'
+        });
+        if (!resp.ok) throw new Error('status ' + resp.status);
+        location.replace('/liff/survey?assignment_id=' + encodeURIComponent(ASSIGNMENT_ID));
+      } catch (e) {
+        console.error('[survey] retest failed', e);
+        errEl.textContent = 'やり直しの準備に失敗しました。時間をおいてもう一度お試しください。';
+        errEl.style.display = 'block';
+        btn.disabled = false;
+      }
+    });
+  })();
 </script>
 <% } %>
 </body>
