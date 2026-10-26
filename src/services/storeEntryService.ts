@@ -1,3 +1,4 @@
+import { isDemoProject } from "../lib/demoProject";
 import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
@@ -52,7 +53,10 @@ export const storeEntryService = {
 
     // 繰り返しアンケート（Migration 093）なら所属サイクルを解決する。
     // サイクル定義に属さない案件では null が返り、以降は従来どおりの挙動になる。
-    const resolution = await cycleService.resolveCycleSafely(project.id, lineUserId);
+    // デモ案件 (Migration 120) は周を作らない＝ A だけで完結し、B/C の案内も予約されない。
+    const resolution = isDemoProject(project)
+      ? null
+      : await cycleService.resolveCycleSafely(project.id, lineUserId);
     const cycleId = resolution?.cycle.id ?? null;
 
     // assignment を冪等に確保。

@@ -1,5 +1,6 @@
 ﻿import { DATETIME_CONFIG_KEYS, type DatetimeConfig, isDatetimeType, sanitizeDatetimeConfig } from "../lib/datetimeAnswer";
 import type { Request, Response } from "express";
+import { isDemoProject } from "../lib/demoProject";
 import { HttpError } from "../lib/http";
 import { parseProjectManagement, managementIdentity } from '../lib/projectManagement';
 import { ADMIN_MEMO_MAX_LENGTH, normalizeAdminMemo } from "../lib/adminMemo";
@@ -3416,6 +3417,7 @@ export const adminController = {
         user_display_title: bodyString(req.body.user_display_title) || null,
         completion_message: bodyString(req.body.completion_message).trim() || null,
         ...await projectManagementFromRequest(req),
+        is_demo: req.body.is_demo === "true" || req.body.is_demo === "on",
         objective,
         status: bodyString(req.body.status || "draft") as import("../types/domain").ProjectStatus,
         reward_points: numberField(req.body.reward_points),
@@ -3586,6 +3588,8 @@ export const adminController = {
         screening_config: buildScreeningConfig(req),
         screening_last_question_order: existing.screening_last_question_order ?? null,
         is_discoverable: req.body.is_discoverable === "true" || req.body.is_discoverable === "on",
+        // デモ案件 (Migration 120)。フォームに欄が無い送信元（他画面の部分更新）で false に落とさない。
+        ...(req.body.is_demo_present ? { is_demo: req.body.is_demo === "true" || req.body.is_demo === "on" } : {}),
         randomize_question_order: req.body.randomize_question_order === "true" || req.body.randomize_question_order === "on",
         // C-3: 空文字（＝「全体既定に従う」）のときだけ体験設定の既定を実体化する。
         // 既存プロジェクトはフォームに保存済みの値が選択されているため挙動は変わらない。
@@ -10053,8 +10057,8 @@ export const adminController = {
       questions: questionsByProject.get(project.id) ?? []
     }));
 
-    // 件数系の単純合算(A)
-    const totals = rows.reduce(
+    // 件数系の単純合算(A)。デモ案件 (Migration 120) は行には出す（DEMO 表示）が合計・横断指標には入れない。
+    const totals = rows.filter((r) => !isDemoProject(r.project)).reduce(
       (acc, r) => ({
         respondents: acc.respondents + r.respondentCount,
         completed: acc.completed + r.completedCount
@@ -10064,7 +10068,7 @@ export const adminController = {
 
     // 横断集計できる指標の可視化（実合算(B)は将来Slice）
     const metrics = collectClientMetrics(
-      rows.map((r) => ({ project_id: r.project.id, questions: r.questions }))
+      rows.filter((r) => !isDemoProject(r.project)).map((r) => ({ project_id: r.project.id, questions: r.questions }))
     );
 
     res.render("admin/clients/overview", {

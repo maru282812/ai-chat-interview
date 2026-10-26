@@ -137,6 +137,9 @@
           <% if (row.project.template_step_role) { %>
             <span style="display:inline-block;background:<%= ROLE_COLORS[row.project.template_step_role] || '#999' %>;color:#fff;font-size:10px;padding:1px 6px;border-radius:3px;margin-right:5px"><%= ROLE_LABELS[row.project.template_step_role] || row.project.template_step_role %></span>
           <% } %>
+          <% if (row.project.is_demo) { %>
+            <span title="デモ案件：繰り返し回答可・ポイント0・統計対象外" style="display:inline-block;background:#e8590c;color:#fff;font-size:10px;font-weight:700;letter-spacing:.06em;padding:1px 7px;border-radius:999px;margin-right:5px">DEMO</span>
+          <% } %>
           <strong><%= row.project.name %></strong><br />
           <% if (row.project.store_id && storeNameById[row.project.store_id]) { %>
             <span style="font-size:11px;color:#2a6fb0"><%= storeNameById[row.project.store_id] %></span>
@@ -171,7 +174,7 @@
         </td>
         <td><span class="tag"><%= row.project.status %></span></td>
         <td style="white-space:nowrap"><strong><%= row.completedCount %></strong> 件</td>
-        <td><%= row.project.reward_points %> pt</td>
+        <td><% if (row.project.is_demo) { %><span title="デモ案件はポイントを付与しません" style="color:#e8590c;font-weight:700">0 pt</span><% } else { %><%= row.project.reward_points %> pt<% } %></td>
         <td>
           <span class="tag"><%= row.project.research_mode %></span><br />
           <span class="muted">questions: <%= row.questionCount %> / branches: <%= row.branchCount %></span>

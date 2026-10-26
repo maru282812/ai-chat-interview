@@ -1,3 +1,4 @@
+import { isDemoProject } from "../lib/demoProject";
 import { projectApplicationRepository } from "../repositories/projectApplicationRepository";
 import { projectAssignmentRepository } from "../repositories/projectAssignmentRepository";
 import { projectRepository } from "../repositories/projectRepository";
@@ -61,8 +62,10 @@ export const applicationService = {
         }));
 
       // 繰り返しアンケート（Migration 093）の所属サイクル。非サイクル案件は null。
-      const cycleId =
-        (await cycleService.resolveCycleSafely(projectId, lineUserId))?.cycle.id ?? null;
+      // デモ案件 (Migration 120) は周を作らない＝ A だけで完結する。
+      const cycleId = isDemoProject(project)
+        ? null
+        : ((await cycleService.resolveCycleSafely(projectId, lineUserId))?.cycle.id ?? null);
 
       const assignment =
         (await projectAssignmentRepository.getByProjectRespondentAndCycle(
@@ -146,9 +149,11 @@ export const applicationService = {
       }));
 
     // 繰り返しアンケート（Migration 093）の所属サイクル。非サイクル案件は null。
-    const cycleId =
-      (await cycleService.resolveCycleSafely(application.project_id, application.line_user_id))
-        ?.cycle.id ?? null;
+    // デモ案件 (Migration 120) は周を作らない＝ A だけで完結する。
+    const cycleId = isDemoProject(project)
+      ? null
+      : ((await cycleService.resolveCycleSafely(application.project_id, application.line_user_id))
+          ?.cycle.id ?? null);
 
     const assignment =
       (await projectAssignmentRepository.getByProjectRespondentAndCycle(

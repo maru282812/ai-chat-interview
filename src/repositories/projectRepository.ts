@@ -116,6 +116,8 @@ interface ProjectMutationInput {
   closed_at?: string | null;
   /** 運営者メモ (Migration 117)。 */
   admin_memo?: string | null;
+  /** デモ案件 (Migration 120)。 */
+  is_demo?: boolean;
   ai_prompt_policy_json?: AIPromptPolicy | null;
   ai_prompt_templates_json?: AIPromptTemplateMap | null;
   ai_prompt_mode?: 'custom' | 'package';
@@ -300,7 +302,9 @@ export const projectRepository = {
     const { count, error } = await supabase
       .from("projects")
       .select("*", { count: "exact", head: true })
-      .eq("status", status);
+      .eq("status", status)
+      // ダッシュボードの「公開中の案件」。デモ案件 (Migration 120) は数えない。
+      .eq("is_demo", false);
     throwIfError(error);
     return count ?? 0;
   },
@@ -314,6 +318,8 @@ export const projectRepository = {
       // 管理画面の「一覧に出す」チェック（is_discoverable）を尊重する。
       // これが無いと published × public というだけでテスト・デモ案件まで露出する。
       .eq("is_discoverable", true)
+      // デモ案件 (Migration 120) は一般の回答者に見せない。
+      .eq("is_demo", false)
       // 募集期限切れは一覧に出さない（recruit_deadline 未設定は常に表示）
       .or(`recruit_deadline.is.null,recruit_deadline.gte.${new Date().toISOString()}`)
       .order("created_at", { ascending: false });
@@ -331,6 +337,7 @@ export const projectRepository = {
       // 一覧と同条件。一覧に出していない案件へ直リンク／応募で入れる穴を塞ぐ
       // （応募検証 applicationService もこの関数を通る）。
       .eq("is_discoverable", true)
+      .eq("is_demo", false)
       .maybeSingle();
     throwIfError(error);
     return data as Project | null;
@@ -440,6 +447,8 @@ export const projectRepository = {
       .select("*")
       .eq("id", projectId)
       .eq("partner_store_id", storeId)
+      // デモ案件 (Migration 120) の回答・集計は店舗へ出さない（存在しない扱いで 404）。
+      .eq("is_demo", false)
       .maybeSingle();
     throwIfError(error);
     return (data as Project | null) ?? null;
@@ -502,6 +511,8 @@ export const projectRepository = {
       .is("client_id", null)
       .in("status", ["draft", "ready"])
       .eq("is_discoverable", false)
+      // デモ案件 (Migration 120) は店舗に割り当てない（割り当てると店舗側に集計が出る）。
+      .eq("is_demo", false)
       .order("created_at", { ascending: false });
     throwIfError(error);
     return (data ?? []) as Project[];

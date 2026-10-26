@@ -1,4 +1,6 @@
+import { isDemoProject } from "../lib/demoProject";
 import { pointTransactionRepository } from "../repositories/pointTransactionRepository";
+import { projectRepository } from "../repositories/projectRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
 import { testOperatorRepository } from "../repositories/testOperatorRepository";
 import { rewardRuleRepository } from "../repositories/rewardRuleRepository";
@@ -30,6 +32,20 @@ export const pointService = {
     /** 品質判定のシグナル（回答内容・所要時間）。未指定なら判定材料なし＝満額。 */
     qualitySignals?: AnswerQualitySignals;
   }): Promise<AwardResult> {
+    // デモ案件 (Migration 120) は必ず 0pt。完了経路（フォーム/チャット/会員化時の保留付与）が
+    // すべてここを通るので、呼び出し側の付け忘れや案件のポイント設定ミスがあっても付与されない。
+    // 明細を作らない＝保留付与（awardDeferredCompletionsForMember）からも「未付与」に見えるが、
+    // そちらも毎回ここで 0 になるので二重にも漏れにもならない。
+    const project = await projectRepository.getById(input.projectId);
+    if (isDemoProject(project)) {
+      return {
+        transactions: [],
+        totalAwarded: 0,
+        updatedRespondent: input.respondent,
+        quality: { points: 0, basePoints: 0, factor: QUALITY_NEUTRAL, reasons: [], isFullAmount: false },
+      };
+    }
+
     // テスト運営者（migration 119）の回答は何度でもやり直せるため、付与すると無限に増える。
     // 完了ステータスだけ進めて 0pt で返す（全完了経路がここを通るので、判定はここに集約する）。
     // 判定中に印を付けておき、エクスポート等の集計からもこの回答を外す。

@@ -429,3 +429,11 @@
           <button type="button" class="flash-close" aria-label="閉じる" onclick="this.parentElement.remove()">×</button>
         </div>
       <% } %>
+      <%# デモ案件 (Migration 120) の帯。project を渡す案件配下の全画面に出し、本番案件との取り違えを防ぐ。 %>
+      <% if (locals.project && locals.project.is_demo === true) { %>
+        <div class="demo-project-banner" role="note" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px;padding:10px 14px;border-radius:8px;background:#fff4e6;border:2px solid #e8590c;color:#7a2e00;font-size:13px;">
+          <span style="display:inline-block;padding:2px 10px;border-radius:999px;background:#e8590c;color:#fff;font-weight:700;letter-spacing:.08em;">DEMO</span>
+          <strong>デモ案件です。</strong>
+          <span>何度でも回答し直せます。ポイント0・統計/店舗開示/案件一覧の対象外・回答は30日で自動削除。</span>
+        </div>
+      <% } %>

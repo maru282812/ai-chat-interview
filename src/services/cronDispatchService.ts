@@ -2,6 +2,7 @@ import { supabase } from "../config/supabase";
 import { logger } from "../lib/logger";
 import { CAMPAIGN_RESERVATION_CATCH_UP_WINDOW_MIN } from "../lib/deliveryCalendar";
 import { cycleFollowupService } from "./cycleFollowupService";
+import { demoCleanupService } from "./demoCleanupService";
 import { missionHiddenRoomService } from "./missionHiddenRoomService";
 import { notificationSchedulerService } from "./notificationSchedulerService";
 import { projectDeliveryService } from "./projectDeliveryService";
@@ -321,6 +322,27 @@ class CronDispatchService {
     } catch (e) {
       logger.error("cronDispatch: hidden room settle failed", { error: String(e) });
       outcomes.push({ job_key: "hidden_room_settle", ran: false, reason: "error", detail: String(e) });
+    }
+
+    // --- デモ案件の古い回答の削除 - Migration 120 ---
+    //
+    // 毎日 03:30 JST。発火窓の外では DB に触らない（毎分の lastFired 照会でサブリクエストを使わない）。
+    try {
+      const jobKey = "demo_cleanup";
+      const inWindow = this.dueDaily(jstNowDate, 3, 30, null);
+      if (!inWindow) {
+        outcomes.push({ job_key: jobKey, ran: false, reason: "not-due" });
+      } else if (!this.dueDaily(jstNowDate, 3, 30, await this.lastFired(jobKey))) {
+        outcomes.push({ job_key: jobKey, ran: false, reason: "not-due" });
+      } else if (!(await this.recordRun(jobKey))) {
+        outcomes.push({ job_key: jobKey, ran: false, reason: "record-failed" });
+      } else {
+        const detail = await demoCleanupService.purgeExpired(now);
+        outcomes.push({ job_key: jobKey, ran: true, reason: "fired", detail });
+      }
+    } catch (e) {
+      logger.error("cronDispatch: demo cleanup failed", { error: String(e) });
+      outcomes.push({ job_key: "demo_cleanup", ran: true, reason: "error", detail: String(e) });
     }
 
     return outcomes;

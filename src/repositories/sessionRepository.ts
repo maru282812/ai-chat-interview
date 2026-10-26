@@ -88,10 +88,12 @@ export const sessionRepository = {
   },
 
   async countByStatus(status: SessionStatus): Promise<number> {
+    // ダッシュボードの全体KPI。デモ案件 (Migration 120) のセッションは数えない。
     const { count, error } = await supabase
       .from("sessions")
-      .select("*", { count: "exact", head: true })
-      .eq("status", status);
+      .select("id, projects!inner(is_demo)", { count: "exact", head: true })
+      .eq("status", status)
+      .eq("projects.is_demo", false);
     throwIfError(error);
     return count ?? 0;
   },

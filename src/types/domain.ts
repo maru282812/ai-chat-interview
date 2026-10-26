@@ -369,6 +369,11 @@ export interface Project {
   closed_at?: string | null;
   /** 運営者メモ (Migration 117)。管理画面の案件一覧でのみ表示・編集。回答者・店舗には出さない。 */
   admin_memo?: string | null;
+  /**
+   * デモ案件 (Migration 120)。true なら何度でも回答し直せる体験専用の案件。
+   * ポイント0・サイクル不参加・完了通知なし・統計/開示/公開一覧から除外。判定は isDemoProject を使う。
+   */
+  is_demo?: boolean;
   /** AIプロンプト方針設定 */
   ai_prompt_policy_json: AIPromptPolicy | null;
   /** ベースプロンプトテンプレート上書き設定 */

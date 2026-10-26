@@ -6004,6 +6004,10 @@ function encode_char(c) {
     ; __append(escapeFn( ROLE_LABELS[row.project.template_step_role] || row.project.template_step_role ))
     ; __append("</span>\r\n          ")
     ;  } 
+    ; __append("\r\n          ")
+    ;  if (row.project.is_demo) { 
+    ; __append("\r\n            <span title=\"デモ案件：繰り返し回答可・ポイント0・統計対象外\" style=\"display:inline-block;background:#e8590c;color:#fff;font-size:10px;font-weight:700;letter-spacing:.06em;padding:1px 7px;border-radius:999px;margin-right:5px\">DEMO</span>\r\n          ")
+    ;  } 
     ; __append("\r\n          <strong>")
     ; __append(escapeFn( row.project.name ))
     ; __append("</strong><br />\r\n          ")
@@ -6054,8 +6058,13 @@ function encode_char(c) {
     ; __append("</span></td>\r\n        <td style=\"white-space:nowrap\"><strong>")
     ; __append(escapeFn( row.completedCount ))
     ; __append("</strong> 件</td>\r\n        <td>")
+    ;  if (row.project.is_demo) { 
+    ; __append("<span title=\"デモ案件はポイントを付与しません\" style=\"color:#e8590c;font-weight:700\">0 pt</span>")
+    ;  } else { 
     ; __append(escapeFn( row.project.reward_points ))
-    ; __append(" pt</td>\r\n        <td>\r\n          <span class=\"tag\">")
+    ; __append(" pt")
+    ;  } 
+    ; __append("</td>\r\n        <td>\r\n          <span class=\"tag\">")
     ; __append(escapeFn( row.project.research_mode ))
     ; __append("</span><br />\r\n          <span class=\"muted\">questions: ")
     ; __append(escapeFn( row.questionCount ))
@@ -6458,7 +6467,16 @@ function encode_char(c) {
     ;  } 
     ; __append("\r\n      </ul>\r\n      <p class=\"helper-text\" style=\"margin-top:6px\">保存は完了しています。プロンプト実行時に該当プレースホルダーは空文字に置換されます。</p>\r\n    </section>\r\n  ")
     ;  } 
-    ; __append("\r\n\r\n  <section class=\"editor-section stack\">\r\n    <h2>1. 基本設定</h2>\r\n    <p class=\"helper-text\">調査内容とクライアントを設定します。管理年・確定番号は調査票の値を入力してください。</p>\r\n\r\n    <div class=\"form-grid\">\r\n      <label>クライアント\r\n        <select name=\"client_id\" id=\"management-client\">\r\n          <option value=\"\">未設定（既存の自由入力名を保持）</option>\r\n          ")
+    ; __append("\r\n\r\n  <section class=\"editor-section stack\">\r\n    <h2>1. 基本設定</h2>\r\n    <p class=\"helper-text\">調査内容とクライアントを設定します。管理年・確定番号は調査票の値を入力してください。</p>\r\n\r\n    ")
+    ; __append("\r\n    <div class=\"demo-toggle")
+    ; __append(escapeFn( project?.is_demo ? ' is-on' : '' ))
+    ; __append("\" id=\"demo-toggle\">\r\n      <input type=\"hidden\" name=\"is_demo_present\" value=\"1\" />\r\n      <label class=\"demo-toggle__label\">\r\n        <input type=\"checkbox\" name=\"is_demo\" value=\"true\" id=\"demo-toggle-input\" ")
+    ; __append(escapeFn( project?.is_demo ? "checked" : "" ))
+    ; __append(" data-was-demo=\"")
+    ; __append(escapeFn( project?.is_demo ? '1' : '0' ))
+    ; __append("\" data-existing=\"")
+    ; __append(escapeFn( project?.id ? '1' : '0' ))
+    ; __append("\" />\r\n        <span class=\"demo-toggle__badge\">DEMO</span>\r\n        デモ案件にする（何度でも回答し直せる体験用）\r\n      </label>\r\n      <ul class=\"demo-toggle__rules\">\r\n        <li>開くたびに 1 問目から回答し直せます（回答済み画面は出ません）</li>\r\n        <li>ポイントは必ず 0（下のポイント設定に関係なく付与しません）</li>\r\n        <li>ABCサイクルに入っていても、この案件だけで完結します（B/C の案内は送りません）</li>\r\n        <li>統計・エクスポート・店舗への開示・LIFFの案件一覧には出ません。回答は 30 日で自動削除されます</li>\r\n      </ul>\r\n    </div>\r\n    <style>\r\n      .demo-toggle { border: 2px dashed #c9cfd6; border-radius: 10px; padding: 10px 14px; margin: 8px 0 12px; background: #fafbfc; }\r\n      .demo-toggle.is-on { border-color: #e8590c; background: #fff4e6; }\r\n      .demo-toggle__label { display: flex; flex-direction: row; justify-content: flex-start; align-items: center; gap: 8px; font-weight: 700; cursor: pointer; }\r\n      /* フォーム共通の input { width:100% } を打ち消す（チェックボックスが横に伸びて文言が右へ飛ぶ） */\r\n      .demo-toggle__label input[type=\"checkbox\"] { width: 18px; height: 18px; flex: none; margin: 0; }\r\n      .demo-toggle__badge { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #e8590c; color: #fff; font-size: 12px; letter-spacing: .08em; }\r\n      .demo-toggle:not(.is-on) .demo-toggle__badge { background: #adb5bd; }\r\n      .demo-toggle__rules { margin: 6px 0 0 1.4em; padding: 0; font-size: 12px; color: #555; line-height: 1.7; }\r\n    </style>\r\n    <script>\r\n      (() => {\r\n        const box = document.getElementById('demo-toggle');\r\n        const input = document.getElementById('demo-toggle-input');\r\n        input.addEventListener('change', () => {\r\n          // 既存の本番案件をデモへ切り替えるときだけ確認する（回答が統計から消え、30日で削除されるため）。\r\n          if (input.checked && input.dataset.existing === '1' && input.dataset.wasDemo !== '1') {\r\n            const ok = confirm('この案件をデモにします。\\n\\nすでに集まっている回答も統計・エクスポート・店舗開示から外れ、30日を過ぎた回答は自動で削除されます。\\n本番の回答がある案件なら、コピーしてデモ用を作るほうが安全です。\\n\\n続けますか？');\r\n            if (!ok) { input.checked = false; }\r\n          }\r\n          box.classList.toggle('is-on', input.checked);\r\n        });\r\n      })();\r\n    </script>\r\n\r\n    <div class=\"form-grid\">\r\n      <label>クライアント\r\n        <select name=\"client_id\" id=\"management-client\">\r\n          <option value=\"\">未設定（既存の自由入力名を保持）</option>\r\n          ")
     ;  managementClients.forEach(function(c) { 
     ; __append("<option value=\"")
     ; __append(escapeFn( c.id ))
@@ -11570,7 +11588,11 @@ const opsAssignmentsHref = typeof locals.portalOpsHref === "function" ? locals.p
     ;  } else { 
     ; __append("\r\n    <table>\r\n      <thead>\r\n        <tr>\r\n          <th>アンケート名</th>\r\n          <th>店舗</th>\r\n          <th>店舗コード</th>\r\n          <th>専用URL / QR</th>\r\n          <th>状態</th>\r\n          <th>回答数</th>\r\n          <th>操作</th>\r\n        </tr>\r\n      </thead>\r\n      <tbody>\r\n        ")
     ;  for (const row of rows) { const p = row.project; 
-    ; __append("\r\n        <tr>\r\n          <td>\r\n            <strong>")
+    ; __append("\r\n        <tr>\r\n          <td>\r\n            ")
+    ;  if (p.is_demo) { 
+    ; __append("<span title=\"デモ案件：繰り返し回答可・ポイント0・統計対象外\" style=\"display:inline-block;background:#e8590c;color:#fff;font-size:10px;font-weight:700;letter-spacing:.06em;padding:1px 7px;border-radius:999px;margin-right:5px\">DEMO</span>")
+    ;  } 
+    ; __append("\r\n            <strong>")
     ; __append(escapeFn( p.user_display_title || p.name ))
     ; __append("</strong>\r\n            ")
     ;  if (p.status !== 'published') { 
@@ -11665,6 +11687,7 @@ const opsAssignmentsHref = typeof locals.portalOpsHref === "function" ? locals.p
     ; __append("\r\n          <option value=\"")
     ; __append(escapeFn( p.id ))
     ; __append("\">")
+    ; __append(escapeFn( p.is_demo ? '[DEMO] ' : '' ))
     ; __append(escapeFn( p.user_display_title || p.name ))
     ; __append("（")
     ; __append(escapeFn( STATUS_LABELS[p.status]?.label || p.status ))
@@ -13624,6 +13647,11 @@ function encode_char(c) {
     ; __append("\" role=\"status\">\r\n          <span class=\"flash-message\">")
     ; __append(escapeFn( locals.adminFlash.message ))
     ; __append("</span>\r\n          <button type=\"button\" class=\"flash-close\" aria-label=\"閉じる\" onclick=\"this.parentElement.remove()\">×</button>\r\n        </div>\r\n      ")
+    ;  } 
+    ; __append("\r\n      ")
+    ; __append("\r\n      ")
+    ;  if (locals.project && locals.project.is_demo === true) { 
+    ; __append("\r\n        <div class=\"demo-project-banner\" role=\"note\" style=\"display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px;padding:10px 14px;border-radius:8px;background:#fff4e6;border:2px solid #e8590c;color:#7a2e00;font-size:13px;\">\r\n          <span style=\"display:inline-block;padding:2px 10px;border-radius:999px;background:#e8590c;color:#fff;font-weight:700;letter-spacing:.08em;\">DEMO</span>\r\n          <strong>デモ案件です。</strong>\r\n          <span>何度でも回答し直せます。ポイント0・統計/店舗開示/案件一覧の対象外・回答は30日で自動削除。</span>\r\n        </div>\r\n      ")
     ;  } 
     ; __append("\r\n")
   return __output;

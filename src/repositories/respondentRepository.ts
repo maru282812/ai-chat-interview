@@ -190,9 +190,11 @@ export const respondentRepository = {
   },
 
   async countAll(): Promise<number> {
+    // ダッシュボードの全体KPI。デモ案件 (Migration 120) の回答者は数えない。
     const { count, error } = await supabase
       .from("respondents")
-      .select("*", { count: "exact", head: true });
+      .select("id, projects!inner(is_demo)", { count: "exact", head: true })
+      .eq("projects.is_demo", false);
     throwIfError(error);
     return count ?? 0;
   },
