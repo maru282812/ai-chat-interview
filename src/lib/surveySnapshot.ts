@@ -61,3 +61,42 @@ export function countPostCloseSessions(sessions: Session[], closedAt: string | n
   const completed = sessions.filter((session) => session.status === "completed");
   return completed.length - selectCountedSessions(sessions, closedAt).length;
 }
+
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+export interface DailyCount {
+  /** JST の日付（YYYY-MM-DD） */
+  date: string;
+  count: number;
+}
+
+/**
+ * 数えたセッションを JST の日付ごとに振り分ける（店舗の納品物の「回収推移」）。
+ *
+ * **必ず `selectCountedSessions` を通したあとの配列を渡すこと。** そうすれば
+ * `daily` の合計 + `undated_count` が `total_count` と一致する（締切後のぶんは入らない）。
+ *
+ * `completed_at` が無い・読めないセッションは日付に振れないので `undated_count` に数える
+ * （黙って落とすと、日別の合計が total_count より小さくなり、どちらかが嘘に見える）。
+ * 日付は昇順。回答の無かった日は含めない（0 埋めは表示側の判断）。
+ */
+export function countSessionsByJstDate(sessions: Session[]): {
+  daily: DailyCount[];
+  undated_count: number;
+} {
+  const byDate = new Map<string, number>();
+  let undated = 0;
+  for (const session of sessions) {
+    const at = session.completed_at ? Date.parse(session.completed_at) : Number.NaN;
+    if (Number.isNaN(at)) {
+      undated += 1;
+      continue;
+    }
+    const date = new Date(at + JST_OFFSET_MS).toISOString().slice(0, 10);
+    byDate.set(date, (byDate.get(date) ?? 0) + 1);
+  }
+  const daily = [...byDate.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, count]) => ({ date, count }));
+  return { daily, undated_count: undated };
+}

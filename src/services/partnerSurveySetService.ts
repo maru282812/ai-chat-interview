@@ -12,7 +12,10 @@ import {
   toPartnerOptions,
   toPartnerQuestionType
 } from "../lib/partnerQuestions";
-import { cycleGroupRepository } from "../repositories/cycleRepository";
+import { summarizeCycles } from "../lib/cycleFunnel";
+import { SMALL_N_THRESHOLD } from "../lib/gtTable";
+import { cycleGroupRepository, surveyCycleRepository } from "../repositories/cycleRepository";
+import { respondentRepository } from "../repositories/respondentRepository";
 import { projectRepository } from "../repositories/projectRepository";
 import { questionRepository } from "../repositories/questionRepository";
 import { sessionRepository } from "../repositories/sessionRepository";
@@ -73,6 +76,35 @@ export interface PartnerSurveySetView {
   answer_url: string | null;
   surveys: PartnerSetSurveyView[];
   created_at: string;
+}
+
+/**
+ * ABC サイクルの到達と再来店（店舗の納品物「実際に戻ってきたか」）。
+ *
+ * - 判定は管理画面と同じ `summarizeCycles`（再来店＝次の A の回答。C の回答は使わない）。
+ * - **テスト回答者を除く**（A 案件の is_test の LINE ユーザー）。管理画面の集計は除いていない。
+ * - 件数だけを返す。回答者の識別子・理由の原文は返さない（回答者規約 第9条4項の統計の範囲）。
+ * - `decided`（= returned + churned）が {@link SMALL_N_THRESHOLD} 未満なら
+ *   `rate_suppressed: true`。店舗側は再来店率を出さない（GT の小N抑制と同じ約束）。
+ * - 離脱理由・再来店理由は**含めない**。理由の設問は業種ごとに question_code が違い、
+ *   意味を示すフラグが無い。開示判定（on_close）もセットの案件では開かない。
+ */
+export interface PartnerSetFunnelView {
+  set_id: string;
+  /** 集計した時刻（サイクル判定は「いま」基準で動くので、必ず時点を添える） */
+  as_of: string;
+  small_n_threshold: number;
+  /** A/B/C の完了セッション数（テスト回答者を除く・各案件の締切時点まで） */
+  steps: { role: CycleStepRole; survey_id: string; completed_count: number }[];
+  returned: number;
+  churned: number;
+  /** 期限前で未確定（分母に入れない） */
+  pending: number;
+  /** 来店頻度が取れず判定不能（分母に入れない） */
+  unknown: number;
+  /** returned + churned（再来店率の分母） */
+  decided: number;
+  rate_suppressed: boolean;
 }
 
 /** 業種テンプレ1件（ポータルのパッケージ編集で選ばせる）。 */
@@ -394,6 +426,58 @@ export const partnerSurveySetService = {
   async getSet(partnerStoreId: string, setId: string): Promise<PartnerSurveySetView> {
     const { group, store } = await loadOwnedSet(setId, partnerStoreId);
     return buildSetView(group, store, { includeCounts: true });
+  },
+
+  /** ABC サイクルの到達と再来店（{@link PartnerSetFunnelView}）。所有者スコープ付き。 */
+  async getFunnel(
+    partnerStoreId: string,
+    setId: string,
+    now: Date = new Date()
+  ): Promise<PartnerSetFunnelView> {
+    const { group } = await loadOwnedSet(setId, partnerStoreId);
+    const stepRows = await cycleGroupRepository.listSteps(group.id);
+
+    const steps: PartnerSetFunnelView["steps"] = [];
+    let entryProjectId: string | null = null;
+    for (const step of stepRows) {
+      const project = await projectRepository.getById(step.project_id).catch(() => null);
+      if (!project) continue;
+      if (step.step_role === "entry") entryProjectId = project.id;
+      const [sessions, testRespondentIds] = await Promise.all([
+        sessionRepository.listByProject(project.id),
+        respondentRepository.listTestIdsByProject(project.id)
+      ]);
+      const countable = sessions.filter((session) => !testRespondentIds.has(session.respondent_id));
+      steps.push({
+        role: step.step_role,
+        survey_id: project.id,
+        completed_count: selectCountedSessions(countable, project.closed_at ?? null).length
+      });
+    }
+
+    const [cycles, testLineUserIds] = await Promise.all([
+      surveyCycleRepository.listByGroup(group.id),
+      entryProjectId
+        ? respondentRepository.listTestLineUserIdsByProject(entryProjectId)
+        : Promise.resolve(new Set<string>())
+    ]);
+    const summary = summarizeCycles(
+      cycles.filter((cycle) => !testLineUserIds.has(cycle.line_user_id)),
+      now
+    );
+
+    return {
+      set_id: group.id,
+      as_of: now.toISOString(),
+      small_n_threshold: SMALL_N_THRESHOLD,
+      steps: sortByRole(steps),
+      returned: summary.returned,
+      churned: summary.churned,
+      pending: summary.pending,
+      unknown: summary.unknown,
+      decided: summary.decided,
+      rate_suppressed: summary.decided < SMALL_N_THRESHOLD
+    };
   },
 
   /**

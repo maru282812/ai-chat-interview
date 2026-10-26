@@ -7,7 +7,12 @@ import {
   buildGtQuestionTableByAnswerBreaks
 } from "../lib/gtTable";
 import { logger } from "../lib/logger";
-import { countPostCloseSessions, selectCountedSessions } from "../lib/surveySnapshot";
+import {
+  countPostCloseSessions,
+  countSessionsByJstDate,
+  type DailyCount,
+  selectCountedSessions
+} from "../lib/surveySnapshot";
 import {
   AGE_OPTIONS,
   DEMOGRAPHIC_AGE_CODE,
@@ -153,6 +158,14 @@ export interface PartnerStatsView {
    */
   post_close_count: number;
   demographics: DemographicSummary;
+  /**
+   * total_count の内訳を JST の日付ごとに並べたもの（納品物の「回収推移」）。
+   * `daily_counts` の合計 + `undated_count` = total_count。締切後のぶんは入らない。
+   * 件数だけで回答者の識別子は含まない（回答者規約 第9条4項の統計の範囲）。
+   */
+  daily_counts: DailyCount[];
+  /** 完了時刻が無く日付に振れなかった件数（通常 0） */
+  undated_count: number;
 }
 
 /** 店舗へ開示する設問1件ぶんの結果。 */
@@ -636,10 +649,14 @@ export const partnerSurveyService = {
       }
     }
 
+    const byDate = countSessionsByJstDate(completedSessions);
+
     return {
       survey_id: project.id,
       status: project.status,
       total_count: completedSessions.length,
+      daily_counts: byDate.daily,
+      undated_count: byDate.undated_count,
       // 締切後に届いたぶん。店舗には「次回ぶん」として件数だけ見せる
       post_close_count: countPostCloseSessions(sessions, project.closed_at ?? null),
       demographics: summarizeDemographics([...bySession.values()])

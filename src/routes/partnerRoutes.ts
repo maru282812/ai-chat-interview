@@ -738,6 +738,16 @@ partnerRoutes.get(
   })
 );
 
+/** ABC サイクルの到達と再来店（件数のみ）。納品物ダッシュボードの「実際に戻ってきたか」。 */
+partnerRoutes.get(
+  "/survey-sets/:id/funnel",
+  asyncHandler(async (req, res) => {
+    const partner = requirePartner(req);
+    const setId = parseSetId(req.params.id);
+    res.json(await partnerSurveySetService.getFunnel(partner.storeId, setId));
+  })
+);
+
 /** セット全体を公開して A の回答URLを返す（冪等）。 */
 partnerRoutes.post(
   "/survey-sets/:id/publish",
