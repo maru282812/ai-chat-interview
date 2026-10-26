@@ -53,10 +53,12 @@ export const userBadgeService = {
 
   async checkAndAward(lineUserId: string): Promise<BadgeCheckResult> {
     // respondent_ids を先に取得（サブクエリは型不一致のため2段階で）
+    // デモ案件 (Migration 120) の回答はバッジの実績に数えない（projects へ inner join して除外）。
     const { data: respondentRows } = await supabase
       .from("respondents")
-      .select("id")
-      .eq("line_user_id", lineUserId);
+      .select("id, projects!inner(is_demo)")
+      .eq("line_user_id", lineUserId)
+      .eq("projects.is_demo", false);
     const respondentIds = ((respondentRows ?? []) as Array<{ id: string }>).map((r) => r.id);
 
     const [badges, earnedAwards, pointSummary, streakRow, profileRow, sessionRow, assignmentRow] =
@@ -71,9 +73,12 @@ export const userBadgeService = {
               .eq("status", "completed")
               .in("respondent_id", respondentIds)
           : Promise.resolve({ count: 0 }),
-        supabase.from("project_assignments").select("id", { count: "exact", head: true })
-          .eq("status", "completed")
-          .eq("line_user_id", lineUserId)
+        // respondent 経由で絞る＝デモ案件の assignment を数えない（line_user_id 直指定だと素通りする）。
+        respondentIds.length > 0
+          ? supabase.from("project_assignments").select("id", { count: "exact", head: true })
+              .eq("status", "completed")
+              .in("respondent_id", respondentIds)
+          : Promise.resolve({ count: 0 })
       ]);
 
     const earnedCodes = new Set(earnedAwards.map((a) => a.badge_code));

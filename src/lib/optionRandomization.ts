@@ -44,7 +44,7 @@ export function computeOptionOrder(
       for (const option of members) {
         grouped.add(option.value);
       }
-      sequence.push(...seededShuffle(members, `${seed}:g${index}`));
+      sequence.push(...(group.keep_order ? members : seededShuffle(members, `${seed}:g${index}`)));
     }
     // どの群にも属さない非アンカー選択肢は末尾にシャッフルして付ける（取りこぼし防止）
     const leftovers = nonAnchored.filter((option) => !grouped.has(option.value));
@@ -63,4 +63,17 @@ export function computeOptionOrder(
     }
   }
   return result.map((option, index) => option ?? options[index]!);
+}
+
+/**
+ * 選択肢を referenceValues の並び順にそろえる（option_randomization.follow_question 用）。
+ * referenceValues に含まれる選択肢だけが入れ替わり、含まれない選択肢（その他 / 特になし 等）は元の位置に残る。
+ */
+export function alignOptionOrder(options: QuestionOption[], referenceValues: string[]): QuestionOption[] {
+  const rank = new Map(referenceValues.map((value, index) => [value, index]));
+  const followers = options
+    .filter((option) => rank.has(option.value))
+    .sort((left, right) => rank.get(left.value)! - rank.get(right.value)!);
+  let cursor = 0;
+  return options.map((option) => (rank.has(option.value) ? followers[cursor++]! : option));
 }

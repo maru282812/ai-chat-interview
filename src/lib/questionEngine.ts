@@ -425,6 +425,7 @@ function selectedValuesOf(ctx: AnswerContext, code: string): string[] {
  * - mode="selected"  : 参照元で選ばれた value のみを、基底 options の並び順を保って残す。
  * - mode="unselected": 参照元で選ばれなかった value のみを残す。
  * - 参照元が未回答なら selected=空 / unselected=全件（＝まだ絞られていない状態）。
+ * - alwaysInclude の value は参照元の回答に関係なく残す（「特になし」等）。
  */
 export function applyCarryForward(
   options: QuestionOption[],
@@ -433,11 +434,12 @@ export function applyCarryForward(
 ): QuestionOption[] {
   if (!source) return options;
   const selected = new Set(selectedValuesOf(ctx, source.fromQuestion));
+  const always = new Set(source.alwaysInclude ?? []);
   if (source.mode === "unselected") {
-    return options.filter((o) => !selected.has(o.value));
+    return options.filter((o) => always.has(o.value) || !selected.has(o.value));
   }
   // selected
-  return options.filter((o) => selected.has(o.value));
+  return options.filter((o) => always.has(o.value) || selected.has(o.value));
 }
 
 // ------------------------------------------------------------------

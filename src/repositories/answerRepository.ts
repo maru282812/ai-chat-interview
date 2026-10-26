@@ -164,11 +164,14 @@ export const answerRepository = {
   },
 
   async listAll(): Promise<Answer[]> {
+    // 全件エクスポート用。デモ案件 (Migration 120) の回答は除く（answers→sessions→projects を inner join）。
     const { data, error } = await supabase
       .from("answers")
-      .select("*")
+      .select("*, sessions!inner(projects!inner(is_demo))")
+      .eq("sessions.projects.is_demo", false)
       .order("created_at", { ascending: false });
     throwIfError(error);
-    return (data ?? []) as Answer[];
+    // join 用の入れ子列は CSV の列にしない。
+    return ((data ?? []) as Array<Answer & { sessions?: unknown }>).map(({ sessions: _s, ...answer }) => answer as Answer);
   }
 };

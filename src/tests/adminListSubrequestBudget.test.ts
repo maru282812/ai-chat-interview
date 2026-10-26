@@ -36,6 +36,8 @@ const projectRepositoryModule =
   require("../repositories/projectRepository") as typeof import("../repositories/projectRepository");
 const questionRepositoryModule =
   require("../repositories/questionRepository") as typeof import("../repositories/questionRepository");
+const sessionRepositoryModule =
+  require("../repositories/sessionRepository") as typeof import("../repositories/sessionRepository");
 const { adminService } = require("../services/adminService") as typeof import("../services/adminService");
 
 type Question = import("../types/domain").Question;
@@ -79,10 +81,14 @@ async function countQuestionFetches(projectCount: number): Promise<{
   const originalList = projectRepositoryModule.projectRepository.list;
   const originalByProject = questionRepositoryModule.questionRepository.listByProject;
   const originalByProjectIds = questionRepositoryModule.questionRepository.listByProjectIds;
+  const originalCompleted = sessionRepositoryModule.sessionRepository.countCompletedByProjectIds;
 
   let calls = 0;
 
   projectRepositoryModule.projectRepository.list = async () => projects;
+  // 回答数も一括取得（設問とは別計測。ここでは件数の受け渡しだけ見る）
+  sessionRepositoryModule.sessionRepository.countCompletedByProjectIds = async (projectIds: string[]) =>
+    new Map(projectIds.map((id, i) => [id, i]));
 
   // 案件ごとの取得（= 事故の形）。呼ばれた回数がそのまま fetch 回数になる。
   questionRepositoryModule.questionRepository.listByProject = async (projectId: string) => {
@@ -107,6 +113,7 @@ async function countQuestionFetches(projectCount: number): Promise<{
     projectRepositoryModule.projectRepository.list = originalList;
     questionRepositoryModule.questionRepository.listByProject = originalByProject;
     questionRepositoryModule.questionRepository.listByProjectIds = originalByProjectIds;
+    sessionRepositoryModule.sessionRepository.countCompletedByProjectIds = originalCompleted;
   }
 }
 
@@ -144,6 +151,10 @@ test("listProjects: 一括取得でも各案件の設問数・分岐数が正し
       `${row.project.name} の設問数が ${row.questionCount}。一括取得のグルーピングが壊れている`
     );
   }
+
+  rows.forEach((row, i) => {
+    assert.equal(row.completedCount, i, `${row.project.name} の回答数が取り違えられている`);
+  });
 
   // 取り違え（全案件が同じ設問を指す等）が起きていないこと
   const ids = new Set(rows.map((row) => row.project.id));

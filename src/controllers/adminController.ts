@@ -1,6 +1,8 @@
 ﻿import { DATETIME_CONFIG_KEYS, type DatetimeConfig, isDatetimeType, sanitizeDatetimeConfig } from "../lib/datetimeAnswer";
 import type { Request, Response } from "express";
+import { isDemoProject } from "../lib/demoProject";
 import { HttpError } from "../lib/http";
+import { parseProjectManagement, managementIdentity } from '../lib/projectManagement';
 import { ADMIN_MEMO_MAX_LENGTH, normalizeAdminMemo } from "../lib/adminMemo";
 import { redirectWithFlash, redirectWithError } from "../lib/adminFlash";
 import { formatDateTimeJst, fromDateTimeLocalJst, statusLabel } from "../lib/adminView";
@@ -168,6 +170,7 @@ import { sessionRepository } from "../repositories/sessionRepository";
 import { lineMessagingService } from "../services/lineMessagingService";
 import { buildApplicationAcceptedFlex, buildApplicationRejectedFlex } from "../templates/flex";
 import { buildProjectStartUrl, buildProjectsListLiffUrl, buildStoreEntryLiffUrl } from "../services/liffService";
+import { resolveProjectDistribution } from "../lib/projectDistributionUrl";
 
 function routeParam(req: Request, key: string): string {
   const value = req.params[key];
@@ -687,6 +690,7 @@ function renderProjectsIndex(
     templates?: import("../types/domain").IndustryTemplate[];
     stores?: import("../types/domain").Store[];
     totalCount?: number;
+    clients?: Awaited<ReturnType<typeof clientRepository.list>>;
     /** 絞り込み条件のクエリ文字列（JS無効時、メモ保存後に同じ一覧へ戻すため） */
     currentQuery?: string;
   }
@@ -701,6 +705,8 @@ function renderProjectsIndex(
     hasFilter: hasActiveFilter(filter),
     industryTemplates: input.templates ?? [],
     stores: input.stores ?? [],
+    clients: input.clients ?? [],
+    managementIdentity,
     totalCount: input.totalCount ?? input.projects.length,
     currentQuery: input.currentQuery ?? ""
   });
@@ -971,6 +977,11 @@ function parseQuestionType(value: string): QuestionType {
 type ProjectDisplayStyle = "survey" | "interview";
 
 type ProjectFormOverrides = Partial<{
+  client_id: string;
+  store_id: string;
+  management_year: string;
+  confirmed_number: string;
+  survey_purpose: string;
   name: string;
   user_display_title: string;
   /** 送信完了画面のお礼文 (Migration 108)。空文字なら汎用文。 */
@@ -1064,6 +1075,11 @@ function buildProjectForm(project: Project | null, overrides: ProjectFormOverrid
     user_display_title: overrides.user_display_title ?? project?.user_display_title ?? "",
     completion_message: overrides.completion_message ?? project?.completion_message ?? "",
     client_name: overrides.client_name ?? project?.client_name ?? "",
+    client_id: overrides.client_id ?? project?.client_id ?? '',
+    store_id: overrides.store_id ?? project?.store_id ?? '',
+    management_year: overrides.management_year ?? String(project?.management_year ?? ''),
+    confirmed_number: overrides.confirmed_number ?? String(project?.confirmed_number ?? ''),
+    survey_purpose: overrides.survey_purpose ?? project?.survey_purpose ?? '',
     objective,
     status: overrides.status ?? project?.status ?? "draft",
     reward_points_text: overrides.reward_points_text ?? String(project?.reward_points ?? 30),
@@ -1093,6 +1109,11 @@ function buildProjectFormOverridesFromRequest(req: Request): ProjectFormOverride
     user_display_title: bodyString(req.body.user_display_title),
     completion_message: bodyString(req.body.completion_message),
     client_name: bodyString(req.body.client_name),
+    client_id: bodyString(req.body.client_id),
+    store_id: bodyString(req.body.store_id),
+    management_year: bodyString(req.body.management_year),
+    confirmed_number: bodyString(req.body.confirmed_number),
+    survey_purpose: bodyString(req.body.survey_purpose),
     objective: bodyString(req.body.objective),
     status: bodyString(req.body.status) || "draft",
     reward_points_text: bodyString(req.body.reward_points) || "30",
@@ -1106,7 +1127,7 @@ function buildProjectFormOverridesFromRequest(req: Request): ProjectFormOverride
   };
 }
 
-function renderProjectResearchForm(
+async function renderProjectResearchForm(
   res: Response,
   input: {
     title: string;
@@ -1125,7 +1146,8 @@ function renderProjectResearchForm(
     /** エラー再描画時にフォーム送信値の選択パッケージバージョンを維持する */
     selectedPromptPackageVersionId?: string | null;
   }
-): void {
+): Promise<void> {
+  const [managementClients, managementStores] = await Promise.all([clientRepository.list(), storeRepository.list()]);
   const projectForm = buildProjectForm(input.project, input.projectFormOverrides ?? {});
   if (typeof input.statusCode === "number") {
     res.status(input.statusCode);
@@ -1143,6 +1165,8 @@ function renderProjectResearchForm(
     promptKeyDefs: buildPromptKeyDefs(),
     projectAiStateTemplates: getProjectAiStateTemplates(),
     projectForm,
+    managementClients,
+    managementStores,
     aiStateDisplay: projectForm.ai_state_summary,
     screeningConditions: allConditions,
     screeningQuestions: input.screeningQuestions ?? [],
@@ -1150,6 +1174,8 @@ function renderProjectResearchForm(
     promptPackages: input.promptPackages ?? [],
     packageFallbackWarning: input.packageFallbackWarning ?? null,
     selectedPromptPackageVersionId: input.selectedPromptPackageVersionId ?? null,
+    // 配布用QR（編集画面のみ。新規作成時は id が無いので出さない）
+    distribution: input.project ? resolveProjectDistribution(input.project) : null,
     // 若年層体験オプション（Phase 0）: project スコープのキーだけをフォームに出す。
     experienceKeyDefs: EXPERIENCE_KEYS,
     experienceProjectKeys: PROJECT_SCOPED_KEYS,
@@ -1158,7 +1184,25 @@ function renderProjectResearchForm(
   });
 }
 
+async function projectManagementFromRequest(req: Request, existing?: Project) {
+  const fields = parseProjectManagement(req.body);
+  const clientId = 'client_id' in req.body ? bodyString(req.body.client_id).trim() || null : existing?.client_id ?? null;
+  const storeId = 'store_id' in req.body ? bodyString(req.body.store_id).trim() || null : existing?.store_id ?? null;
+  const client = clientId ? await clientRepository.getById(clientId) : null;
+  if (('confirmed_number' in fields ? fields.confirmed_number : existing?.confirmed_number) && !clientId) {
+    throw new HttpError(400, '確定番号を登録する場合はクライアントを選択してください');
+  }
+  if (storeId) {
+    const store = await storeRepository.getById(storeId);
+    if (!store || store.client_id !== clientId) throw new HttpError(400, '選択した店舗はクライアントに属していません');
+  }
+  return { ...fields, client_id: clientId, store_id: storeId,
+    client_name: client?.name ?? (bodyString(req.body.client_name) || null) };
+}
+
 function getProjectRenderErrorMessage(error: unknown, fallbackMessage: string): string {
+  if (error instanceof Error && /ux_projects_client_confirmed_number|ux_clients_company_code/.test(error.message)) return '同じクライアントの確定番号、または企業コードが既に使用されています';
+  if (error && typeof error === 'object' && 'code' in error && error.code === '23505') return '同じクライアントの確定番号、またはコードが既に使用されています';
   if (error instanceof HttpError && error.message.trim()) {
     return error.message;
   }
@@ -3308,15 +3352,23 @@ export const adminController = {
 
   async projects(req: Request, res: Response): Promise<void> {
     const filter = parseProjectListFilter(req.query as Record<string, unknown>);
-    const [projects, templates, stores] = await Promise.all([
+    const [projects, templates, stores, clients] = await Promise.all([
       adminService.listProjects(),
       // 業種・店舗はまだ使っていない環境もあるので、失敗しても一覧は出す。
       industryTemplateRepository.list().catch(() => []),
-      storeRepository.list().catch(() => [])
+      storeRepository.list().catch(() => []),
+      clientRepository.list()
     ]);
 
+    const clientById = new Map(clients.map(c => [c.id, c]));
+    const managedRows = projects.map(row => ({ ...row, project: { ...row.project,
+      company_code: clientById.get(row.project.client_id ?? '')?.company_code ?? null,
+      client_name: clientById.get(row.project.client_id ?? '')?.name ?? row.project.client_name,
+    }}));
+
     renderProjectsIndex(res, {
-      projects: filterProjectRows(projects, filter, (row) => row.project),
+      projects: filterProjectRows(managedRows, filter, (row) => row.project),
+      clients,
       notice: req.query.notice,
       filter,
       templates,
@@ -3333,7 +3385,7 @@ export const adminController = {
     // 新規作成時からパッケージを選択できるよう一覧を渡す（既定選択はビュー側で公開中バージョンを持つ先頭パッケージ）
     const { promptPackageRepository } = await import("../repositories/promptPackageRepository");
     const promptPackages = await promptPackageRepository.list().catch(() => []);
-    renderProjectResearchForm(res, {
+    await renderProjectResearchForm(res, {
       title: "新規プロジェクト作成",
       project: null,
       action: "/admin/projects",
@@ -3360,9 +3412,12 @@ export const adminController = {
 
       const created = await projectRepository.create({
         name,
+        visibility_type: bodyString(req.body.visibility_type) === 'private_store' ? 'private_store' : 'public',
+        entry_code: bodyString(req.body.visibility_type) === 'private_store' ? bodyString(req.body.entry_code).trim() || null : null,
         user_display_title: bodyString(req.body.user_display_title) || null,
         completion_message: bodyString(req.body.completion_message).trim() || null,
-        client_name: bodyString(req.body.client_name) || null,
+        ...await projectManagementFromRequest(req),
+        is_demo: req.body.is_demo === "true" || req.body.is_demo === "on",
         objective,
         status: bodyString(req.body.status || "draft") as import("../types/domain").ProjectStatus,
         reward_points: numberField(req.body.reward_points),
@@ -3422,7 +3477,7 @@ export const adminController = {
     } catch (error) {
       const { promptPackageRepository } = await import("../repositories/promptPackageRepository").catch(() => ({ promptPackageRepository: { list: async () => [] } }));
       const promptPackages = await promptPackageRepository.list().catch(() => []);
-      renderProjectResearchForm(res, {
+      await renderProjectResearchForm(res, {
         title: "新規プロジェクト作成",
         project: null,
         action: "/admin/projects",
@@ -3458,7 +3513,7 @@ export const adminController = {
       }
     }
 
-    renderProjectResearchForm(res, {
+    await renderProjectResearchForm(res, {
       title: "プロジェクト編集",
       project,
       action: `/admin/projects/${project.id}`,
@@ -3511,7 +3566,7 @@ export const adminController = {
         name,
         user_display_title: bodyString(req.body.user_display_title) || null,
         completion_message: bodyString(req.body.completion_message).trim() || null,
-        client_name: bodyString(req.body.client_name) || null,
+        ...await projectManagementFromRequest(req, existing),
         objective,
         status: bodyString(req.body.status || "draft") as import("../types/domain").ProjectStatus,
         reward_points: numberField(req.body.reward_points),
@@ -3533,6 +3588,8 @@ export const adminController = {
         screening_config: buildScreeningConfig(req),
         screening_last_question_order: existing.screening_last_question_order ?? null,
         is_discoverable: req.body.is_discoverable === "true" || req.body.is_discoverable === "on",
+        // デモ案件 (Migration 120)。フォームに欄が無い送信元（他画面の部分更新）で false に落とさない。
+        ...(req.body.is_demo_present ? { is_demo: req.body.is_demo === "true" || req.body.is_demo === "on" } : {}),
         randomize_question_order: req.body.randomize_question_order === "true" || req.body.randomize_question_order === "on",
         // C-3: 空文字（＝「全体既定に従う」）のときだけ体験設定の既定を実体化する。
         // 既存プロジェクトはフォームに保存済みの値が選択されているため挙動は変わらない。
@@ -3616,7 +3673,7 @@ export const adminController = {
       } catch {
         // DB 未準備の場合は空配列のまま
       }
-      renderProjectResearchForm(res, {
+      await renderProjectResearchForm(res, {
         title: "プロジェクト編集",
         project: existing,
         action: `/admin/projects/${projectId}`,
@@ -9866,7 +9923,7 @@ export const adminController = {
     }
 
     res.render("admin/stores/index", {
-      title: "店舗管理（業種テンプレから一括生成）",
+      title: "クライアント・店舗管理",
       templates,
       clients,
       clientGroups: [...byClient.entries()].map(([clientId, list]) => ({
@@ -9890,8 +9947,15 @@ export const adminController = {
     const codeSlug = bodyString(req.body.code_slug).trim();
     const rewardRaw = bodyString(req.body.reward_points_override).trim();
 
-    if (!clientId || !templateId || !name || !codeSlug) {
-      back("err=" + encodeURIComponent("法人・業種・店舗名・店舗コードは必須です"));
+    // Older open forms did not send creation_mode and represented ABC creation.
+    const creationMode = bodyString(req.body.creation_mode) || 'abc';
+    if (!['register', 'abc'].includes(creationMode)) {
+      back('err=' + encodeURIComponent('登録方法を選択してください'));
+      return;
+    }
+    const generateSet = creationMode === 'abc';
+    if (!clientId || (generateSet && !templateId) || !name || !codeSlug) {
+      back("err=" + encodeURIComponent("クライアント・店舗名・店舗コードを入力してください。A/B/C生成時はテンプレートも必要です"));
       return;
     }
 
@@ -9907,6 +9971,13 @@ export const adminController = {
     }
 
     try {
+      await clientRepository.getById(clientId);
+      if (!generateSet) {
+        if (!/^[a-z0-9][a-z0-9-]*$/.test(codeSlug)) throw new Error('店舗コードは英小文字・数字・ハイフンで指定してください');
+        await storeRepository.create({ client_id: clientId, name, code_slug: codeSlug, industry_template_id: null });
+        back('msg=' + encodeURIComponent(`店舗・施設「${name}」を登録しました。アンケートは生成していません`));
+        return;
+      }
       const result = await storeProvisioningService.provisionStore({
         clientId,
         industryTemplateId: templateId,
@@ -9986,8 +10057,8 @@ export const adminController = {
       questions: questionsByProject.get(project.id) ?? []
     }));
 
-    // 件数系の単純合算(A)
-    const totals = rows.reduce(
+    // 件数系の単純合算(A)。デモ案件 (Migration 120) は行には出す（DEMO 表示）が合計・横断指標には入れない。
+    const totals = rows.filter((r) => !isDemoProject(r.project)).reduce(
       (acc, r) => ({
         respondents: acc.respondents + r.respondentCount,
         completed: acc.completed + r.completedCount
@@ -9997,7 +10068,7 @@ export const adminController = {
 
     // 横断集計できる指標の可視化（実合算(B)は将来Slice）
     const metrics = collectClientMetrics(
-      rows.map((r) => ({ project_id: r.project.id, questions: r.questions }))
+      rows.filter((r) => !isDemoProject(r.project)).map((r) => ({ project_id: r.project.id, questions: r.questions }))
     );
 
     res.render("admin/clients/overview", {
@@ -10042,8 +10113,39 @@ export const adminController = {
       entryUrl: buildStoreEntryUrl(project.entry_code),
       entryCode: project.entry_code ?? null,
       isPublished: project.status === "published",
+      qrSrc: `/admin/store-surveys/${project.id}/qr.svg?size=600`,
+      warnings: [],
       backUrl: "/admin/store-surveys"
     });
+  },
+
+  // ---- 案件（通常案件を含む）の配布用QR ----
+  // 店舗専用は entry_code の専用URL、通常案件は案件詳細ページを QR にする（resolveProjectDistribution）。
+
+  async projectFlyer(req: Request, res: Response): Promise<void> {
+    const project = await projectRepository.getById(routeParam(req, "projectId"));
+    const distribution = resolveProjectDistribution(project);
+    const surveyTitle = project.user_display_title || project.name;
+    res.render("admin/store-surveys/flyer", {
+      title: `配布用QR - ${surveyTitle}`,
+      storeName: null,
+      surveyTitle,
+      projectId: project.id,
+      entryUrl: distribution.url,
+      entryCode: project.entry_code ?? null,
+      // 未公開警告は warnings 側に含めて出す（二重表示しない）
+      isPublished: true,
+      qrSrc: `/admin/projects/${project.id}/qr.svg?size=600`,
+      warnings: distribution.warnings,
+      backUrl: `/admin/projects/${project.id}/edit`
+    });
+  },
+
+  async projectQr(req: Request, res: Response): Promise<void> {
+    const project = await projectRepository.getById(routeParam(req, "projectId"));
+    const { url } = resolveProjectDistribution(project);
+    if (!url) throw new HttpError(404, "entry_code が未設定のためQRコードを生成できません");
+    await sendQrSvg(res, url, req.query.size);
   },
 
   // ---- 店舗QRコード（サーバ側生成） ----
@@ -10059,39 +10161,49 @@ export const adminController = {
     const project = await projectRepository.getById(projectId);
     const entryUrl = buildStoreEntryUrl(project.entry_code);
     if (!entryUrl) throw new HttpError(404, "entry_code が未設定のためQRコードを生成できません");
-
-    const sizeRaw = Number.parseInt(String(req.query.size ?? "180"), 10);
-    const width = Number.isFinite(sizeRaw) ? Math.min(Math.max(sizeRaw, 120), 1200) : 180;
-    const svg = await QRCode.toString(entryUrl, { type: "svg", width, margin: 2 });
-    res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
-    res.setHeader("Cache-Control", "private, max-age=300");
-    res.send(svg);
+    await sendQrSvg(res, entryUrl, req.query.size);
   },
 
   // ---- 店舗マスタ（clients）CRUD ----
 
   async createClient(req: Request, res: Response): Promise<void> {
+    const back = req.body.return_to === '/admin/stores' ? '/admin/stores' : '/admin/store-surveys';
     const name = bodyString(req.body.name).trim();
     if (!name) {
-      res.redirect("/admin/store-surveys?err=" + encodeURIComponent("店舗名を入力してください"));
+      res.redirect(back + "?err=" + encodeURIComponent("クライアント名を入力してください"));
       return;
     }
-    await clientRepository.create({ name, contact: bodyString(req.body.contact).trim() || null });
-    res.redirect("/admin/store-surveys?msg=" + encodeURIComponent("店舗を追加しました"));
+    try {
+      const code = bodyString(req.body.company_code).trim().toUpperCase() || null;
+      if (code && !/^C\d+$/.test(code)) throw new Error('企業コードはC0001の形式で入力してください');
+      const clients = await clientRepository.list();
+      if (clients.some(c => c.name.trim() === name)) throw new Error('同名クライアントが登録済みです。既存のクライアントを選択してください');
+      await clientRepository.create({ name, contact: bodyString(req.body.contact).trim() || null, company_code: code });
+      res.redirect(back + "?msg=" + encodeURIComponent("クライアントを追加しました"));
+    } catch (error) {
+      res.redirect(back + '?err=' + encodeURIComponent(getProjectRenderErrorMessage(error, 'クライアントの追加に失敗しました')));
+    }
   },
 
   async updateClient(req: Request, res: Response): Promise<void> {
+    const back = req.body.return_to === '/admin/stores' ? '/admin/stores' : '/admin/store-surveys';
     const clientId = routeParam(req, "clientId");
     const name = bodyString(req.body.name).trim();
     if (!name) {
-      res.redirect("/admin/store-surveys?err=" + encodeURIComponent("店舗名を入力してください"));
+      res.redirect(back + "?err=" + encodeURIComponent("クライアント名を入力してください"));
       return;
     }
-    await clientRepository.update(clientId, {
-      name,
-      contact: bodyString(req.body.contact).trim() || null
-    });
-    res.redirect("/admin/store-surveys?msg=" + encodeURIComponent("店舗を更新しました"));
+    try {
+      const code = bodyString(req.body.company_code).trim().toUpperCase() || null;
+      if (code && !/^C\d+$/.test(code)) throw new Error('企業コードはC0001の形式で入力してください');
+      await clientRepository.update(clientId, {
+        name, contact: bodyString(req.body.contact).trim() || null,
+        ...('company_code' in req.body ? { company_code: code } : {})
+      });
+      res.redirect(back + "?msg=" + encodeURIComponent("クライアントを更新しました"));
+    } catch (error) {
+      res.redirect(back + '?err=' + encodeURIComponent(getProjectRenderErrorMessage(error, '更新に失敗しました')));
+    }
   },
 
   async deleteClient(req: Request, res: Response): Promise<void> {
@@ -10832,6 +10944,15 @@ async function generateUniqueEntryCode(): Promise<string> {
 function buildStoreEntryUrl(entryCode: string | null | undefined): string | null {
   if (!entryCode) return null;
   return buildStoreEntryLiffUrl(entryCode);
+}
+
+async function sendQrSvg(res: Response, url: string, sizeQuery: unknown): Promise<void> {
+  const sizeRaw = Number.parseInt(String(sizeQuery ?? "180"), 10);
+  const width = Number.isFinite(sizeRaw) ? Math.min(Math.max(sizeRaw, 120), 1200) : 180;
+  const svg = await QRCode.toString(url, { type: "svg", width, margin: 2 });
+  res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.send(svg);
 }
 
 type EntryCodeValidation =

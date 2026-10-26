@@ -126,6 +126,43 @@
 
 <%- include("../../partials/partner-store-warning", { project }) %>
 
+<% if (project && project.id && typeof distribution !== 'undefined' && distribution) { %>
+  <details class="card" id="distribution-qr">
+    <summary style="cursor:pointer;font-weight:bold">配布用URL / QRコード</summary>
+    <% if (distribution.url) { %>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;margin-top:10px">
+        <img alt="配布用QRコード" class="qr-img" data-src="/admin/projects/<%= project.id %>/qr.svg?size=180"
+             width="180" height="180" style="border:1px solid #ddd;border-radius:4px" />
+        <div style="flex:1;min-width:220px;font-size:13px">
+          <div style="color:#666"><%= distribution.kind === 'store_entry' ? '店舗専用URL（entry_code）' : '案件詳細ページURL' %></div>
+          <code style="word-break:break-all"><%= distribution.url %></code>
+          <div style="margin-top:8px;display:flex;gap:12px;flex-wrap:wrap">
+            <a href="/admin/projects/<%= project.id %>/qr.svg?size=1000" download="qr-<%= project.id %>.svg">QRをダウンロード（SVG）</a>
+            <a href="/admin/projects/<%= project.id %>/flyer" target="_blank" rel="noopener">印刷用チラシを開く</a>
+          </div>
+        </div>
+      </div>
+    <% } %>
+    <% for (const w of distribution.warnings) { %>
+      <p class="danger-text" style="margin:8px 0 0;font-size:13px">⚠ <%= w %></p>
+    <% } %>
+  </details>
+  <script>
+    // QR 画像は開いたときに初めて読み込む
+    (function () {
+      const d = document.getElementById('distribution-qr');
+      if (!d) return;
+      d.addEventListener('toggle', function () {
+        if (!d.open) return;
+        d.querySelectorAll('img.qr-img[data-src]').forEach(function (img) {
+          img.src = img.getAttribute('data-src');
+          img.removeAttribute('data-src');
+        });
+      });
+    })();
+  </script>
+<% } %>
+
 <form class="card stack" method="post" action="<%= action %>" onsubmit="return confirmPromptPackageSelection();">
   <% if (successMessage) { %>
     <section class="card subtle-card success-card">
@@ -154,7 +191,83 @@
 
   <section class="editor-section stack">
     <h2>1. 基本設定</h2>
-    <p class="helper-text">まずはこの3項目だけで、使える調査プロジェクトを作れます。</p>
+    <p class="helper-text">調査内容とクライアントを設定します。管理年・確定番号は調査票の値を入力してください。</p>
+
+    <%# デモ案件 (Migration 120)。本番案件との取り違えを防ぐため基本設定の先頭に置く。 %>
+    <div class="demo-toggle<%= project?.is_demo ? ' is-on' : '' %>" id="demo-toggle">
+      <input type="hidden" name="is_demo_present" value="1" />
+      <label class="demo-toggle__label">
+        <input type="checkbox" name="is_demo" value="true" id="demo-toggle-input" <%= project?.is_demo ? "checked" : "" %> data-was-demo="<%= project?.is_demo ? '1' : '0' %>" data-existing="<%= project?.id ? '1' : '0' %>" />
+        <span class="demo-toggle__badge">DEMO</span>
+        デモ案件にする（何度でも回答し直せる体験用）
+      </label>
+      <ul class="demo-toggle__rules">
+        <li>開くたびに 1 問目から回答し直せます（回答済み画面は出ません）</li>
+        <li>ポイントは必ず 0（下のポイント設定に関係なく付与しません）</li>
+        <li>ABCサイクルに入っていても、この案件だけで完結します（B/C の案内は送りません）</li>
+        <li>統計・エクスポート・店舗への開示・LIFFの案件一覧には出ません。回答は 30 日で自動削除されます</li>
+      </ul>
+    </div>
+    <style>
+      .demo-toggle { border: 2px dashed #c9cfd6; border-radius: 10px; padding: 10px 14px; margin: 8px 0 12px; background: #fafbfc; }
+      .demo-toggle.is-on { border-color: #e8590c; background: #fff4e6; }
+      .demo-toggle__label { display: flex; flex-direction: row; justify-content: flex-start; align-items: center; gap: 8px; font-weight: 700; cursor: pointer; }
+      /* フォーム共通の input { width:100% } を打ち消す（チェックボックスが横に伸びて文言が右へ飛ぶ） */
+      .demo-toggle__label input[type="checkbox"] { width: 18px; height: 18px; flex: none; margin: 0; }
+      .demo-toggle__badge { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #e8590c; color: #fff; font-size: 12px; letter-spacing: .08em; }
+      .demo-toggle:not(.is-on) .demo-toggle__badge { background: #adb5bd; }
+      .demo-toggle__rules { margin: 6px 0 0 1.4em; padding: 0; font-size: 12px; color: #555; line-height: 1.7; }
+    </style>
+    <script>
+      (() => {
+        const box = document.getElementById('demo-toggle');
+        const input = document.getElementById('demo-toggle-input');
+        input.addEventListener('change', () => {
+          // 既存の本番案件をデモへ切り替えるときだけ確認する（回答が統計から消え、30日で削除されるため）。
+          if (input.checked && input.dataset.existing === '1' && input.dataset.wasDemo !== '1') {
+            const ok = confirm('この案件をデモにします。\n\nすでに集まっている回答も統計・エクスポート・店舗開示から外れ、30日を過ぎた回答は自動で削除されます。\n本番の回答がある案件なら、コピーしてデモ用を作るほうが安全です。\n\n続けますか？');
+            if (!ok) { input.checked = false; }
+          }
+          box.classList.toggle('is-on', input.checked);
+        });
+      })();
+    </script>
+
+    <div class="form-grid">
+      <label>クライアント
+        <select name="client_id" id="management-client">
+          <option value="">未設定（既存の自由入力名を保持）</option>
+          <% managementClients.forEach(function(c) { %><option value="<%= c.id %>" <%= form.client_id === c.id ? 'selected' : '' %>><%= c.company_code ? c.company_code + ' ' : '' %><%= c.name %></option><% }) %>
+        </select>
+        <a href="/admin/stores" target="_blank" rel="noopener">クライアントを追加・管理（別タブ）</a>
+        <small>追加後はこの画面を再表示すると選択できます。</small>
+      </label>
+      <label>店舗・施設（任意）
+        <select name="store_id" id="management-store"><option value="">指定なし</option>
+        <% managementStores.forEach(function(s) { %><option value="<%= s.id %>" data-client="<%= s.client_id %>" <%= form.store_id === s.id ? 'selected' : '' %>><%= s.name %></option><% }) %>
+        </select>
+      </label>
+      <label>案件用途
+        <select name="survey_purpose">
+          <option value="">未設定</option>
+          <option value="monitor" <%= form.survey_purpose === 'monitor' ? 'selected' : '' %>>モニター配信</option>
+          <option value="store" <%= form.survey_purpose === 'store' ? 'selected' : '' %>>店舗専用アンケート</option>
+        </select><small>公開範囲・配信設定は詳細設定で別に指定します。</small>
+      </label>
+      <label>管理年<input name="management_year" type="number" min="1900" max="9999" value="<%= form.management_year %>" placeholder="2026"></label>
+      <label>確定番号<input name="confirmed_number" type="text" inputmode="numeric" pattern="[0-9]+" value="<%= form.confirmed_number %>" placeholder="0001"><small>クライアントごとの番号。自動採番はしません。</small></label>
+    </div>
+    <script>
+      (() => {
+        const client = document.getElementById('management-client');
+        const store = document.getElementById('management-store');
+        function sync() {
+          Array.from(store.options).forEach(o => { if (o.value) o.hidden = o.dataset.client !== client.value; });
+          if (store.selectedOptions[0]?.hidden) store.value = '';
+        }
+        client.addEventListener('change', sync); sync();
+      })();
+    </script>
 
     <div class="form-grid">
       <label>
@@ -225,7 +338,7 @@
 
       <div class="form-grid">
         <label>
-          クライアント名
+          旧クライアント名（マスタ未選択時のみ）
           <input type="text" name="client_name" value="<%= form.client_name || '' %>" />
         </label>
         <label>

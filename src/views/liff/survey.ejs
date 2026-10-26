@@ -1262,10 +1262,12 @@
   function applyCarryForward(choices, source) {
     if (!source || !source.fromQuestion) return choices;
     const selected = selectedValuesOf(source.fromQuestion);
+    // alwaysInclude（「特になし」等）は参照元の回答に関係なく残す（サーバー applyCarryForward と同じ）
+    const always = (source.alwaysInclude || []).map(String);
     if (source.mode === 'unselected') {
-      return choices.filter(c => !selected.includes(String(c.value)));
+      return choices.filter(c => always.includes(String(c.value)) || !selected.includes(String(c.value)));
     }
-    return choices.filter(c => selected.includes(String(c.value)));
+    return choices.filter(c => always.includes(String(c.value)) || selected.includes(String(c.value)));
   }
 
   // ---- <carry> 持ち越し → <disable> による選択肢フィルタ ----
@@ -3154,6 +3156,31 @@
       questionArea.querySelectorAll(`[data-code="${q.question_code}"]`).forEach(el => {
         if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
           if (el.type === 'hidden') return; // hidden は input イベントなし
+          // 「その他」の記述欄は選択肢の一部。el.value をそのまま回答にすると、
+          // 選んであった他の選択肢が記述文だけで上書きされて消える（2026-10-20 水族館検証で発覚）。
+          if (el.classList.contains('other-text-input')) {
+            el.addEventListener('input', () => {
+              // 画像カードグリッドの記述欄は AnswerUI が配線しないので、ここで選択肢を ON にする。
+              const grid = el.closest('.card-grid');
+              const box = grid && el.closest('.card-item')?.querySelector(`input[name="q_${q.question_code}"]`);
+              if (box && !box.checked && el.value.trim()) {
+                if (box.type === 'radio') {
+                  questionArea.querySelectorAll(`input[name="q_${q.question_code}"]`).forEach(b => { b.checked = false; });
+                  box.checked = true;
+                } else {
+                  box.checked = true;
+                  if (!AnswerUI.enforceMaxSelect(questionArea, box, q.question_code)) applyExclusion(box, q.question_code);
+                }
+                grid.querySelectorAll('.card-item').forEach(l => {
+                  const b = l.querySelector(`input[name="q_${q.question_code}"]`);
+                  if (b) l.classList.toggle('selected', b.checked);
+                });
+              }
+              answerCtx.answers[q.question_code.toLowerCase()] = collectChoiceVal(q);
+              checkNextEnabled();
+            });
+            return;
+          }
           el.addEventListener('input', () => {
             answerCtx.answers[q.question_code.toLowerCase()] = el.value;
             el.classList.remove('free-text-required');

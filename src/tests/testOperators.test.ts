@@ -111,6 +111,8 @@ test("テスト運営者の完了ではポイントを付与せず、回答者�
   const marked: string[] = [];
   await withStubs(
     [
+      // デモ案件 (Migration 120) の判定が先に走るので、通常案件として返す。
+      stub(projectRepository, "getById", async () => ({ id: PROJECT_ID, is_demo: false }) as unknown as Project),
       stub(testOperatorRepository, "isTestOperator", async () => true),
       stub(respondentRepository, "markTest", async (id: string) => {
         marked.push(id);
@@ -141,6 +143,8 @@ test("運営者でなければ通常どおり付与処理へ進む", async () =>
   const sentinel = new Error("reached-normal-award");
   await withStubs(
     [
+      // デモ案件 (Migration 120) の判定が先に走るので、通常案件として返す。
+      stub(projectRepository, "getById", async () => ({ id: PROJECT_ID, is_demo: false }) as unknown as Project),
       stub(testOperatorRepository, "isTestOperator", async () => false),
       stub(rewardRuleRepository, "listActive", async () => {
         throw sentinel;

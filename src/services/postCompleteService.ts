@@ -1,3 +1,4 @@
+import { isDemoProject } from "../lib/demoProject";
 import { logger } from "../lib/logger";
 import { rankService } from "./rankService";
 import { pointService } from "./pointService";
@@ -74,6 +75,12 @@ export async function runPostCompleteProcess({
   project,
   lineUserId,
 }: PostCompleteParams): Promise<void> {
+  // デモ案件 (Migration 120) はポイントも完了通知も出さない（何度も回答するたびに LINE が鳴るのを防ぐ）。
+  if (isDemoProject(project)) {
+    logger.info("postComplete.skipped.demo", { assignmentId, projectId: project.id });
+    return;
+  }
+
   let awardResult: Awaited<ReturnType<typeof pointService.awardCompletionPoints>> | null = null;
   let rankResult: Awaited<ReturnType<typeof rankService.syncRespondentRank>> | null = null;
 
@@ -228,6 +235,8 @@ export async function awardDeferredCompletionsForMember(lineUserId: string): Pro
 
       try {
         const project = await projectRepository.getById(session.project_id);
+        // デモ案件 (Migration 120) の回答は保留ポイントの対象外。
+        if (isDemoProject(project)) continue;
         // total_points を最新化してから付与（同一 respondent で複数 session を回す場合の取りこぼし防止）
         const fresh = await respondentRepository.getById(respondent.id);
 

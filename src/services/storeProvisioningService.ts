@@ -128,6 +128,12 @@ export const storeProvisioningService = {
     }
 
     const existing = linkedStore ?? slugStore;
+    if (existing && existing.client_id !== input.clientId) {
+      throw new Error('店舗コードが別のクライアントで使用されています');
+    }
+    if (existing?.industry_template_id && existing.industry_template_id !== template.id) {
+      throw new Error('既存店舗の業種テンプレートと一致しません');
+    }
 
     const store =
       existing ??
@@ -140,6 +146,10 @@ export const storeProvisioningService = {
         partner_store_id: partnerStoreId,
       }));
 
+    if (!store.industry_template_id) {
+      await storeRepository.update(store.id, { industry_template_id: template.id });
+      store.industry_template_id = template.id;
+    }
     const result = await this.ensureStoreProjects(store, template, options);
     return { ...result, created: !existing };
   },
@@ -181,6 +191,7 @@ export const storeProvisioningService = {
       const project = await projectRepository.update(copied.id, {
         name: `【${store.name}】${stripStorePrefix(source.name)}`,
         client_name: store.name,
+        survey_purpose: 'store',
         client_id: store.client_id,
         store_id: store.id,
         industry_template_id: template.id,

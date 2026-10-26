@@ -144,12 +144,16 @@
       <% } %>
     </div>
 
+    <% const flyerWarnings = typeof warnings !== 'undefined' ? warnings : []; %>
     <% if (!entryUrl) { %>
       <div class="warn">
         この案件には<strong>店舗コードが設定されていない</strong>ため、配布用QRを発行できません。
-        <a href="<%= backUrl %>">一覧の「編集」</a>から店舗コードを設定してください。
+        <a href="<%= backUrl %>">「編集」</a>から店舗コードを設定してください。
       </div>
     <% } else { %>
+      <% for (const w of flyerWarnings) { %>
+        <div class="warn"><span class="noprint">⚠ <%= w %></span></div>
+      <% } %>
       <% if (!isPublished) { %>
         <div class="warn">
           <span class="noprint">⚠ この案件は<strong>公開中ではありません</strong>。このままだとQRから回答できません。配布前に状態を「公開中」にしてください。</span>
@@ -170,7 +174,7 @@
 
         <div class="qr-box">
           <img alt="アンケート用QRコード"
-               src="/admin/store-surveys/<%= projectId %>/qr.svg?size=600" />
+               src="<%= typeof qrSrc !== 'undefined' ? qrSrc : `/admin/store-surveys/${projectId}/qr.svg?size=600` %>" />
         </div>
 
         <div class="steps">

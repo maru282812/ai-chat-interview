@@ -441,12 +441,12 @@ export const ADMIN_SCREENS: AdminScreenEntry[] = [
   {
     key: "stores-index",
     path: "/admin/stores",
-    label: "店舗マスタ",
+      label: "クライアント・店舗管理",
     group: "店舗",
     nav: true,
     description:
-      "法人（クライアント）と店舗を管理する。店舗を1件追加するとA/B/C案件・設問・QRコード・サイクル定義がまとめて生成される。",
-    settings: ["法人の登録", "店舗の登録・編集", "業種テンプレートの選択", "店舗別案件の一括生成"],
+        "モニター配信と店舗専用で共通のクライアントを管理する。クライアント登録・店舗施設の登録・店舗用A/B/Cセット生成を分けて行う。",
+      settings: ["クライアントと企業コードの登録", "店舗・施設の登録・編集", "業種テンプレートの選択", "店舗別案件の一括生成"],
     synonyms: ["店舗", "お店", "チェーン", "法人", "クライアント", "店舗一覧", "stores"],
     related: ["cycles-index", "store-surveys-index", "client-overview"]
   },
@@ -483,6 +483,19 @@ export const ADMIN_SCREENS: AdminScreenEntry[] = [
     settings: [],
     synonyms: ["チラシ", "ポスター", "印刷", "QRコード"],
     related: ["store-surveys-index"],
+    dynamicParam: { name: "projectId", resolver: "project" }
+  },
+  {
+    key: "project-flyer",
+    path: "/admin/projects/:projectId/flyer",
+    label: "案件の配布用QR・チラシ",
+    group: "調査",
+    nav: false,
+    description:
+      "案件の配布用QRコードと印刷用チラシを表示する。店舗専用は専用URL、通常案件は案件詳細ページへのQRになる。",
+    settings: [],
+    synonyms: ["QR", "QRコード", "チラシ", "配布", "案件URL"],
+    related: ["research-form", "store-survey-flyer"],
     dynamicParam: { name: "projectId", resolver: "project" }
   },
   {

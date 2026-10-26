@@ -50,6 +50,12 @@ const CAROUSEL_OPTION_MAX = 8;
 /** 選択肢数がこれ以上の face_scale / big_slider は tap_cards へ降格。 */
 const SCALE_OPTION_MAX = 6;
 /**
+ * 設問単位で big_slider を明示指定した場合の上限（これを超えたら tap_cards）。
+ * 7段階・11段階(0〜10)の推奨度スケールなど、作成者が意図してスライダーにした尺度は
+ * 目盛りが増えても操作として成立するため、自動解決時の SCALE_OPTION_MAX より緩める。
+ */
+const EXPLICIT_SLIDER_OPTION_MAX = 11;
+/**
  * 明示指定された sort_swipe でも、これを超える件数は chip_select へ降格する。
  * 1枚1画面のため、選択肢の数がそのまま画面数になり、9枚を超えると長すぎる。
  */
@@ -94,7 +100,10 @@ export function resolveAnswerPresentation(
   // 3. 自動フォールバック（適用不能条件に該当したら降格）。
   // sort_swipe は「デッキに並ぶ枚数」で判定する。排他選択肢（特になし）と自由記述つき
   // 選択肢（その他）はカードにならず専用行へ出るため、件数に数えると実際より多く見える。
-  const finalPattern = applyFallback(base, question.question_text ?? "", n, deckCount(cfg, n));
+  const explicitSlider = override === "big_slider";
+  const finalPattern = explicitSlider && n > 0 && n <= EXPLICIT_SLIDER_OPTION_MAX
+    ? base
+    : applyFallback(base, question.question_text ?? "", n, deckCount(cfg, n));
 
   return {
     pattern: finalPattern,

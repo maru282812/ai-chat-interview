@@ -322,6 +322,9 @@ export interface CarryForwardSource {
 }
 
 export interface Project {
+  management_year?: number | null;
+  confirmed_number?: number | null;
+  survey_purpose?: 'monitor' | 'store' | null;
   id: UUID;
   name: string;
   /** USERに表示するタイトル。未設定時は name にフォールバックする */
@@ -366,6 +369,11 @@ export interface Project {
   closed_at?: string | null;
   /** 運営者メモ (Migration 117)。管理画面の案件一覧でのみ表示・編集。回答者・店舗には出さない。 */
   admin_memo?: string | null;
+  /**
+   * デモ案件 (Migration 120)。true なら何度でも回答し直せる体験専用の案件。
+   * ポイント0・サイクル不参加・完了通知なし・統計/開示/公開一覧から除外。判定は isDemoProject を使う。
+   */
+  is_demo?: boolean;
   /** AIプロンプト方針設定 */
   ai_prompt_policy_json: AIPromptPolicy | null;
   /** ベースプロンプトテンプレート上書き設定 */
@@ -583,6 +591,11 @@ export interface OptionGroup {
   label?: string;
   /** この群に属する選択肢 value */
   values: string[];
+  /**
+   * true なら群の中は values の順のまま固定する（群の位置だけが動く）。
+   * 調査票 F列の小数（1.1, 1.2 …）＝同じ群・この順で表示、に対応する。
+   */
+  keep_order?: boolean;
 }
 
 /** 選択肢ランダム化設定（L3）。 */
@@ -595,6 +608,12 @@ export interface OptionRandomizationConfig {
   groups?: OptionGroup[];
   /** 群の順序もランダム化するか */
   randomize_groups?: boolean;
+  /**
+   * 別設問（question_code）の表示順にそろえる。値が一致する選択肢はその設問の並び順に、
+   * 一致しない選択肢（その他 / 特になし 等）は元の位置に残す。指定時は enabled より優先。
+   * 例: 「改善してほしいもの」を直前の満足度マトリクスの行順と同じに出す。
+   */
+  follow_question?: string;
 }
 
 /** 回答UI表示パターンの設問単位上書き（migration 075）。 */

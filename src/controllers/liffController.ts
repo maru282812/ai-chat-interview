@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { env } from "../config/env";
 import { STORAGE_BUCKET, storagePaths } from "../config/storage";
+import { isDemoProject } from "../lib/demoProject";
 import { HttpError } from "../lib/http";
 import { logger } from "../lib/logger";
 import { getProjectResearchSettings } from "../lib/projectResearch";
@@ -950,6 +951,19 @@ export const liffController = {
       return;
     }
 
+    // デモ案件 (Migration 120) は何度でも 1 問目からやり直せる。
+    // 完了済みの assignment を開き直したら started に戻すだけでよい: 前回のセッションは completed なので
+    // getActiveByRespondent に拾われず、下で新しいセッションが作られる（前回の回答は引き継がない）。
+    if (assignment.status === "completed" && isDemoProject(project)) {
+      logger.info("[surveyPage] branch=demoRestart", { assignmentId });
+      await projectAssignmentRepository.update(assignment.id, {
+        status: "started",
+        started_at: new Date().toISOString(),
+        completed_at: null,
+      });
+      assignment.status = "started";
+    }
+
     // 二重回答防止: 既に完了済みの場合は完了済み画面を返す
     if (assignment.status === "completed") {
       logger.info("[surveyPage] branch=alreadyCompleted", { assignmentId });
@@ -1793,7 +1807,10 @@ export const liffController = {
     }
 
     // キャンペーン完了カウントも配信上限判定に効くため await（非致命・失敗は無視）
-    await incrementCampaignCount(assignmentId, "completed_count").catch(() => {});
+    // デモ案件 (Migration 120) は回答のたびに数が増えて上限判定を狂わせるので数えない。
+    if (!isDemoProject(project)) {
+      await incrementCampaignCount(assignmentId, "completed_count").catch(() => {});
+    }
 
     res.json({ ok: true, alreadyCompleted: false });
   },
