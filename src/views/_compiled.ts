@@ -6549,17 +6549,29 @@ function encode_char(c) {
     ; __append(escapeFn( form.client_name || '' ))
     ; __append("\" />\r\n        </label>\r\n        <label>\r\n          報酬ポイント\r\n          <input type=\"number\" name=\"reward_points\" value=\"")
     ; __append(escapeFn( form.reward_points_text || '30' ))
-    ; __append("\" />\r\n        </label>\r\n        <label>\r\n          ステータス\r\n          <select name=\"status\">\r\n            ")
+    ; __append("\" />\r\n        </label>\r\n        <label>\r\n          ステータス\r\n          ")
+    ; __append("\r\n          ")
+    ;  const isStoreForm = project?.visibility_type === 'private_store'; 
+    ; __append("\r\n          <select name=\"status\" id=\"project_status_select\">\r\n            ")
     ;  for (const status of statusOptions) { 
     ; __append("\r\n              <option value=\"")
     ; __append(escapeFn( status.value ))
     ; __append("\" ")
     ; __append(escapeFn( form.status === status.value ? "selected" : "" ))
-    ; __append(">")
+    ;  if (status.value === "published") { 
+    ; __append(" data-label-public=\"")
     ; __append(escapeFn( status.label ))
+    ; __append("\" data-label-store=\"回答受付中\"")
+    ;  } 
+    ; __append(">")
+    ; __append(escapeFn( status.value === "published" && isStoreForm ? "回答受付中" : status.label ))
     ; __append("</option>\r\n            ")
     ;  } 
-    ; __append("\r\n          </select>\r\n        </label>\r\n        <label>\r\n          カテゴリ（LIFF案件一覧）\r\n          <select name=\"category\">\r\n            <option value=\"\">未設定</option>\r\n            ")
+    ; __append("\r\n          </select>\r\n          <small class=\"helper-text\" id=\"project_status_store_hint\"")
+    ;  if (!isStoreForm) { 
+    ; __append(" hidden")
+    ;  } 
+    ; __append(">店舗専用アンケートは「回答受付中」にするとQR・専用URLから回答できます（下書きのままでは開けません）。</small>\r\n        </label>\r\n        <label>\r\n          カテゴリ（LIFF案件一覧）\r\n          <select name=\"category\">\r\n            <option value=\"\">未設定</option>\r\n            ")
     ;  for (const cat of ["生活系","仕事系","子育て","健康","趣味","その他"]) { 
     ; __append("\r\n              <option value=\"")
     ; __append(escapeFn( cat ))
@@ -6635,7 +6647,7 @@ function encode_char(c) {
     ; __append(escapeFn( project?.visibility_type === 'private_store' ? "selected" : "" ))
     ; __append(">店舗専用（専用URL/QRからのみ・一覧に出さない）</option>\r\n          </select>\r\n        </label>\r\n        <label>\r\n          店舗コード（entry_code）\r\n          <input type=\"text\" name=\"entry_code\" id=\"entry_code_input\" value=\"")
     ; __append(escapeFn( project?.entry_code || '' ))
-    ; __append("\" placeholder=\"例: abc（店舗専用時に必須・一意）\" autocomplete=\"off\" />\r\n        </label>\r\n        <div id=\"store_url_preview\" style=\"display:none;background:#f6f8f7;border:1px solid #d8e3e0;border-radius:8px;padding:10px 12px;font-size:13px;color:#445\">\r\n          専用URL：<code id=\"store_url_text\"></code>\r\n          <p style=\"margin:6px 0 0;color:#789\">このURLをQRコード化して店舗に配布してください。</p>\r\n        </div>\r\n        <script>\r\n          (function () {\r\n            const sel = document.getElementById('visibility_type_select');\r\n            const codeInput = document.getElementById('entry_code_input');\r\n            const preview = document.getElementById('store_url_preview');\r\n            const urlText = document.getElementById('store_url_text');\r\n            if (!sel || !codeInput) return;\r\n            function refresh() {\r\n              const isStore = sel.value === 'private_store';\r\n              const code = (codeInput.value || '').trim();\r\n              if (isStore && code) {\r\n                urlText.textContent = location.origin + '/liff/store?entry_code=' + encodeURIComponent(code);\r\n                preview.style.display = '';\r\n              } else {\r\n                preview.style.display = 'none';\r\n              }\r\n            }\r\n            sel.addEventListener('change', refresh);\r\n            codeInput.addEventListener('input', refresh);\r\n            refresh();\r\n          })();\r\n        </script>\r\n      </div>\r\n    </div>\r\n  </details>\r\n\r\n  <section class=\"editor-section stack\">\r\n    <h2>3. 内部プレビュー</h2>\r\n    <p class=\"helper-text\">JSONは表示しません。下の内容は、現在の入力から内部で自動生成される AI 実行コンテキストです。</p>\r\n\r\n    <div class=\"preview-grid\">\r\n      <div class=\"preview-card\">\r\n        <div class=\"muted\">調査ゴール</div>\r\n        <div>")
+    ; __append("\" placeholder=\"例: abc（店舗専用時に必須・一意）\" autocomplete=\"off\" />\r\n        </label>\r\n        <div id=\"store_url_preview\" style=\"display:none;background:#f6f8f7;border:1px solid #d8e3e0;border-radius:8px;padding:10px 12px;font-size:13px;color:#445\">\r\n          専用URL：<code id=\"store_url_text\"></code>\r\n          <p style=\"margin:6px 0 0;color:#789\">このURLをQRコード化して店舗に配布してください。</p>\r\n        </div>\r\n        <script>\r\n          (function () {\r\n            const sel = document.getElementById('visibility_type_select');\r\n            const codeInput = document.getElementById('entry_code_input');\r\n            const preview = document.getElementById('store_url_preview');\r\n            const urlText = document.getElementById('store_url_text');\r\n            if (!sel || !codeInput) return;\r\n            const statusOption = document.querySelector('#project_status_select option[value=\"published\"]');\r\n            const statusHint = document.getElementById('project_status_store_hint');\r\n            function refresh() {\r\n              const isStore = sel.value === 'private_store';\r\n              if (statusOption) statusOption.textContent = isStore ? statusOption.dataset.labelStore : statusOption.dataset.labelPublic;\r\n              if (statusHint) statusHint.hidden = !isStore;\r\n              const code = (codeInput.value || '').trim();\r\n              if (isStore && code) {\r\n                urlText.textContent = location.origin + '/liff/store?entry_code=' + encodeURIComponent(code);\r\n                preview.style.display = '';\r\n              } else {\r\n                preview.style.display = 'none';\r\n              }\r\n            }\r\n            sel.addEventListener('change', refresh);\r\n            codeInput.addEventListener('input', refresh);\r\n            refresh();\r\n          })();\r\n        </script>\r\n      </div>\r\n    </div>\r\n  </details>\r\n\r\n  <section class=\"editor-section stack\">\r\n    <h2>3. 内部プレビュー</h2>\r\n    <p class=\"helper-text\">JSONは表示しません。下の内容は、現在の入力から内部で自動生成される AI 実行コンテキストです。</p>\r\n\r\n    <div class=\"preview-grid\">\r\n      <div class=\"preview-card\">\r\n        <div class=\"muted\">調査ゴール</div>\r\n        <div>")
     ; __append(escapeFn( aiState.project_goal || "未設定" ))
     ; __append("</div>\r\n      </div>\r\n      <div class=\"preview-card\">\r\n        <div class=\"muted\">理解したいこと</div>\r\n        <div>")
     ; __append(escapeFn( aiState.user_understanding_goal || "未設定" ))
