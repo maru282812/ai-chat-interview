@@ -347,11 +347,15 @@
         </label>
         <label>
           ステータス
-          <select name="status">
+          <%# 店舗専用は「探す」一覧に出ないので、published を「LIFF掲載中」と書くと一般公開と誤解される。
+              店舗専用のときだけ「回答受付中」と表示する（値は同じ published）。公開区分の切り替えにも追従する。 %>
+          <% const isStoreForm = project?.visibility_type === 'private_store'; %>
+          <select name="status" id="project_status_select">
             <% for (const status of statusOptions) { %>
-              <option value="<%= status.value %>" <%= form.status === status.value ? "selected" : "" %>><%= status.label %></option>
+              <option value="<%= status.value %>" <%= form.status === status.value ? "selected" : "" %><% if (status.value === "published") { %> data-label-public="<%= status.label %>" data-label-store="回答受付中"<% } %>><%= status.value === "published" && isStoreForm ? "回答受付中" : status.label %></option>
             <% } %>
           </select>
+          <small class="helper-text" id="project_status_store_hint"<% if (!isStoreForm) { %> hidden<% } %>>店舗専用アンケートは「回答受付中」にするとQR・専用URLから回答できます（下書きのままでは開けません）。</small>
         </label>
         <label>
           カテゴリ（LIFF案件一覧）
@@ -466,8 +470,12 @@
             const preview = document.getElementById('store_url_preview');
             const urlText = document.getElementById('store_url_text');
             if (!sel || !codeInput) return;
+            const statusOption = document.querySelector('#project_status_select option[value="published"]');
+            const statusHint = document.getElementById('project_status_store_hint');
             function refresh() {
               const isStore = sel.value === 'private_store';
+              if (statusOption) statusOption.textContent = isStore ? statusOption.dataset.labelStore : statusOption.dataset.labelPublic;
+              if (statusHint) statusHint.hidden = !isStore;
               const code = (codeInput.value || '').trim();
               if (isStore && code) {
                 urlText.textContent = location.origin + '/liff/store?entry_code=' + encodeURIComponent(code);
