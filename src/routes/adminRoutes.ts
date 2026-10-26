@@ -18,6 +18,8 @@ adminRoutes.get("/projects", asyncHandler(adminController.projects));
 adminRoutes.get("/projects/new", asyncHandler(adminController.newProject));
 adminRoutes.post("/projects", asyncHandler(adminController.createProject));
 adminRoutes.get("/projects/:projectId/edit", asyncHandler(adminController.editProject));
+adminRoutes.get("/projects/:projectId/flyer", asyncHandler(adminController.projectFlyer));
+adminRoutes.get("/projects/:projectId/qr.svg", asyncHandler(adminController.projectQr));
 adminRoutes.post("/projects/:projectId", asyncHandler(adminController.updateProject));
 adminRoutes.get("/projects/:projectId/prompt-package-history", asyncHandler(adminController.projectPromptPackageHistoryPage));
 adminRoutes.post("/projects/:projectId/copy", asyncHandler(adminController.copyProject));

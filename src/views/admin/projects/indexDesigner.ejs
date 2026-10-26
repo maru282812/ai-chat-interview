@@ -5,7 +5,7 @@
 
 <div class="actions-row">
   <a class="button-link" href="/admin/projects/new">新規プロジェクト</a>
-  <a class="button-link" href="/admin/stores" style="margin-left:8px">店舗管理</a>
+  <a class="button-link" href="/admin/stores" style="margin-left:8px">クライアント・店舗管理</a>
 </div>
 
 <%
@@ -43,6 +43,11 @@
 
 <form method="get" action="/admin/projects" class="card"
       style="margin-top:16px;padding:10px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
+  <label>クライアント<br><select name="client"><option value="">すべて</option><% clients.forEach(function(c) { %><option value="<%= c.id %>" <%= filter.client === c.id ? 'selected' : '' %>><%= c.name %></option><% }) %></select></label>
+  <label>企業コード<br><input name="company_code" value="<%= filter.company_code || '' %>" placeholder="C0001" size="8"></label>
+  <label>管理年<br><input name="management_year" value="<%= filter.management_year || '' %>" inputmode="numeric" pattern="[0-9]+" size="5"></label>
+  <label>確定番号<br><input name="confirmed_number" value="<%= filter.confirmed_number || '' %>" inputmode="numeric" pattern="[0-9]+" placeholder="0001" size="7"></label>
+  <label>案件用途<br><select name="survey_purpose"><option value="">すべて</option><% [['monitor','モニター配信'],['store','店舗専用'],['none','未設定']].forEach(function(v) { %><option value="<%= v[0] %>" <%= filter.survey_purpose === v[0] ? 'selected' : '' %>><%= v[1] %></option><% }) %></select></label>
   <label style="font-size:12px;color:#555">
     業種<br>
     <select name="industry" style="padding:5px;min-width:150px">
@@ -66,7 +71,7 @@
   </label>
 
   <label style="font-size:12px;color:#555">
-    種別<br>
+    A/B/Cの役割<br>
     <select name="role" style="padding:5px;min-width:130px">
       <option value="">すべて</option>
       <option value="template" <%= filter.role === 'template' ? 'selected' : '' %>>原本（テンプレ）</option>
@@ -118,6 +123,7 @@
       <th>Project</th>
       <th>Client</th>
       <th>Status</th>
+      <th style="white-space:nowrap">回答数</th>
       <th>Reward</th>
       <th>Design</th>
       <th>AIプロンプト</th>
@@ -158,8 +164,13 @@
             </form>
           </div>
         </td>
-        <td><%= row.project.client_name || "-" %></td>
+        <td><%= row.project.client_name || "-" %>
+          <% const identity = managementIdentity(row.project); %>
+          <small style="display:block"><%= identity.code || '' %> <%= identity.year || '' %> <%= identity.number ? '番号 ' + String(identity.number).padStart(4,'0') : '' %></small>
+          <small style="display:block"><%= row.project.survey_purpose === 'monitor' ? 'モニター配信' : row.project.survey_purpose === 'store' ? '店舗専用' : '用途未設定' %></small>
+        </td>
         <td><span class="tag"><%= row.project.status %></span></td>
+        <td style="white-space:nowrap"><strong><%= row.completedCount %></strong> 件</td>
         <td><%= row.project.reward_points %> pt</td>
         <td>
           <span class="tag"><%= row.project.research_mode %></span><br />
@@ -192,6 +203,7 @@
             <a href="/admin/projects/<%= row.project.id %>/respondents">Respondents</a>
             <a href="/admin/projects/<%= row.project.id %>/delivery">Delivery</a>
             <a href="/admin/projects/<%= row.project.id %>/analysis">Analysis</a>
+            <a href="/admin/projects/<%= row.project.id %>/flyer" target="_blank" rel="noopener">QR</a>
             <form method="post" action="/admin/projects/<%= row.project.id %>/copy" class="inline-form" onsubmit="return window.confirm('このプロジェクトを複製します。複製先は draft として作成されます。よろしいですか？');">
               <button type="submit" class="button-link secondary">Copy</button>
             </form>

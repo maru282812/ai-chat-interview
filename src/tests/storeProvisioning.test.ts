@@ -533,6 +533,16 @@ test("運営が作った店舗（partner紐づけなし）の店舗コードも�
   );
 });
 
+test('別クライアントの店舗コードに合流しない', async () => {
+  stubProvision({existingStore: store({client_id:'another-client'})});
+  await assert.rejects(() => storeProvisioningService.provisionStore({clientId:CLIENT_ID,industryTemplateId:TEMPLATE_ID,name:'店',codeSlug:'salon-shibuya'}), /別のクライアント/);
+});
+
+test('既存店舗に異なるテンプレートを混ぜない', async () => {
+  stubProvision({existingStore: store({industry_template_id:'another-template'})});
+  await assert.rejects(() => storeProvisioningService.provisionStore({clientId:CLIENT_ID,industryTemplateId:TEMPLATE_ID,name:'店',codeSlug:'salon-shibuya'}), /テンプレートと一致/);
+});
+
 test("運営マスタ経由（partnerStoreId なし）は従来どおり既存店舗に合流する", async () => {
   // 上の防御はポータル注文だけに効かせる。運営の再実行は今までどおり冪等でなければならない。
   stubProvision({

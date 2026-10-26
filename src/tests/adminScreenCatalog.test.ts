@@ -144,6 +144,7 @@ test("settings は詳細・確認系を除いて埋まっている", () => {
     "daily-survey-show",
     "daily-survey-analytics",
     "store-survey-flyer",
+    "project-flyer",
     "session-show",
     "ai-log-show",
     "prompt-packages-migration"

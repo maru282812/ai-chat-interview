@@ -205,5 +205,45 @@ export const sessionRepository = {
       .eq("project_id", projectId);
     throwIfError(error);
     return count ?? 0;
+  },
+
+  /**
+   * 複数案件の回答完了数（status=completed のセッション数）をまとめて数える。
+   *
+   * 案件ごとに数えると fetch が案件数だけ出て Workers のサブリクエスト上限（50件）に当たるため、
+   * 案件IDは100件ずつ、行は PostgREST の上限（1000行）ずつページングして畳む。
+   * 0件の案件はキーごと存在しないため、呼び出し側は `?? 0` で受けること。
+   */
+  async countCompletedByProjectIds(projectIds: string[]): Promise<Map<string, number>> {
+    const counts = new Map<string, number>();
+    const uniqueIds = [...new Set(projectIds)];
+    const chunkSize = 100;
+    const pageSize = 1000;
+
+    for (let i = 0; i < uniqueIds.length; i += chunkSize) {
+      const chunk = uniqueIds.slice(i, i + chunkSize);
+      for (let offset = 0; ; offset += pageSize) {
+        const { data, error } = await supabase
+          .from("sessions")
+          .select("project_id")
+          .in("project_id", chunk)
+          .eq("status", "completed")
+          .order("id", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+        throwIfError(error);
+        const rows = (data ?? []) as { project_id: string | null }[];
+        for (const row of rows) {
+          if (!row.project_id) {
+            continue;
+          }
+          counts.set(row.project_id, (counts.get(row.project_id) ?? 0) + 1);
+        }
+        if (rows.length < pageSize) {
+          break;
+        }
+      }
+    }
+
+    return counts;
   }
 };

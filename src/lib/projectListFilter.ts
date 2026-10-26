@@ -11,7 +11,13 @@
  */
 
 /** 一覧に出す案件の、絞り込みに使う属性だけを抜き出した形。 */
+import { managementIdentity } from './projectManagement';
 export interface FilterableProject {
+  management_year?: number | null;
+  confirmed_number?: number | null;
+  company_code?: string | null;
+  client_name?: string | null;
+  survey_purpose?: string | null;
   store_id?: string | null;
   industry_template_id?: string | null;
   template_step_role?: string | null;
@@ -22,6 +28,11 @@ export interface FilterableProject {
 }
 
 export interface ProjectListFilter {
+  client?: string | null;
+  company_code?: string | null;
+  management_year?: string | null;
+  confirmed_number?: string | null;
+  survey_purpose?: string | null;
   /** 業種テンプレID。"none" で「業種に属さない案件」 */
   industry: string | null;
   /** 店舗ID。"none" で「店舗に属さない案件」 */
@@ -39,6 +50,7 @@ export const EMPTY_FILTER: ProjectListFilter = {
   role: null,
   keyword: null,
   status: null,
+  client: null, company_code: null, management_year: null, confirmed_number: null, survey_purpose: null,
 };
 
 /** クエリ文字列から絞り込み条件を作る。空文字は「指定なし」として扱う。 */
@@ -53,12 +65,17 @@ export function parseProjectListFilter(query: Record<string, unknown>): ProjectL
     role: str(query.role),
     keyword: str(query.q),
     status: str(query.status),
+    client: str(query.client),
+    company_code: str(query.company_code),
+    management_year: str(query.management_year),
+    confirmed_number: str(query.confirmed_number),
+    survey_purpose: str(query.survey_purpose),
   };
 }
 
 /** 絞り込みが1つでも指定されているか（画面で「解除」を出すかの判定に使う）。 */
 export function hasActiveFilter(filter: ProjectListFilter): boolean {
-  return Object.values(filter).some((v) => v !== null);
+  return Object.values(filter).some((v) => v != null && v !== '');
 }
 
 /**
@@ -72,6 +89,13 @@ export function matchesProjectFilter(
   project: FilterableProject,
   filter: ProjectListFilter
 ): boolean {
+  const identity = managementIdentity(project);
+  if (filter.client && project.client_id !== filter.client) return false;
+  if (filter.company_code && identity.code?.toUpperCase() !== filter.company_code.toUpperCase()) return false;
+  if (filter.survey_purpose && (filter.survey_purpose === 'none' ? !!project.survey_purpose : project.survey_purpose !== filter.survey_purpose)) return false;
+  for (const [input, value] of [[filter.management_year, identity.year], [filter.confirmed_number, identity.number]] as const) {
+    if (input && (!/^\d+$/.test(input) || value == null || Number(input) !== value)) return false;
+  }
   if (filter.industry) {
     const value = project.industry_template_id ?? null;
     if (filter.industry === "none" ? value !== null : value !== filter.industry) return false;
@@ -94,7 +118,7 @@ export function matchesProjectFilter(
     const keyword = filter.keyword.toLowerCase();
     const name = (project.name ?? "").toLowerCase();
     const memo = (project.admin_memo ?? "").toLowerCase();
-    if (!name.includes(keyword) && !memo.includes(keyword)) return false;
+    if (!name.includes(keyword) && !memo.includes(keyword) && !(project.client_name ?? '').toLowerCase().includes(keyword)) return false;
   }
 
   return true;

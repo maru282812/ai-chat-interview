@@ -126,6 +126,43 @@
 
 <%- include("../../partials/partner-store-warning", { project }) %>
 
+<% if (project && project.id && typeof distribution !== 'undefined' && distribution) { %>
+  <details class="card" id="distribution-qr">
+    <summary style="cursor:pointer;font-weight:bold">配布用URL / QRコード</summary>
+    <% if (distribution.url) { %>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;margin-top:10px">
+        <img alt="配布用QRコード" class="qr-img" data-src="/admin/projects/<%= project.id %>/qr.svg?size=180"
+             width="180" height="180" style="border:1px solid #ddd;border-radius:4px" />
+        <div style="flex:1;min-width:220px;font-size:13px">
+          <div style="color:#666"><%= distribution.kind === 'store_entry' ? '店舗専用URL（entry_code）' : '案件詳細ページURL' %></div>
+          <code style="word-break:break-all"><%= distribution.url %></code>
+          <div style="margin-top:8px;display:flex;gap:12px;flex-wrap:wrap">
+            <a href="/admin/projects/<%= project.id %>/qr.svg?size=1000" download="qr-<%= project.id %>.svg">QRをダウンロード（SVG）</a>
+            <a href="/admin/projects/<%= project.id %>/flyer" target="_blank" rel="noopener">印刷用チラシを開く</a>
+          </div>
+        </div>
+      </div>
+    <% } %>
+    <% for (const w of distribution.warnings) { %>
+      <p class="danger-text" style="margin:8px 0 0;font-size:13px">⚠ <%= w %></p>
+    <% } %>
+  </details>
+  <script>
+    // QR 画像は開いたときに初めて読み込む
+    (function () {
+      const d = document.getElementById('distribution-qr');
+      if (!d) return;
+      d.addEventListener('toggle', function () {
+        if (!d.open) return;
+        d.querySelectorAll('img.qr-img[data-src]').forEach(function (img) {
+          img.src = img.getAttribute('data-src');
+          img.removeAttribute('data-src');
+        });
+      });
+    })();
+  </script>
+<% } %>
+
 <form class="card stack" method="post" action="<%= action %>" onsubmit="return confirmPromptPackageSelection();">
   <% if (successMessage) { %>
     <section class="card subtle-card success-card">
@@ -154,7 +191,43 @@
 
   <section class="editor-section stack">
     <h2>1. 基本設定</h2>
-    <p class="helper-text">まずはこの3項目だけで、使える調査プロジェクトを作れます。</p>
+    <p class="helper-text">調査内容とクライアントを設定します。管理年・確定番号は調査票の値を入力してください。</p>
+
+    <div class="form-grid">
+      <label>クライアント
+        <select name="client_id" id="management-client">
+          <option value="">未設定（既存の自由入力名を保持）</option>
+          <% managementClients.forEach(function(c) { %><option value="<%= c.id %>" <%= form.client_id === c.id ? 'selected' : '' %>><%= c.company_code ? c.company_code + ' ' : '' %><%= c.name %></option><% }) %>
+        </select>
+        <a href="/admin/stores" target="_blank" rel="noopener">クライアントを追加・管理（別タブ）</a>
+        <small>追加後はこの画面を再表示すると選択できます。</small>
+      </label>
+      <label>店舗・施設（任意）
+        <select name="store_id" id="management-store"><option value="">指定なし</option>
+        <% managementStores.forEach(function(s) { %><option value="<%= s.id %>" data-client="<%= s.client_id %>" <%= form.store_id === s.id ? 'selected' : '' %>><%= s.name %></option><% }) %>
+        </select>
+      </label>
+      <label>案件用途
+        <select name="survey_purpose">
+          <option value="">未設定</option>
+          <option value="monitor" <%= form.survey_purpose === 'monitor' ? 'selected' : '' %>>モニター配信</option>
+          <option value="store" <%= form.survey_purpose === 'store' ? 'selected' : '' %>>店舗専用アンケート</option>
+        </select><small>公開範囲・配信設定は詳細設定で別に指定します。</small>
+      </label>
+      <label>管理年<input name="management_year" type="number" min="1900" max="9999" value="<%= form.management_year %>" placeholder="2026"></label>
+      <label>確定番号<input name="confirmed_number" type="text" inputmode="numeric" pattern="[0-9]+" value="<%= form.confirmed_number %>" placeholder="0001"><small>クライアントごとの番号。自動採番はしません。</small></label>
+    </div>
+    <script>
+      (() => {
+        const client = document.getElementById('management-client');
+        const store = document.getElementById('management-store');
+        function sync() {
+          Array.from(store.options).forEach(o => { if (o.value) o.hidden = o.dataset.client !== client.value; });
+          if (store.selectedOptions[0]?.hidden) store.value = '';
+        }
+        client.addEventListener('change', sync); sync();
+      })();
+    </script>
 
     <div class="form-grid">
       <label>
@@ -225,7 +298,7 @@
 
       <div class="form-grid">
         <label>
-          クライアント名
+          旧クライアント名（マスタ未選択時のみ）
           <input type="text" name="client_name" value="<%= form.client_name || '' %>" />
         </label>
         <label>

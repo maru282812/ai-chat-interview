@@ -16,6 +16,7 @@ import {
 import { projectRepository } from "../repositories/projectRepository";
 import { questionRepository } from "../repositories/questionRepository";
 import { rankRepository } from "../repositories/rankRepository";
+import { sessionRepository } from "../repositories/sessionRepository";
 import { personalityService } from "./personalityService";
 import { assignmentService } from "./assignmentService";
 import { researchOpsService } from "./researchOpsService";
@@ -49,6 +50,8 @@ export interface AdminProjectListRow {
   questionCount: number;
   branchCount: number;
   hasBranches: boolean;
+  /** 回答完了数（status=completed のセッション数） */
+  completedCount: number;
   packageInfo: ProjectPackageInfo | null;
 }
 
@@ -145,9 +148,11 @@ export const adminService = {
     // 設問は案件ごとに引かず一括取得する。案件ごとに引くと fetch が案件数だけ出て、
     // Cloudflare Workers のサブリクエスト上限（50件）を案件57件で超え、
     // 一覧画面が丸ごと 500 になっていた（2026-09-24）。
-    const questionsByProject = await questionRepository.listByProjectIds(
-      projects.map((project) => project.id)
-    );
+    const projectIds = projects.map((project) => project.id);
+    const [questionsByProject, completedByProject] = await Promise.all([
+      questionRepository.listByProjectIds(projectIds),
+      sessionRepository.countCompletedByProjectIds(projectIds)
+    ]);
 
     const rows = await Promise.all(
       projects.map(async (project) => {
@@ -190,6 +195,7 @@ export const adminService = {
           questionCount: questions.length,
           branchCount,
           hasBranches: branchCount > 0,
+          completedCount: completedByProject.get(project.id) ?? 0,
           packageInfo,
         };
       })

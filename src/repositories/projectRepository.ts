@@ -72,6 +72,10 @@ export function stripStoreDisclosureOnCopy(
 
 
 interface ProjectMutationInput {
+  management_year?: number | null;
+  confirmed_number?: number | null;
+  survey_purpose?: 'monitor' | 'store' | null;
+  store_id?: string | null;
   name: string;
   user_display_title?: string | null;
   client_name?: string | null;
@@ -184,6 +188,12 @@ export const projectRepository = {
     const sourceQuestions = await questionRepository.listByProject(projectId, { includeHidden: true });
     const copiedProject = await this.create({
       name: `${source.name}_コピー`,
+      client_id: source.client_id,
+      store_id: source.store_id,
+      survey_purpose: source.survey_purpose,
+      management_year: source.management_year,
+      // A copied survey needs its own manually assigned number.
+      confirmed_number: null,
       client_name: source.client_name,
       objective: source.objective,
       status: "draft",

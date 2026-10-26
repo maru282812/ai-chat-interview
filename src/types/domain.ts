@@ -322,6 +322,9 @@ export interface CarryForwardSource {
 }
 
 export interface Project {
+  management_year?: number | null;
+  confirmed_number?: number | null;
+  survey_purpose?: 'monitor' | 'store' | null;
   id: UUID;
   name: string;
   /** USERに表示するタイトル。未設定時は name にフォールバックする */

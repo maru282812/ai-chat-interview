@@ -7,6 +7,7 @@ import { requireData, throwIfError } from "./baseRepository";
  * 紐づけて管理するために使う。単発運用では未使用でもよい。
  */
 export interface Client {
+  company_code?: string | null;
   id: string;
   name: string;
   contact: string | null;
@@ -14,6 +15,7 @@ export interface Client {
 }
 
 export interface ClientMutationInput {
+  company_code?: string | null;
   name: string;
   contact?: string | null;
 }
@@ -41,7 +43,7 @@ export const clientRepository = {
   async create(input: ClientMutationInput): Promise<Client> {
     const { data, error } = await supabase
       .from("clients")
-      .insert({ name: input.name, contact: input.contact ?? null })
+      .insert({ name: input.name, contact: input.contact ?? null, company_code: input.company_code ?? null })
       .select("*")
       .single();
     throwIfError(error);
@@ -51,7 +53,7 @@ export const clientRepository = {
   async update(id: string, input: ClientMutationInput): Promise<Client> {
     const { data, error } = await supabase
       .from("clients")
-      .update({ name: input.name, contact: input.contact ?? null })
+      .update({ name: input.name, contact: input.contact ?? null, ...(input.company_code !== undefined ? { company_code: input.company_code } : {}) })
       .eq("id", id)
       .select("*")
       .single();
