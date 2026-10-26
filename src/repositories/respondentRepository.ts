@@ -179,6 +179,25 @@ export const respondentRepository = {
     return new Set(((data ?? []) as { id: string }[]).map((row) => row.id));
   },
 
+  /**
+   * 案件のテスト回答者の LINE ユーザー ID（Migration 067 / 119）。
+   * survey_cycles は respondent ではなく line_user_id で持つので、サイクル集計から
+   * テスト回答者を外すときはこちらを使う。
+   */
+  async listTestLineUserIdsByProject(projectId: string): Promise<Set<string>> {
+    const { data, error } = await supabase
+      .from("respondents")
+      .select("line_user_id")
+      .eq("project_id", projectId)
+      .eq("is_test", true);
+    throwIfError(error);
+    return new Set(
+      ((data ?? []) as { line_user_id: string | null }[])
+        .map((row) => row.line_user_id)
+        .filter((id): id is string => Boolean(id))
+    );
+  },
+
   async countCompletedByLineUser(lineUserId: string): Promise<number> {
     const { count, error } = await supabase
       .from("respondents")

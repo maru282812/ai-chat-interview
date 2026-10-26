@@ -530,6 +530,12 @@ draft を更新する。`title` と `questions` は**どちらか一方だけで
   "survey_id": "0f2b...-uuid",
   "status": "published",
   "total_count": 42,
+  "post_close_count": 0,
+  "daily_counts": [
+    { "date": "2026-09-18", "count": 12 },
+    { "date": "2026-09-19", "count": 30 }
+  ],
+  "undated_count": 0,
   "demographics": {
     "gender": { "female": 25, "male": 15, "no_answer": 2 },
     "age": { "under20": 1, "20s": 12, "30s": 14, "40s": 9, "50s": 4, "60s_over": 2 },
@@ -553,6 +559,11 @@ draft を更新する。`title` と `questions` は**どちらか一方だけで
 - `gender` / `age` / `cross` のキーは**必ず全件そろう**（0 埋め）。キー欠損の考慮は不要。
 - 片方の軸だけ未回答/未知値の回答者は、判明している軸だけ数え `cross` には入れない。
   したがって **`cross` の合計 ≦ `total_count`**（一致するとは限らない）。
+- `total_count` は**締切時点で固定**（`completed_at <= closed_at`・Migration 114）。締切後に届いたぶんは
+  `post_close_count` に分けて返す（回収中は 0）。テスト回答者（`respondents.is_test`）は数えない。
+- `daily_counts` = `total_count` の内訳を **JST の日付**ごとに並べたもの（昇順・回答の無い日は含めない）。
+  完了時刻が無く日付に振れない件数は `undated_count`。**`daily_counts` の合計 + `undated_count` = `total_count`**。
+  納品物の「回収推移」に使う。件数のみで識別子は含まない。
 
 ---
 
@@ -1203,6 +1214,32 @@ A-Q11（来店頻度 → C の送付日を決める）の分岐が壊れる。�
 
 `SurveySetView`。各ステップの `completed_count`（完了セッション数）付き。
 他店のセット・非 UUID はどちらも 404。
+
+### 9.5.1 `GET /api/partner/survey-sets/:id/funnel`
+
+ABC サイクルの到達と再来店（件数のみ）。納品物ダッシュボードの「実際に戻ってきたか」に使う。
+
+```jsonc
+{
+  "set_id": "…uuid",
+  "as_of": "2026-10-26T10:00:00.000Z",   // 判定は「いま」基準で動くので必ず時点を添える
+  "small_n_threshold": 10,
+  "steps": [
+    { "role": "entry",    "survey_id": "…", "completed_count": 120 },
+    { "role": "followup", "survey_id": "…", "completed_count": 104 },
+    { "role": "verify",   "survey_id": "…", "completed_count": 58 }
+  ],
+  "returned": 46, "churned": 28, "pending": 30, "unknown": 2,
+  "decided": 74,            // returned + churned（再来店率の分母）
+  "rate_suppressed": false  // decided < small_n_threshold なら true（再来店率を出さない）
+}
+```
+
+- 判定は管理画面の離脱率と同じ `summarizeCycles`（`src/lib/cycleFunnel.ts`）。**再来店＝次の A の回答**。C の回答は判定に使わない。
+- **テスト回答者を除く**（A 案件の `is_test` の LINE ユーザー）。`completed_count` もテスト回答者を除き、各案件の締切時点まで。
+  （§9.5 の `completed_count` はテスト回答者を除いていないので、数字が一致しないことがある）
+- 離脱理由・再来店理由は**返さない**。理由の設問は業種ごとに `question_code` が違い、意味を示す印が無いため。
+- 回答者の識別子・回答原文は返さない（回答者規約 第9条4項の統計の範囲）。
 
 ### 9.6 `POST /api/partner/survey-sets/:id/publish`
 

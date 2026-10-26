@@ -40,6 +40,8 @@ const sessionRepositoryModule =
   require("../repositories/sessionRepository") as typeof import("../repositories/sessionRepository");
 const storeRepositoryModule =
   require("../repositories/storeRepository") as typeof import("../repositories/storeRepository");
+const respondentRepositoryModule =
+  require("../repositories/respondentRepository") as typeof import("../repositories/respondentRepository");
 const cycleRepositoryModule =
   require("../repositories/cycleRepository") as typeof import("../repositories/cycleRepository");
 const partnerRoutesModule =
@@ -768,6 +770,74 @@ test("未紐づけのセットの解除は冪等（何もせず 200）", async (
       adminKey: PARTNER_ADMIN_KEY
     });
     assert.equal(result.status, 200);
+  } finally {
+    restoreAll(restores);
+  }
+});
+
+// ------------------------------------------------------------------
+// ファネル（/survey-sets/:id/funnel）
+// ------------------------------------------------------------------
+
+function cycle(lineUserId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id: `cy-${lineUserId}`,
+    cycle_group_id: SET_ID,
+    line_user_id: lineUserId,
+    cycle_no: 1,
+    started_at: "2026-09-01T00:00:00.000Z",
+    frequency_code: "within_3w",
+    expected_return_at: "2026-10-01T00:00:00.000Z",
+    followup_sent_at: null,
+    returned_at: null,
+    closed_at: null,
+    close_reason: null,
+    ...overrides
+  };
+}
+
+test("ファネル: テスト回答者を除いて再来店・離脱を数え、分母が10未満なら率を伏せる", async () => {
+  const { respondentRepository } = respondentRepositoryModule;
+  const { surveyCycleRepository } = cycleRepositoryModule;
+  const restores = [
+    ...stubSet({ completedPerProject: 3 }),
+    stub(respondentRepository, "listTestIdsByProject", async () => new Set<string>()),
+    stub(respondentRepository, "listTestLineUserIdsByProject", async () => new Set(["U-test"])),
+    stub(surveyCycleRepository, "listByGroup", (async () => [
+      cycle("U1", { returned_at: "2026-09-20T00:00:00.000Z" }),
+      cycle("U2"),
+      cycle("U3", { expected_return_at: "2099-01-01T00:00:00.000Z" }),
+      cycle("U4", { expected_return_at: null }),
+      cycle("U-test", { returned_at: "2026-09-20T00:00:00.000Z" })
+    ]) as unknown as typeof surveyCycleRepository.listByGroup)
+  ];
+  try {
+    const result = await call("GET", `/api/partner/survey-sets/${SET_ID}/funnel`);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.returned, 1);
+    assert.equal(result.body.churned, 1);
+    assert.equal(result.body.pending, 1);
+    assert.equal(result.body.unknown, 1);
+    assert.equal(result.body.decided, 2);
+    assert.equal(result.body.rate_suppressed, true);
+    assert.deepEqual(
+      (result.body.steps as { role: string; completed_count: number }[]).map((s) => [s.role, s.completed_count]),
+      [["entry", 3], ["followup", 3], ["verify", 3]]
+    );
+    // 識別子を返さない
+    assert.equal(result.raw.includes("U1"), false);
+  } finally {
+    restoreAll(restores);
+  }
+});
+
+test("ファネル: 他店のセットは 404", async () => {
+  const restores = stubSet();
+  try {
+    const result = await call("GET", `/api/partner/survey-sets/${SET_ID}/funnel`, {
+      storeId: OTHER_PARTNER_STORE_ID
+    });
+    assert.equal(result.status, 404);
   } finally {
     restoreAll(restores);
   }

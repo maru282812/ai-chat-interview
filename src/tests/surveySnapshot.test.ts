@@ -13,7 +13,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { countPostCloseSessions, selectCountedSessions } from "../lib/surveySnapshot";
+import {
+  countPostCloseSessions,
+  countSessionsByJstDate,
+  selectCountedSessions
+} from "../lib/surveySnapshot";
 import type { Session, SessionStatus } from "../types/domain";
 
 const CLOSED_AT = "2026-09-20T10:00:00.000Z";
@@ -108,4 +112,26 @@ test("締切後の件数（次回ぶん）を数える", () => {
 test("回収中は「次回ぶん」という概念が無いので 0", () => {
   const sessions = [s("a", "completed", "2026-09-19T00:00:00.000Z")];
   assert.equal(countPostCloseSessions(sessions, null), 0);
+});
+
+test("日別件数は JST の日付で振り分け、締切で切った件数と合計が一致する", () => {
+  const sessions = [
+    // UTC 14:59 = JST 23:59（19日）/ UTC 15:00 = JST 0:00（20日）
+    s("a", "completed", "2026-09-19T14:59:00.000Z"),
+    s("b", "completed", "2026-09-19T15:00:00.000Z"),
+    s("c", "completed", "2026-09-18T01:00:00.000Z"),
+    s("d", "completed", null),
+    s("e", "completed", "2026-09-21T00:00:00.000Z"), // 締切後
+    s("f", "active", "2026-09-19T01:00:00.000Z")
+  ];
+  const counted = selectCountedSessions(sessions, CLOSED_AT);
+  const { daily, undated_count } = countSessionsByJstDate(counted);
+  assert.deepEqual(daily, [
+    { date: "2026-09-18", count: 1 },
+    { date: "2026-09-19", count: 1 },
+    { date: "2026-09-20", count: 1 }
+  ]);
+  assert.equal(undated_count, 1);
+  const sum = daily.reduce((total, day) => total + day.count, 0) + undated_count;
+  assert.equal(sum, counted.length);
 });
