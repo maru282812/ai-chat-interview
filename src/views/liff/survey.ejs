@@ -895,9 +895,10 @@
         url: location.href,
         ua: navigator.userAgent.slice(0, 150),
       });
-      // ループガード付きで LINE Login へ（OAuth残渣を除去した redirectUri で
-      // assignment_id / session_id を保持。試行上限超過時はエラー表示で停止）
-      if (!window.LiffAuth || !LiffAuth.loginWithGuard()) {
+      // スマホの通常ブラウザなら「LINEで開く」案内、それ以外はループガード付きで LINE Login へ
+      // （OAuth残渣を除去した redirectUri で assignment_id / session_id を保持。
+      // 試行上限超過時はエラー表示で停止）
+      if (!window.LiffAuth || !(await LiffAuth.promptOrLogin(LIFF_ID))) {
         showAuthError('login_loop');
       }
       return;
