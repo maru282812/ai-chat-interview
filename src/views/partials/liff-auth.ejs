@@ -107,12 +107,157 @@
     return true;
   }
 
+  // --- スマホの通常ブラウザで開かれたときの LIFF への切り替え -------------------
+  // LINE の in-app ブラウザやカメラアプリ経由のブラウザで開かれると LIFF ブラウザではない
+  // ため Web 版 LINE Login の往復が必要になり、端末によっては戻り後もログイン済みに
+  // ならずループガードで止まる（店舗QRで実際に発生）。スマホではログイン往復の前に
+  // 「LINEで開く」（liff.line.me 恒久URL）を案内し、LIFF ブラウザで開き直してもらう。
+  // リンクはタップで開かせる（JS の自動遷移だと iOS のユニバーサルリンクが効かない）。
+  var HANDOFF_PARAM = 'liff_handoff';
+
+  function _hasParam(name) {
+    try { return new URL(location.href).searchParams.has(name); } catch (_e) { return false; }
+  }
+
+  function _safe(fn, fallback) {
+    try { return fn(); } catch (_e) { return fallback; }
+  }
+
+  function _isMobileExternal() {
+    var os = _safe(function () { return liff.getOS(); }, 'web');
+    var inClient = _safe(function () { return liff.isInClient(); }, false);
+    return !inClient && (os === 'ios' || os === 'android');
+  }
+
+  /**
+   * ログイン往復の状態をサーバーログへ送る（/liff/auth-beacon → liff.auth.client）。
+   * 外部ブラウザでログインが完了しない原因を実データで特定するための計測。
+   */
+  function _authBeacon(event, extra) {
+    try {
+      var u = new URL(location.href);
+      var storageOk = _safe(function () {
+        sessionStorage.setItem('__liff_auth_probe', '1');
+        sessionStorage.removeItem('__liff_auth_probe');
+        return true;
+      }, false);
+      var body = {
+        event: event,
+        page: location.pathname,
+        attempt: _loginAttemptCount(),
+        handoff: u.searchParams.has(HANDOFF_PARAM),
+        hasCode: u.searchParams.has('code'),
+        hasState: u.searchParams.has('state'),
+        oauthError: u.searchParams.get('error') || undefined,
+        oauthErrorDescription: (u.searchParams.get('error_description') || '').slice(0, 200) || undefined,
+        isInClient: _safe(function () { return liff.isInClient(); }, undefined),
+        isLoggedIn: _safe(function () { return liff.isLoggedIn(); }, undefined),
+        os: _safe(function () { return liff.getOS(); }, undefined),
+        sessionStorageOk: storageOk,
+        cookieEnabled: navigator.cookieEnabled,
+        referrerHost: _safe(function () { return document.referrer ? new URL(document.referrer).host : ''; }, ''),
+        ua: navigator.userAgent.slice(0, 200),
+      };
+      if (extra) { for (var k in extra) { body[k] = extra[k]; } }
+      _log('auth beacon', body);
+      var json = JSON.stringify(body);
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/liff/auth-beacon', new Blob([json], { type: 'application/json' }));
+      } else {
+        fetch('/liff/auth-beacon', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: json, keepalive: true });
+      }
+    } catch (_e) { /* 計測がページを壊さないことを最優先 */ }
+  }
+
+  /** 今のページを LIFF ブラウザで開き直す liff.line.me URL（作れなければ null） */
+  async function _buildOpenInLineUrl(liffId) {
+    var u = _sanitizedUrl();
+    if (!u) return null;
+    u.searchParams.delete(RETRY_PARAM);
+    u.searchParams.delete('liff.state');
+    u.searchParams.set(HANDOFF_PARAM, '1');
+    try {
+      if (liff.permanentLink && typeof liff.permanentLink.createUrlBy === 'function') {
+        return await liff.permanentLink.createUrlBy(u.toString());
+      }
+    } catch (_e) { /* endpoint 外など。下の組み立てにフォールバック */ }
+    // LIFF endpoint は {APP_BASE_URL}/liff（liffRoutes の玄関）なので /liff 以下をそのまま渡す
+    if (u.pathname.indexOf('/liff') !== 0) return null;
+    return 'https://liff.line.me/' + liffId + u.pathname.slice('/liff'.length) + u.search;
+  }
+
+  function _esc(v) {
+    return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  /** 「LINEで開く」案内画面。ブラウザでのログインは試行上限まで選べる。 */
+  function _renderOpenInLine(openUrl, opts) {
+    var canBrowserLogin = _loginAttemptCount() < MAX_LOGIN_ATTEMPTS;
+    var lead = opts.loginFailed
+      ? 'このブラウザではLINEログインを完了できませんでした。'
+      : opts.handoff
+        ? 'LINEアプリに切り替えられませんでした。'
+        : 'このページはLINEアプリで開くと、ログインなしでそのまま進めます。';
+    var btn = 'display:block;width:100%;padding:14px;border-radius:12px;font-size:15px;font-weight:600;text-align:center;text-decoration:none;margin-top:14px;cursor:pointer;box-sizing:border-box;';
+    document.body.innerHTML =
+      '<div style="max-width:480px;margin:0 auto;padding:16px;font-family:-apple-system,BlinkMacSystemFont,\'Hiragino Sans\',\'Noto Sans JP\',sans-serif;">' +
+        '<div style="background:#fff;border-radius:16px;padding:24px 20px;box-shadow:0 2px 8px rgba(0,0,0,.07);text-align:center;">' +
+          '<div style="font-size:44px;margin-bottom:12px;">💬</div>' +
+          '<h2 style="font-size:18px;font-weight:700;color:#1a2f2a;margin:0 0 8px;">LINEアプリで開いてください</h2>' +
+          '<p style="font-size:14px;color:#60726f;line-height:1.7;margin:0;">' + _esc(lead) + '</p>' +
+          (openUrl
+            ? '<a id="liff-open-in-line" href="' + _esc(openUrl) + '" style="' + btn + 'background:#06c755;color:#fff;">LINEで開く</a>'
+            : '') +
+          '<p style="font-size:13px;color:#60726f;line-height:1.7;margin:16px 0 0;text-align:left;">' +
+            'うまく開かない場合は、LINEアプリの「ホーム」→ 検索欄の横のQRアイコンから、QRコードを読み取り直してください。' +
+          '</p>' +
+          (canBrowserLogin
+            ? '<button id="liff-browser-login" type="button" style="' + btn + 'background:#f0f4f3;color:#333;border:1px solid #d8e3e0;">このブラウザでログインする</button>'
+            : '') +
+        '</div>' +
+      '</div>';
+    var open = document.getElementById('liff-open-in-line');
+    if (open) open.addEventListener('click', function () { _authBeacon('open_in_line_tap'); });
+    var login = document.getElementById('liff-browser-login');
+    if (login) {
+      login.addEventListener('click', function () {
+        login.disabled = true;
+        _authBeacon('browser_login_tap');
+        loginWithGuard();
+      });
+    }
+  }
+
+  /**
+   * 未ログイン時の入口。スマホの通常ブラウザなら「LINEで開く」案内を出し、
+   * それ以外（PC 等）はループガード付きで LINE Login へリダイレクトする。
+   * @returns {boolean} true = 案内表示 or リダイレクト中 / false = 試行上限（呼び出し側でエラー表示）
+   */
+  async function promptOrLogin(liffId) {
+    var attempt = _loginAttemptCount();
+    var loginFailed = attempt > 0;
+    _authBeacon(loginFailed ? 'login_return_not_logged_in' : 'not_logged_in');
+    if (_isMobileExternal()) {
+      var openUrl = await _buildOpenInLineUrl(liffId);
+      _authBeacon('open_in_line_prompt', { hasOpenUrl: Boolean(openUrl) });
+      _renderOpenInLine(openUrl, { loginFailed: loginFailed, handoff: _hasParam(HANDOFF_PARAM) });
+      return true;
+    }
+    if (!loginWithGuard()) {
+      _authBeacon('login_loop_guard');
+      return false;
+    }
+    return true;
+  }
+  // ----------------------------------------------------------------------
+
   /** 認証成功後にアドレスバーから OAuth 残渣とリトライカウンタを消す */
   function _clearLoginResidue() {
     try {
       var u = _sanitizedUrl();
       if (!u) return;
       u.searchParams.delete(RETRY_PARAM);
+      u.searchParams.delete(HANDOFF_PARAM);
       var next = u.toString();
       if (next !== location.href) history.replaceState(null, '', next);
     } catch (_e) { /* noop */ }
@@ -160,7 +305,7 @@
     });
 
     if (!isLoggedIn) {
-      if (!loginWithGuard()) {
+      if (!(await promptOrLogin(liffId))) {
         throw new Error('LINEログインを完了できませんでした。LINEアプリでQRコードを読み取り直すか、しばらくしてからもう一度お試しください。');
       }
       return null;
@@ -191,6 +336,8 @@
     } catch (_e) { /* decode 失敗時はそのまま送信しサーバー判定に委ねる */ }
 
     _log('auth ok', { isInClient: isInClient });
+    // ログイン往復・LINE への切り替えを経た成功だけ記録（どの経路が効いたかの確認用）
+    if (_loginAttemptCount() > 0 || _hasParam(HANDOFF_PARAM)) _authBeacon('auth_ok_after_retry');
     _clearLoginResidue();
     // 認証完了時点で SDK＋init の内訳を自動でビーコン送信（ページ側が reportPerf を
     // 呼ばなくても最低限クライアント側ウォーターフォールが測れるように）。
@@ -251,6 +398,7 @@
     requireLoginIfNeeded: requireLoginIfNeeded,
     handleTokenExpired:   handleTokenExpired,
     loginWithGuard:       loginWithGuard,
+    promptOrLogin:        promptOrLogin,
     closeOrBack:          closeOrBack,
     reportPerf:           reportPerf,
   };

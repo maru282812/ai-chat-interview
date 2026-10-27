@@ -2,6 +2,7 @@ import { Router } from "express";
 import { liffController } from "../controllers/liffController";
 import { missionController } from "../controllers/missionController";
 import { asyncHandler } from "../lib/http";
+import { parseLiffStateQuery } from "../lib/liffState";
 import { logger } from "../lib/logger";
 import { liffAuthService } from "../services/liffAuthService";
 import { recordBehaviorEvents } from "../services/liffBehaviorService";
@@ -24,6 +25,35 @@ liffRoutes.post("/perf-beacon", (req, res) => {
     renderMs: num(b.renderMs), //      DOM 描画
     totalMs: num(b.totalMs), //        ページ読込開始→初期表示完了
     inClient: typeof b.inClient === "boolean" ? b.inClient : undefined,
+  });
+  res.status(204).end();
+});
+
+// LINE ログイン往復の計測ビーコン（liff-auth.ejs の _authBeacon・DB書込みなし・認証不要）。
+// スマホの通常ブラウザで LINE Login から戻ってもログイン済みにならない事象の原因を
+// 実データで特定するため、往復の状態（試行回数・code/state の有無・OAuth エラー・
+// ストレージ可否・UA 等）をサーバーログに出す。何があっても 204 を返す。
+liffRoutes.post("/auth-beacon", (req, res) => {
+  const b = (req.body ?? {}) as Record<string, unknown>;
+  const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : undefined);
+  const bool = (v: unknown) => (typeof v === "boolean" ? v : undefined);
+  logger.info("liff.auth.client", {
+    event: str(b.event, 40),
+    page: str(b.page, 80),
+    attempt: typeof b.attempt === "number" && Number.isFinite(b.attempt) ? b.attempt : undefined,
+    handoff: bool(b.handoff),
+    hasCode: bool(b.hasCode),
+    hasState: bool(b.hasState),
+    oauthError: str(b.oauthError, 60),
+    oauthErrorDescription: str(b.oauthErrorDescription, 200),
+    isInClient: bool(b.isInClient),
+    isLoggedIn: bool(b.isLoggedIn),
+    os: str(b.os, 20),
+    sessionStorageOk: bool(b.sessionStorageOk),
+    cookieEnabled: bool(b.cookieEnabled),
+    referrerHost: str(b.referrerHost, 80),
+    hasOpenUrl: bool(b.hasOpenUrl),
+    ua: str(b.ua, 200),
   });
   res.status(204).end();
 });
@@ -77,20 +107,18 @@ liffRoutes.get("/", (req, res) => {
   // 店舗入口へ解決できるよう、query / liff.state から entry_code を拾って引き継ぐ。
   // liff.state をリダイレクト先に残すと SDK の二次リダイレクトで endpoint へ戻され
   // ループするため、entry_code だけを取り出して捨てる。
+  // liff.state は "?entry_code=x"（QR）と "/store?entry_code=x"（「LINEで開く」の恒久リンク）の
+  // 両形式で来るため、"?" 以降をクエリとして読む。
+  const liffStateParams = parseLiffStateQuery(req.query["liff.state"]);
+  // 「LINEで開く」経由の目印（liff-auth.ejs の HANDOFF_PARAM）は着地先へ引き継ぐ
+  const handoffSuffix = liffStateParams.get("liff_handoff") === "1" || req.query.liff_handoff === "1" ? "&liff_handoff=1" : "";
   const entryCode = (() => {
     const direct = typeof req.query.entry_code === "string" ? req.query.entry_code.trim() : "";
     if (direct) return direct;
-    const liffState = typeof req.query["liff.state"] === "string" ? req.query["liff.state"] : "";
-    if (!liffState) return "";
-    try {
-      const params = new URLSearchParams(liffState.startsWith("?") ? liffState.slice(1) : liffState);
-      return (params.get("entry_code") ?? "").trim();
-    } catch {
-      return "";
-    }
+    return (liffStateParams.get("entry_code") ?? "").trim();
   })();
   if (entryCode) {
-    res.redirect(302, `/liff/store?entry_code=${encodeURIComponent(entryCode)}`);
+    res.redirect(302, `/liff/store?entry_code=${encodeURIComponent(entryCode)}${handoffSuffix}`);
     return;
   }
 
@@ -101,17 +129,10 @@ liffRoutes.get("/", (req, res) => {
   const assignmentId = (() => {
     const direct = typeof req.query.assignment_id === "string" ? req.query.assignment_id.trim() : "";
     if (direct) return direct;
-    const liffState = typeof req.query["liff.state"] === "string" ? req.query["liff.state"] : "";
-    if (!liffState) return "";
-    try {
-      const params = new URLSearchParams(liffState.startsWith("?") ? liffState.slice(1) : liffState);
-      return (params.get("assignment_id") ?? "").trim();
-    } catch {
-      return "";
-    }
+    return (liffStateParams.get("assignment_id") ?? "").trim();
   })();
   if (assignmentId) {
-    res.redirect(302, `/liff/survey?assignment_id=${encodeURIComponent(assignmentId)}`);
+    res.redirect(302, `/liff/survey?assignment_id=${encodeURIComponent(assignmentId)}${handoffSuffix}`);
     return;
   }
 

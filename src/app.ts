@@ -143,7 +143,7 @@ export function createApp() {
   // ここで本ルートのパースエラーだけを body={} に丸め、計測が 500 を出さないようにする
   // （他のエンドポイントの 400/500 挙動は変えない）。
   app.use((err: unknown, req: express.Request, _res: express.Response, next: express.NextFunction) => {
-    if (req.path === "/liff/behavior-beacon" && err instanceof SyntaxError) {
+    if ((req.path === "/liff/behavior-beacon" || req.path === "/liff/auth-beacon") && err instanceof SyntaxError) {
       req.body = {};
       next();
       return;
