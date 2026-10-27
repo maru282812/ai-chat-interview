@@ -107,6 +107,43 @@
     return true;
   }
 
+  // --- 開かれた LIFF アプリに合わせた LIFF ID ---------------------------------
+  // LIFF ブラウザ内で liff.init() に「開いた LIFF アプリと別の LIFF ID」を渡すと
+  // "Invalid LIFF ID" で失敗する。案件QR（回答用LIFFの liff.line.me/{id}/projects/xxx）を
+  // マイページ用 LIFF ID で初期化する案件ページで開くとこれが起きるため、リンク側に
+  // CTX_PARAM=<開くLIFFのID> を載せ、ページ既定の ID より優先する。同じタブ内の
+  // 画面遷移（詳細→一覧など）でも同じ ID を使えるよう sessionStorage に持ち回る。
+  // 別チャネルの ID を渡されてもサーバーの IDトークン検証（チャネルID照合）で弾かれる。
+  var CTX_PARAM = 'liff_ctx';
+  var CTX_STORAGE_KEY = 'liff_ctx_id';
+  var LIFF_ID_PATTERN = /^\d{6,}-[A-Za-z0-9]{4,}$/;
+
+  function _ctxLiffIdFromUrl() {
+    try {
+      var sp = new URL(location.href).searchParams;
+      var direct = sp.get(CTX_PARAM);
+      if (direct) return direct;
+      // LIFF ブラウザの初回表示では liff.init() 前なので、パラメータは liff.state の中にある
+      var state = sp.get('liff.state') || '';
+      var q = state.indexOf('?');
+      if (q >= 0) return new URLSearchParams(state.slice(q + 1)).get(CTX_PARAM);
+    } catch (_e) {}
+    return null;
+  }
+
+  /** ページ既定の liffId より、開かれた LIFF アプリの ID（リンク指定 → タブ内の記憶）を優先する */
+  function resolveLiffId(liffId) {
+    var fromUrl = _ctxLiffIdFromUrl();
+    if (fromUrl && LIFF_ID_PATTERN.test(fromUrl)) {
+      try { sessionStorage.setItem(CTX_STORAGE_KEY, fromUrl); } catch (_e) {}
+      return fromUrl;
+    }
+    var stored = _safe(function () { return sessionStorage.getItem(CTX_STORAGE_KEY); }, null);
+    if (stored && LIFF_ID_PATTERN.test(stored)) return stored;
+    return liffId;
+  }
+  // ----------------------------------------------------------------------
+
   // --- スマホの通常ブラウザで開かれたときの LIFF への切り替え -------------------
   // LINE の in-app ブラウザやカメラアプリ経由のブラウザで開かれると LIFF ブラウザではない
   // ため Web 版 LINE Login の往復が必要になり、端末によっては戻り後もログイン済みに
@@ -285,6 +322,10 @@
       throw new Error('LIFF IDが設定されていません。管理者にお問い合わせください。');
     }
 
+    var pageLiffId = liffId;
+    liffId = resolveLiffId(liffId);
+    if (liffId !== pageLiffId) _log('liff id overridden by context', { pageLiffId: pageLiffId, liffId: liffId });
+
     if (!_initialized) {
       var _initStart = _now();
       await liff.init({ liffId: liffId });
@@ -399,6 +440,7 @@
     handleTokenExpired:   handleTokenExpired,
     loginWithGuard:       loginWithGuard,
     promptOrLogin:        promptOrLogin,
+    resolveLiffId:        resolveLiffId,
     closeOrBack:          closeOrBack,
     reportPerf:           reportPerf,
   };

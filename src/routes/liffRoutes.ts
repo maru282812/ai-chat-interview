@@ -2,7 +2,7 @@ import { Router } from "express";
 import { liffController } from "../controllers/liffController";
 import { missionController } from "../controllers/missionController";
 import { asyncHandler } from "../lib/http";
-import { parseLiffStateQuery } from "../lib/liffState";
+import { liffStatePath, parseLiffStateQuery } from "../lib/liffState";
 import { logger } from "../lib/logger";
 import { liffAuthService } from "../services/liffAuthService";
 import { recordBehaviorEvents } from "../services/liffBehaviorService";
@@ -133,6 +133,16 @@ liffRoutes.get("/", (req, res) => {
   })();
   if (assignmentId) {
     res.redirect(302, `/liff/survey?assignment_id=${encodeURIComponent(assignmentId)}${handoffSuffix}`);
+    return;
+  }
+
+  // パス付きディープリンク（liff.line.me/{id}/projects/xxx → liff.state="/projects/xxx?..."）は
+  // ここで直接そのページへ送る。従来は liff.state を残して /liff/projects へ送り SDK の
+  // 二次リダイレクトに任せていたが、着地ページの liff.init が失敗すると（LIFF ID 食い違い等）
+  // 二次リダイレクトが起きず「探す」に取り残されていた。
+  const statePath = liffStatePath(req.query["liff.state"]);
+  if (statePath) {
+    res.redirect(302, `/liff${statePath}`);
     return;
   }
 
