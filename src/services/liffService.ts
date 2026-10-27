@@ -210,6 +210,15 @@ export function buildStoreEntryLiffUrl(entryCode: string): string {
   return buildAbsoluteUrl("/liff/store", { entry_code: entryCode });
 }
 
+/** デモ案件 (Migration 120) の配布用URL。店舗QRと同じ形でルートが受けて /liff/demo へ 302 する。 */
+export function buildDemoEntryLiffUrl(projectId: string): string {
+  const liffId = getSurveyLiffId();
+  if (liffId) {
+    return buildLiffDeepLink("", liffId, { demo_project: projectId });
+  }
+  return buildAbsoluteUrl("/liff/demo", { project_id: projectId });
+}
+
 /**
  * 案件ページ（一覧・詳細）は既定でマイページ用 LIFF ID で liff.init する。回答用 LIFF の
  * 恒久URLで開くと LIFF アプリと ID が食い違って "Invalid LIFF ID" になるため、

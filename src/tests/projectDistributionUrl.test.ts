@@ -57,3 +57,24 @@ test("通常案件でも未公開・一覧OFFなら QR は出すが警告する"
     assert.equal(d.warnings.length, 2);
   });
 });
+
+test("デモ案件は公開区分・ステータス・一覧に関係なくデモ入口の恒久URLで、警告を出さない", () => {
+  withSurveyLiff(() => {
+    for (const visibility_type of ["public", "private_store"]) {
+      const d = resolveProjectDistribution({
+        id: "p-1", status: "draft", visibility_type, is_discoverable: false, entry_code: null, is_demo: true
+      });
+      assert.equal(d.kind, "demo_entry");
+      assert.equal(d.url, `https://liff.line.me/${SURVEY_ID}?demo_project=p-1`);
+      assert.deepEqual(d.warnings, []);
+    }
+  });
+});
+
+test("アーカイブ済みのデモ案件は QR から回答できないと警告する", () => {
+  withSurveyLiff(() => {
+    const d = resolveProjectDistribution({ id: "p-1", status: "archived", visibility_type: "public", is_demo: true });
+    assert.equal(d.kind, "demo_entry");
+    assert.equal(d.warnings.length, 1);
+  });
+});

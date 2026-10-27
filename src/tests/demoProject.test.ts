@@ -166,3 +166,41 @@ test("デモ案件の完了後処理は LINE 通知もポイントも出さな�
     pointService.awardCompletionPoints = originalAward;
   }
 });
+
+test("デモ入口: デモ案件ならステータス・公開区分に関係なく assignment を確保し、サイクルに入れない", async () => {
+  const originals = {
+    getById: projectRepository.getById,
+    getResp: respondentRepository.getByLineUserAndProject,
+    getAssign: projectAssignmentRepository.getByProjectRespondentAndCycle,
+  };
+  let cycleIdUsed: string | null | undefined;
+  projectRepository.getById = async () =>
+    ({ ...projectFixture(true), status: "draft", visibility_type: "public", is_discoverable: false }) as unknown as Project;
+  respondentRepository.getByLineUserAndProject = async () => respondentFixture();
+  projectAssignmentRepository.getByProjectRespondentAndCycle = async (_p, _r, cycleId) => {
+    cycleIdUsed = cycleId;
+    return { id: ASSIGNMENT_ID } as ProjectAssignment;
+  };
+  try {
+    const result = await storeEntryService.resolveDemoEntry(PROJECT_ID, LINE_USER_ID);
+    assert.equal(result?.assignmentId, ASSIGNMENT_ID);
+    assert.equal(result?.cycleId, null);
+    assert.equal(cycleIdUsed, null);
+  } finally {
+    projectRepository.getById = originals.getById;
+    respondentRepository.getByLineUserAndProject = originals.getResp;
+    projectAssignmentRepository.getByProjectRespondentAndCycle = originals.getAssign;
+  }
+});
+
+test("デモ入口: デモでない案件・アーカイブ済みは開かせない", async () => {
+  const original = projectRepository.getById;
+  try {
+    projectRepository.getById = async () => projectFixture(false);
+    assert.equal(await storeEntryService.resolveDemoEntry(PROJECT_ID, LINE_USER_ID), null);
+    projectRepository.getById = async () => ({ ...projectFixture(true), status: "archived" }) as unknown as Project;
+    assert.equal(await storeEntryService.resolveDemoEntry(PROJECT_ID, LINE_USER_ID), null);
+  } finally {
+    projectRepository.getById = original;
+  }
+});

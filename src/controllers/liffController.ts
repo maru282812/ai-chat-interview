@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { env } from "../config/env";
 import { STORAGE_BUCKET, storagePaths } from "../config/storage";
 import { isDemoProject } from "../lib/demoProject";
+import { parseLiffStateQuery } from "../lib/liffState";
 import { HttpError } from "../lib/http";
 import { logger } from "../lib/logger";
 import { getProjectResearchSettings } from "../lib/projectResearch";
@@ -901,7 +902,8 @@ export const liffController = {
     // ただし店舗専用アンケート（private_store）は「非会員のまま基本情報なしで即回答」が設計なので
     // 回答前の基本情報入力・利用規約同意ゲートはかけない。基本情報と同意は完了後の
     // 「Hibiに参加する（会員登録）」CTA に進んだ希望者だけが会員化フローで入力する。
-    const isStoreSurveyEntry = project.visibility_type === "private_store";
+    // デモ案件 (Migration 120) も同じ扱い: QRを読んだらすぐ回答できることを優先し、ゲートをかけない。
+    const isStoreSurveyEntry = project.visibility_type === "private_store" || isDemoProject(project);
 
     // profile-check の「この内容で回答を開始する」からの遷移（mypage_confirm_session）。
     // 確認完了の書込みを別POST（confirm-mypage）で待たせず遷移URLに同乗させ、ここで
@@ -2785,6 +2787,49 @@ export const liffController = {
 
     if (!resolution) {
       throw new HttpError(404, "このお店のアンケートが見つかりませんでした。");
+    }
+
+    res.json({ ok: true, assignment_id: resolution.assignmentId, project_id: resolution.projectId });
+  },
+
+  /**
+   * デモ案件 (Migration 120) の配布用QRの着地点。`?project_id=xxx` を受け、LIFF 認証後に
+   * resolve API で assignment を確保して survey へ遷移する（画面は店舗入口と共用）。
+   * デモは「QRさえ読めば回答できる」ことを優先し、ステータス・公開区分・一覧に出すは見ない。
+   */
+  async demoEntryPage(req: Request, res: Response): Promise<void> {
+    const liffId = env.LINE_LIFF_ID_SURVEY ?? env.LINE_LIFF_ID ?? "";
+    const projectId =
+      stringValue(req.query.project_id).trim() ||
+      (parseLiffStateQuery(req.query["liff.state"]).get("project_id") ?? "").trim();
+
+    res.render("liff/store-entry", {
+      title: "デモアンケート",
+      loadingLabel: "アンケートを準備中...",
+      initialData: {
+        liffId,
+        entryCode: projectId,
+        resolveUrl: "/liff/demo/resolve",
+        surveyBaseUrl: "/liff/survey",
+      },
+    });
+  },
+
+  /** デモ案件の assignment を確保して返す。デモでない案件・存在しない案件は 404。 */
+  async resolveDemoEntry(req: Request, res: Response): Promise<void> {
+    const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
+    const projectId = stringValue(req.body.entry_code).trim();
+    if (!isUuid(projectId)) {
+      throw new HttpError(404, "このデモアンケートが見つかりませんでした。");
+    }
+
+    const resolution = await storeEntryService.resolveDemoEntry(
+      projectId,
+      verifiedUser.userId,
+      verifiedUser.displayName ?? null
+    );
+    if (!resolution) {
+      throw new HttpError(404, "このデモアンケートが見つかりませんでした。");
     }
 
     res.json({ ok: true, assignment_id: resolution.assignmentId, project_id: resolution.projectId });
