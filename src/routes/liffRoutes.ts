@@ -122,6 +122,17 @@ liffRoutes.get("/", (req, res) => {
     return;
   }
 
+  // デモ案件 (Migration 120) の配布用QR（liff.line.me/{id}?demo_project=xxx）の着地。店舗QRと同じ形。
+  const demoProjectId = (() => {
+    const direct = typeof req.query.demo_project === "string" ? req.query.demo_project.trim() : "";
+    if (direct) return direct;
+    return (liffStateParams.get("demo_project") ?? "").trim();
+  })();
+  if (demoProjectId) {
+    res.redirect(302, `/liff/demo?project_id=${encodeURIComponent(demoProjectId)}${handoffSuffix}`);
+    return;
+  }
+
   // 案件配信の「回答を開始する」（liff.line.me/{id}?assignment_id=xxx）の着地。
   // endpoint が /liff の LIFF 構成では liff.state 内に assignment_id が入るため、
   // ここで拾わないと下の「探す」リダイレクトで assignment_id が捨てられ回答画面に到達できない。
@@ -208,6 +219,8 @@ liffRoutes.post("/pool-questions/:questionId/skip", asyncHandler(liffController.
 // 店舗専用アンケート流入（専用URL / QR）
 liffRoutes.get("/store", asyncHandler(liffController.storeEntryPage));
 liffRoutes.post("/store/resolve", asyncHandler(liffController.resolveStoreEntry));
+liffRoutes.get("/demo", asyncHandler(liffController.demoEntryPage));
+liffRoutes.post("/demo/resolve", asyncHandler(liffController.resolveDemoEntry));
 
 // 案件一覧・詳細・保存・やりとり
 // NOTE: /projects/:id の静的セグメントより先に定義

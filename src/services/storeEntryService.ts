@@ -78,5 +78,46 @@ export const storeEntryService = {
       }));
 
     return { assignmentId: assignment.id, projectId: project.id, cycleId };
+  },
+
+  /**
+   * デモ案件 (Migration 120) の配布用QRからの流入を解決する。
+   * デモは「QRさえ読めば回答できる」ようにするため、ステータス・公開区分・一覧に出すは見ない。
+   * サイクルにも入れない（A だけで完結）。デモでない案件は null（本番案件をこの入口で開かせない）。
+   */
+  async resolveDemoEntry(
+    projectId: string,
+    lineUserId: string,
+    displayName?: string | null
+  ): Promise<StoreEntryResolution | null> {
+    if (!projectId || !lineUserId) return null;
+
+    const project = await projectRepository.getById(projectId).catch(() => null);
+    if (!project || !isDemoProject(project) || project.status === "archived") {
+      return null;
+    }
+
+    const respondent =
+      (await respondentRepository.getByLineUserAndProject(lineUserId, project.id)) ??
+      (await respondentRepository.create({
+        line_user_id: lineUserId,
+        display_name: displayName ?? null,
+        project_id: project.id,
+        status: "invited"
+      }));
+
+    const assignment =
+      (await projectAssignmentRepository.getByProjectRespondentAndCycle(project.id, respondent.id, null)) ??
+      (await projectAssignmentRepository.create({
+        user_id: lineUserId,
+        project_id: project.id,
+        respondent_id: respondent.id,
+        assignment_type: "manual",
+        status: "opened",
+        delivery_channel: "liff",
+        cycle_id: null
+      }));
+
+    return { assignmentId: assignment.id, projectId: project.id, cycleId: null };
   }
 };

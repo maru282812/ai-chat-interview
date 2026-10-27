@@ -134,7 +134,7 @@
         <img alt="配布用QRコード" class="qr-img" data-src="/admin/projects/<%= project.id %>/qr.svg?size=180"
              width="180" height="180" style="border:1px solid #ddd;border-radius:4px" />
         <div style="flex:1;min-width:220px;font-size:13px">
-          <div style="color:#666"><%= distribution.kind === 'store_entry' ? '店舗専用URL（entry_code）' : '案件詳細ページURL' %></div>
+          <div style="color:#666"><%= distribution.kind === 'demo_entry' ? 'デモ用URL（このQRを読めばすぐ回答できます）' : distribution.kind === 'store_entry' ? '店舗専用URL（entry_code）' : '案件詳細ページURL' %></div>
           <code style="word-break:break-all"><%= distribution.url %></code>
           <div style="margin-top:8px;display:flex;gap:12px;flex-wrap:wrap">
             <a href="/admin/projects/<%= project.id %>/qr.svg?size=1000" download="qr-<%= project.id %>.svg">QRをダウンロード（SVG）</a>
@@ -202,6 +202,7 @@
         デモ案件にする（何度でも回答し直せる体験用）
       </label>
       <ul class="demo-toggle__rules">
+        <li>上の「配布用URL / QRコード」を読めばすぐ回答できます（ステータス・公開区分・一覧に出すの設定は関係ありません。保存後にQRが切り替わります）</li>
         <li>開くたびに 1 問目から回答し直せます（回答済み画面は出ません）</li>
         <li>ポイントは必ず 0（下のポイント設定に関係なく付与しません）</li>
         <li>ABCサイクルに入っていても、この案件だけで完結します（B/C の案内は送りません）</li>
@@ -347,11 +348,15 @@
         </label>
         <label>
           ステータス
-          <select name="status">
+          <%# 店舗専用は「探す」一覧に出ないので、published を「LIFF掲載中」と書くと一般公開と誤解される。
+              店舗専用のときだけ「回答受付中」と表示する（値は同じ published）。公開区分の切り替えにも追従する。 %>
+          <% const isStoreForm = project?.visibility_type === 'private_store'; %>
+          <select name="status" id="project_status_select">
             <% for (const status of statusOptions) { %>
-              <option value="<%= status.value %>" <%= form.status === status.value ? "selected" : "" %>><%= status.label %></option>
+              <option value="<%= status.value %>" <%= form.status === status.value ? "selected" : "" %><% if (status.value === "published") { %> data-label-public="<%= status.label %>" data-label-store="回答受付中"<% } %>><%= status.value === "published" && isStoreForm ? "回答受付中" : status.label %></option>
             <% } %>
           </select>
+          <small class="helper-text" id="project_status_store_hint"<% if (!isStoreForm) { %> hidden<% } %>>店舗専用アンケートは「回答受付中」にするとQR・専用URLから回答できます（下書きのままでは開けません）。</small>
         </label>
         <label>
           カテゴリ（LIFF案件一覧）
@@ -466,8 +471,12 @@
             const preview = document.getElementById('store_url_preview');
             const urlText = document.getElementById('store_url_text');
             if (!sel || !codeInput) return;
+            const statusOption = document.querySelector('#project_status_select option[value="published"]');
+            const statusHint = document.getElementById('project_status_store_hint');
             function refresh() {
               const isStore = sel.value === 'private_store';
+              if (statusOption) statusOption.textContent = isStore ? statusOption.dataset.labelStore : statusOption.dataset.labelPublic;
+              if (statusHint) statusHint.hidden = !isStore;
               const code = (codeInput.value || '').trim();
               if (isStore && code) {
                 urlText.textContent = location.origin + '/liff/store?entry_code=' + encodeURIComponent(code);
