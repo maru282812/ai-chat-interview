@@ -83,10 +83,12 @@ test("★LIFF ID 未設定なら絶対URLにフォールバックする（黙っ
 
 test("案件詳細・案件一覧のURLも恒久URL＋パスで組む", () => {
   withLiffEnv({ LINE_LIFF_ID_SURVEY: SURVEY_ID }, () => {
+    // 案件ページはマイページ用IDで liff.init するため、開く LIFF の ID を liff_ctx で渡す
+    // （無いと LIFF ブラウザで "Invalid LIFF ID" になる）
     const detail = buildProjectDetailLiffUrl("p-1");
-    assert.equal(detail, `https://liff.line.me/${SURVEY_ID}/projects/p-1`);
+    assert.equal(detail, `https://liff.line.me/${SURVEY_ID}/projects/p-1?liff_ctx=${SURVEY_ID}`);
     const list = buildProjectsListLiffUrl();
-    assert.equal(list, `https://liff.line.me/${SURVEY_ID}/projects`);
+    assert.equal(list, `https://liff.line.me/${SURVEY_ID}/projects?liff_ctx=${SURVEY_ID}`);
   });
 });
 
@@ -108,6 +110,6 @@ test("マイページは専用LIFFの素URL（パスを付けない）", () => {
 test("専用IDが無ければ汎用 LINE_LIFF_ID にフォールバックする", () => {
   withLiffEnv({ LINE_LIFF_ID: "9999999999-generic" }, () => {
     const url = buildProjectsListLiffUrl();
-    assert.equal(url, "https://liff.line.me/9999999999-generic/projects");
+    assert.equal(url, "https://liff.line.me/9999999999-generic/projects?liff_ctx=9999999999-generic");
   });
 });

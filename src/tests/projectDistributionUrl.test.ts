@@ -45,7 +45,7 @@ test("通常案件は案件詳細ページの恒久URL（公開中・一覧ONな
   withSurveyLiff(() => {
     const d = resolveProjectDistribution({ id: "p-1", status: "published", visibility_type: "public", is_discoverable: true });
     assert.equal(d.kind, "project_detail");
-    assert.equal(d.url, `https://liff.line.me/${SURVEY_ID}/projects/p-1`);
+    assert.equal(d.url, `https://liff.line.me/${SURVEY_ID}/projects/p-1?liff_ctx=${SURVEY_ID}`);
     assert.deepEqual(d.warnings, []);
   });
 });

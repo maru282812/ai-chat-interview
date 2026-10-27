@@ -210,14 +210,24 @@ export function buildStoreEntryLiffUrl(entryCode: string): string {
   return buildAbsoluteUrl("/liff/store", { entry_code: entryCode });
 }
 
+/**
+ * 案件ページ（一覧・詳細）は既定でマイページ用 LIFF ID で liff.init する。回答用 LIFF の
+ * 恒久URLで開くと LIFF アプリと ID が食い違って "Invalid LIFF ID" になるため、
+ * 開く LIFF の ID を liff_ctx で渡し、liff-auth.ejs の resolveLiffId に優先させる。
+ */
+function buildProjectsAreaLiffUrl(path: string): string {
+  const liffId = getSurveyLiffId();
+  return buildLiffDeepLink(path, liffId, { liff_ctx: liffId });
+}
+
 /** 案件詳細ページのURL。 */
 export function buildProjectDetailLiffUrl(projectId: string): string {
-  return buildLiffDeepLink(`/projects/${projectId}`, getSurveyLiffId());
+  return buildProjectsAreaLiffUrl(`/projects/${projectId}`);
 }
 
 /** 案件一覧（探す）のURL。 */
 export function buildProjectsListLiffUrl(): string {
-  return buildLiffDeepLink("/projects", getSurveyLiffId());
+  return buildProjectsAreaLiffUrl("/projects");
 }
 
 /** デイリーアンケート（survey_id）の起動URL。 */
