@@ -210,6 +210,14 @@ export function buildStoreEntryLiffUrl(entryCode: string): string {
   return buildAbsoluteUrl("/liff/store", { entry_code: entryCode });
 }
 
+/**
+ * ブラウザ回答者（LINE の外）が完了後に Hibi 会員になる入口。LIFF 内の会員登録と同じ同意フロー
+ * （/liff/consent?mode=initial）を、LINE アプリで開く恒久URLにして渡す。
+ */
+export function buildMemberJoinLiffUrl(): string {
+  return buildLiffDeepLink("/consent", getMypageLiffId(), { mode: "initial", redirect: "/liff/mypage" });
+}
+
 /** デモ案件 (Migration 120) の配布用URL。店舗QRと同じ形でルートが受けて /liff/demo へ 302 する。 */
 export function buildDemoEntryLiffUrl(projectId: string): string {
   const liffId = getSurveyLiffId();

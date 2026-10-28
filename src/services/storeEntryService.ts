@@ -29,7 +29,8 @@ export const storeEntryService = {
   async resolveEntry(
     entryCode: string,
     lineUserId: string,
-    displayName?: string | null
+    displayName?: string | null,
+    opts: { browser?: boolean } = {}
   ): Promise<StoreEntryResolution | null> {
     const code = entryCode.trim();
     if (!code || !lineUserId) {
@@ -54,7 +55,8 @@ export const storeEntryService = {
     // 繰り返しアンケート（Migration 093）なら所属サイクルを解決する。
     // サイクル定義に属さない案件では null が返り、以降は従来どおりの挙動になる。
     // デモ案件 (Migration 120) は周を作らない＝ A だけで完結し、B/C の案内も予約されない。
-    const resolution = isDemoProject(project)
+    // ブラウザ回答（LINE なし）も同じ: B/C を届ける先がないので周を作らず、離脱率の分母にも入れない。
+    const resolution = isDemoProject(project) || opts.browser
       ? null
       : await cycleService.resolveCycleSafely(project.id, lineUserId);
     const cycleId = resolution?.cycle.id ?? null;

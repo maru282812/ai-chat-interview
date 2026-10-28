@@ -48,6 +48,27 @@
       }
       .code-input:focus { outline: none; border-color: #2ca87a; box-shadow: 0 0 0 3px rgba(44,168,122,.15); }
       .err { color: #c0392b; font-size: 13px; margin-top: 10px; }
+      /* ブラウザ回答の選択（LINE ログインなしで回答する入口） */
+      .btn-line { background: #06c755; color: #fff; text-decoration: none; }
+      .notice {
+        margin-top: 16px; padding: 12px 14px; border-radius: 10px;
+        background: #f7faf9; border: 1px solid #e3ece9;
+        font-size: 12px; color: #4f625e; line-height: 1.7; text-align: left;
+      }
+      .notice a { color: #1f7a5a; }
+      .divider { margin: 22px 0 0; font-size: 12px; color: #8a9a97; }
+      .doc-overlay {
+        position: fixed; inset: 0; background: rgba(0,0,0,.45);
+        display: flex; align-items: flex-end; justify-content: center; z-index: 10;
+      }
+      .doc-sheet {
+        background: #fff; width: 100%; max-width: 480px; max-height: 85vh;
+        border-radius: 16px 16px 0 0; padding: 16px; display: flex; flex-direction: column;
+      }
+      .doc-body {
+        overflow-y: auto; white-space: pre-wrap; font-size: 13px; color: #333;
+        line-height: 1.7; text-align: left; margin-top: 8px; flex: 1;
+      }
     </style>
   </head>
   <body>
@@ -64,7 +85,9 @@
     <script>
     (() => {
       const initialData = JSON.parse(document.getElementById("initial-data").dataset.json || "{}");
-      const { liffId, resolveUrl, surveyBaseUrl } = initialData;
+      const { liffId, resolveUrl, webResolveUrl, surveyBaseUrl, termsDocumentUrl, privacyDocumentUrl } = initialData;
+      // ブラウザ回答者のトークン。同じブラウザなら同じ回答者＝回答は1回まで（src/lib/webRespondent.ts）。
+      const WEB_TOKEN_KEY = "hibi_web_answer_token";
       const appView = document.getElementById("app-view");
       const loadingView = document.getElementById("loading-view");
       let idToken = null;
@@ -108,6 +131,91 @@
         window.location.href = `${surveyBaseUrl}/${encodeURIComponent(data.assignment_id)}`;
       }
 
+      function readWebToken() {
+        try { return localStorage.getItem(WEB_TOKEN_KEY) || ""; } catch { return ""; }
+      }
+
+      // ブラウザ回答（LINE ログインなし）で assignment を確保して回答画面へ。
+      // トークンは localStorage に加えて URL の # でも渡す（保存できないブラウザでも回答を続けられるように。# はサーバーに送られない）。
+      async function resolveWebAndGo(entryCode) {
+        const res = await fetch(webResolveUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entry_code: entryCode, web_token: readWebToken() })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.message || "アンケートが見つかりませんでした。");
+        }
+        const data = await res.json();
+        try { localStorage.setItem(WEB_TOKEN_KEY, data.web_token); } catch { /* # で渡す */ }
+        window.location.href = `${surveyBaseUrl}/${encodeURIComponent(data.assignment_id)}#wt=${encodeURIComponent(data.web_token)}`;
+      }
+
+      async function showDocument(url) {
+        const overlay = document.createElement("div");
+        overlay.className = "doc-overlay";
+        overlay.innerHTML = `<div class="doc-sheet"><h2 id="doc-title">読み込み中...</h2><div class="doc-body" id="doc-body"></div>
+          <button class="btn btn-secondary" id="doc-close" style="margin-top:12px">閉じる</button></div>`;
+        document.body.appendChild(overlay);
+        const close = () => overlay.remove();
+        overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+        document.getElementById("doc-close").onclick = close;
+        try {
+          const res = await fetch(url);
+          const data = await res.json();
+          document.getElementById("doc-title").textContent = data.document?.title || "";
+          document.getElementById("doc-body").textContent = String(data.version?.content || "").trim();
+        } catch {
+          document.getElementById("doc-title").textContent = "読み込めませんでした。";
+        }
+      }
+
+      /**
+       * LINE の外（PC・メールから開いたスマホのブラウザ）での入口。
+       * 主導線はログインなしの「このまま回答する」。LINE を使う人向けに LINE で回答する道も残す。
+       * line: initLiffOrWebAuth の onNotLoggedIn が渡す LINE へ進む手段（LIFF を使えない時は null）。
+       */
+      function renderBrowserChoice(entryCode, line) {
+        const lineAction = !line
+          ? ""
+          : line.openInLineUrl
+            ? `<a class="btn btn-line" id="line-open" href="${esc(line.openInLineUrl)}">LINEで開いて回答する</a>`
+            : line.canBrowserLogin
+              ? `<button class="btn btn-secondary" id="line-login">LINEでログインして回答する</button>`
+              : "";
+        show(`
+          <div class="card">
+            <div class="icon">📝</div>
+            <h2>アンケートにご協力ください</h2>
+            <p>ログインなしで、このまま回答できます。</p>
+            <button class="btn btn-primary" id="web-go">同意して回答する</button>
+            <p id="web-err" class="err"></p>
+            <div class="notice">
+              ご回答の内容は、アンケートを実施しているお店に共有され、サービスの改善に使われます。
+              お名前やLINEアカウントなど、あなたを特定する情報は取得しません。
+              回答の取り扱いは<a href="#" data-doc="${esc(termsDocumentUrl)}">利用規約</a>と<a href="#" data-doc="${esc(privacyDocumentUrl)}">プライバシーポリシー</a>に沿います。
+            </div>
+            ${lineAction ? `<p class="divider">LINEをお使いの方は、LINEで回答することもできます</p>${lineAction}` : ""}
+          </div>
+        `);
+        appView.querySelectorAll("[data-doc]").forEach((a) => {
+          a.addEventListener("click", (e) => { e.preventDefault(); void showDocument(a.dataset.doc); });
+        });
+        const go = document.getElementById("web-go");
+        go.onclick = async () => {
+          go.disabled = true;
+          try {
+            await resolveWebAndGo(entryCode);
+          } catch (err) {
+            go.disabled = false;
+            document.getElementById("web-err").textContent = err.message || "読み込みに失敗しました。";
+          }
+        };
+        const login = document.getElementById("line-login");
+        if (login) login.onclick = () => { login.disabled = true; if (!line.login()) login.disabled = false; };
+      }
+
       // 店舗コード手入力フォールバック（QR/URL で来られなかった人向け = C 案）
       function renderCodeForm(message) {
         show(`
@@ -138,13 +246,28 @@
       }
 
       async function load() {
-        if (!liffId) { show(`<div class="card"><div class="icon">⚠️</div><p>LIFF IDが設定されていません。</p></div>`); return; }
+        const entryCode = readEntryCode();
+        // URL で入口が決まっていればブラウザ回答を選べる（コード手入力は LINE 内の従来導線のまま）
+        const browserEntry = Boolean(webResolveUrl && entryCode);
+        if (!liffId) {
+          if (browserEntry) { renderBrowserChoice(entryCode, null); return; }
+          show(`<div class="card"><div class="icon">⚠️</div><p>LIFF IDが設定されていません。</p></div>`);
+          return;
+        }
         try {
-          const token = await LiffAuth.initLiffOrWebAuth(liffId);
+          let token;
+          try {
+            token = await LiffAuth.initLiffOrWebAuth(liffId, browserEntry
+              ? { onNotLoggedIn: (line) => renderBrowserChoice(entryCode, line) }
+              : undefined);
+          } catch (err) {
+            // LIFF を使えない（SDK を読めない・初期化に失敗）ブラウザでも、ブラウザ回答なら進められる
+            if (browserEntry) { renderBrowserChoice(entryCode, null); return; }
+            throw err;
+          }
           if (!token) return;
           idToken = token;
 
-          const entryCode = readEntryCode();
           if (!entryCode) { renderCodeForm(); return; }
 
           try {

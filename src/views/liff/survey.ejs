@@ -781,6 +781,8 @@
   const LIFF_AUTH_AVAIL = <%- JSON.stringify(locals.liffAuthAvailable === true) %>;
   // ALLOW_LIFF_AUTH_SKIP=false のとき本人確認失敗・スキップを禁止する
   const SKIP_ALLOWED    = <%- JSON.stringify(locals.skipAllowed !== false) %>;
+  // ブラウザ回答（LINE ログインなしの店舗アンケート）。LIFF は使わず、入口で受け取ったトークンで回答する。
+  const WEB_ANSWER      = <%- JSON.stringify(locals.webAnswer === true) %>;
   // 管理画面の設問プレビュー（/admin/questions/:id/preview）。true のときは
   // 回答・完了の書込み系APIを一切叩かず、画面遷移だけをローカルで進める。
   // ＝プレビューでも「実際に出る画面」そのものを描くためのフラグで、描画側は一切分岐させない。
@@ -851,8 +853,55 @@
   // ================================================================
   // LIFF 初期化 + 本人確認
   // ================================================================
+  // ブラウザ回答のトークン。入口（store-entry）が URL の #wt= と localStorage の両方で渡す。
+  function takeWebAnswerToken() {
+    const KEY = 'hibi_web_answer_token';
+    let token = '';
+    try {
+      const m = location.hash.match(/(?:^#|&)wt=([^&]+)/);
+      if (m) {
+        token = decodeURIComponent(m[1]);
+        try { localStorage.setItem(KEY, token); } catch (_e) {}
+        history.replaceState(null, '', location.pathname + location.search);
+      }
+    } catch (_e) {}
+    if (!token) {
+      try { token = localStorage.getItem(KEY) || ''; } catch (_e) {}
+    }
+    return token;
+  }
+
+  async function verifyWebAnswer() {
+    const token = takeWebAnswerToken();
+    if (!token) { showAuthError('web_token_missing'); return; }
+    AUTH_ID_TOKEN = token;
+    try {
+      const res = await fetch('/liff/survey/verify-identity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id_token: token, assignment_id: ASSIGNMENT_ID }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        console.warn('[survey] web verify failed', res.status);
+        showAuthError('web_token_missing');
+        return;
+      }
+    } catch (e) {
+      console.error('[survey] web verify network error', e);
+      showAuthError('token_failed');
+      return;
+    }
+    startSurvey();
+  }
+
   async function initLiffAndVerify() {
-    console.info('[survey] LIFF init start', { liffId: LIFF_ID, authRequired: AUTH_REQUIRED, skipAllowed: SKIP_ALLOWED });
+    console.info('[survey] LIFF init start', { liffId: LIFF_ID, authRequired: AUTH_REQUIRED, skipAllowed: SKIP_ALLOWED, webAnswer: WEB_ANSWER });
+
+    if (WEB_ANSWER) {
+      await verifyWebAnswer();
+      return;
+    }
 
     // LIFF 未設定 or auth 不要の場合
     if (!LIFF_ID || !AUTH_REQUIRED || !LIFF_AUTH_AVAIL) {
@@ -1012,6 +1061,7 @@
       token_failed:      BASE_MSG,
       liff_init_failed:  BASE_MSG,
       login_loop:        'LINEログインを完了できませんでした。<br>LINEアプリでリンクを開き直すか、しばらくしてからもう一度お試しください。',
+      web_token_missing: 'このブラウザでは回答を続けられません。<br>お店から届いたURLを、最初に開いたブラウザで開き直してください。',
     };
     const msg = messages[code] || BASE_MSG;
     console.error('[survey] showAuthError', code);
@@ -3490,7 +3540,7 @@
           let code = '';
           try { code = (await resp.json()).error || ''; } catch (_e) {}
           console.error('[survey] complete failed', { status: resp.status, code });
-          if (resp.status === 401 && window.LiffAuth && LiffAuth.handleTokenExpired) {
+          if (resp.status === 401 && !WEB_ANSWER && window.LiffAuth && LiffAuth.handleTokenExpired) {
             try { sessionStorage.setItem('survey_complete_resume', ASSIGNMENT_ID); } catch (_e) {}
             if (LiffAuth.handleTokenExpired()) return; // logout+login でリダイレクト中
             try { sessionStorage.removeItem('survey_complete_resume'); } catch (_e) {}
@@ -4095,7 +4145,7 @@
           let code = '';
           try { code = (await resp.json()).error || ''; } catch (_e) {}
           console.error('[survey] chat complete failed', { status: resp.status, code });
-          if (resp.status === 401 && window.LiffAuth && LiffAuth.handleTokenExpired) {
+          if (resp.status === 401 && !WEB_ANSWER && window.LiffAuth && LiffAuth.handleTokenExpired) {
             try { sessionStorage.setItem('survey_complete_resume', ASSIGNMENT_ID); } catch (_e) {}
             if (LiffAuth.handleTokenExpired()) return; // logout+login でリダイレクト中
             try { sessionStorage.removeItem('survey_complete_resume'); } catch (_e) {}
