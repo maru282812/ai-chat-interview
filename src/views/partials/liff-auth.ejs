@@ -305,9 +305,10 @@
    * スマホLINE内: LIFF認証 → IDトークン取得
    * PCブラウザ等: LINE Login OAuth → リダイレクト後に再実行 → IDトークン取得
    * @param {string} liffId
-   * @returns {Promise<string|null>} IDトークン（リダイレクトが起きた場合はnull）
+   * @param {{ onNotLoggedIn?: function }} [opts] 未ログイン時の画面をページ側で出すときに渡す
+   * @returns {Promise<string|null>} IDトークン（リダイレクト・未ログイン画面に任せた場合はnull）
    */
-  async function initLiffOrWebAuth(liffId) {
+  async function initLiffOrWebAuth(liffId, opts) {
     _log('init start', {
       liffId: liffId,
       sdkLoaded: typeof liff !== 'undefined',
@@ -346,6 +347,21 @@
     });
 
     if (!isLoggedIn) {
+      // ページが未ログイン時の画面を自前で出す場合（店舗アンケートのブラウザ回答の選択など）。
+      // LINE へ進む手段（スマホは「LINEで開く」URL、PC はループガード付きログイン）を渡して任せる。
+      if (opts && typeof opts.onNotLoggedIn === 'function') {
+        var attemptNow = _loginAttemptCount();
+        _authBeacon(attemptNow > 0 ? 'login_return_not_logged_in' : 'not_logged_in', { custom: true });
+        var mobileExternal = _isMobileExternal();
+        opts.onNotLoggedIn({
+          isMobile: mobileExternal,
+          openInLineUrl: mobileExternal ? await _buildOpenInLineUrl(liffId) : null,
+          loginFailed: attemptNow > 0,
+          canBrowserLogin: attemptNow < MAX_LOGIN_ATTEMPTS,
+          login: function () { _authBeacon('browser_login_tap'); return loginWithGuard(); },
+        });
+        return null;
+      }
       if (!(await promptOrLogin(liffId))) {
         throw new Error('LINEログインを完了できませんでした。LINEアプリでQRコードを読み取り直すか、しばらくしてからもう一度お試しください。');
       }

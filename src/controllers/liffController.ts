@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { env } from "../config/env";
 import { STORAGE_BUCKET, storagePaths } from "../config/storage";
 import { isDemoProject } from "../lib/demoProject";
+import { isWebAnswerToken, isWebRespondentId, issueWebAnswerToken, verifyWebAnswerToken } from "../lib/webRespondent";
 import { parseLiffStateQuery } from "../lib/liffState";
 import { HttpError } from "../lib/http";
 import { logger } from "../lib/logger";
@@ -42,7 +43,7 @@ import { cycleService } from "../services/cycleService";
 import { aiService } from "../services/aiService";
 import { analysisService } from "../services/analysisService";
 import { liffAuthService } from "../services/liffAuthService";
-import { liffService, getSurveyLiffConfig } from "../services/liffService";
+import { liffService, getSurveyLiffConfig, buildMemberJoinLiffUrl } from "../services/liffService";
 import { personalityService } from "../services/personalityService";
 import { postService } from "../services/postService";
 import { respondentService } from "../services/respondentService";
@@ -211,6 +212,39 @@ function bearerToken(req: Request): string {
  * - assignment.user_id 未設定は本番のみ 403、非本番は許容（verifyIdentity と同挙動）。
  * - トークンは Authorization: Bearer <id_token> または body.id_token を受理。tmtest: seam も透過。
  */
+/**
+ * 回答の書込み系で使う本人確認。LINE の ID トークンに加えて、ブラウザ回答者の署名付きトークン
+ * （src/lib/webRespondent.ts）を受け付ける。ブラウザ回答者の userId は "web:<uuid>" で、
+ * ブラウザ入口が作った assignment.user_id としか一致しないため、LINE 回答者の回答には届かない。
+ * マイページ等の会員向け API は従来どおり liffAuthService.verifyIdToken だけを使う（ここは通さない）。
+ */
+/**
+ * ブラウザ回答の入口で回答者を決める。保存済みトークンが正しければその人、無い・壊れていれば新しく発行する。
+ * 入口は誰でも叩けるが、作られるのは「新しい匿名の回答者」だけで、既存の回答には触れない。
+ */
+function resolveWebActor(rawToken: unknown): { userId: string; token: string; issued: boolean } {
+  const token = stringValue(rawToken).trim();
+  const existing = verifyWebAnswerToken(token);
+  if (existing) return { userId: existing, token, issued: false };
+  const fresh = issueWebAnswerToken();
+  return { userId: fresh.userId, token: fresh.token, issued: true };
+}
+
+/** ブラウザ回答の前に出す説明からリンクする書類（migration 045 で固定 ID で投入済み）。 */
+const BROWSER_ANSWER_DOCUMENTS = {
+  termsDocumentUrl: "/liff/documents/d0000000-0000-0000-0000-000000000001",
+  privacyDocumentUrl: "/liff/documents/d0000000-0000-0000-0000-000000000002",
+};
+
+async function verifySurveyActorToken(token: string, path: string): Promise<{ userId: string }> {
+  if (isWebAnswerToken(token)) {
+    const userId = verifyWebAnswerToken(token);
+    if (!userId) throw new HttpError(401, "回答の情報を確認できませんでした。お店から届いたURLを開き直してください。");
+    return { userId };
+  }
+  return liffAuthService.verifyIdToken(token, { path });
+}
+
 async function verifyAssignmentOwnerOrThrow(req: Request, assignmentId: string): Promise<void> {
   const liffConfig = getSurveyLiffConfig();
   if (!liffConfig.liffAuthAvailable) {
@@ -237,7 +271,7 @@ async function verifyAssignmentOwnerOrThrow(req: Request, assignmentId: string):
     return;
   }
   // トークンがあれば authRequired の値に関わらず検証し、本人以外の回答/完了を遮断する（IDOR 防止）。
-  const verified = await liffAuthService.verifyIdToken(token, { path: req.path });
+  const verified = await verifySurveyActorToken(token, req.path);
   const assignment = await projectAssignmentRepository.getById(assignmentId);
   if (!assignment.user_id) {
     if (env.NODE_ENV === "production") {
@@ -1098,6 +1132,7 @@ export const liffController = {
     });
 
     const DEFAULT_FAIL_MSG = "今回はご参加いただけませんでした。またの機会にご協力をお願いします。";
+    const webAnswer = isWebRespondentId(assignment.user_id);
     const renderData = {
       title: project.user_display_title || project.name,
       project,
@@ -1131,7 +1166,12 @@ export const liffController = {
       projectsUrl: "/liff/projects",
       // 店舗回答者をグローバル必須書類の同意フローへ通し、正式な Hibi 会員に昇格させる導線。
       // 既に同意済みなら consent ページが即マイページへリダイレクトする（冪等）。
-      memberJoinUrl: "/liff/consent?mode=initial&redirect=/liff/mypage",
+      // ブラウザ回答者は LINE の外にいるので、同じ同意フローを LINE アプリで開く恒久URLへ送る。
+      memberJoinUrl: webAnswer
+        ? buildMemberJoinLiffUrl()
+        : "/liff/consent?mode=initial&redirect=/liff/mypage",
+      // ブラウザ回答（LINE ログインなし）。クライアントは LIFF を初期化せず、保存済みトークンで回答する。
+      webAnswer,
     };
 
     logger.info("[surveyPage] before render survey.ejs", {
@@ -1190,9 +1230,9 @@ export const liffController = {
       return;
     }
 
-    let verifiedUser: Awaited<ReturnType<typeof liffAuthService.verifyIdToken>>;
+    let verifiedUser: { userId: string };
     try {
-      verifiedUser = await liffAuthService.verifyIdToken(idToken);
+      verifiedUser = await verifySurveyActorToken(idToken, req.path);
     } catch (err) {
       logger.warn("verifyIdentity.tokenVerificationFailed", {
         assignmentId,
@@ -1799,7 +1839,8 @@ export const liffController = {
         session,
         respondent,
         project,
-        lineUserId: assignment.user_id,
+        // ブラウザ回答者には LINE がない: ポイント・ランク・完了通知は動かさない（null で全部止まる）
+        lineUserId: isWebRespondentId(assignment.user_id) ? null : assignment.user_id,
       });
     } catch (err: unknown) {
       logger.error("completeSurveyByAssignment.postComplete.failed", {
@@ -2762,9 +2803,42 @@ export const liffController = {
         liffId,
         entryCode,
         resolveUrl: "/liff/store/resolve",
+        webResolveUrl: "/liff/store/resolve-web",
         surveyBaseUrl: "/liff/survey",
+        ...BROWSER_ANSWER_DOCUMENTS,
       },
     });
+  },
+
+  /**
+   * ブラウザ回答（LINE ログインなし）で店舗専用アンケートに入る。メールで URL を受け取った人・PC の人向け。
+   * body: { entry_code, web_token? }。web_token が正しければ同じ回答者を使う（同一ブラウザ1回まで）。
+   * B/C を届ける先がないのでサイクルは作らない＝A だけで完結する。
+   */
+  async resolveStoreWebEntry(req: Request, res: Response): Promise<void> {
+    const entryCode = stringValue(req.body.entry_code).trim();
+    if (!entryCode) throw new HttpError(404, "このお店のアンケートが見つかりませんでした。");
+    const actor = resolveWebActor(req.body.web_token);
+
+    const resolution = await storeEntryService.resolveEntry(entryCode, actor.userId, null, { browser: true });
+    if (!resolution) {
+      throw new HttpError(404, "このお店のアンケートが見つかりませんでした。");
+    }
+    logger.info("storeEntry.web.resolved", { projectId: resolution.projectId, issued: actor.issued });
+    res.json({ ok: true, assignment_id: resolution.assignmentId, project_id: resolution.projectId, web_token: actor.token });
+  },
+
+  /** デモ案件のブラウザ回答の入口。resolveStoreWebEntry と同じ扱い。 */
+  async resolveDemoWebEntry(req: Request, res: Response): Promise<void> {
+    const projectId = stringValue(req.body.entry_code).trim();
+    if (!isUuid(projectId)) throw new HttpError(404, "このデモアンケートが見つかりませんでした。");
+    const actor = resolveWebActor(req.body.web_token);
+
+    const resolution = await storeEntryService.resolveDemoEntry(projectId, actor.userId, null);
+    if (!resolution) {
+      throw new HttpError(404, "このデモアンケートが見つかりませんでした。");
+    }
+    res.json({ ok: true, assignment_id: resolution.assignmentId, project_id: resolution.projectId, web_token: actor.token });
   },
 
   /**
@@ -2810,7 +2884,9 @@ export const liffController = {
         liffId,
         entryCode: projectId,
         resolveUrl: "/liff/demo/resolve",
+        webResolveUrl: "/liff/demo/resolve-web",
         surveyBaseUrl: "/liff/survey",
+        ...BROWSER_ANSWER_DOCUMENTS,
       },
     });
   },

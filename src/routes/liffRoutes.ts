@@ -219,8 +219,11 @@ liffRoutes.post("/pool-questions/:questionId/skip", asyncHandler(liffController.
 // 店舗専用アンケート流入（専用URL / QR）
 liffRoutes.get("/store", asyncHandler(liffController.storeEntryPage));
 liffRoutes.post("/store/resolve", asyncHandler(liffController.resolveStoreEntry));
+// ブラウザ回答（LINE ログインなし）。メール等で URL を受け取った人・PC の人が A に答えるための入口。
+liffRoutes.post("/store/resolve-web", asyncHandler(liffController.resolveStoreWebEntry));
 liffRoutes.get("/demo", asyncHandler(liffController.demoEntryPage));
 liffRoutes.post("/demo/resolve", asyncHandler(liffController.resolveDemoEntry));
+liffRoutes.post("/demo/resolve-web", asyncHandler(liffController.resolveDemoWebEntry));
 
 // 案件一覧・詳細・保存・やりとり
 // NOTE: /projects/:id の静的セグメントより先に定義

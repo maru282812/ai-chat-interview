@@ -1,5 +1,6 @@
 import { env } from "../config/env";
 import { logger } from "../lib/logger";
+import { isWebRespondentId } from "../lib/webRespondent";
 import type { LineMessage } from "../types/domain";
 
 const lineApiBaseUrl = "https://api.line.me/v2/bot";
@@ -93,6 +94,11 @@ export const lineMessagingService = {
 
   async push(userId: string, messages: LineMessage[]): Promise<void> {
     if (messages.length === 0) {
+      return;
+    }
+    // ブラウザ回答者（"web:<uuid>"）には LINE がない。どの経路から呼ばれても送らない（最後の砦）。
+    if (isWebRespondentId(userId)) {
+      logger.info("line.push.skipWebRespondent", { userId, messageCount: messages.length });
       return;
     }
 
