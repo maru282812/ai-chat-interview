@@ -1,0 +1,77 @@
+<script>
+  // 配布用URL / QR 画像のコピー（案件編集の「配布用URL / QRコード」と印刷用チラシで共用）。
+  //   <button data-copy-text="URL" data-copy-select="#要素">   … URL をコピー。失敗時は要素を選択状態にする
+  //   <button data-copy-qr="/…/qr.svg?size=600">               … SVG を PNG に描き直して画像としてコピー
+  //   <p data-copy-status>                                      … 結果の表示先（無ければ表示しない）
+  // QR を PNG にするのは、LINE・Word・スライドへそのまま貼れる形にするため。
+  (function () {
+    const status = document.querySelector('[data-copy-status]');
+    function say(text, ok) {
+      if (!status) return;
+      status.textContent = text;
+      status.style.color = ok ? '#2a6' : '#b33';
+    }
+    function selectNode(selector) {
+      const el = selector ? document.querySelector(selector) : null;
+      const sel = window.getSelection();
+      if (!el || !sel) return;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    function qrPngBlob(src) {
+      return fetch(src, { credentials: 'same-origin' })
+        .then(function (res) {
+          if (!res.ok) throw new Error('qr ' + res.status);
+          return res.text();
+        })
+        .then(function (svg) {
+          return new Promise(function (resolve, reject) {
+            const img = new Image();
+            img.onload = function () {
+              const size = 600;
+              const canvas = document.createElement('canvas');
+              canvas.width = size;
+              canvas.height = size;
+              const ctx = canvas.getContext('2d');
+              ctx.fillStyle = '#fff';
+              ctx.fillRect(0, 0, size, size);
+              ctx.drawImage(img, 0, 0, size, size);
+              canvas.toBlob(function (blob) { blob ? resolve(blob) : reject(new Error('toBlob')); }, 'image/png');
+            };
+            img.onerror = function () { reject(new Error('svg load')); };
+            img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+          });
+        });
+    }
+    document.querySelectorAll('[data-copy-text]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const text = btn.getAttribute('data-copy-text') || '';
+        const fallback = function () {
+          // クリップボードが使えない環境では URL を選択状態にして手でコピーしてもらう
+          selectNode(btn.getAttribute('data-copy-select'));
+          say('自動でコピーできなかったため、URLを選択しました。Ctrl+C（⌘+C）でコピーしてください', false);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function () { say('URLをコピーしました', true); }, fallback);
+        } else {
+          fallback();
+        }
+      });
+    });
+    document.querySelectorAll('[data-copy-qr]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (!navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem === 'undefined') {
+          say('このブラウザは画像のコピーに対応していません。QRを右クリックして保存してください', false);
+          return;
+        }
+        // Safari はクリック直後に write を呼ぶ必要があるため、Blob は Promise のまま渡す
+        navigator.clipboard
+          .write([new ClipboardItem({ 'image/png': qrPngBlob(btn.getAttribute('data-copy-qr') || '') })])
+          .then(function () { say('QR画像をコピーしました（貼り付けできます）', true); })
+          .catch(function () { say('QR画像をコピーできませんでした。QRを右クリックして保存してください', false); });
+      });
+    });
+  })();
+</script>

@@ -137,13 +137,13 @@
           <div style="color:#666"><%= distribution.kind === 'demo_entry' ? 'デモ用URL（このQRを読めばすぐ回答できます）' : distribution.kind === 'store_entry' ? '店舗専用URL（entry_code）' : '案件詳細ページURL' %></div>
           <code id="distribution-url" style="word-break:break-all"><%= distribution.url %></code>
           <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
-            <button type="button" class="btn-secondary" id="copy-distribution-url" data-url="<%= distribution.url %>">URLをコピー</button>
-            <button type="button" class="btn-secondary" id="copy-distribution-qr" data-src="/admin/projects/<%= project.id %>/qr.svg?size=600">QR画像をコピー</button>
+            <button type="button" class="btn-secondary" id="copy-distribution-url" data-copy-text="<%= distribution.url %>" data-copy-select="#distribution-url">URLをコピー</button>
+            <button type="button" class="btn-secondary" id="copy-distribution-qr" data-copy-qr="/admin/projects/<%= project.id %>/qr.svg?size=600">QR画像をコピー</button>
           </div>
           <% if (distribution.kind === 'demo_entry' && !project.entry_code) { %>
             <p class="muted" style="margin:6px 0 0;font-size:12px">「店舗コード（entry_code）」を設定すると、URLが短くなり案件IDも出なくなります（例: tsukuba-wanwan-land-demo）。</p>
           <% } %>
-          <p id="copy-distribution-status" role="status" aria-live="polite" style="margin:6px 0 0;font-size:12px;color:#2a6;min-height:1em"></p>
+          <p id="copy-distribution-status" data-copy-status role="status" aria-live="polite" style="margin:6px 0 0;font-size:12px;color:#2a6;min-height:1em"></p>
           <div style="margin-top:4px;display:flex;gap:12px;flex-wrap:wrap">
             <a href="/admin/projects/<%= project.id %>/qr.svg?size=1000" download="qr-<%= project.entry_code || project.id %>.svg">QRをダウンロード（SVG）</a>
             <a href="/admin/projects/<%= project.id %>/flyer" target="_blank" rel="noopener">印刷用チラシを開く</a>
@@ -156,75 +156,6 @@
     <% } %>
   </details>
   <script>
-    // URL / QR 画像のコピー。QR は SVG を PNG に描き直してクリップボードへ（Word・LINE・スライドへそのまま貼れる形）。
-    (function () {
-      const status = document.getElementById('copy-distribution-status');
-      const urlBtn = document.getElementById('copy-distribution-url');
-      const qrBtn = document.getElementById('copy-distribution-qr');
-      function say(text, ok) {
-        if (!status) return;
-        status.textContent = text;
-        status.style.color = ok ? '#2a6' : '#b33';
-      }
-      if (urlBtn) urlBtn.addEventListener('click', function () {
-        const url = urlBtn.getAttribute('data-url') || '';
-        const done = function () { say('URLをコピーしました', true); };
-        const fallback = function () {
-          // クリップボードが使えない環境では URL を選択状態にして手でコピーしてもらう
-          const code = document.getElementById('distribution-url');
-          const sel = window.getSelection();
-          if (code && sel) {
-            const range = document.createRange();
-            range.selectNodeContents(code);
-            sel.removeAllRanges();
-            sel.addRange(range);
-          }
-          say('自動でコピーできなかったため、URLを選択しました。Ctrl+C（⌘+C）でコピーしてください', false);
-        };
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(url).then(done, fallback);
-        } else {
-          fallback();
-        }
-      });
-      function qrPngBlob(src) {
-        return fetch(src, { credentials: 'same-origin' })
-          .then(function (res) {
-            if (!res.ok) throw new Error('qr ' + res.status);
-            return res.text();
-          })
-          .then(function (svg) {
-            return new Promise(function (resolve, reject) {
-              const img = new Image();
-              img.onload = function () {
-                const size = 600;
-                const canvas = document.createElement('canvas');
-                canvas.width = size;
-                canvas.height = size;
-                const ctx = canvas.getContext('2d');
-                ctx.fillStyle = '#fff';
-                ctx.fillRect(0, 0, size, size);
-                ctx.drawImage(img, 0, 0, size, size);
-                canvas.toBlob(function (blob) { blob ? resolve(blob) : reject(new Error('toBlob')); }, 'image/png');
-              };
-              img.onerror = function () { reject(new Error('svg load')); };
-              img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-            });
-          });
-      }
-      if (qrBtn) qrBtn.addEventListener('click', function () {
-        const src = qrBtn.getAttribute('data-src') || '';
-        if (!navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem === 'undefined') {
-          say('このブラウザは画像のコピーに対応していません。「QRをダウンロード」を使ってください', false);
-          return;
-        }
-        // Safari はクリック直後に write を呼ぶ必要があるため、Blob は Promise のまま渡す
-        navigator.clipboard
-          .write([new ClipboardItem({ 'image/png': qrPngBlob(src) })])
-          .then(function () { say('QR画像をコピーしました（貼り付けできます）', true); })
-          .catch(function () { say('QR画像をコピーできませんでした。「QRをダウンロード」を使ってください', false); });
-      });
-    })();
     // QR 画像は開いたときに初めて読み込む
     (function () {
       const d = document.getElementById('distribution-qr');
@@ -238,6 +169,7 @@
       });
     })();
   </script>
+  <%- include("../../partials/copy-share-script") %>
 <% } %>
 
 <form class="card stack" method="post" action="<%= action %>" onsubmit="return confirmPromptPackageSelection();">

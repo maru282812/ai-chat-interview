@@ -33,6 +33,8 @@
         text-decoration: none;
         cursor: pointer;
       }
+      .toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+      .copy-status { max-width: 720px; margin: -12px auto 12px; font-size: 13px; min-height: 1em; text-align: right; }
       .toolbar .primary {
         background: #2ca87a;
         color: #fff;
@@ -130,7 +132,7 @@
 
       @media print {
         body { background: #fff; padding: 0; }
-        .toolbar, .warn .noprint { display: none !important; }
+        .toolbar, .copy-status, .warn .noprint { display: none !important; }
         .warn { display: none !important; }
         .flyer { box-shadow: none; border-radius: 0; max-width: 100%; padding: 24px; }
       }
@@ -140,9 +142,14 @@
     <div class="toolbar">
       <a href="<%= backUrl %>">← 一覧に戻る</a>
       <% if (entryUrl) { %>
-        <button class="primary" onclick="window.print()">🖨 印刷 / PDFに保存</button>
+        <div class="toolbar-actions">
+          <button type="button" data-copy-text="<%= entryUrl %>" data-copy-select="#flyer-url">🔗 URLをコピー</button>
+          <button type="button" data-copy-qr="<%= typeof qrSrc !== 'undefined' ? qrSrc : `/admin/store-surveys/${projectId}/qr.svg?size=600` %>">🖼 QR画像をコピー</button>
+          <button class="primary" onclick="window.print()">🖨 印刷 / PDFに保存</button>
+        </div>
       <% } %>
     </div>
+    <p class="copy-status" data-copy-status role="status" aria-live="polite"></p>
 
     <% const flyerWarnings = typeof warnings !== 'undefined' ? warnings : []; %>
     <% if (!entryUrl) { %>
@@ -194,9 +201,10 @@
 
         <div class="url-line">
           <span class="label">QRが読み取れない場合：</span><br>
-          <%= entryUrl %>
+          <span id="flyer-url"><%= entryUrl %></span>
         </div>
       </div>
     <% } %>
+    <%- include("../../partials/copy-share-script") %>
   </body>
 </html>
