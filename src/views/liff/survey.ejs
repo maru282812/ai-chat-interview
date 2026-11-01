@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title><%= project?.user_display_title || project?.name || 'アンケート' %></title>
+  <title><%= project?.user_display_title || String(project?.name || '').replace(/^\d{4}-C\d+-\d+[_＿]\s*/i, '') || project?.name || 'アンケート' %></title>
   <% if (locals.liffId) { %>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <%- include('../partials/liff-auth') %>

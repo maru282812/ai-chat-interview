@@ -78,3 +78,31 @@ test("アーカイブ済みのデモ案件は QR から回答できないと警�
     assert.equal(d.warnings.length, 1);
   });
 });
+
+test("デモ案件に entry_code があれば ?demo=<コード> にして案件IDを URL に出さない", () => {
+  withSurveyLiff(() => {
+    const id = "00000000-0000-4000-8000-000000000a01";
+    const d = resolveProjectDistribution({
+      id, status: "published", visibility_type: "public", entry_code: "tsukuba-wanwan-land-demo", is_demo: true
+    });
+    assert.equal(d.kind, "demo_entry");
+    assert.equal(d.url, `https://liff.line.me/${SURVEY_ID}?demo=tsukuba-wanwan-land-demo`);
+    assert.ok(!d.url?.includes(id), "UUID を出さない");
+    assert.deepEqual(d.warnings, []);
+  });
+});
+
+test("LIFF 未設定でもデモのコード付きURLは /liff/demo?code= で UUID を含まない", () => {
+  const target = env as unknown as { LINE_LIFF_ID_SURVEY?: string; LINE_LIFF_ID?: string };
+  const saved = { s: target.LINE_LIFF_ID_SURVEY, d: target.LINE_LIFF_ID };
+  target.LINE_LIFF_ID_SURVEY = undefined;
+  target.LINE_LIFF_ID = undefined;
+  try {
+    const d = resolveProjectDistribution({ id: "p-uuid", status: "published", entry_code: "demo-x", is_demo: true });
+    assert.ok(d.url?.includes("/liff/demo?code=demo-x"), d.url ?? "");
+    assert.ok(!d.url?.includes("p-uuid"));
+  } finally {
+    target.LINE_LIFF_ID_SURVEY = saved.s;
+    target.LINE_LIFF_ID = saved.d;
+  }
+});

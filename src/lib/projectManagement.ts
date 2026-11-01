@@ -39,3 +39,17 @@ export function managementIdentity(project: { name?: string | null; management_y
     code: project.company_code ?? match?.[2] ?? null,
   };
 }
+
+/** 案件名の先頭に付く管理番号（例: 2026-C123-0001_）。社内向けなので回答者には見せない。 */
+const MANAGEMENT_PREFIX_RE = /^\d{4}-C\d+-\d+[_＿]\s*/i;
+
+/**
+ * 回答者・配布物（回答画面・チラシ・LINE通知）に出す案件タイトル。
+ * 回答者向けタイトル（user_display_title）を優先し、無ければ案件名から管理番号を外して出す。
+ */
+export function respondentProjectTitle(project: { user_display_title?: unknown; name?: string | null }): string {
+  const display = typeof project.user_display_title === "string" ? project.user_display_title.trim() : "";
+  if (display) return display;
+  const name = (project.name ?? "").trim();
+  return name.replace(MANAGEMENT_PREFIX_RE, "").trim() || name;
+}

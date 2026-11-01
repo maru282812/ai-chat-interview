@@ -1,3 +1,4 @@
+import { respondentProjectTitle } from "../lib/projectManagement";
 import type { Request, Response } from "express";
 import { env } from "../config/env";
 import { STORAGE_BUCKET, storagePaths } from "../config/storage";
@@ -335,6 +336,14 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** uuid 型カラムへ直接渡る id の形式検証。形式不正は DB に渡す前に存在しない扱い（404）にする。 */
 function isUuid(value: string): boolean {
   return UUID_RE.test(value);
+}
+
+/**
+ * デモ入口が受けるキー。旧形式の案件ID（UUID）か、entry_code（英数・ハイフン・アンダースコア）。
+ * それ以外は DB に渡す前に存在しない扱い（404）にする。
+ */
+function isDemoEntryKey(value: string): boolean {
+  return isUuid(value) || /^[A-Za-z0-9_-]{1,64}$/.test(value);
 }
 
 function resolveMenuActionKey(value: unknown, fallback: string): string {
@@ -910,7 +919,7 @@ export const liffController = {
       logger.info("[surveyPage] branch=screeningFailed", { assignmentId });
       const DEFAULT_FAIL_MESSAGE = "今回はご参加いただけませんでした。またの機会にご協力をお願いします。";
       res.render("liff/survey", {
-        title: project.user_display_title || project.name,
+        title: respondentProjectTitle(project),
         screeningFailed: true,
         screeningFailMessage: project.screening_config?.fail_message?.trim() || DEFAULT_FAIL_MESSAGE,
         errorMessage: null,
@@ -1004,7 +1013,7 @@ export const liffController = {
     if (assignment.status === "completed") {
       logger.info("[surveyPage] branch=alreadyCompleted", { assignmentId });
       res.render("liff/survey", {
-        title: project.user_display_title || project.name,
+        title: respondentProjectTitle(project),
         alreadyCompleted: true,
         errorMessage: null,
         project: null,
@@ -1134,11 +1143,11 @@ export const liffController = {
     const DEFAULT_FAIL_MSG = "今回はご参加いただけませんでした。またの機会にご協力をお願いします。";
     const webAnswer = isWebRespondentId(assignment.user_id);
     const renderData = {
-      title: project.user_display_title || project.name,
+      title: respondentProjectTitle(project),
       project,
       projectData: {
         id: project.id,
-        name: project.user_display_title || project.name,
+        name: respondentProjectTitle(project),
         display_mode: project.display_mode ?? "survey_question",
       },
       questions: questionsForClient,
@@ -2831,7 +2840,7 @@ export const liffController = {
   /** デモ案件のブラウザ回答の入口。resolveStoreWebEntry と同じ扱い。 */
   async resolveDemoWebEntry(req: Request, res: Response): Promise<void> {
     const projectId = stringValue(req.body.entry_code).trim();
-    if (!isUuid(projectId)) throw new HttpError(404, "このデモアンケートが見つかりませんでした。");
+    if (!isDemoEntryKey(projectId)) throw new HttpError(404, "このデモアンケートが見つかりませんでした。");
     const actor = resolveWebActor(req.body.web_token);
 
     const resolution = await storeEntryService.resolveDemoEntry(projectId, actor.userId, null);
@@ -2873,9 +2882,13 @@ export const liffController = {
    */
   async demoEntryPage(req: Request, res: Response): Promise<void> {
     const liffId = env.LINE_LIFF_ID_SURVEY ?? env.LINE_LIFF_ID ?? "";
+    // ?code=<entry_code>（新形式）を優先し、無ければ旧形式の ?project_id=<UUID>。
+    const liffState = parseLiffStateQuery(req.query["liff.state"]);
     const projectId =
+      stringValue(req.query.code).trim() ||
+      (liffState.get("code") ?? "").trim() ||
       stringValue(req.query.project_id).trim() ||
-      (parseLiffStateQuery(req.query["liff.state"]).get("project_id") ?? "").trim();
+      (liffState.get("project_id") ?? "").trim();
 
     res.render("liff/store-entry", {
       title: "デモアンケート",
@@ -2895,7 +2908,7 @@ export const liffController = {
   async resolveDemoEntry(req: Request, res: Response): Promise<void> {
     const verifiedUser = await liffAuthService.verifyIdToken(bearerToken(req));
     const projectId = stringValue(req.body.entry_code).trim();
-    if (!isUuid(projectId)) {
+    if (!isDemoEntryKey(projectId)) {
       throw new HttpError(404, "このデモアンケートが見つかりませんでした。");
     }
 
@@ -2951,7 +2964,7 @@ export const liffController = {
 
     const items = filtered.map(p => ({
       id: p.id,
-      title: (p as unknown as Record<string, unknown>).user_display_title || p.name,
+      title: respondentProjectTitle(p),
       category: (p as unknown as Record<string, unknown>).category ?? null,
       reward_points: p.reward_points,
       estimated_minutes: (p as unknown as Record<string, unknown>).estimated_minutes ?? null,
@@ -3011,7 +3024,7 @@ export const liffController = {
       ok: true,
       project: {
         id: project.id,
-        title: (project as unknown as Record<string, unknown>).user_display_title || project.name,
+        title: respondentProjectTitle(project),
         category: (project as unknown as Record<string, unknown>).category ?? null,
         reward_points: project.reward_points,
         estimated_minutes: (project as unknown as Record<string, unknown>).estimated_minutes ?? null,
@@ -3162,7 +3175,7 @@ export const liffController = {
       const p = projectMap[f.project_id] as Record<string, unknown> | undefined;
       return {
         id: f.project_id,
-        title: p ? (String(p.user_display_title || p.name || "")) : "（削除済み）",
+        title: p ? respondentProjectTitle(p) : "（削除済み）",
         category: p?.category ?? null,
         reward_points: p?.reward_points ?? null,
         estimated_minutes: p?.estimated_minutes ?? null,
@@ -3236,7 +3249,7 @@ export const liffController = {
       return {
         assignment_id: a.id,
         project_id: a.project_id,
-        title: p ? String(p.user_display_title || p.name || "") : "不明",
+        title: p ? respondentProjectTitle(p) : "不明",
         reward_points: p?.reward_points ?? null,
         estimated_minutes: p?.estimated_minutes ?? null,
         status: a.status,
@@ -3260,7 +3273,7 @@ export const liffController = {
         return {
           application_id: a.id,
           project_id: a.project_id,
-          title: p ? String(p.user_display_title || p.name || "") : "不明",
+          title: p ? respondentProjectTitle(p) : "不明",
           reward_points: p?.reward_points ?? null,
           estimated_minutes: p?.estimated_minutes ?? null,
           status: a.status,

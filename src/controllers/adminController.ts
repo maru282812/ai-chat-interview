@@ -2,7 +2,7 @@
 import type { Request, Response } from "express";
 import { isDemoProject } from "../lib/demoProject";
 import { HttpError } from "../lib/http";
-import { parseProjectManagement, managementIdentity } from '../lib/projectManagement';
+import { parseProjectManagement, managementIdentity, respondentProjectTitle } from '../lib/projectManagement';
 import { ADMIN_MEMO_MAX_LENGTH, normalizeAdminMemo } from "../lib/adminMemo";
 import { redirectWithFlash, redirectWithError } from "../lib/adminFlash";
 import { formatDateTimeJst, fromDateTimeLocalJst, statusLabel } from "../lib/adminView";
@@ -3413,7 +3413,7 @@ export const adminController = {
       const created = await projectRepository.create({
         name,
         visibility_type: bodyString(req.body.visibility_type) === 'private_store' ? 'private_store' : 'public',
-        entry_code: bodyString(req.body.visibility_type) === 'private_store' ? bodyString(req.body.entry_code).trim() || null : null,
+        entry_code: await entryCodeFromProjectForm(req, null),
         user_display_title: bodyString(req.body.user_display_title) || null,
         completion_message: bodyString(req.body.completion_message).trim() || null,
         ...await projectManagementFromRequest(req),
@@ -3602,9 +3602,7 @@ export const adminController = {
         estimated_minutes: parseOptionalInteger(req.body.estimated_minutes) ?? null,
         max_respondents: parseOptionalInteger(req.body.max_respondents) ?? null,
         visibility_type: bodyString(req.body.visibility_type) === "private_store" ? "private_store" : "public",
-        entry_code: bodyString(req.body.visibility_type) === "private_store"
-          ? (bodyString(req.body.entry_code) || null)
-          : null,
+        entry_code: await entryCodeFromProjectForm(req, existing),
         apply_mode: bodyString(req.body.apply_mode) === "auto" ? "auto" : "manual",
         tags: bodyString(req.body.tags)
           .split(",")
@@ -10104,7 +10102,7 @@ export const adminController = {
       }
     }
 
-    const surveyTitle = project.user_display_title || project.name;
+    const surveyTitle = respondentProjectTitle(project);
     res.render("admin/store-surveys/flyer", {
       title: `配布用QR - ${clientName || surveyTitle}`,
       storeName: clientName,
@@ -10125,7 +10123,7 @@ export const adminController = {
   async projectFlyer(req: Request, res: Response): Promise<void> {
     const project = await projectRepository.getById(routeParam(req, "projectId"));
     const distribution = resolveProjectDistribution(project);
-    const surveyTitle = project.user_display_title || project.name;
+    const surveyTitle = respondentProjectTitle(project);
     res.render("admin/store-surveys/flyer", {
       title: `配布用QR - ${surveyTitle}`,
       storeName: null,
@@ -10339,7 +10337,7 @@ export const adminController = {
       const startUrl = buildProjectStartUrl(result.assignmentId);
       await lineMessagingService.push(result.application.line_user_id, [
         buildApplicationAcceptedFlex({
-          projectTitle: result.project.user_display_title || result.project.name,
+          projectTitle: respondentProjectTitle(result.project),
           rewardPoints: result.project.reward_points,
           estimatedMinutes: (result.project as unknown as { estimated_minutes?: number | null }).estimated_minutes ?? null,
           surveyUrl: startUrl.url,
@@ -10377,7 +10375,7 @@ export const adminController = {
         const project = await projectRepository.getById(result.application.project_id);
         await lineMessagingService.push(result.application.line_user_id, [
           buildApplicationRejectedFlex({
-            projectTitle: project.user_display_title || project.name,
+            projectTitle: respondentProjectTitle(project),
             projectsUrl: buildProjectsListLiffUrl(),
           }),
         ]);
@@ -10426,7 +10424,7 @@ export const adminController = {
           const startUrl = buildProjectStartUrl(result.assignmentId);
           await lineMessagingService.push(result.application.line_user_id, [
             buildApplicationAcceptedFlex({
-              projectTitle: result.project.user_display_title || result.project.name,
+              projectTitle: respondentProjectTitle(result.project),
               rewardPoints: result.project.reward_points,
               estimatedMinutes:
                 (result.project as unknown as { estimated_minutes?: number | null })
@@ -10453,7 +10451,7 @@ export const adminController = {
             const project = await projectRepository.getById(result.application.project_id);
             await lineMessagingService.push(result.application.line_user_id, [
               buildApplicationRejectedFlex({
-                projectTitle: project.user_display_title || project.name,
+                projectTitle: respondentProjectTitle(project),
                 projectsUrl: buildProjectsListLiffUrl(),
               }),
             ]);
@@ -10953,6 +10951,28 @@ async function sendQrSvg(res: Response, url: string, sizeQuery: unknown): Promis
   res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
   res.setHeader("Cache-Control", "private, max-age=300");
   res.send(svg);
+}
+
+/**
+ * 案件フォームの entry_code。店舗専用（専用URL）とデモ（?demo=<コード>）のときだけ保存し、
+ * それ以外は null（通常案件は案件詳細ページで配るためコードを持たない）。
+ * 変更したときだけ形式・重複を検証する（既存の店舗コードを再保存で弾かないため）。
+ */
+async function entryCodeFromProjectForm(
+  req: Request,
+  existing: { id: string; entry_code?: string | null; is_demo?: boolean | null } | null
+): Promise<string | null> {
+  const isStore = bodyString(req.body.visibility_type) === "private_store";
+  const isDemo = req.body.is_demo_present
+    ? req.body.is_demo === "true" || req.body.is_demo === "on"
+    : existing?.is_demo === true;
+  if (!isStore && !isDemo) return null;
+  const code = bodyString(req.body.entry_code).trim();
+  if (!code) return null;
+  if (code === (existing?.entry_code ?? "").trim()) return code;
+  const validation = await validateEntryCode(code, existing?.id ?? "");
+  if (!validation.ok) throw new HttpError(400, validation.error);
+  return validation.code;
 }
 
 type EntryCodeValidation =

@@ -218,13 +218,18 @@ export function buildMemberJoinLiffUrl(): string {
   return buildLiffDeepLink("/consent", getMypageLiffId(), { mode: "initial", redirect: "/liff/mypage" });
 }
 
-/** デモ案件 (Migration 120) の配布用URL。店舗QRと同じ形でルートが受けて /liff/demo へ 302 する。 */
-export function buildDemoEntryLiffUrl(projectId: string): string {
+/**
+ * デモ案件 (Migration 120) の配布用URL。店舗QRと同じ形でルートが受けて /liff/demo へ 302 する。
+ * entry_code があれば ?demo=<コード> にして案件ID（UUID）を URL に出さない（短くもなる）。
+ * 未設定なら従来どおり UUID の ?demo_project= で出す（配布済みQRもこの形で生き続ける）。
+ */
+export function buildDemoEntryLiffUrl(projectId: string, entryCode?: string | null): string {
+  const code = entryCode?.trim() || null;
   const liffId = getSurveyLiffId();
   if (liffId) {
-    return buildLiffDeepLink("", liffId, { demo_project: projectId });
+    return buildLiffDeepLink("", liffId, code ? { demo: code } : { demo_project: projectId });
   }
-  return buildAbsoluteUrl("/liff/demo", { project_id: projectId });
+  return buildAbsoluteUrl("/liff/demo", code ? { code } : { project_id: projectId });
 }
 
 /**

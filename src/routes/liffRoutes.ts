@@ -122,7 +122,18 @@ liffRoutes.get("/", (req, res) => {
     return;
   }
 
-  // デモ案件 (Migration 120) の配布用QR（liff.line.me/{id}?demo_project=xxx）の着地。店舗QRと同じ形。
+  // デモ案件 (Migration 120) の配布用QR（liff.line.me/{id}?demo=<entry_code>）の着地。店舗QRと同じ形。
+  const demoCode = (() => {
+    const direct = typeof req.query.demo === "string" ? req.query.demo.trim() : "";
+    if (direct) return direct;
+    return (liffStateParams.get("demo") ?? "").trim();
+  })();
+  if (demoCode) {
+    res.redirect(302, `/liff/demo?code=${encodeURIComponent(demoCode)}${handoffSuffix}`);
+    return;
+  }
+
+  // 旧形式（liff.line.me/{id}?demo_project=<UUID>）。配布済みQRのために残す。
   const demoProjectId = (() => {
     const direct = typeof req.query.demo_project === "string" ? req.query.demo_project.trim() : "";
     if (direct) return direct;
