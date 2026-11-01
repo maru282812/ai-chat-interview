@@ -135,9 +135,17 @@
              width="180" height="180" style="border:1px solid #ddd;border-radius:4px" />
         <div style="flex:1;min-width:220px;font-size:13px">
           <div style="color:#666"><%= distribution.kind === 'demo_entry' ? 'デモ用URL（このQRを読めばすぐ回答できます）' : distribution.kind === 'store_entry' ? '店舗専用URL（entry_code）' : '案件詳細ページURL' %></div>
-          <code style="word-break:break-all"><%= distribution.url %></code>
-          <div style="margin-top:8px;display:flex;gap:12px;flex-wrap:wrap">
-            <a href="/admin/projects/<%= project.id %>/qr.svg?size=1000" download="qr-<%= project.id %>.svg">QRをダウンロード（SVG）</a>
+          <code id="distribution-url" style="word-break:break-all"><%= distribution.url %></code>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn-secondary" id="copy-distribution-url" data-url="<%= distribution.url %>">URLをコピー</button>
+            <button type="button" class="btn-secondary" id="copy-distribution-qr" data-src="/admin/projects/<%= project.id %>/qr.svg?size=600">QR画像をコピー</button>
+          </div>
+          <% if (distribution.kind === 'demo_entry' && !project.entry_code) { %>
+            <p class="muted" style="margin:6px 0 0;font-size:12px">「店舗コード（entry_code）」を設定すると、URLが短くなり案件IDも出なくなります（例: tsukuba-wanwan-land-demo）。</p>
+          <% } %>
+          <p id="copy-distribution-status" role="status" aria-live="polite" style="margin:6px 0 0;font-size:12px;color:#2a6;min-height:1em"></p>
+          <div style="margin-top:4px;display:flex;gap:12px;flex-wrap:wrap">
+            <a href="/admin/projects/<%= project.id %>/qr.svg?size=1000" download="qr-<%= project.entry_code || project.id %>.svg">QRをダウンロード（SVG）</a>
             <a href="/admin/projects/<%= project.id %>/flyer" target="_blank" rel="noopener">印刷用チラシを開く</a>
           </div>
         </div>
@@ -148,6 +156,75 @@
     <% } %>
   </details>
   <script>
+    // URL / QR 画像のコピー。QR は SVG を PNG に描き直してクリップボードへ（Word・LINE・スライドへそのまま貼れる形）。
+    (function () {
+      const status = document.getElementById('copy-distribution-status');
+      const urlBtn = document.getElementById('copy-distribution-url');
+      const qrBtn = document.getElementById('copy-distribution-qr');
+      function say(text, ok) {
+        if (!status) return;
+        status.textContent = text;
+        status.style.color = ok ? '#2a6' : '#b33';
+      }
+      if (urlBtn) urlBtn.addEventListener('click', function () {
+        const url = urlBtn.getAttribute('data-url') || '';
+        const done = function () { say('URLをコピーしました', true); };
+        const fallback = function () {
+          // クリップボードが使えない環境では URL を選択状態にして手でコピーしてもらう
+          const code = document.getElementById('distribution-url');
+          const sel = window.getSelection();
+          if (code && sel) {
+            const range = document.createRange();
+            range.selectNodeContents(code);
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+          say('自動でコピーできなかったため、URLを選択しました。Ctrl+C（⌘+C）でコピーしてください', false);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(done, fallback);
+        } else {
+          fallback();
+        }
+      });
+      function qrPngBlob(src) {
+        return fetch(src, { credentials: 'same-origin' })
+          .then(function (res) {
+            if (!res.ok) throw new Error('qr ' + res.status);
+            return res.text();
+          })
+          .then(function (svg) {
+            return new Promise(function (resolve, reject) {
+              const img = new Image();
+              img.onload = function () {
+                const size = 600;
+                const canvas = document.createElement('canvas');
+                canvas.width = size;
+                canvas.height = size;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, 0, size, size);
+                ctx.drawImage(img, 0, 0, size, size);
+                canvas.toBlob(function (blob) { blob ? resolve(blob) : reject(new Error('toBlob')); }, 'image/png');
+              };
+              img.onerror = function () { reject(new Error('svg load')); };
+              img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+            });
+          });
+      }
+      if (qrBtn) qrBtn.addEventListener('click', function () {
+        const src = qrBtn.getAttribute('data-src') || '';
+        if (!navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem === 'undefined') {
+          say('このブラウザは画像のコピーに対応していません。「QRをダウンロード」を使ってください', false);
+          return;
+        }
+        // Safari はクリック直後に write を呼ぶ必要があるため、Blob は Promise のまま渡す
+        navigator.clipboard
+          .write([new ClipboardItem({ 'image/png': qrPngBlob(src) })])
+          .then(function () { say('QR画像をコピーしました（貼り付けできます）', true); })
+          .catch(function () { say('QR画像をコピーできませんでした。「QRをダウンロード」を使ってください', false); });
+      });
+    })();
     // QR 画像は開いたときに初めて読み込む
     (function () {
       const d = document.getElementById('distribution-qr');
@@ -458,8 +535,13 @@
         </label>
         <label>
           店舗コード（entry_code）
-          <input type="text" name="entry_code" id="entry_code_input" value="<%= project?.entry_code || '' %>" placeholder="例: abc（店舗専用時に必須・一意）" autocomplete="off" />
+          <input type="text" name="entry_code" id="entry_code_input" value="<%= project?.entry_code || '' %>" placeholder="例: tsukuba-wanwan-land-a（店舗専用時は必須・一意）" autocomplete="off" pattern="[A-Za-z0-9_\-]+" title="半角英数・ハイフン・アンダースコア" />
+          <span class="muted" style="font-size:11px;display:block">店舗専用とデモ案件で使います。デモ案件に付けると配布URLが「?demo=コード」になり、案件IDが出なくなります。他の案件と同じコードは使えません（同じ店舗でも案件ごとに「-a」「-demo」などで分けてください）。</span>
         </label>
+        <div id="demo_url_preview" style="display:none;background:#f6f8f7;border:1px solid #d8e3e0;border-radius:8px;padding:10px 12px;font-size:13px;color:#445">
+          デモ用URLの末尾：<code id="demo_url_text"></code>
+          <p style="margin:6px 0 0;color:#789">保存すると上の「配布用URL / QRコード」がこの形に変わります。</p>
+        </div>
         <div id="store_url_preview" style="display:none;background:#f6f8f7;border:1px solid #d8e3e0;border-radius:8px;padding:10px 12px;font-size:13px;color:#445">
           専用URL：<code id="store_url_text"></code>
           <p style="margin:6px 0 0;color:#789">このURLをQRコード化して店舗に配布してください。</p>
@@ -485,9 +567,22 @@
                 preview.style.display = 'none';
               }
             }
+            const demoInput = document.getElementById('demo-toggle-input');
+            const demoPreview = document.getElementById('demo_url_preview');
+            const demoText = document.getElementById('demo_url_text');
+            function refreshDemo() {
+              if (!demoPreview || !demoText) return;
+              const code = (codeInput.value || '').trim();
+              const isDemo = !!(demoInput && demoInput.checked);
+              demoText.textContent = '?demo=' + encodeURIComponent(code);
+              demoPreview.style.display = isDemo && code ? '' : 'none';
+            }
             sel.addEventListener('change', refresh);
             codeInput.addEventListener('input', refresh);
+            codeInput.addEventListener('input', refreshDemo);
+            if (demoInput) demoInput.addEventListener('change', refreshDemo);
             refresh();
+            refreshDemo();
           })();
         </script>
       </div>

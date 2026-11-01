@@ -204,3 +204,38 @@ test("デモ入口: デモでない案件・アーカイブ済みは開かせな
     projectRepository.getById = original;
   }
 });
+
+test("デモ入口: entry_code（?demo=<コード>）でも引け、店舗アンケートのコードでは開かせない", async () => {
+  const originals = {
+    getById: projectRepository.getById,
+    findCode: projectRepository.findAnyByEntryCode,
+    getResp: respondentRepository.getByLineUserAndProject,
+    getAssign: projectAssignmentRepository.getByProjectRespondentAndCycle,
+  };
+  let getByIdCalled = false;
+  projectRepository.getById = async () => {
+    getByIdCalled = true;
+    return projectFixture(true);
+  };
+  respondentRepository.getByLineUserAndProject = async () => respondentFixture();
+  projectAssignmentRepository.getByProjectRespondentAndCycle = async () => ({ id: ASSIGNMENT_ID }) as ProjectAssignment;
+  try {
+    projectRepository.findAnyByEntryCode = async (code) =>
+      code === "tsukuba-wanwan-land-demo" ? projectFixture(true) : null;
+    const ok = await storeEntryService.resolveDemoEntry("tsukuba-wanwan-land-demo", LINE_USER_ID);
+    assert.equal(ok?.assignmentId, ASSIGNMENT_ID);
+    assert.equal(getByIdCalled, false, "コードは UUID として引かない");
+
+    // 同じ店舗の本番アンケート（デモでない）のコードではデモ入口に入れない
+    projectRepository.findAnyByEntryCode = async () => projectFixture(false);
+    assert.equal(await storeEntryService.resolveDemoEntry("tsukuba-wanwan-land-a", LINE_USER_ID), null);
+
+    projectRepository.findAnyByEntryCode = async () => null;
+    assert.equal(await storeEntryService.resolveDemoEntry("unknown-code", LINE_USER_ID), null);
+  } finally {
+    projectRepository.getById = originals.getById;
+    projectRepository.findAnyByEntryCode = originals.findCode;
+    respondentRepository.getByLineUserAndProject = originals.getResp;
+    projectAssignmentRepository.getByProjectRespondentAndCycle = originals.getAssign;
+  }
+});

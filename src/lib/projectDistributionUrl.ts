@@ -8,6 +8,7 @@ import { buildDemoEntryLiffUrl, buildProjectDetailLiffUrl, buildStoreEntryLiffUr
  *   詳細ページは getDiscoverableById（published × public × is_discoverable）を通るので、
  *   どれかが欠けると QR を読んでも 404 になる → warnings で知らせる（QR 自体は事前準備用に出す）。
  * - デモ案件（is_demo）: 公開区分に関係なくデモ専用の入口（/liff/demo 導線）。ステータス等の条件なしで回答できる。
+ *   entry_code があれば ?demo=<コード>（案件IDを出さない）、無ければ UUID の ?demo_project=。
  */
 export interface ProjectDistribution {
   kind: "store_entry" | "project_detail" | "demo_entry";
@@ -27,7 +28,7 @@ export function resolveProjectDistribution(project: {
 
   if (project.is_demo === true) {
     const demoWarnings = project.status === "archived" ? ["アーカイブ済みのため、QRから回答できません。"] : [];
-    return { kind: "demo_entry", url: buildDemoEntryLiffUrl(project.id), warnings: demoWarnings };
+    return { kind: "demo_entry", url: buildDemoEntryLiffUrl(project.id, project.entry_code), warnings: demoWarnings };
   }
   const isPublished = project.status === "published";
 

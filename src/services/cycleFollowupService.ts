@@ -18,6 +18,7 @@
  *   二重送信より未送信を選ぶ）。失敗はログに残して運用で拾う。
  */
 
+import { respondentProjectTitle } from "../lib/projectManagement";
 import { logger } from "../lib/logger";
 import { cycleGroupRepository, surveyCycleRepository } from "../repositories/cycleRepository";
 import { projectRepository } from "../repositories/projectRepository";
@@ -117,7 +118,7 @@ export const cycleFollowupService = {
   /** C の案内を LINE で送る。entry_code 付きの LIFF URL を渡してそのまま回答に入れる。 */
   async sendFollowup(cycle: SurveyCycle, group: CycleGroup): Promise<void> {
     const project = await projectRepository.getById(group.followup_project_id as string);
-    const title = project.user_display_title || project.name;
+    const title = respondentProjectTitle(project);
     const url = this.entryUrl(project);
 
     const text = `【${title}】\n\nその後、いかがお過ごしでしょうか。\nよろしければ最近のご様子をお聞かせください。\n\n${url}`;
@@ -208,7 +209,7 @@ export const cycleFollowupService = {
 
       try {
         const project = await projectRepository.getById(projectId);
-        const title = project.user_display_title || project.name;
+        const title = respondentProjectTitle(project);
         const text = `【${title}】\n\n本日はご来店ありがとうございました。\n仕上がりのご感想を1〜2分でお聞かせください。\n\n${this.entryUrl(project)}`;
 
         await lineMessagingService.push(cycle.line_user_id, [{ type: "text", text }]);

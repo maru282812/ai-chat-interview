@@ -1,3 +1,4 @@
+import { respondentProjectTitle } from "../lib/projectManagement";
 import type { Request, Response } from "express";
 import { env } from "../config/env";
 import { resolveAnswerPresentation } from "../lib/answerPresentation";
@@ -102,11 +103,11 @@ export const surveyPreviewController = {
     res.setHeader("Cache-Control", "no-store");
 
     res.render("liff/survey", {
-      title: project.user_display_title || project.name,
+      title: respondentProjectTitle(project),
       project,
       projectData: {
         id: project.id,
-        name: project.user_display_title || project.name,
+        name: respondentProjectTitle(project),
         display_mode: project.display_mode ?? "survey_question"
       },
       questions: questionsForClient,

@@ -4,6 +4,8 @@ import { projectRepository } from "../repositories/projectRepository";
 import { respondentRepository } from "../repositories/respondentRepository";
 import { cycleService } from "./cycleService";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface StoreEntryResolution {
   assignmentId: string;
   projectId: string;
@@ -94,7 +96,11 @@ export const storeEntryService = {
   ): Promise<StoreEntryResolution | null> {
     if (!projectId || !lineUserId) return null;
 
-    const project = await projectRepository.getById(projectId).catch(() => null);
+    // 新形式の QR は entry_code（?demo=<コード>）、旧形式は案件ID（UUID）で来る。
+    // どちらで引いても下の isDemoProject で絞るので、店舗アンケートのコードでデモ入口に入ることはない。
+    const project = UUID_RE.test(projectId)
+      ? await projectRepository.getById(projectId).catch(() => null)
+      : await projectRepository.findAnyByEntryCode(projectId);
     if (!project || !isDemoProject(project) || project.status === "archived") {
       return null;
     }
