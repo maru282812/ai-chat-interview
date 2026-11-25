@@ -16,6 +16,7 @@ import {
   LOCK_WINDOW_MS,
   MAX_FAILURES
 } from "../repositories/adminLoginAttemptRepository";
+import { securityEventService } from "../services/securityEventService";
 
 /**
  * 管理画面のログイン／ログアウト（middleware/adminAuth.ts と対になる）。
@@ -91,6 +92,7 @@ export const adminAuthController = {
     const failures = await adminLoginAttemptRepository.recentFailureCount(ip);
     if (failures >= MAX_FAILURES) {
       logger.warn("adminAuth.loginLocked", { failures });
+      await securityEventService.record(req, { kind: "login_locked", detail: { failures } });
       res.redirect(`/admin/login?error=locked&next=${encodeURIComponent(nextPath)}`);
       return;
     }
@@ -101,6 +103,7 @@ export const adminAuthController = {
     if (!ok) {
       await adminLoginAttemptRepository.recordFailure(ip);
       logger.warn("adminAuth.loginFailed", { failures: failures + 1 });
+      await securityEventService.record(req, { kind: "login_failed", detail: { failures: failures + 1 } });
       res.redirect(`/admin/login?error=invalid&next=${encodeURIComponent(nextPath)}`);
       return;
     }
@@ -112,6 +115,7 @@ export const adminAuthController = {
     const sessionValue = issueAdminSession(env.ADMIN_SESSION_SECRET);
     res.setHeader("Set-Cookie", buildSessionCookie(sessionValue, useSecureCookie()));
     logger.info("adminAuth.loginSucceeded", {});
+    await securityEventService.record(req, { kind: "login_succeeded", actor: "admin" });
     res.redirect(nextPath);
   },
 

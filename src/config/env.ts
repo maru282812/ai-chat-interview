@@ -38,6 +38,10 @@ const envSchema = z.object({
   LINE_LIFF_ID_CONTACT: z.string().min(1).optional(),
   RESEND_API_KEY: z.string().min(1).optional(),
   ADMIN_NOTIFICATION_EMAIL: z.string().email().optional(),
+  // セキュリティ通知（securityEventService）の宛先。無ければ ADMIN_NOTIFICATION_EMAIL へ送る。
+  SECURITY_ALERT_EMAIL: z.string().email().optional(),
+  // 送信元。Resend で認証済みのドメイン（mail.yottollc.com）のアドレス。
+  SECURITY_ALERT_FROM: z.string().min(1).optional(),
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_MODEL: z.string().default("gpt-5-mini"),
   // 管理ツール系 AI 呼び出し（設問生成・フロー流用・属性提案）に使うモデル。

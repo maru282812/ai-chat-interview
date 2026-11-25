@@ -2,6 +2,7 @@ import type { RequestHandler } from "express";
 import { env } from "../config/env";
 import { ADMIN_SESSION_COOKIE, readCookie, verifyAdminSession } from "../lib/adminSession";
 import { secureEquals } from "../lib/secureCompare";
+import { securityEventService } from "../services/securityEventService";
 
 /**
  * 管理画面（/admin/*）の認証。
@@ -39,7 +40,10 @@ export const adminAuthMiddleware: RequestHandler = (req, res, next) => {
       return;
     }
     // 鍵を提示して外したクライアントはブラウザではない。リダイレクトせず 401 を返す。
-    res.status(401).json({ error: "unauthorized" });
+    // 外した鍵は総当たりの兆候なので記録する（ログイン失敗と合わせて数える）。
+    void securityEventService
+      .record(req, { kind: "api_key_rejected" })
+      .finally(() => res.status(401).json({ error: "unauthorized" }));
     return;
   }
 

@@ -19,6 +19,13 @@ workers_dev = true
 [placement]
 mode = "smart"
 
+# Workers のログ（console.log/error）を Cloudflare に保存して後から検索できるようにする
+# （ダッシュボード → Workers → ai-chat-interview → Observability）。2026-11-25。
+# 攻撃や障害のあとで「何が起きていたか」を追うため。security_events（migration 122）は
+# 要点だけ、こちらは全部のログ。
+[observability]
+enabled = true
+
 # ---------------------------------------------------------------------------
 # 本番ドメイン
 # ---------------------------------------------------------------------------
