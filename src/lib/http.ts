@@ -33,6 +33,28 @@ export function errorHandler(
   error: Error | HttpError,
   req: Request,
   res: Response,
+  next: NextFunction
+): void {
+  const statusCode = error instanceof HttpError ? error.statusCode : 500;
+  if (statusCode < 500) {
+    respondError(error, req, res, next);
+    return;
+  }
+  // 5xx は急増を見張るため security_events に残す（回答者も通るので IP は残さない）。
+  // Workers では応答後の処理が打ち切られうるため、記録を待ってから応答する。
+  // 遅延 import にするのは、http.ts を読むだけのテストに Supabase の設定を要求しないため。
+  void import("../services/securityEventService")
+    .then(({ securityEventService }) =>
+      securityEventService.record(req, { kind: "server_error", keepIp: false, detail: { status: statusCode } })
+    )
+    .catch(() => undefined)
+    .finally(() => respondError(error, req, res, next));
+}
+
+function respondError(
+  error: Error | HttpError,
+  req: Request,
+  res: Response,
   _next: NextFunction
 ): void {
   logger.error("Unhandled request error", {

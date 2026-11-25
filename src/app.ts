@@ -1,6 +1,7 @@
 import express from "express";
 import { env } from "./config/env";
 import { adminAuthMiddleware } from "./middleware/adminAuth";
+import { adminActionLog } from "./middleware/adminActionLog";
 import { adminCsrfMiddleware } from "./middleware/adminCsrf";
 import { adminLocals } from "./middleware/adminLocals";
 import { perfTiming } from "./middleware/perfTiming";
@@ -192,7 +193,7 @@ export function createApp() {
   app.use("/admin", (_req, res, next) => {
     res.setHeader("Cache-Control", "no-store, must-revalidate");
     next();
-  }, adminAuthMiddleware, adminCsrfMiddleware, adminLocals, adminRoutes);
+  }, adminAuthMiddleware, adminCsrfMiddleware, adminActionLog, adminLocals, adminRoutes);
   app.use("/liff", perfTiming, liffRoutes);
 
   app.get("/", (_req, res) => {
