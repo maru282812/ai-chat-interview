@@ -11,7 +11,8 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  * 記録は待ってから次へ進む（Workers では応答後の処理が打ち切られうるため）。
  */
 export const adminActionLog: RequestHandler = (req, res, next) => {
-  if (SAFE_METHODS.has(req.method)) {
+  // ログインの POST は adminAuthController が login_* として残すので、ここでは数えない（二重になる）。
+  if (SAFE_METHODS.has(req.method) || req.path === "/login") {
     next();
     return;
   }
